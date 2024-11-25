@@ -1,0 +1,34 @@
+# Build dependencies - install these first manually:
+# pip install Cython
+# pip install "numpy>=1.22,<1.24"
+
+# Core dependencies
+torch>=2.0.0
+torchaudio>=2.0.0
+scipy>=1.11.0
+
+# Web dependencies
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+websockets==12.0
+python-dotenv==1.0.0
+requests==2.31.0
+
+# Audio dependencies
+sounddevice==0.4.6
+pyaudio==0.2.14
+pulsectl>=23.5.2
+
+# ML dependencies
+huggingface_hub==0.17.3
+transformers>=4.34.0
+openai-whisper==20231117
+faster-whisper
+nltk
+wget
+
+# Diarization
+pyannote.audio
+deepmultilingualpunctuation
+git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git
