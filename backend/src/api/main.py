@@ -33,7 +33,6 @@ class TranscriptionManager:
         self.active_connections: List[WebSocket] = []
         self.is_recording = False
         self.current_recording_file = None
-        self._broadcast_task = None
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -49,28 +48,17 @@ class TranscriptionManager:
             except Exception as e:
                 print(f"Error broadcasting to connection: {e}")
 
-    async def _check_transcriptions(self):
-        """Background task to check for and broadcast new transcriptions"""
-        while True:
-            try:
-                latest = self.transcriber.get_latest_transcription()
-                if latest:
-                    await self.broadcast({
-                        "type": "transcription",
-                        "data": latest
-                    })
-            except Exception as e:
-                print(f"Error checking transcriptions: {e}")
-            await asyncio.sleep(0.1)
+    async def broadcast_status(self, message: str):
+        await self.broadcast({
+            "type": "status",
+            "message": message
+        })
 
     def start_recording(self, device_ids: List[str]):
         if not self.is_recording:
             self.is_recording = True
             self.transcriber.clear_transcript()
             self.audio_capture.start_recording(device_ids)
-            # Start the broadcast task
-            if self._broadcast_task is None:
-                self._broadcast_task = asyncio.create_task(self._check_transcriptions())
 
     async def stop_recording(self):
         """Stop recording and process the file"""
@@ -80,20 +68,32 @@ class TranscriptionManager:
             self.current_recording_file = self.audio_capture.stop_recording()
             
             if self.current_recording_file:
+                await self.broadcast_status("Processing audio file...")
                 print(f"Processing recording: {self.current_recording_file}")
+                
                 # Process the recorded file
                 success = self.transcriber.process_audio_file(self.current_recording_file)
                 if not success:
                     print("Failed to process recording")
+                    await self.broadcast_status("Failed to process recording")
                     return False
                 
-                # Wait a bit to ensure all transcriptions are processed
-                await asyncio.sleep(1)
+                # Send all transcript segments through WebSocket
+                transcript = self.transcriber.get_full_transcript()
+                for segment in transcript:
+                    await self.broadcast({
+                        "type": "transcription",
+                        "data": segment
+                    })
+                    # Small delay to prevent overwhelming the WebSocket
+                    await asyncio.sleep(0.01)
                 
-                # Cancel the broadcast task
-                if self._broadcast_task:
-                    self._broadcast_task.cancel()
-                    self._broadcast_task = None
+                await self.broadcast_status("Generating summary...")
+                summary = self.generate_summary()
+                await self.broadcast({
+                    "type": "summary",
+                    "data": summary
+                })
                 
                 return True
             return False
@@ -122,8 +122,8 @@ class TranscriptionManager:
             f.write("## Transcript\n\n")
             for segment in transcript:
                 timestamp = datetime.fromtimestamp(segment['timestamp']).strftime('%H:%M:%S')
-                if 'start_time' in segment and 'end_time' in segment:
-                    timestamp = f"{segment['start_time']/1000:.1f}s - {segment['end_time']/1000:.1f}s"
+                if 'start' in segment and 'end' in segment:
+                    timestamp = f"{segment['start']:.1f}s - {segment['end']:.1f}s"
                 f.write(f"**{segment['speaker']}** ({timestamp}):\n")
                 f.write(f"{segment['text']}\n\n")
             f.write("## Summary\n\n")
@@ -160,16 +160,9 @@ async def stop_recording():
     success = await manager.stop_recording()
     if success:
         filename = manager.save_transcript()
-        summary = manager.generate_summary()
-        # Broadcast the final summary
-        await manager.broadcast({
-            "type": "summary",
-            "data": summary
-        })
         return {
             "status": "Recording stopped",
-            "transcript_file": filename,
-            "summary": summary
+            "transcript_file": filename
         }
     return {"status": "Recording stopped with errors"}
 

@@ -29,6 +29,8 @@ nltk
 wget
 
 # Diarization
-pyannote.audio
+pyannote.audio==3.1.0
+hydra-core==1.1.2
+omegaconf==2.1.2
 deepmultilingualpunctuation
 git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git

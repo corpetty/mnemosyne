@@ -19,10 +19,12 @@ interface AudioDevice {
 
 function App() {
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
   const [summary, setSummary] = useState<string>('');
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const [selectedDevices, setSelectedDevices] = useState<Array<string>>([]);
+  const [processingStatus, setProcessingStatus] = useState<string>('');
 
   // Fetch available audio devices
   useEffect(() => {
@@ -67,6 +69,10 @@ function App() {
         setTranscript(prev => [...prev, data.data]);
       } else if (data.type === 'summary') {
         setSummary(data.data);
+        setIsProcessing(false);
+        setProcessingStatus('');
+      } else if (data.type === 'status') {
+        setProcessingStatus(data.message);
       }
     };
 
@@ -95,6 +101,7 @@ function App() {
         setIsRecording(true);
         setTranscript([]);
         setSummary('');
+        setProcessingStatus('');
       }
     } catch (error) {
       console.error('Error starting recording:', error);
@@ -103,16 +110,21 @@ function App() {
 
   const stopRecording = async () => {
     try {
+      setIsProcessing(true);
+      setProcessingStatus('Stopping recording...');
+      
       const response = await fetch('http://localhost:8000/stop', {
         method: 'POST',
       });
       const data = await response.json();
       if (response.ok) {
         setIsRecording(false);
-        setSummary(data.summary);
+        setProcessingStatus('Processing audio...');
       }
     } catch (error) {
       console.error('Error stopping recording:', error);
+      setIsProcessing(false);
+      setProcessingStatus('Error processing recording');
     }
   };
 
@@ -186,7 +198,7 @@ function App() {
                               type="checkbox"
                               checked={selectedDevices.includes(String(device.id))}
                               onChange={() => handleDeviceToggle(String(device.id))}
-                              disabled={isRecording}
+                              disabled={isRecording || isProcessing}
                               className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                             />
                             <span className="text-sm text-gray-700">{device.name}</span>
@@ -204,7 +216,7 @@ function App() {
                             type="checkbox"
                             checked={selectedDevices.includes(String(device.id))}
                             onChange={() => handleDeviceToggle(String(device.id))}
-                            disabled={isRecording}
+                            disabled={isRecording || isProcessing}
                             className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                           />
                           <span className="text-sm text-gray-700">
@@ -214,36 +226,43 @@ function App() {
                       ))}
                   </div>
                 </div>
-                <button
-                  onClick={isRecording ? stopRecording : startRecording}
-                  disabled={selectedDevices.length === 0}
-                  className={`inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
-                    selectedDevices.length === 0
-                      ? 'bg-gray-400 cursor-not-allowed'
-                      : isRecording
-                      ? 'bg-red-600 hover:bg-red-700'
-                      : 'bg-green-600 hover:bg-green-700'
-                  }`}
-                >
-                  {isRecording ? (
-                    <>
-                      <span className="mr-2">⏹</span>
-                      Stop Recording
-                    </>
-                  ) : (
-                    <>
-                      <span className="mr-2">⏵</span>
-                      Start Recording
-                    </>
+                <div className="flex flex-col space-y-2">
+                  <button
+                    onClick={isRecording ? stopRecording : startRecording}
+                    disabled={selectedDevices.length === 0 || isProcessing}
+                    className={`inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
+                      selectedDevices.length === 0 || isProcessing
+                        ? 'bg-gray-400 cursor-not-allowed'
+                        : isRecording
+                        ? 'bg-red-600 hover:bg-red-700'
+                        : 'bg-green-600 hover:bg-green-700'
+                    }`}
+                  >
+                    {isRecording ? (
+                      <>
+                        <span className="mr-2">⏹</span>
+                        Stop Recording
+                      </>
+                    ) : (
+                      <>
+                        <span className="mr-2">⏵</span>
+                        Start Recording
+                      </>
+                    )}
+                  </button>
+                  {processingStatus && (
+                    <div className="text-sm text-gray-600 text-center">
+                      {processingStatus}
+                    </div>
                   )}
-                </button>
+                </div>
               </div>
             </div>
 
             <div className="space-y-6">
               <div className="bg-gray-50 rounded-lg p-4">
                 <h2 className="text-lg font-medium text-gray-900 mb-4">
-                  Live Transcript
+                  Transcript
                 </h2>
                 <div className="space-y-2">
                   {renderTranscript()}

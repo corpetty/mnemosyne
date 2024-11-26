@@ -29,18 +29,18 @@ except LookupError:
     nltk.download('punkt')
 
 class AudioTranscriber:
-    def __init__(self, model_name: str = "large-v3"):  # Using the latest large model
+    def __init__(self, model_name: str = "large-v3"):
         print("Initializing AudioTranscriber...")
         print(f"CUDA available: {torch.cuda.is_available()}")
         print(f"Current CUDA device: {torch.cuda.current_device() if torch.cuda.is_available() else 'None'}")
         
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            self.device = "cuda"
+            self.device = torch.device("cuda")
             torch.cuda.set_device(0)
             print(f"Using GPU: {torch.cuda.get_device_name(0)}")
         else:
-            self.device = "cpu"
+            self.device = torch.device("cpu")
             print("Using CPU")
             
         print(f"Loading Whisper model: {model_name}")
@@ -59,26 +59,32 @@ class AudioTranscriber:
                 raise ValueError("HUGGINGFACE_TOKEN not found in .env file")
             
             self.diarization = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization",
+                "pyannote/speaker-diarization-3.1",
                 use_auth_token=hf_token
             ).to(self.device)
             
-            # Configure diarization parameters
-            self.diarization.instantiate({
-                "segmentation": {
-                    "min_duration_off": 0.1,      # Minimum silence duration
-                    "threshold": 0.4,             # Speech activity detection threshold
-                    "min_duration_on": 0.2,       # Minimum speech duration
-                },
-                "clustering": {
-                    "method": "centroid",         # Use centroid clustering
-                    "min_cluster_size": 6,        # Minimum segment duration per speaker
-                    "threshold": 0.7              # Speaker differentiation threshold
-                }
-            })
+            # Configure diarization parameters for version 3.1
+            # self.diarization.instantiate({
+            #     "segmentation": {
+            #         "threshold": 0.7,            # Voice activity detection threshold
+            #         "min_duration_on": 0.1,      # Minimum speech duration
+            #         "min_duration_off": 0.1      # Minimum silence duration
+            #     },
+            #     "embedding": {
+            #         "batch_size": 32,            # Batch size for speaker embedding
+            #         "exclude_overlap": True      # Exclude overlapping speech
+            #     },
+            #     "clustering": {
+            #         "method": "centroid",        # Clustering method
+            #         "min_cluster_size": 6,       # Minimum segment duration per speaker
+            #         "threshold": 0.7             # Speaker differentiation threshold
+            #     }
+            # })
             print("Diarization pipeline initialized")
         except Exception as e:
             print(f"Error initializing diarization: {e}")
+            import traceback
+            print(f"Diarization error traceback: {traceback.format_exc()}")
             self.diarization = None
             
         # Initialize punctuation model
@@ -98,7 +104,7 @@ class AudioTranscriber:
         for next_segment in segments[1:]:
             # If same speaker and close in time, merge
             if (next_segment['speaker'] == current['speaker'] and 
-                next_segment['start'] - current['end'] < 1.0):  # 1 second gap threshold
+                next_segment['start'] - current['end'] < 0.5):  # 0.5 second gap threshold
                 current['text'] += ' ' + next_segment['text']
                 current['end'] = next_segment['end']
             else:
@@ -205,7 +211,7 @@ class AudioTranscriber:
             return False
         finally:
             # Clear GPU memory
-            if self.device == "cuda":
+            if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
     def get_latest_transcription(self):

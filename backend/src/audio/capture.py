@@ -81,19 +81,6 @@ class AudioCapture:
             print(f"Error traceback: {traceback.format_exc()}")
             return []
 
-    def mix_audio(self, buffers: List[np.ndarray]) -> np.ndarray:
-        """Mix multiple audio streams together"""
-        if not buffers:
-            return np.array([], dtype=np.float32)
-        
-        # Ensure all buffers are the same length
-        min_length = min(len(buf) for buf in buffers)
-        aligned_buffers = [buf[:min_length] for buf in buffers]
-        
-        # Mix the streams with equal weight
-        mixed = np.mean(aligned_buffers, axis=0)
-        return mixed
-
     def start_recording(self, device_ids: Optional[List[str]] = None):
         """Start recording audio from specified sources to a WAV file"""
         if not device_ids:
@@ -110,7 +97,7 @@ class AudioCapture:
             
             self.wave_file = wave.open(self.output_file, 'wb')
             self.wave_file.setnchannels(1)  # Mono
-            self.wave_file.setsampwidth(4)  # 32-bit float
+            self.wave_file.setsampwidth(2)  # 16-bit
             self.wave_file.setframerate(self.sample_rate)
             
             self.is_recording = True
@@ -139,7 +126,7 @@ class AudioCapture:
             '--target', device_id,
             '--rate', str(self.sample_rate),
             '--channels', '1',
-            '--format', 'f32',
+            '--format', 's16',  # 16-bit signed integer
             '--latency', '128/48000',
             '-'  # Output to stdout
         ]
@@ -148,16 +135,16 @@ class AudioCapture:
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            bufsize=self.buffer_size * 4  # 4 bytes per float32
+            bufsize=self.buffer_size * 2  # 2 bytes per sample for s16
         )
         print(f"Started PipeWire recording from: {device_id}")
         
         def read_pipewire_audio():
             try:
                 while self.is_recording and device_id in self.active_sources:
-                    raw_data = process.stdout.read(self.buffer_size * 4)  # 4 bytes per float32
+                    raw_data = process.stdout.read(self.buffer_size * 2)  # 2 bytes per sample
                     if raw_data:
-                        audio_data = np.frombuffer(raw_data, dtype=np.float32)
+                        audio_data = np.frombuffer(raw_data, dtype=np.int16)
                         if len(audio_data) > 0:
                             with self.buffer_lock:
                                 self.source_buffers[device_id] = audio_data
@@ -165,7 +152,7 @@ class AudioCapture:
                                 # If we have data from all sources, mix and write to file
                                 if len(self.source_buffers) == len(self.active_sources):
                                     buffers_to_mix = list(self.source_buffers.values())
-                                    mixed_audio = self.mix_audio(buffers_to_mix)
+                                    mixed_audio = self._mix_audio(buffers_to_mix)
                                     self.wave_file.writeframes(mixed_audio.tobytes())
                                     self.source_buffers.clear()
                                     
@@ -185,6 +172,28 @@ class AudioCapture:
         thread = threading.Thread(target=read_pipewire_audio)
         thread.start()
         self._recording_threads.append(thread)
+
+    def _mix_audio(self, buffers: List[np.ndarray]) -> np.ndarray:
+        """Mix multiple audio streams together"""
+        if not buffers:
+            return np.array([], dtype=np.int16)
+        
+        # Ensure all buffers are the same length
+        min_length = min(len(buf) for buf in buffers)
+        aligned_buffers = [buf[:min_length] for buf in buffers]
+        
+        # Convert to float32 for mixing
+        float_buffers = [buf.astype(np.float32) / 32768.0 for buf in aligned_buffers]
+        
+        # Mix the streams with equal weight
+        mixed = np.mean(float_buffers, axis=0)
+        
+        # Normalize and convert back to int16
+        if np.abs(mixed).max() > 0:
+            mixed = mixed / np.abs(mixed).max()
+        mixed = (mixed * 32767).astype(np.int16)
+        
+        return mixed
 
     def stop_recording(self) -> Optional[str]:
         """Stop recording and return the path to the recorded file"""
