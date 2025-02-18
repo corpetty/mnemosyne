@@ -2,6 +2,8 @@
 
 A real-time audio transcription and diarization system that can capture both system audio and microphone input simultaneously.
 
+NOTE: This project is a super alpha terrible quality. Lots of work needs to be done to ensure the produced content is accurate. Don't have high expectations and if you have ideas on how to improve quality I'm all ears, or better yet, make a PR. 
+
 ## Features
 
 - Real-time audio transcription using OpenAI's Whisper large-v3 model
