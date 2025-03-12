@@ -8,8 +8,14 @@ import json
 import wave
 import os
 from datetime import datetime
+from scipy import signal
+import time
 
 class AudioCapture:
+    _cached_devices: List[Dict] = []
+    _last_cache_time: float = 0
+    CACHE_DURATION = 60  # Cache duration in seconds
+
     def __init__(self, sample_rate: int = 16000):
         self.sample_rate = sample_rate
         self.is_recording = False
@@ -21,9 +27,18 @@ class AudioCapture:
         self.output_file = None
         self.wave_file = None
 
-    @staticmethod
-    def list_devices() -> List[Dict]:
+    @classmethod
+    def list_devices(cls, force_refresh: bool = False) -> List[Dict]:
         """Get list of available audio devices including monitor sources"""
+        current_time = time.time()
+        if force_refresh or not cls._cached_devices or (current_time - cls._last_cache_time) > cls.CACHE_DURATION:
+            cls._cached_devices = cls._fetch_devices()
+            cls._last_cache_time = current_time
+        return cls._cached_devices
+
+    @staticmethod
+    def _fetch_devices() -> List[Dict]:
+        """Fetch the list of audio devices"""
         devices = []
         try:
             # Get PipeWire sources using pw-dump
@@ -174,7 +189,7 @@ class AudioCapture:
         self._recording_threads.append(thread)
 
     def _mix_audio(self, buffers: List[np.ndarray]) -> np.ndarray:
-        """Mix multiple audio streams together"""
+        """Mix multiple audio streams together with improved quality"""
         if not buffers:
             return np.array([], dtype=np.int16)
         
@@ -182,18 +197,51 @@ class AudioCapture:
         min_length = min(len(buf) for buf in buffers)
         aligned_buffers = [buf[:min_length] for buf in buffers]
         
-        # Convert to float32 for mixing
+        # Convert to float32 for processing
         float_buffers = [buf.astype(np.float32) / 32768.0 for buf in aligned_buffers]
         
-        # Mix the streams with equal weight
-        mixed = np.mean(float_buffers, axis=0)
+        # Apply noise reduction to each buffer
+        denoised_buffers = [self._reduce_noise(buf) for buf in float_buffers]
         
-        # Normalize and convert back to int16
-        if np.abs(mixed).max() > 0:
-            mixed = mixed / np.abs(mixed).max()
+        # Calculate weights based on signal-to-noise ratio
+        weights = [np.std(buf) for buf in denoised_buffers]
+        total_weight = sum(weights)
+        if total_weight > 0:
+            weights = [w / total_weight for w in weights]
+        else:
+            weights = [1.0 / len(denoised_buffers)] * len(denoised_buffers)
+        
+        # Mix the streams with calculated weights
+        mixed = np.sum([buf * weight for buf, weight in zip(denoised_buffers, weights)], axis=0)
+        
+        # Apply volume normalization
+        mixed = self._normalize_volume(mixed)
+        
+        # Convert back to int16
         mixed = (mixed * 32767).astype(np.int16)
         
         return mixed
+
+    def _reduce_noise(self, audio: np.ndarray) -> np.ndarray:
+        """Apply simple noise reduction"""
+        # Estimate noise from the first 1000 samples (assuming it's background noise)
+        noise_sample = audio[:1000]
+        noise_power = np.mean(noise_sample ** 2)
+        
+        # Apply spectral gating
+        sig_stft = np.fft.rfft(audio)
+        sig_power = np.abs(sig_stft) ** 2
+        mask = sig_power > (noise_power * 2)  # Adjust threshold as needed
+        sig_stft_denoised = sig_stft * mask
+        
+        return np.fft.irfft(sig_stft_denoised)
+
+    def _normalize_volume(self, audio: np.ndarray) -> np.ndarray:
+        """Normalize audio volume"""
+        max_amplitude = np.max(np.abs(audio))
+        if max_amplitude > 0:
+            return audio / max_amplitude
+        return audio
 
     def stop_recording(self) -> Optional[str]:
         """Stop recording and return the path to the recorded file"""

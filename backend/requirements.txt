@@ -22,11 +22,12 @@ pulsectl>=23.5.2
 
 # ML dependencies
 huggingface_hub==0.17.3
-transformers>=4.34.0
-openai-whisper==20231117
+transformers>=4.35.0
 faster-whisper
 nltk
 wget
+datasets
+accelerate  # Added to resolve the ImportError
 
 # Diarization
 pyannote.audio==3.1.0
