@@ -1,10 +1,98 @@
 import os
-from typing import Dict, List, Optional, Tuple
+import re
+from typing import Dict, List, Optional, Tuple, Literal
 import requests
 import json
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Prompt templates for different detail levels
+DETAILED_PROMPT_TEMPLATE = """You are an expert meeting summarizer tasked with creating a detailed, comprehensive, and highly structured analysis of the following conversation transcript.
+
+TRANSCRIPT:
+{transcript}
+
+INSTRUCTIONS:
+1. Create a thorough and detailed summary organized into these clearly labeled sections:
+   - OVERVIEW: A comprehensive 5-7 sentence summary of the conversation that captures all key themes, context, purpose, and outcomes
+   - PARTICIPANTS & DYNAMICS: Identify all speakers and their roles, analyze communication dynamics, note any significant interactions or patterns
+   - KEY TOPICS: For each significant topic discussed:
+      * Provide a detailed explanation with context and importance
+      * Include sub-topics and their relationships
+      * Capture nuanced perspectives from different speakers
+      * Include relevant numbers, metrics, or technical details mentioned
+   - DECISIONS & CONCLUSIONS: Thoroughly document all decisions with:
+      * Complete context around how the decision was reached
+      * Any disagreements or alternative options discussed
+      * Specific attribution to speakers with relevant quotes
+      * Implications or next steps related to each decision
+   - ACTION ITEMS: Comprehensive list of action items including:
+      * Both explicit and implied tasks
+      * Detailed description of each action required
+      * Responsible parties (if mentioned)
+      * Deadlines, priorities, or dependencies
+      * Related resources or references mentioned
+
+2. Format requirements:
+   - Use markdown formatting with headers (##) for each section
+   - Use bullet points for lists
+   - Bold (**Speaker Name**) when attributing statements or actions to specific speakers
+   - Use sub-bullets (indentation) to organize hierarchical information
+   - Use quotes for important verbatim statements
+
+3. Focus on accuracy, depth, and comprehensiveness:
+   - Maintain the original meaning while providing deep analysis
+   - Preserve ALL technical terms, numbers, and specific language used by speakers
+   - If speakers disagree on a topic, thoroughly analyze the different perspectives
+   - Note changes in opinion or progression of ideas throughout the conversation
+   - Capture tone, sentiment, and emotional context when relevant"""
+
+STANDARD_PROMPT_TEMPLATE = """You are an expert meeting summarizer tasked with creating a structured and detailed analysis of the following conversation transcript.
+
+TRANSCRIPT:
+{transcript}
+
+INSTRUCTIONS:
+1. Create a detailed summary with these labeled sections:
+   - OVERVIEW: A 4-5 sentence summary capturing key themes, context, and outcomes
+   - PARTICIPANTS: Identify speakers and their roles
+   - KEY TOPICS: For each major topic discussed:
+      * Provide context and importance
+      * Include relevant technical details
+      * Note different perspectives from speakers
+   - DECISIONS: Document decisions with speaker attribution and context
+   - ACTION ITEMS: List explicit and implied tasks with responsible parties
+
+2. Format requirements:
+   - Use markdown with ## headers for sections
+   - Use bullet points and bold (**Speaker Name**) for attribution
+   - Include relevant quotes when helpful
+
+3. Focus on accuracy and completeness:
+   - Preserve technical terms and specific language
+   - Present multiple viewpoints when speakers disagree
+   - Maintain original meaning and context"""
+
+COMPACT_PROMPT_TEMPLATE = """Provide a concise but comprehensive summary of this conversation transcript:
+
+TRANSCRIPT:
+{transcript}
+
+Structure your summary with these markdown headers:
+## Overview
+## Participants
+## Key Topics
+## Decisions
+## Action Items
+
+For each section, include essential information only:
+- Use bullet points
+- Bold speaker names (**Name**)
+- Preserve all technical terms
+- Include all decisions and tasks mentioned
+
+Focus on accuracy and clarity."""
 
 class Summarizer:
     def __init__(self, provider: str = "ollama", model: str = None):
@@ -18,6 +106,31 @@ class Summarizer:
         
         # Use provided model or default
         self.model = model or (self.default_ollama_model if provider == "ollama" else self.default_openai_model)
+        
+    def _estimate_token_count(self, text: str) -> int:
+        """Rough estimation of token count for a given text.
+        This uses a simple approximation that works for most English text."""
+        # Count words
+        word_count = len(re.findall(r'\b\w+\b', text))
+        
+        # Count non-alphanumeric characters that might be tokenized separately
+        special_chars = len(re.findall(r'[^\w\s]', text))
+        
+        # Apply a multiplier to account for tokenization differences
+        # Most tokenizers split words into subwords, resulting in more tokens than words
+        return int((word_count + special_chars) * 1.3)  # Words plus 30% for tokenization
+        
+    def _select_prompt_template(self, transcript_text: str) -> Tuple[str, Literal["detailed", "standard", "compact"]]:
+        """Select the appropriate prompt template based on estimated token count"""
+        estimated_tokens = self._estimate_token_count(transcript_text)
+        print(f"Estimated token count for transcript: {estimated_tokens}")
+        
+        if estimated_tokens < 800:  # Allow for prompt overhead
+            return DETAILED_PROMPT_TEMPLATE, "detailed"
+        elif estimated_tokens < 1500:  # Medium length
+            return STANDARD_PROMPT_TEMPLATE, "standard"
+        else:  # Long transcript
+            return COMPACT_PROMPT_TEMPLATE, "compact"
 
     def get_available_models(self) -> List[Dict]:
         """Fetch available models based on the provider"""
@@ -58,59 +171,23 @@ class Summarizer:
         full_text = "\n".join([f"{segment['speaker']}: {segment['text']}" 
                               for segment in transcript])
         
-        # Calculate transcript length to determine summary depth
-        word_count = len(full_text.split())
-        detail_level = "detailed" if word_count < 1000 else "concise"
+        # Select appropriate prompt template based on transcript length
+        prompt_template, detail_level = self._select_prompt_template(full_text)
+        print(f"Using {detail_level} prompt template for summary")
         
-        prompt = f"""You are an expert meeting summarizer tasked with creating a clear, structured, and informative summary of the following conversation transcript.
-
-TRANSCRIPT:
-{full_text}
-
-INSTRUCTIONS:
-1. Create a {detail_level} summary organized into these clearly labeled sections:
-   - OVERVIEW: A 2-3 sentence high-level summary of the conversation
-   - KEY TOPICS: List the main topics discussed with bullet points for each topic
-   - DECISIONS & CONCLUSIONS: Note any decisions made or conclusions reached, with speaker attribution
-   - ACTION ITEMS: List specific tasks, responsibilities, deadlines mentioned (if any)
-
-2. Format requirements:
-   - Use markdown formatting with headers (##) for each section
-   - Use bullet points for lists
-   - Bold (**Speaker Name**) when attributing statements or actions to specific speakers
-   - Keep the summary focused and relevant, avoiding unnecessary details
-
-3. Focus on accuracy and objectivity:
-   - Maintain the original meaning without adding your own interpretations
-   - Preserve important technical terms and language used by speakers
-   - If speakers disagree on a topic, clearly present both viewpoints with proper attribution
-
-4. Use this exact structure for your response:
-
-## Overview
-[2-3 sentence summary]
-
-## Key Topics
-- [Topic 1]
-  - [Important point]
-  - [Important point]
-- [Topic 2]
-  - [Important point]
-  - [Important point]
-
-## Decisions & Conclusions
-- [Decision 1] (by **Speaker Name**)
-- [Decision 2] (agreed by **Speaker A** and **Speaker B**)
-
-## Action Items
-- **Speaker Name** will [action] by [deadline if mentioned]
-- [Action item] (owner not specified)
-
-If any section would be empty, include the heading but state "None identified in the transcript."
-"""
+        # Format the prompt with transcript
+        prompt = prompt_template.format(transcript=full_text)
 
         if self.provider == "ollama":
-            return self._summarize_with_ollama(prompt, model_to_use)
+            summary = self._summarize_with_ollama(prompt, model_to_use)
+            # Check if we got a simplified fallback summary
+            if "simplified fallback summary" in summary:
+                print("Received fallback summary. Trying with a more compact prompt.")
+                # Try a more compact prompt
+                if detail_level != "compact":
+                    compact_prompt = COMPACT_PROMPT_TEMPLATE.format(transcript=full_text)
+                    return self._summarize_with_ollama(compact_prompt, model_to_use)
+            return summary
         else:
             return self._summarize_with_openai(prompt, model_to_use)
 
@@ -119,6 +196,7 @@ If any section would be empty, include the heading but state "None identified in
         model_to_use = model or self.default_ollama_model
         
         try:
+            print(f"Sending request to Ollama with prompt length: {len(prompt)} characters")
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json={
@@ -126,23 +204,32 @@ If any section would be empty, include the heading but state "None identified in
                     "prompt": prompt,
                     "stream": False
                 },
-                timeout=30  # Add timeout to prevent hanging
+                timeout=60  # Increased timeout for longer processing
             )
             
+            # Check for token limit errors
             if response.status_code != 200:
-                # Try OpenAI fallback if Ollama fails
-                if self.api_key:
-                    return self._summarize_with_openai(prompt, self.default_openai_model)
+                error_text = response.text.lower() if hasattr(response, 'text') else ""
+                if 'token' in error_text and ('limit' in error_text or 'exceed' in error_text or 'truncat' in error_text):
+                    print(f"Token limit error detected: {response.text}")
+                    # Try OpenAI fallback if Ollama fails due to token limits and API key is available
+                    if self.api_key:
+                        print("Attempting fallback to OpenAI due to token limit")
+                        return self._summarize_with_openai(prompt, self.default_openai_model)
+                    
+                # Other errors
+                print(f"Ollama error: {response.status_code} - {response.text if hasattr(response, 'text') else 'No response text'}")
                 return self._generate_simple_summary(prompt)
                 
             return response.json()["response"]
         except Exception as e:
             # Try OpenAI fallback if Ollama fails with an exception
+            print(f"Exception in Ollama summarization: {str(e)}")
             if self.api_key:
                 try:
                     return self._summarize_with_openai(prompt, self.default_openai_model)
-                except:
-                    pass
+                except Exception as openai_e:
+                    print(f"OpenAI fallback also failed: {str(openai_e)}")
             return self._generate_simple_summary(prompt)
             
     def _generate_simple_summary(self, prompt: str) -> str:
@@ -190,26 +277,48 @@ If any section would be empty, include the heading but state "None identified in
         if sample_size > 2:
             samples.append(unique_lines[-1])
         
-        # Build a simple markdown summary
+        # Build a more detailed markdown summary even in fallback mode
         summary = "## Overview\n"
-        summary += f"This conversation includes {len(speakers)} speaker(s) discussing various topics.\n\n"
+        summary += f"This transcript contains a conversation between {len(speakers)} participant(s). "
+        summary += "The discussion covers several topics as sampled below. "
+        summary += "Due to limitations in the fallback summary mode, this represents only a basic extraction of content. "
+        summary += "For a complete and thorough analysis, please try again when the LLM service is available. "
+        summary += "This simplified summary attempts to extract key information from the beginning, middle, and end of the conversation.\n\n"
+        
+        summary += "## Participants & Dynamics\n"
+        for speaker in speakers:
+            summary += f"- **{speaker}**: Participated in the conversation\n"
+        summary += "- Interaction dynamics could not be analyzed in fallback mode\n\n"
         
         summary += "## Key Topics\n"
-        for sample in samples:
+        for i, sample in enumerate(samples):
             if ':' in sample:
-                _, content = sample.split(':', 1)
+                speaker, content = sample.split(':', 1)
                 content = content.strip()
                 if content:
-                    # Extract a topic-like phrase (first 8-10 words)
+                    # Extract a topic-like phrase (first 15-20 words for more detail)
                     words = content.split()
-                    topic = ' '.join(words[:min(10, len(words))])
-                    summary += f"- {topic}...\n"
+                    topic = ' '.join(words[:min(20, len(words))])
+                    position = "beginning" if i == 0 else "middle" if i == 1 else "end"
+                    summary += f"- Discussion at {position} of transcript: {topic}...\n"
+                    summary += f"  - Mentioned by **{speaker.strip()}**\n"
+                    
+                    # Try to extract subtopics by looking at sentence structure
+                    sentences = content.split('.')
+                    if len(sentences) > 1:
+                        for j, sentence in enumerate(sentences[:2]):  # Get first two sentences as subtopics
+                            if sentence.strip():
+                                subtopic = sentence.strip()
+                                if len(subtopic.split()) > 3:  # Only if it's a substantial sentence
+                                    summary += f"    - {subtopic}\n"
         
         summary += "\n## Decisions & Conclusions\n"
-        summary += "None identified (automatic fallback summary).\n\n"
+        summary += "- None could be automatically identified in fallback summary mode\n"
+        summary += "- A full LLM analysis is required to accurately extract decisions and conclusions\n\n"
         
         summary += "## Action Items\n"
-        summary += "None identified (automatic fallback summary).\n\n"
+        summary += "- None could be automatically identified in fallback summary mode\n"
+        summary += "- A full LLM analysis is required to accurately extract action items\n\n"
         
         summary += "\n---\n*Note: This is a simplified fallback summary generated because the LLM service was unavailable.*"
         
@@ -223,6 +332,7 @@ If any section would be empty, include the heading but state "None identified in
         model_to_use = model or self.default_openai_model
 
         try:
+            print(f"Sending request to OpenAI with prompt length: {len(prompt)} characters")
             response = requests.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={

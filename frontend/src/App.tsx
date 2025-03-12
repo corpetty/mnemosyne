@@ -161,7 +161,7 @@ function App() {
             )}
             <div className="space-y-6 mt-6">
               <Transcript transcript={transcript} />
-              {summary && <Summary summary={summary} />}
+              {summary && <Summary summary={summary} processingStatus={processingStatus} />}
             </div>
           </div>
         </div>

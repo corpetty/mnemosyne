@@ -149,8 +149,31 @@ class TranscriptionManager:
             return "No transcript available to summarize."
         return self.summarizer.summarize_transcript(transcript, model)
         
-    def resummarize_transcript(self, transcript_file: str, model: str = None) -> Dict:
-        """Resummarize a transcript file using the specified model"""
+    def _update_transcript_file_summary(self, file_path: str, new_summary: str) -> bool:
+        """Update the summary section of a transcript file with a new summary."""
+        try:
+            with open(file_path, 'r') as f:
+                content = f.read()
+            
+            # Split content into pre-summary and summary sections
+            if '## Summary' in content:
+                pre_summary, _ = content.split('## Summary', 1)
+                updated_content = pre_summary + '## Summary\n\n' + new_summary
+                
+                # Write back the updated content
+                with open(file_path, 'w') as f:
+                    f.write(updated_content)
+                logger.info(f"Updated summary in transcript file: {file_path}")
+                return True
+            else:
+                logger.warning(f"No Summary section found in file: {file_path}")
+                return False
+        except Exception as e:
+            logger.error(f"Error updating transcript file summary: {e}")
+            return False
+    
+    async def resummarize_transcript(self, transcript_file: str, model: str = None) -> Dict:
+        """Resummarize a transcript file using the specified model and overwrite the original file"""
         if not os.path.exists(transcript_file):
             raise HTTPException(status_code=404, detail=f"Transcript file not found: {transcript_file}")
             
@@ -160,12 +183,22 @@ class TranscriptionManager:
             raise HTTPException(status_code=400, detail="Failed to parse transcript file")
             
         # Generate a new summary
+        await self.broadcast_status(f"Generating new summary for {os.path.basename(transcript_file)}...")
+        logger.info(f"Generating new summary for transcript file: {transcript_file}")
         summary = self.summarizer.summarize_transcript(transcript, model)
         
+        # Update the original transcript file with the new summary
+        success = self._update_transcript_file_summary(transcript_file, summary)
+        if not success:
+            logger.warning("Failed to update original transcript file with new summary")
+        else:
+            await self.broadcast_status(f"Updated summary in {os.path.basename(transcript_file)}")
+            
         return {
             "transcript_file": transcript_file,
             "summary": summary,
-            "model": model or self.summarizer.model
+            "model": model or self.summarizer.model,
+            "file_updated": success
         }
     
     def get_available_transcripts(self) -> List[Dict]:
@@ -282,7 +315,7 @@ async def get_transcripts():
 @app.post("/resummarize")
 async def resummarize(request: ResummarizeRequest):
     """Re-summarize a transcript file using a specified model"""
-    result = manager.resummarize_transcript(request.transcript_file, request.model)
+    result = await manager.resummarize_transcript(request.transcript_file, request.model)
     # Broadcast the new summary through WebSockets
     await manager.broadcast({
         "type": "summary",
