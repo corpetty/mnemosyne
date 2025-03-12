@@ -1,18 +1,27 @@
 # Mnemosyne
 
-A real-time audio transcription and diarization system that can capture both system audio and microphone input simultaneously.
-
-NOTE: This project is a super alpha terrible quality. Lots of work needs to be done to ensure the produced content is accurate. Don't have high expectations and if you have ideas on how to improve quality I'm all ears, or better yet, make a PR. 
+A real-time audio transcription and diarization system that can capture both system audio and microphone input simultaneously, with enhanced summarization capabilities.
 
 ## Features
 
 - Real-time audio transcription using OpenAI's Whisper large-v3 model
 - Speaker diarization using pyannote.audio 3.1
-- Automatic summarization using Llama 3.2 (via Ollama)
+- Advanced summarization using Llama 3.3 (via Ollama) with dynamic prompt selection
 - Supports multiple audio sources simultaneously (e.g., system audio + microphone)
 - Real-time display of transcriptions with speaker identification
+- Intelligent summary depth adjustment based on transcript length
+- Ability to regenerate and update summaries for existing transcripts
 - Exports transcripts in markdown format with timestamps
 - Progress tracking and status updates during processing
+
+## Recent Improvements
+
+- **Enhanced Summarization**: Implemented a three-tiered prompt system (detailed, standard, compact) that dynamically adjusts based on transcript length
+- **Token Optimization**: Added automatic token count estimation to select the most appropriate prompt format
+- **Improved Error Handling**: Better detection and handling of token limit errors with automatic fallback mechanisms
+- **Status Feedback**: Added real-time status updates during summary generation with loading indicators
+- **File Overwriting**: Added ability to regenerate summaries and update the original transcript files
+- **UI Enhancements**: Added expand/collapse functionality for large summaries and improved styling for nested elements
 
 ## Prerequisites
 
@@ -21,17 +30,17 @@ NOTE: This project is a super alpha terrible quality. Lots of work needs to be d
 - PipeWire audio system (for Linux)
 - Node.js and npm (for frontend)
 - Hugging Face account and API token (for diarization model)
-- Ollama with Llama 3.2 model (for summarization)
+- Ollama with Llama 3.3 model (for summarization)
 
 ## Installation
 
-1. Install Ollama and Llama 3.2:
+1. Install Ollama and Llama 3.3:
 ```bash
 # Install Ollama
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Pull Llama 2 model
-ollama pull llama3.2
+# Pull Llama 3.3 model
+ollama pull llama3.3
 ```
 
 2. Create and activate a Python virtual environment:
@@ -65,7 +74,8 @@ npm install
 1. Create a `.env` file in the root directory:
 ```bash
 HUGGINGFACE_TOKEN=your_token_here
-OLLAMA_HOST=http://localhost:11434  # Ollama API endpoint
+OLLAMA_URL=http://localhost:11434  # Ollama API endpoint
+OPENAI_API_KEY=your_key_here       # Optional, for OpenAI fallback
 ```
 
 2. Hugging Face Setup:
@@ -82,7 +92,7 @@ OLLAMA_HOST=http://localhost:11434  # Ollama API endpoint
 # Check Ollama is running
 curl http://localhost:11434/api/tags
 
-# Verify Llama 3.2 is available
+# Verify Llama 3.3 is available
 ollama list
 ```
 
@@ -122,8 +132,14 @@ npm start
    - The system will process the recording
    - Status updates show progress
    - Transcription appears with speaker identification
-   - A summary is generated using Llama 2
+   - A summary is generated using Llama 3.3
    - Files are saved in the transcripts directory
+
+4. Regenerate Summaries (New Feature):
+   - Select an existing transcript file from the dropdown
+   - Optionally select a different model
+   - Click "Generate New Summary" to create an improved summary
+   - The original transcript file will be updated with the new summary
 
 ## Output Files
 
@@ -156,10 +172,21 @@ The system generates several files:
 - Optimized clustering parameters
 
 ### Summarization
-- Using Llama 3.2 via Ollama
-- Context-aware summaries
-- Maintains speaker attribution
-- Handles long conversations
+- Using Llama 3.3 via Ollama
+- Dynamic prompt selection based on transcript length:
+  - Detailed mode: Comprehensive analysis for shorter transcripts
+  - Standard mode: Balanced detail for medium-length transcripts
+  - Compact mode: Essential information for long transcripts
+- Intelligent token count estimation
+- Error handling with automatic fallback mechanisms
+- Status feedback during generation
+- Ability to overwrite existing summaries
+- Structured output with:
+  - Overview
+  - Participants & dynamics analysis
+  - Detailed key topics with hierarchical organization
+  - Comprehensive decisions & conclusions
+  - Action items with context and dependencies
 
 ### User Interface
 - Real-time status updates
@@ -167,6 +194,8 @@ The system generates several files:
 - Timestamp display
 - Processing progress indicators
 - Device selection interface
+- Summary regeneration capabilities
+- Expand/collapse functionality for large summaries
 
 ## Troubleshooting
 
@@ -192,8 +221,11 @@ The system generates several files:
 
 5. **Summarization issues:**
    - Verify Ollama is running: `systemctl status ollama`
-   - Check Llama 3.2 model is installed: `ollama list`
+   - Check Llama 3.3 model is installed: `ollama list`
    - Verify API endpoint in .env file
+   - For token limit errors, try a different model or regenerate with a compact prompt
+   - If using OpenAI fallback, ensure your API key is correctly set in .env
+   - Monitor CPU/GPU usage during summarization as it can be resource-intensive
 
 ### Getting Help
 
@@ -213,5 +245,5 @@ This project uses:
 - [Pyannote Audio](https://github.com/pyannote/pyannote-audio) for speaker diarization
 - [Faster Whisper](https://github.com/guillaumekln/faster-whisper) for optimized inference
 - [CTC Forced Aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner) for timestamp alignment
-- [Ollama](https://ollama.com/) for running Llama 2
-- [Llama 2](https://ai.meta.com/llama/) for summarization
+- [Ollama](https://ollama.com/) for running Llama 3.3
+- [Llama 3.3](https://ai.meta.com/llama/) for summarization
