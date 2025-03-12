@@ -82,7 +82,7 @@ If any section would be empty, include the heading but state "None identified in
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json={
-                    "model": "llama3.2",
+                    "model": "llama3.3",
                     "prompt": prompt,
                     "stream": False
                 },

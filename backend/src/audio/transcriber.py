@@ -59,6 +59,7 @@ class AudioTranscriber:
         self.processor = AutoProcessor.from_pretrained(model_name)
         
         # Configure pipeline with explicit return_timestamps=True
+        # And ensure WhisperTimeStampLogitsProcessor is used
         self.pipe = pipeline(
             "automatic-speech-recognition",
             model=self.model,
@@ -67,7 +68,9 @@ class AudioTranscriber:
             max_new_tokens=128,
             torch_dtype=self.torch_dtype,
             device=self.device,
-            return_timestamps=True  # Explicitly request timestamps
+            return_timestamps=True,  # Explicitly request timestamps
+            chunk_length_s=30,       # Fixed chunk length
+            stride_length_s=5        # Fixed stride length for overlap
         )
         
         print("Distil-Whisper model loaded and pipeline created")
@@ -254,14 +257,26 @@ class AudioTranscriber:
                     import traceback
                     print(f"Diarization error traceback: {traceback.format_exc()}")
             
-            # Transcribe with Distil-Whisper - explicitly set chunk and stride lengths
+            # Transcribe with Distil-Whisper
             print("Starting transcription...")
-            result = self.pipe(
-                audio, 
-                chunk_length_s=30, 
-                stride_length_s=5,
-                return_timestamps=True  # Explicitly request timestamps
-            )
+            try:
+                # Use the pipeline with existing configurations
+                result = self.pipe(
+                    audio,
+                    return_timestamps=True  # Explicitly request timestamps again
+                )
+            except Exception as e:
+                print(f"Error during transcription: {e}")
+                import traceback
+                print(f"Transcription error traceback: {traceback.format_exc()}")
+                # Try again with smaller chunks if there was an error
+                print("Retrying with smaller chunks...")
+                result = self.pipe(
+                    audio,
+                    chunk_length_s=15,  # Smaller chunks
+                    stride_length_s=3,  # Smaller stride
+                    return_timestamps=True
+                )
             print("Transcription complete")
             
             # Process segments
@@ -288,18 +303,37 @@ class AudioTranscriber:
                         print(f"Warning: Missing timestamps for chunk: {text}")
                         
                     # Find the speaker for this segment using a more robust method
-                    speaker = self.find_speaker_for_time((start_time + end_time) / 2, speakers)
+                    # Handle cases where start_time or end_time might be None
+                    if start_time is None or end_time is None:
+                        # If at least one timestamp is available, use it
+                        if start_time is not None:
+                            time_point = start_time
+                        elif end_time is not None:
+                            time_point = end_time
+                        else:
+                            # If both are None, use a fallback approach
+                            time_point = 0.0
+                        print(f"Warning: Handling missing timestamp for chunk: {text}")
+                    else:
+                        # Original calculation when both timestamps are available
+                        time_point = (start_time + end_time) / 2
+                    
+                    speaker = self.find_speaker_for_time(time_point, speakers)
                     
                     # Add punctuation
                     text = self.add_punctuation(text)
                     
                     # Create segment with current time as processing timestamp
+                    # Ensure we don't store None values for timestamps
+                    safe_start = 0.0 if start_time is None else start_time
+                    safe_end = 0.0 if end_time is None else end_time
+                    
                     segments.append({
                         "text": text,
                         "timestamp": time.time(),
                         "speaker": speaker,
-                        "start": start_time,
-                        "end": end_time
+                        "start": safe_start,
+                        "end": safe_end
                     })
             else:
                 # Fallback if no chunks are available
