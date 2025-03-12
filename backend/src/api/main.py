@@ -1,10 +1,11 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import json
 import os
 import tempfile
+import glob
 from datetime import datetime
 from pydantic import BaseModel
 import logging
@@ -28,6 +29,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class ModelInfo(BaseModel):
+    id: str
+    name: str
+    provider: str
+    size: Optional[str] = None
+
+class ResummarizeRequest(BaseModel):
+    transcript_file: str
+    model: Optional[str] = None
 
 class TranscriptionManager:
     def __init__(self):
@@ -128,16 +139,69 @@ class TranscriptionManager:
             logger.error(f"Processing error traceback: {traceback.format_exc()}")
             return False
 
-    def generate_summary(self) -> str:
+    def get_available_models(self) -> List[Dict]:
+        """Get available models for summarization"""
+        return self.summarizer.get_available_models()
+        
+    def generate_summary(self, model: str = None) -> str:
         transcript = self.transcriber.get_full_transcript()
         if not transcript:
             return "No transcript available to summarize."
-        return self.summarizer.summarize_transcript(transcript)
+        return self.summarizer.summarize_transcript(transcript, model)
+        
+    def resummarize_transcript(self, transcript_file: str, model: str = None) -> Dict:
+        """Resummarize a transcript file using the specified model"""
+        if not os.path.exists(transcript_file):
+            raise HTTPException(status_code=404, detail=f"Transcript file not found: {transcript_file}")
+            
+        # Parse the transcript file
+        transcript = self.summarizer.parse_transcript_file(transcript_file)
+        if not transcript:
+            raise HTTPException(status_code=400, detail="Failed to parse transcript file")
+            
+        # Generate a new summary
+        summary = self.summarizer.summarize_transcript(transcript, model)
+        
+        return {
+            "transcript_file": transcript_file,
+            "summary": summary,
+            "model": model or self.summarizer.model
+        }
+    
+    def get_available_transcripts(self) -> List[Dict]:
+        """Get a list of available transcript files"""
+        transcripts = []
+        
+        # Search for transcript files
+        transcript_files = glob.glob("transcripts/transcript_*.md")
+        
+        for file_path in transcript_files:
+            try:
+                with open(file_path, 'r') as f:
+                    # Read the first few lines to get the date
+                    lines = [next(f) for _ in range(5) if f]
+                    
+                date_line = next((line for line in lines if line.startswith("Date:")), None)
+                date = date_line.split("Date:")[1].strip() if date_line else "Unknown"
+                
+                # Get file size
+                file_size = os.path.getsize(file_path)
+                
+                transcripts.append({
+                    "path": file_path,
+                    "filename": os.path.basename(file_path),
+                    "date": date,
+                    "size": file_size
+                })
+            except Exception as e:
+                print(f"Error processing transcript file {file_path}: {e}")
+                
+        return sorted(transcripts, key=lambda x: x.get("date", ""), reverse=True)
 
-    def save_transcript(self) -> str:
+    def save_transcript(self, model: str = None) -> str:
         """Save transcript to markdown file"""
         transcript = self.transcriber.get_full_transcript()
-        summary = self.generate_summary()
+        summary = self.generate_summary(model)
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"transcripts/transcript_{timestamp}.md"
@@ -203,11 +267,41 @@ async def upload_file(file: UploadFile = File(...)):
         # Clean up the temporary file
         os.unlink(temp_file_path)
 
+@app.get("/models")
+async def get_models():
+    """Get available models for summarization"""
+    models = manager.get_available_models()
+    return {"models": models}
+
+@app.get("/transcripts")
+async def get_transcripts():
+    """Get available transcript files"""
+    transcripts = manager.get_available_transcripts()
+    return {"transcripts": transcripts}
+
+@app.post("/resummarize")
+async def resummarize(request: ResummarizeRequest):
+    """Re-summarize a transcript file using a specified model"""
+    result = manager.resummarize_transcript(request.transcript_file, request.model)
+    # Broadcast the new summary through WebSockets
+    await manager.broadcast({
+        "type": "summary",
+        "data": result["summary"]
+    })
+    return result
+
+class StartRecordingRequest(BaseModel):
+    device_ids: List[str]
+    model: Optional[str] = None
+
 @app.post("/start")
-async def start_recording(device_ids: List[str]):
+async def start_recording(request: StartRecordingRequest):
     """Start recording audio"""
-    await manager.start_recording(device_ids)
-    return {"status": "Recording started"}
+    await manager.start_recording(request.device_ids)
+    # Store the model preference if provided
+    if request.model:
+        manager.summarizer.model = request.model
+    return {"status": "Recording started", "model": request.model or manager.summarizer.model}
 
 @app.post("/stop")
 async def stop_recording():

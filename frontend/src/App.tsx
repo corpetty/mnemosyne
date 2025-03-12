@@ -3,7 +3,7 @@ import DeviceSelection from './components/DeviceSelection';
 import Transcript from './components/Transcript';
 import Summary from './components/Summary';
 import { useDevices, useWebSocket } from './hooks';
-import { TranscriptSegment, UploadMode } from './types';
+import { TranscriptSegment, UploadMode, Model, TranscriptFile } from './types';
 
 function App() {
   const [isRecording, setIsRecording] = useState(false);
@@ -13,6 +13,8 @@ function App() {
   const [selectedDevices, setSelectedDevices] = useState<Array<string>>([]);
   const [processingStatus, setProcessingStatus] = useState<string>('');
   const [uploadMode, setUploadMode] = useState<UploadMode>(UploadMode.Recording);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [selectedTranscriptFile, setSelectedTranscriptFile] = useState<string>('');
 
   const { devices, fetchDevices, isLoading } = useDevices(setSelectedDevices);
   const webSocketProps = {
@@ -21,9 +23,16 @@ function App() {
     setIsProcessing,
     setProcessingStatus,
   };
-  const { initWebSocket, sendStartRecording, sendStopRecording, sendUploadFile } = useWebSocket(
-    webSocketProps
-  );
+  const { 
+    initWebSocket, 
+    sendStartRecording, 
+    sendStopRecording, 
+    sendUploadFile, 
+    resummarizeTranscript,
+    models,
+    transcriptFiles,
+    fetchTranscriptFiles
+  } = useWebSocket(webSocketProps);
 
   useEffect(() => {
     initWebSocket();
@@ -32,7 +41,7 @@ function App() {
   const startRecording = async () => {
     try {
       console.log('Starting recording with devices:', selectedDevices);
-      await sendStartRecording(selectedDevices);
+      await sendStartRecording(selectedDevices, selectedModel || undefined);
       setIsRecording(true);
       setTranscript([]);
       setSummary('');
@@ -73,10 +82,35 @@ function App() {
       setProcessingStatus('Uploading file...');
       await sendUploadFile(file);
       setProcessingStatus('Processing uploaded file...');
+      
+      // Refresh the transcript files list after upload
+      setTimeout(() => {
+        fetchTranscriptFiles();
+      }, 2000);
     } catch (error) {
       console.error('Error uploading file:', error);
       setIsProcessing(false);
       setProcessingStatus('Error uploading file');
+    }
+  };
+  
+  const handleResummarize = async () => {
+    if (!selectedTranscriptFile) {
+      setProcessingStatus('Please select a transcript file');
+      return;
+    }
+    
+    try {
+      setProcessingStatus('Generating new summary...');
+      setTranscript([]);
+      
+      const result = await resummarizeTranscript(selectedTranscriptFile, selectedModel || undefined);
+      
+      // The summary will be updated through the WebSocket connection
+      console.log('Resummarization completed:', result);
+    } catch (error) {
+      console.error('Error resummarizing:', error);
+      setProcessingStatus('Error generating new summary');
     }
   };
 
@@ -116,6 +150,13 @@ function App() {
                 stopRecording={stopRecording}
                 handleUploadFile={handleUploadFile}
                 processingStatus={processingStatus}
+                models={models}
+                selectedModel={selectedModel}
+                setSelectedModel={setSelectedModel}
+                transcriptFiles={transcriptFiles}
+                selectedTranscriptFile={selectedTranscriptFile}
+                setSelectedTranscriptFile={setSelectedTranscriptFile}
+                handleResummarize={handleResummarize}
               />
             )}
             <div className="space-y-6 mt-6">

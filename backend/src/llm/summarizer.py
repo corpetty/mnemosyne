@@ -1,18 +1,56 @@
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import requests
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class Summarizer:
-    def __init__(self, provider: str = "ollama"):
+    def __init__(self, provider: str = "ollama", model: str = None):
         self.provider = provider
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        
+        # Default models
+        self.default_ollama_model = "llama3.3"
+        self.default_openai_model = "gpt-3.5-turbo"
+        
+        # Use provided model or default
+        self.model = model or (self.default_ollama_model if provider == "ollama" else self.default_openai_model)
 
-    def summarize_transcript(self, transcript: List[Dict]) -> str:
-        """Summarize the transcript using the specified LLM provider"""
+    def get_available_models(self) -> List[Dict]:
+        """Fetch available models based on the provider"""
+        models = []
+        
+        # Add Ollama models
+        try:
+            ollama_response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
+            if ollama_response.status_code == 200:
+                ollama_models = ollama_response.json().get("models", [])
+                models.extend([{
+                    "id": model["name"],
+                    "name": model["name"],
+                    "provider": "ollama",
+                    "size": model.get("size", "Unknown")
+                } for model in ollama_models])
+        except Exception as e:
+            print(f"Error fetching Ollama models: {e}")
+            
+        # Add OpenAI models if API key is configured
+        if self.api_key:
+            openai_models = [
+                {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "provider": "openai"},
+                {"id": "gpt-4", "name": "GPT-4", "provider": "openai"}
+            ]
+            models.extend(openai_models)
+            
+        return models
+    
+    def summarize_transcript(self, transcript: List[Dict], model: str = None) -> str:
+        """Summarize the transcript using the specified LLM provider and model"""
+        # Use the provided model or the default one
+        model_to_use = model or self.model
         if not transcript:
             return "No transcript available to summarize."
 
@@ -72,17 +110,19 @@ If any section would be empty, include the heading but state "None identified in
 """
 
         if self.provider == "ollama":
-            return self._summarize_with_ollama(prompt)
+            return self._summarize_with_ollama(prompt, model_to_use)
         else:
-            return self._summarize_with_openai(prompt)
+            return self._summarize_with_openai(prompt, model_to_use)
 
-    def _summarize_with_ollama(self, prompt: str) -> str:
+    def _summarize_with_ollama(self, prompt: str, model: str = None) -> str:
         """Use local Ollama model for summarization"""
+        model_to_use = model or self.default_ollama_model
+        
         try:
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json={
-                    "model": "llama3.3",
+                    "model": model_to_use,
                     "prompt": prompt,
                     "stream": False
                 },
@@ -92,7 +132,7 @@ If any section would be empty, include the heading but state "None identified in
             if response.status_code != 200:
                 # Try OpenAI fallback if Ollama fails
                 if self.api_key:
-                    return self._summarize_with_openai(prompt)
+                    return self._summarize_with_openai(prompt, self.default_openai_model)
                 return self._generate_simple_summary(prompt)
                 
             return response.json()["response"]
@@ -100,7 +140,7 @@ If any section would be empty, include the heading but state "None identified in
             # Try OpenAI fallback if Ollama fails with an exception
             if self.api_key:
                 try:
-                    return self._summarize_with_openai(prompt)
+                    return self._summarize_with_openai(prompt, self.default_openai_model)
                 except:
                     pass
             return self._generate_simple_summary(prompt)
@@ -175,10 +215,12 @@ If any section would be empty, include the heading but state "None identified in
         
         return summary
 
-    def _summarize_with_openai(self, prompt: str) -> str:
+    def _summarize_with_openai(self, prompt: str, model: str = None) -> str:
         """Use OpenAI API for summarization"""
         if not self.api_key:
             return "OpenAI API key not configured"
+
+        model_to_use = model or self.default_openai_model
 
         try:
             response = requests.post(
@@ -188,10 +230,86 @@ If any section would be empty, include the heading but state "None identified in
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "gpt-3.5-turbo",
+                    "model": model_to_use,
                     "messages": [{"role": "user", "content": prompt}]
                 }
             )
-            return response.json()["choices"][0]["message"]["content"]
+            if response.status_code == 200:
+                return response.json()["choices"][0]["message"]["content"]
+            else:
+                error_message = f"OpenAI API error: {response.status_code} - {response.text}"
+                print(error_message)
+                return self._generate_simple_summary(prompt)
         except Exception as e:
-            return f"Error generating summary with OpenAI: {str(e)}"
+            error_message = f"Error generating summary with OpenAI: {str(e)}"
+            print(error_message)
+            return self._generate_simple_summary(prompt)
+            
+    def parse_transcript_file(self, file_path: str) -> List[Dict]:
+        """Parse a transcript file and extract the transcript segments"""
+        transcript = []
+        
+        try:
+            with open(file_path, 'r') as f:
+                content = f.read()
+                
+            in_transcript_section = False
+            current_speaker = None
+            current_time = None
+            current_text = ""
+            
+            for line in content.split('\n'):
+                if line.startswith('## Transcript'):
+                    in_transcript_section = True
+                    continue
+                elif line.startswith('## Summary'):
+                    in_transcript_section = False
+                    break
+                    
+                if in_transcript_section and line.strip():
+                    # Check if this is a speaker line
+                    if line.startswith('**') and '**' in line[2:]:
+                        # Save previous segment if it exists
+                        if current_speaker and current_text:
+                            transcript.append({
+                                'speaker': current_speaker,
+                                'timestamp': current_time or 0,
+                                'text': current_text.strip()
+                            })
+                            
+                        # Parse new speaker line
+                        speaker_part = line[2:].split('**')[0].strip()
+                        time_part = None
+                        
+                        if '(' in line and ')' in line:
+                            time_text = line.split('(')[1].split(')')[0]
+                            if 's - ' in time_text:
+                                # Format: "0.0s - 0.8s"
+                                start, end = time_text.split('s - ')
+                                start = float(start)
+                                end = float(end.replace('s', ''))
+                                time_part = start
+                            elif ':' in time_text:
+                                # Format: "0:00:00"
+                                # Convert to seconds for simplicity
+                                time_part = 0
+                        
+                        current_speaker = speaker_part
+                        current_time = time_part or 0
+                        current_text = ""
+                    elif current_speaker:
+                        # This is text content for the current speaker
+                        current_text += line + " "
+            
+            # Add the final segment
+            if current_speaker and current_text:
+                transcript.append({
+                    'speaker': current_speaker,
+                    'timestamp': current_time or 0,
+                    'text': current_text.strip()
+                })
+                
+            return transcript
+        except Exception as e:
+            print(f"Error parsing transcript file: {e}")
+            return []
