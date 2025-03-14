@@ -1,0 +1,37 @@
+# Session Persistence Feature
+
+This update adds session persistence to the application. Sessions will now be maintained between application restarts.
+
+## Implementation Details
+
+- Sessions are now automatically saved to the `backend/sessions/` directory in JSON format
+- Each session is stored in a separate file named with its session ID
+- When the application starts, it loads all saved sessions from disk
+- Sessions are automatically saved when they are:
+  - Created
+  - Updated (status changes, recording starts/stops, processing completes)
+  - Deleted (the file is removed from disk)
+
+## Technical Implementation
+
+The implementation involves two main components:
+
+1. **Session Class Updates:**
+   - Added methods for serializing sessions to JSON and deserializing from JSON
+   - Added methods for saving/loading sessions to/from disk
+   - Added a class method to list all saved sessions
+
+2. **TranscriptionManager Updates:**
+   - Added initialization code to load saved sessions from disk
+   - Modified session operations to save sessions after state changes
+   - Added cleanup code to remove session files when sessions are deleted
+
+## Testing
+
+You can test the persistence feature by:
+
+1. Creating a session and recording/uploading audio
+2. Restarting the application 
+3. Verifying that the session is still available with all its data
+
+This resolves the issue where sessions weren't persistent between application restarts.

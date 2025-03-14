@@ -16,7 +16,8 @@ A real-time audio transcription and diarization system that can capture both sys
 
 ## Recent Improvements
 
-- **Enhanced Summarization**: Implemented a three-tiered prompt system (detailed, standard, compact) that dynamically adjusts based on transcript length
+- **Session Persistence**: Sessions are now automatically saved to disk and loaded when the application starts, ensuring they persist between application restarts
+- **Enhanced Summarization**: Implemented a three-tiered prompt system (detailed standard compact) that dynamically adjusts based on transcript length
 - **Token Optimization**: Added automatic token count estimation to select the most appropriate prompt format
 - **Improved Error Handling**: Better detection and handling of token limit errors with automatic fallback mechanisms
 - **Status Feedback**: Added real-time status updates during summary generation with loading indicators

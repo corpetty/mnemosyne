@@ -26,10 +26,32 @@ export interface TranscriptFile {
   filename: string;
   date: string;
   size: number;
+  session_id?: string;
 }
 
 export enum UploadMode {
   Recording,
   FileUpload,
   Resummarize,
+}
+
+export enum SessionStatus {
+  Created = "created",
+  Recording = "recording",
+  Processing = "processing",
+  Completed = "completed",
+  Error = "error"
+}
+
+export interface Session {
+  session_id: string;
+  status: string;
+  created_at: string;
+  model?: string;
+  device_ids: string[];
+  recording_file?: string;
+  transcript_file?: string;
+  is_recording: boolean;
+  summary_length?: number;
+  transcript_length?: number;
 }

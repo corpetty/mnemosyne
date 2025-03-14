@@ -19,7 +19,7 @@ export const useDevices = (setSelectedDevices: (devices: string[]) => void): Use
 
     setIsLoading(true);
     try {
-      const response = await fetch(`http://localhost:8000/devices${forceRefresh ? '?force_refresh=true' : ''}`);
+      const response = await fetch(`/devices${forceRefresh ? '?force_refresh=true' : ''}`);
       const data = await response.json();
       console.log('Available devices:', data.devices);
       setDevices(data.devices);
