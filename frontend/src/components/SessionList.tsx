@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Session, SessionStatus } from '../types';
 
 interface SessionListProps {
@@ -10,6 +10,50 @@ interface SessionListProps {
   isLoading: boolean;
 }
 
+interface RenameFormProps {
+  sessionId: string;
+  currentName: string | undefined;
+  onRename: (sessionId: string, newName: string) => void;
+  onCancel: () => void;
+}
+
+const RenameForm: React.FC<RenameFormProps> = ({ sessionId, currentName, onRename, onCancel }) => {
+  const [newName, setNewName] = useState(currentName || '');
+  
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newName.trim()) {
+      onRename(sessionId, newName.trim());
+    }
+  };
+  
+  return (
+    <form onSubmit={handleSubmit} className="flex items-center mt-1 mb-2">
+      <input
+        type="text"
+        value={newName}
+        onChange={(e) => setNewName(e.target.value)}
+        className="flex-1 px-2 py-1 border border-gray-300 rounded mr-2"
+        placeholder="Enter session name"
+        autoFocus
+      />
+      <button 
+        type="submit" 
+        className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
+      >
+        Save
+      </button>
+      <button 
+        type="button" 
+        onClick={onCancel}
+        className="px-2 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400 ml-1"
+      >
+        Cancel
+      </button>
+    </form>
+  );
+};
+
 const SessionList: React.FC<SessionListProps> = ({
   sessions,
   activeSessionId,
@@ -18,6 +62,30 @@ const SessionList: React.FC<SessionListProps> = ({
   onDeleteSession,
   isLoading
 }) => {
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  
+  // Function to handle rename
+  const handleRename = async (sessionId: string, newName: string) => {
+    try {
+      const response = await fetch(`/sessions/${sessionId}/rename`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: newName }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to rename session');
+      }
+      
+      // Reset renaming state
+      setRenamingSessionId(null);
+    } catch (error) {
+      console.error('Error renaming session:', error);
+    }
+  };
+  
   // Get a human-readable status with icon
   const getStatusDisplay = (status: string) => {
     switch(status) {
@@ -46,6 +114,7 @@ const SessionList: React.FC<SessionListProps> = ({
   const getSessionName = (session: Session, index: number) => {
     const shortId = session.session_id.substring(0, 6);
     
+    // Show status-specific messages for active sessions
     if (session.status === SessionStatus.Recording) {
       return `Recording... (${shortId})`;
     }
@@ -54,6 +123,12 @@ const SessionList: React.FC<SessionListProps> = ({
       return `Processing... (${shortId})`;
     }
     
+    // If session has a custom name, use it
+    if (session.name) {
+      return `${session.name} (${shortId})`;
+    }
+    
+    // Default fallback
     return `Session ${index + 1} (${shortId})`;
   };
 
@@ -78,23 +153,43 @@ const SessionList: React.FC<SessionListProps> = ({
         <div className="overflow-auto max-h-60">
           <ul className="divide-y divide-gray-200">
             {sessions.map((session, index) => (
-              <li key={session.session_id} className={`py-2 px-1 cursor-pointer hover:bg-gray-50 ${session.session_id === activeSessionId ? 'bg-blue-50' : ''}`}>
-                <div className="flex items-center justify-between" onClick={() => onSessionSelect(session.session_id)}>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-4">{getStatusDisplay(session.status)}</div>
-                    <div className="flex-1 truncate">{getSessionName(session, index)}</div>
-                    <div className="text-xs text-gray-500">{formatDate(session.created_at)}</div>
+              <li key={session.session_id} className={`py-2 px-1 hover:bg-gray-50 ${session.session_id === activeSessionId ? 'bg-blue-50' : ''}`}>
+                {renamingSessionId === session.session_id ? (
+                  <RenameForm 
+                    sessionId={session.session_id}
+                    currentName={session.name}
+                    onRename={handleRename}
+                    onCancel={() => setRenamingSessionId(null)}
+                  />
+                ) : (
+                  <div className="flex items-center justify-between cursor-pointer" onClick={() => onSessionSelect(session.session_id)}>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-4">{getStatusDisplay(session.status)}</div>
+                      <div className="flex-1 truncate">{getSessionName(session, index)}</div>
+                      <div className="text-xs text-gray-500">{formatDate(session.created_at)}</div>
+                    </div>
+                    <div className="flex items-center">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenamingSessionId(session.session_id);
+                        }}
+                        className="text-blue-500 hover:text-blue-700 text-sm mr-2"
+                      >
+                        Rename
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteSession(session.session_id);
+                        }}
+                        className="text-red-500 hover:text-red-700 text-sm"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteSession(session.session_id);
-                    }}
-                    className="text-red-500 hover:text-red-700 text-sm"
-                  >
-                    Delete
-                  </button>
-                </div>
+                )}
               </li>
             ))}
           </ul>

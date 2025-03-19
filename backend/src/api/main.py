@@ -59,6 +59,10 @@ class ResummarizeRequest(BaseModel):
     model: Optional[str] = None
     session_id: Optional[str] = None
 
+class ParticipantResponse(BaseModel):
+    id: str
+    name: str
+
 class SessionResponse(BaseModel):
     session_id: str
     status: str
@@ -68,12 +72,21 @@ class SessionResponse(BaseModel):
     recording_file: Optional[str] = None
     transcript_file: Optional[str] = None
     is_recording: bool = False
+    name: Optional[str] = None
+    participants: List[ParticipantResponse] = []
 
 class SessionListResponse(BaseModel):
     sessions: List[SessionResponse]
     
 class SessionCreateRequest(BaseModel):
     session_id: Optional[str] = None
+    
+class RenameSessionRequest(BaseModel):
+    name: str
+    
+class UpdateParticipantRequest(BaseModel):
+    participant_id: str
+    name: str
     
 from ..services.model_service import ModelService
 
@@ -619,6 +632,54 @@ async def stop_recording(session_id: Optional[str] = None):
     
     result = await manager.stop_recording(session_id)
     return {"status": "Recording stopped", "session_id": session_id}
+
+# Session renaming and participant management endpoints
+@app.post("/sessions/{session_id}/rename")
+async def rename_session(session_id: str, request: RenameSessionRequest):
+    """Rename a session"""
+    session = manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    success = session.rename(request.name)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to rename session")
+    
+    return {"success": True, "session_id": session_id, "name": request.name}
+
+@app.post("/sessions/{session_id}/participants/extract")
+async def extract_participants(session_id: str):
+    """Extract participants from a session's transcript"""
+    session = manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    if not session.transcript:
+        raise HTTPException(status_code=400, detail="Session has no transcript to extract participants from")
+    
+    participants = session.extract_participants()
+    return {"success": True, "session_id": session_id, "participants": participants}
+
+@app.put("/sessions/{session_id}/participants/{participant_id}")
+async def update_participant(
+    session_id: str, 
+    participant_id: str, 
+    request: UpdateParticipantRequest
+):
+    """Update a participant's information"""
+    session = manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    # Participant ID in path must match the one in the request
+    if participant_id != request.participant_id:
+        raise HTTPException(status_code=400, detail="Participant ID in path does not match request body")
+    
+    success = session.update_participant(participant_id, request.name)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Participant {participant_id} not found in session")
+    
+    return {"success": True, "session_id": session_id, "participant_id": participant_id, "name": request.name}
 
 if __name__ == "__main__":
     import uvicorn

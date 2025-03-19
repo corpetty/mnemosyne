@@ -33,6 +33,8 @@ class Session:
         self.status = "created"
         self.model: Optional[str] = None
         self.device_ids: List[str] = []
+        self.name: Optional[str] = None  # Custom name for the session
+        self.participants: List[Dict[str, str]] = []  # List of participants
         
         # Session data
         self.recording_file: Optional[str] = None
@@ -82,7 +84,9 @@ class Session:
             "transcript_file": self.transcript_file,
             "is_recording": self.is_recording,
             "summary_length": len(self.summary),
-            "transcript_length": len(self.transcript)
+            "transcript_length": len(self.transcript),
+            "name": self.name,
+            "participants": self.participants
         }
         
         # Include full data if requested
@@ -234,7 +238,9 @@ class Session:
             "transcript_file": self.transcript_file,
             "is_recording": self.is_recording,
             "transcript": self.transcript,
-            "summary": self.summary
+            "summary": self.summary,
+            "name": self.name,
+            "participants": self.participants
         }
     
     @classmethod
@@ -257,6 +263,8 @@ class Session:
         session.is_recording = data.get("is_recording", False)
         session.transcript = data.get("transcript", [])
         session.summary = data.get("summary", "")
+        session.name = data.get("name")
+        session.participants = data.get("participants", [])
         
         return session
     
@@ -316,6 +324,77 @@ class Session:
         except Exception as e:
             logger.error(f"Error loading session from disk: {e}")
             return None
+    
+    def rename(self, new_name: str) -> bool:
+        """Rename the session
+        
+        Args:
+            new_name: The new name for the session
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.name = new_name
+            logger.info(f"Session {self.session_id} renamed to '{new_name}'")
+            return self.save_to_disk()
+        except Exception as e:
+            logger.error(f"Error renaming session {self.session_id}: {e}")
+            return False
+
+    def extract_participants(self) -> List[Dict[str, str]]:
+        """Extract unique participants from the transcript
+        
+        Returns:
+            A list of participant dictionaries with id and name
+        """
+        unique_speakers = set()
+        
+        # First pass: collect all unique speaker identifiers
+        for segment in self.transcript:
+            if 'speaker' in segment and segment['speaker']:
+                unique_speakers.add(segment['speaker'])
+                
+        # Convert to participant dictionaries
+        participants = []
+        for speaker in sorted(unique_speakers):
+            participants.append({
+                "id": speaker,
+                "name": speaker  # Initially use the same value for id and name
+            })
+            
+        # Update the session's participants list
+        self.participants = participants
+        logger.info(f"Extracted {len(participants)} participants from transcript for session {self.session_id}")
+        
+        # Save updated participants to disk
+        self.save_to_disk()
+        
+        return participants
+    
+    def update_participant(self, participant_id: str, name: str) -> bool:
+        """Update a participant's information
+        
+        Args:
+            participant_id: The ID of the participant to update (e.g., "Speaker 1")
+            name: The new name for the participant
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            for participant in self.participants:
+                if participant["id"] == participant_id:
+                    participant["name"] = name
+                    logger.info(f"Updated participant {participant_id} to name '{name}' in session {self.session_id}")
+                    return self.save_to_disk()
+            
+            # Participant not found
+            logger.warning(f"Participant {participant_id} not found in session {self.session_id}")
+            return False
+        except Exception as e:
+            logger.error(f"Error updating participant {participant_id} in session {self.session_id}: {e}")
+            return False
     
     @classmethod
     def list_saved_sessions(cls) -> List[str]:

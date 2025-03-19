@@ -3,8 +3,9 @@ import DeviceSelection from './components/DeviceSelection';
 import Transcript from './components/Transcript';
 import Summary from './components/Summary';
 import SessionList from './components/SessionList';
+import ParticipantList from './components/ParticipantList';
 import { useDevices, useWebSocket, useSession } from './hooks';
-import { TranscriptSegment, UploadMode, Model, TranscriptFile, Session } from './types';
+import { TranscriptSegment, UploadMode, Model, TranscriptFile, Session, Participant } from './types';
 
 function App() {
   const [isRecording, setIsRecording] = useState(false);
@@ -289,6 +290,18 @@ function App() {
               />
             )}
             <div className="space-y-6 mt-6">
+              {/* Participant list for active session */}
+              {activeSessionId && getSession(activeSessionId) && (
+                <ParticipantList 
+                  participants={getSession(activeSessionId)?.participants || []} 
+                  sessionId={activeSessionId}
+                  onParticipantsUpdated={() => {
+                    // Refresh sessions to get updated participant data
+                    fetchSessions();
+                  }}
+                />
+              )}
+              
               <Transcript transcript={transcript} />
               {summary && <Summary summary={summary} processingStatus={processingStatus} />}
             </div>

@@ -43,10 +43,15 @@ export enum SessionStatus {
   Error = "error"
 }
 
+export interface Participant {
+  id: string;
+  name: string;
+}
+
 export interface Session {
   session_id: string;
-  status: string;
   created_at: string;
+  status: string;
   model?: string;
   device_ids: string[];
   recording_file?: string;
@@ -54,4 +59,6 @@ export interface Session {
   is_recording: boolean;
   summary_length?: number;
   transcript_length?: number;
+  name?: string;
+  participants?: Participant[];
 }
