@@ -31,6 +31,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Startup and shutdown event handlers
+@app.on_event("startup")
+async def startup_event():
+    """Initialize application resources"""
+    logger.info("Starting application - initializing resources")
+    # Ensure the model service is initialized but models aren't loaded yet
+    ModelService.get_instance()
+    logger.info("Application started successfully")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Release application resources"""
+    logger.info("Shutting down application - releasing resources")
+    # Release model resources
+    ModelService.get_instance().release_resources()
+    logger.info("Resources released successfully")
+
 class ModelInfo(BaseModel):
     id: str
     name: str
@@ -58,18 +75,23 @@ class SessionListResponse(BaseModel):
 class SessionCreateRequest(BaseModel):
     session_id: Optional[str] = None
     
+from ..services.model_service import ModelService
+
 class TranscriptionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
         self.sessions: Dict[str, Session] = {}
         self.connection_sessions: Dict[WebSocket, str] = {}
         
+        # Create model service instance (but models won't be loaded yet)
+        self.model_service = ModelService.get_instance()
+        
         # Load saved sessions from disk
         self._load_saved_sessions()
         
     def _load_saved_sessions(self):
-        """Load all saved sessions from disk"""
-        logger.info("Loading saved sessions from disk")
+        """Load all saved sessions from disk (metadata only)"""
+        logger.info("Loading saved sessions from disk (metadata only)")
         # Ensure the sessions directory exists
         Session.ensure_sessions_dir()
         
@@ -77,13 +99,13 @@ class TranscriptionManager:
         session_ids = Session.list_saved_sessions()
         logger.info(f"Found {len(session_ids)} saved sessions")
         
-        # Load each session
+        # Load each session (models will be loaded on demand)
         for session_id in session_ids:
             try:
                 session = Session.load_from_disk(session_id)
                 if session:
                     self.sessions[session_id] = session
-                    logger.info(f"Loaded session {session_id} from disk")
+                    logger.info(f"Loaded session metadata for {session_id}")
             except Exception as e:
                 logger.error(f"Error loading session {session_id}: {e}")
 
@@ -128,6 +150,10 @@ class TranscriptionManager:
         # Get the session before deleting it
         session = self.sessions[session_id]
         
+        # Clear references to help garbage collection
+        session._transcriber = None
+        session._summarizer = None
+        
         # Remove the session from memory
         del self.sessions[session_id]
         logger.info(f"Deleted session with ID: {session_id}")
@@ -140,6 +166,11 @@ class TranscriptionManager:
                 logger.info(f"Deleted session file: {file_path}")
         except Exception as e:
             logger.error(f"Error deleting session file for {session_id}: {e}")
+            
+        # If we have no sessions, release all model resources
+        if not self.sessions:
+            logger.info("No active sessions - releasing model resources")
+            self.model_service.release_resources()
             
         return True
     
@@ -275,16 +306,10 @@ class TranscriptionManager:
             return False
 
     def get_available_models(self) -> List[Dict]:
-        """Get available models for summarization"""
-        if not self.sessions:
-            # Create a temporary session to get models
-            temp_session = Session()
-            models = temp_session.summarizer.get_available_models()
-            return models
-        
-        # Use the first session to get models
-        first_session = next(iter(self.sessions.values()))
-        return first_session.summarizer.get_available_models()
+        """Get available models for summarization using the model service"""
+        # Get models directly from model service instead of creating a temporary session
+        summarizer = self.model_service.get_summarizer()
+        return summarizer.get_available_models()
         
     def _update_transcript_file_summary(self, file_path: str, new_summary: str) -> bool:
         """Update the summary section of a transcript file with a new summary."""

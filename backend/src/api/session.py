@@ -9,6 +9,7 @@ from datetime import datetime
 from ..audio.transcriber import AudioTranscriber
 from ..llm.summarizer import Summarizer
 from ..audio.capture import AudioCapture
+from ..services.model_service import ModelService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -42,10 +43,28 @@ class Session:
         # Session state
         self.is_recording = False
         
-        # Components
-        self.transcriber = AudioTranscriber()
+        # Light-weight components created directly
         self.audio_capture = AudioCapture()
-        self.summarizer = Summarizer()
+        
+        # Heavy components are not created here - they will be accessed via ModelService when needed
+        self._transcriber = None
+        self._summarizer = None
+    
+    @property
+    def transcriber(self):
+        """Get the transcriber from the model service (lazy loading)"""
+        if self._transcriber is None:
+            logger.debug(f"Lazy loading transcriber for session {self.session_id}")
+            self._transcriber = ModelService.get_instance().get_transcriber()
+        return self._transcriber
+    
+    @property
+    def summarizer(self):
+        """Get the summarizer from the model service (lazy loading)"""
+        if self._summarizer is None:
+            logger.debug(f"Lazy loading summarizer for session {self.session_id}")
+            self._summarizer = ModelService.get_instance().get_summarizer(model=self.model)
+        return self._summarizer
     
     def to_dict(self, include_data: bool = False) -> Dict[str, Any]:
         """Convert session to dictionary for API responses
