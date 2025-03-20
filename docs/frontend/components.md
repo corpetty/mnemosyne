@@ -23,10 +23,12 @@ The SessionList component displays a list of available recording sessions and al
 ```typescript
 interface SessionListProps {
   sessions: Session[];
-  onSelectSession: (sessionId: string) => void;
+  activeSessionId: string | null;
+  onSessionSelect: (sessionId: string) => void;
+  onCreateSession: () => void;
   onDeleteSession: (sessionId: string) => void;
-  onRenameSession: (sessionId: string, name: string) => void;
-  selectedSessionId?: string;
+  isLoading: boolean;
+  updateSession?: (session: Session) => void;
 }
 ```
 
@@ -35,10 +37,12 @@ interface SessionListProps {
 ```tsx
 <SessionList
   sessions={sessions}
-  onSelectSession={handleSelectSession}
+  activeSessionId={activeSessionId}
+  onSessionSelect={handleSessionSelect}
+  onCreateSession={handleCreateSession}
   onDeleteSession={handleDeleteSession}
-  onRenameSession={handleRenameSession}
-  selectedSessionId={currentSessionId}
+  isLoading={isSessionsLoading}
+  updateSession={updateSession}
 />
 ```
 

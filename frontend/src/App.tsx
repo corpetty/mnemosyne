@@ -263,6 +263,7 @@ function App() {
               onCreateSession={handleCreateSession}
               onDeleteSession={handleDeleteSession}
               isLoading={isSessionsLoading}
+              updateSession={updateSession}
             />
             
             {isDevicesLoading ? (

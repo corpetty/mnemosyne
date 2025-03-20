@@ -8,6 +8,7 @@ interface SessionListProps {
   onCreateSession: () => void;
   onDeleteSession: (sessionId: string) => void;
   isLoading: boolean;
+  updateSession?: (session: Session) => void;
 }
 
 interface RenameFormProps {
@@ -60,7 +61,8 @@ const SessionList: React.FC<SessionListProps> = ({
   onSessionSelect,
   onCreateSession,
   onDeleteSession,
-  isLoading
+  isLoading,
+  updateSession
 }) => {
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   
@@ -77,6 +79,22 @@ const SessionList: React.FC<SessionListProps> = ({
       
       if (!response.ok) {
         throw new Error('Failed to rename session');
+      }
+      
+      // Get the updated session data
+      const updatedData = await response.json();
+      
+      // Update the local state using updateSession
+      if (updateSession) {
+        const session = sessions.find(s => s.session_id === sessionId);
+        if (session) {
+          // Create an updated session object with the new name
+          const updatedSession = {
+            ...session,
+            name: newName
+          };
+          updateSession(updatedSession);
+        }
       }
       
       // Reset renaming state
