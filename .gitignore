@@ -47,4 +47,5 @@ transcripts/
 *.wav
 *.mp3
 *.ogg
+*.opus
 sessions/

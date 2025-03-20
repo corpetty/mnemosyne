@@ -44,9 +44,10 @@ This document provides practical examples of how to use Mnemosyne for different 
 ### Uploading External Audio Files
 
 1. Click "Upload File" in the top navigation bar
-2. Select an audio file from your computer (supported formats: WAV, MP3, M4A, FLAC)
+2. Select an audio file from your computer (supported formats: WAV, MP3, M4A, FLAC, OPUS)
 3. The system will process the file, transcribe it, and generate a summary
 4. The results will appear in a new session
+5. Note: Recordings are automatically converted to OPUS format for storage efficiency
 
 ## Use Case: Meeting Transcription
 

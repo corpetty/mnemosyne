@@ -2,6 +2,22 @@
 
 A real-time audio transcription and diarization system that can capture both system audio and microphone input simultaneously, with enhanced summarization capabilities.
 
+## Name meaning
+(from Claude)
+>Mnemosyne is the personification of memory in Greek mythology. She was a Titaness, the daughter of Uranus (Heaven) and Gaia (Earth), and the mother of the nine Muses by Zeus. 
+>
+>The name "Mnemosyne" derives from the Greek word "mnēmē," meaning "memory" or "remembrance." In ancient Greek culture, she represented the concept of memory before writing was widespread, when oral traditions and memorization were essential cultural tools.
+>
+>Beyond mythology, the term has been used in various contexts:
+>
+>1. In psychology, the "Mnemosyne effect" sometimes refers to processes related to memory formation and recall
+>
+>2. "Project Mnemosyne" is an open-source spaced repetition software program designed to help with memorization
+>
+>3. The term appears in various works of literature, art, and music as a reference to memory or the preservation of knowledge
+>
+>The concept of Mnemosyne highlights the ancient Greek understanding of memory as a divine force fundamental to cultural preservation, artistic inspiration, and human identity.
+
 ## Features
 
 - Real-time audio transcription using OpenAI's Whisper large-v3 model
@@ -48,16 +64,19 @@ ollama pull llama3.3
 ```bash
 python3.10 -m venv venv
 source venv/bin/activate
-```
+```Mnemosyne is the personification of memory in Greek mythology. She was a Titaness, the daughter of Uranus (Heaven) and Gaia (Earth), and the mother of the nine Muses by Zeus. 
 
-3. Install PyTorch and torchaudio:
-```bash
-pip install --upgrade pip wheel setuptools
-pip install torch --index-url https://download.pytorch.org/whl/cu118
-pip install torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
+The name "Mnemosyne" derives from the Greek word "mnēmē," meaning "memory" or "remembrance." In ancient Greek culture, she represented the concept of memory before writing was widespread, when oral traditions and memorization were essential cultural tools.
 
-4. Install Python dependencies:
+Beyond mythology, the term has been used in various contexts:
+
+1. In psychology, the "Mnemosyne effect" sometimes refers to processes related to memory formation and recall
+
+2. "Project Mnemosyne" is an open-source spaced repetition software program designed to help with memorization
+
+3. The term appears in various works of literature, art, and music as a reference to memory or the preservation of knowledge
+
+The concept of Mnemosyne highlights the ancient Greek understanding of memory as a divine force fundamental to cultural preservation, artistic inspiration, and human identity.
 ```bash
 pip install Cython
 pip install "numpy>=1.22,<1.24"

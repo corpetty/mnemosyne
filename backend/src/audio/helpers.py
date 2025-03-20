@@ -131,3 +131,100 @@ def find_numeral_symbol_tokens(tokenizer):
         if any(c in "0123456789%$£" for c in token):
             numeral_symbol_tokens.append(token_id)
     return numeral_symbol_tokens
+
+def convert_audio_format(input_file, output_file=None, format="opus", bitrate="64k"):
+    """
+    Convert audio from one format to another using pydub.
+    
+    Args:
+        input_file: Path to the input audio file
+        output_file: Path to save the output file (if None, will replace extension of input_file)
+        format: Target format (opus, mp3, etc.)
+        bitrate: Bitrate for compression (default: 64k - good for speech)
+        
+    Returns:
+        Path to the converted file
+    """
+    try:
+        from pydub import AudioSegment
+        import os
+        import subprocess
+        
+        # Check that ffmpeg is available (required by pydub)
+        try:
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("Warning: ffmpeg not found or not working. Audio conversion may fail.")
+            print("Please ensure ffmpeg is installed and in your PATH.")
+        
+        # Determine output path if not provided
+        if output_file is None:
+            base, _ = os.path.splitext(input_file)
+            output_file = f"{base}.{format}"
+        
+        print(f"Converting {input_file} to {format} format at {output_file}")
+        
+        # Verify input file exists
+        if not os.path.exists(input_file):
+            raise FileNotFoundError(f"Input file not found: {input_file}")
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
+        
+        # Load audio file with appropriate parameters
+        try:
+            audio = AudioSegment.from_file(input_file)
+        except Exception as e:
+            print(f"Error loading audio file: {e}")
+            # Try with explicit format
+            source_format = os.path.splitext(input_file)[1].lower()[1:]
+            if source_format:
+                print(f"Retrying with explicit format: {source_format}")
+                audio = AudioSegment.from_file(input_file, format=source_format)
+            else:
+                raise
+        
+        # For OPUS, we ensure mono and appropriate sample rate for speech
+        if format.lower() == "opus":
+            # Convert to mono if stereo
+            if audio.channels > 1:
+                print(f"Converting {audio.channels} channels to mono")
+                audio = audio.set_channels(1)
+            
+            # 16kHz is good for speech
+            if audio.frame_rate != 16000:
+                print(f"Converting sample rate from {audio.frame_rate}Hz to 16000Hz")
+                audio = audio.set_frame_rate(16000)
+        
+        # Export parameters for different formats
+        export_params = {}
+        if format.lower() == "opus":
+            export_params = {
+                "format": format,
+                "bitrate": bitrate,
+                "parameters": ["-application", "voip"]  # Optimize for speech
+            }
+        else:
+            export_params = {
+                "format": format,
+                "bitrate": bitrate
+            }
+        
+        # Export to the target format
+        audio.export(output_file, **export_params)
+        
+        # Verify the output file exists and has content
+        if not os.path.exists(output_file):
+            raise FileNotFoundError(f"Output file was not created: {output_file}")
+        
+        if os.path.getsize(output_file) == 0:
+            raise ValueError(f"Output file is empty: {output_file}")
+            
+        print(f"Successfully converted audio file to {format} format")
+        return output_file
+        
+    except Exception as e:
+        print(f"Error in convert_audio_format: {e}")
+        import traceback
+        print(f"Error traceback: {traceback.format_exc()}")
+        raise

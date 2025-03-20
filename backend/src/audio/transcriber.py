@@ -227,14 +227,57 @@ class AudioTranscriber:
 
     def process_audio_file(self, audio_file_path: str, batch_size: int = 8, language: str = None):
         """Process a complete audio file"""
+        temp_wav_file = None
         try:
             print(f"Processing audio file: {audio_file_path}")
             
             # Clear any previous transcript
             self.clear_transcript()
             
+            # Check if the file needs conversion to WAV for processing
+            processing_file = audio_file_path
+            
+            # Some libraries work better with WAV files, so convert non-WAV formats temporarily
+            if not audio_file_path.lower().endswith('.wav'):
+                try:
+                    from .helpers import convert_audio_format
+                    import tempfile
+                    import os
+                    
+                    # Create a temporary WAV file
+                    temp_wav = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                    temp_wav.close()
+                    temp_wav_file = temp_wav.name
+                    
+                    # Get the source format from file extension
+                    source_format = os.path.splitext(audio_file_path)[1].lower()[1:]
+                    if not source_format:
+                        source_format = "opus"  # Default assumption
+                    
+                    print(f"Converting {source_format} file to temporary WAV for processing: {audio_file_path}")
+                    
+                    # Convert to WAV for processing
+                    convert_audio_format(audio_file_path, temp_wav_file, format="wav")
+                    print(f"Converted to temporary WAV: {temp_wav_file}")
+                    
+                    if os.path.exists(temp_wav_file) and os.path.getsize(temp_wav_file) > 0:
+                        # Use the temporary WAV file for processing
+                        processing_file = temp_wav_file
+                    else:
+                        print(f"Warning: Converted file exists but is empty or invalid")
+                        # Fallback to original file
+                        processing_file = audio_file_path
+                        
+                except Exception as e:
+                    print(f"Error converting audio to WAV: {e}")
+                    import traceback
+                    print(f"Conversion error traceback: {traceback.format_exc()}")
+                    # Attempt to process the original file if conversion fails
+                    processing_file = audio_file_path
+                    print(f"Falling back to original file: {processing_file}")
+            
             # Load audio file using librosa
-            audio, sr = librosa.load(audio_file_path, sr=16000, mono=True)
+            audio, sr = librosa.load(processing_file, sr=16000, mono=True)
             audio = librosa.util.normalize(audio)
             
             # Perform diarization if available
@@ -392,6 +435,14 @@ class AudioTranscriber:
             print(f"Processing error traceback: {traceback.format_exc()}")
             return False
         finally:
+            # Clean up temporary file if created
+            if temp_wav_file and os.path.exists(temp_wav_file):
+                try:
+                    os.remove(temp_wav_file)
+                    print(f"Cleaned up temporary WAV file: {temp_wav_file}")
+                except Exception as e:
+                    print(f"Error removing temporary file: {e}")
+            
             # Clear GPU memory
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

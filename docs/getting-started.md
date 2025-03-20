@@ -12,6 +12,18 @@ Before you begin, ensure you have the following installed:
 - **Node.js 16+** - For the frontend
 - **npm or yarn** - For package management
 - **Git** - For version control
+- **FFmpeg** - For audio format conversion (required for OPUS support)
+  ```bash
+  # Ubuntu/Debian
+  sudo apt-get install ffmpeg
+
+  # macOS (using Homebrew)
+  brew install ffmpeg
+
+  # Windows
+  # Download from https://www.ffmpeg.org/download.html or use Chocolatey
+  choco install ffmpeg
+  ```
 
 ## Installation
 
@@ -66,8 +78,10 @@ PORT=8000
 HOST=0.0.0.0
 
 # Audio settings
-AUDIO_SAMPLE_RATE=44100
+AUDIO_SAMPLE_RATE=16000
 AUDIO_CHANNELS=1
+AUDIO_FORMAT=opus  # Uses more storage-efficient OPUS format
+AUDIO_BITRATE=64k  # Good quality for speech at small file size
 
 # LLM settings
 LLM_PROVIDER=ollama

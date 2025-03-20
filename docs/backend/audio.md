@@ -15,6 +15,7 @@ The AudioCapture class provides functionality for recording audio from one or mo
 ### Key Features
 
 - Multi-device recording
+- OPUS audio format for storage efficiency (compressed)
 - Configurable output format
 - Session-based recording management
 
@@ -114,10 +115,48 @@ The helpers module provides utility functions for audio processing.
 
 | Function | Description |
 |----------|-------------|
-| `convert_audio_format(input_file, output_file, format)` | Convert audio from one format to another |
+| `convert_audio_format(input_file, output_file, format, bitrate)` | Convert audio from one format to another with configurable bitrate |
 | `normalize_audio(file_path)` | Normalize the volume of an audio file |
 | `split_audio_by_silence(file_path)` | Split audio file at silent points |
 | `merge_audio_files(file_paths, output_path)` | Merge multiple audio files into one |
+
+### Audio Format Conversion
+
+The `convert_audio_format` function uses pydub to convert between different audio formats:
+
+```python
+def convert_audio_format(input_file, output_file=None, format="opus", bitrate="64k"):
+    """
+    Convert audio from one format to another using pydub.
+    
+    Args:
+        input_file: Path to the input audio file
+        output_file: Path to save the output file (if None, will replace extension of input_file)
+        format: Target format (opus, mp3, etc.)
+        bitrate: Bitrate for compression (default: 64k - good for speech)
+        
+    Returns:
+        Path to the converted file
+    """
+```
+
+#### Supported Formats
+
+- **OPUS**: Default format, optimized for speech (64kbps)
+- **WAV**: Uncompressed format (larger files, highest quality)
+- **MP3**: Common compressed format (good compatibility)
+- **FLAC**: Lossless compression (medium size, no quality loss)
+
+#### Storage Efficiency
+
+Using compressed formats provides significant storage savings:
+
+| Format | Size (1 min) | Quality | Compatibility |
+|--------|--------------|---------|---------------|
+| WAV    | ~10 MB       | Highest | Excellent     |
+| OPUS   | ~0.5-1 MB    | Very Good | Good        |
+| MP3    | ~1-1.5 MB    | Good    | Excellent     |
+| FLAC   | ~3-5 MB      | Highest | Good          |
 
 ## Dependencies
 

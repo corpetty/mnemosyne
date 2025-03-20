@@ -43,9 +43,9 @@ The application follows a client-server architecture with a FastAPI backend and 
    - **devices.py**: Audio device discovery and management
 
 2. **Audio Processing** (`/backend/src/audio/`)
-   - **capture.py**: Audio capture from system devices
+   - **capture.py**: Audio capture from system devices (records to OPUS format)
    - **transcriber.py**: Audio transcription using speech-to-text models
-   - **helpers.py**: Utility functions for audio processing
+   - **helpers.py**: Utility functions for audio processing and format conversion
 
 3. **LLM Integration** (`/backend/src/llm/`)
    - **summarizer.py**: Text summarization using large language models
@@ -81,7 +81,8 @@ The application follows a client-server architecture with a FastAPI backend and 
 1. **Recording Flow**
    - User selects audio devices and starts recording
    - Backend captures audio from selected devices
-   - Audio is saved to a file for processing
+   - Audio is initially captured as WAV then automatically converted to OPUS format
+   - Compressed audio file is saved for efficient storage
 
 2. **Transcription Flow**
    - Audio file is processed by the transcriber

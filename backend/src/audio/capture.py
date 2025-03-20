@@ -97,7 +97,7 @@ class AudioCapture:
             return []
 
     def start_recording(self, device_ids: Optional[List[str]] = None):
-        """Start recording audio from specified sources to a WAV file"""
+        """Start recording audio from specified sources"""
         if not device_ids:
             print("No devices specified for recording")
             return
@@ -106,11 +106,12 @@ class AudioCapture:
             # Create recordings directory if it doesn't exist
             os.makedirs('recordings', exist_ok=True)
             
-            # Create a new WAV file
+            # Create a temporary WAV file (we'll convert it later)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.output_file = f"recordings/recording_{timestamp}.wav"
+            self.temp_wav_file = f"recordings/temp_{timestamp}.wav"
+            self.output_file = f"recordings/recording_{timestamp}.opus"  # Changed extension
             
-            self.wave_file = wave.open(self.output_file, 'wb')
+            self.wave_file = wave.open(self.temp_wav_file, 'wb')
             self.wave_file.setnchannels(1)  # Mono
             self.wave_file.setsampwidth(2)  # 16-bit
             self.wave_file.setframerate(self.sample_rate)
@@ -258,6 +259,23 @@ class AudioCapture:
             if self.wave_file:
                 self.wave_file.close()
                 self.wave_file = None
+            
+            # Convert WAV to OPUS
+            try:
+                from .helpers import convert_audio_format
+                convert_audio_format(self.temp_wav_file, self.output_file, format="opus", bitrate="64k")
+                
+                # Remove the temporary WAV file
+                os.remove(self.temp_wav_file)
+                print(f"Converted recording to OPUS format: {self.output_file}")
+                
+            except Exception as e:
+                print(f"Error converting to OPUS: {e}")
+                import traceback
+                print(f"Conversion error traceback: {traceback.format_exc()}")
+                # Fall back to WAV file if conversion fails
+                self.output_file = self.temp_wav_file
+                print(f"Falling back to WAV format: {self.output_file}")
             
             print("Stopped recording")
             return self.output_file

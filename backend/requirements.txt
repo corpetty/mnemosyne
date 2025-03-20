@@ -19,9 +19,10 @@ requests==2.31.0
 sounddevice==0.4.6
 pyaudio==0.2.14
 pulsectl>=23.5.2
+pydub==0.25.1  # For audio format conversion
 
 # ML dependencies
-huggingface_hub==0.17.3
+huggingface_hub>=0.19.0  # Updated to match transformers dependency requirements
 transformers>=4.35.0
 faster-whisper
 nltk
