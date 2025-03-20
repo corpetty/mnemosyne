@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import DeviceSelection from './components/DeviceSelection';
 import Transcript from './components/Transcript';
 import Summary from './components/Summary';
 import SessionList from './components/SessionList';
 import ParticipantList from './components/ParticipantList';
+import Header from './components/Header';
+import Layout from './components/Layout';
 import { useDevices, useWebSocket, useSession } from './hooks';
-import { TranscriptSegment, UploadMode, Model, TranscriptFile, Session, Participant } from './types';
+import { TranscriptSegment, UploadMode } from './types';
 
 function App() {
   const [isRecording, setIsRecording] = useState(false);
@@ -18,12 +20,12 @@ function App() {
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [selectedTranscriptFile, setSelectedTranscriptFile] = useState<string>('');
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<string>('sessions');
 
   // Session management
   const { 
     sessions, 
-    isLoading: isSessionsLoading, 
-    error: sessionsError,
+    isLoading: isSessionsLoading,
     fetchSessions,
     createSession,
     deleteSession,
@@ -43,7 +45,6 @@ function App() {
   };
   
   const { 
-    initWebSocket, 
     sendStartRecording, 
     sendStopRecording, 
     sendUploadFile, 
@@ -132,7 +133,7 @@ function App() {
         }
       }
       
-      const result = await sendStartRecording(selectedDevices, selectedModel || undefined);
+      await sendStartRecording(selectedDevices, selectedModel || undefined);
       setIsRecording(true);
       setTranscript([]);
       setSummary('');
@@ -150,7 +151,7 @@ function App() {
     try {
       setIsProcessing(true);
       setProcessingStatus('Stopping recording...');
-      const result = await sendStopRecording();
+      await sendStopRecording();
       setIsRecording(false);
       setProcessingStatus('Processing audio...');
       
@@ -185,7 +186,7 @@ function App() {
       
       setIsProcessing(true);
       setProcessingStatus('Uploading file...');
-      const result = await sendUploadFile(file);
+      await sendUploadFile(file);
       setProcessingStatus('Processing uploaded file...');
       
       // Refresh the transcript files list after upload
@@ -237,37 +238,21 @@ function App() {
 
   const isLoading = isDevicesLoading || isSessionsLoading;
 
-  return (
-    <div className="min-h-screen bg-gray-100">
-      <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 py-6 sm:px-0">
-          <div className="bg-white shadow rounded-lg p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">
-                Audio Transcriber
-              </h1>
-              <button
-                onClick={handleRefreshDevices}
-                disabled={isLoading}
-                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-blue-300"
-              >
-                {isDevicesLoading ? 'Refreshing...' : 'Refresh Devices'}
-              </button>
-            </div>
-            
-            {/* Sessions List */}
-            <SessionList 
-              sessions={sessions}
-              activeSessionId={activeSessionId}
-              onSessionSelect={handleSessionSelect}
-              onCreateSession={handleCreateSession}
-              onDeleteSession={handleDeleteSession}
-              isLoading={isSessionsLoading}
-              updateSession={updateSession}
-            />
-            
+  // Handle tab change
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+  };
+
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'recordings':
+        return (
+          <div className="space-y-6">
+            <h2 className="text-xl font-semibold text-gray-800 border-b pb-2">Recording Studio</h2>
             {isDevicesLoading ? (
-              <p>Loading audio devices...</p>
+              <div className="p-4 bg-gray-50 rounded animate-pulse">
+                <p className="text-gray-500">Loading audio devices...</p>
+              </div>
             ) : (
               <DeviceSelection
                 devices={devices}
@@ -290,9 +275,73 @@ function App() {
                 handleResummarize={handleResummarize}
               />
             )}
-            <div className="space-y-6 mt-6">
-              {/* Participant list for active session */}
-              {activeSessionId && getSession(activeSessionId) && (
+          </div>
+        );
+      case 'settings':
+        return (
+          <div className="space-y-6">
+            <h2 className="text-xl font-semibold text-gray-800 border-b pb-2">Settings</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                <h3 className="font-medium text-gray-700 mb-2">Device Management</h3>
+                <button
+                  onClick={handleRefreshDevices}
+                  disabled={isLoading}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:bg-indigo-300 text-sm"
+                >
+                  {isDevicesLoading ? 'Refreshing...' : 'Refresh Audio Devices'}
+                </button>
+              </div>
+              
+              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                <h3 className="font-medium text-gray-700 mb-2">Model Selection</h3>
+                <div className="text-sm text-gray-600">
+                  {models.length > 0 ? (
+                    <div>
+                      <p className="mb-2">Available models:</p>
+                      <ul className="list-disc pl-5">
+                        {models.map(model => (
+                          <li key={model.id}>{model.name}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <p>No models available</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      default: // 'sessions' tab
+        return (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-semibold text-gray-800">All Sessions</h2>
+              <button
+                onClick={handleCreateSession}
+                disabled={isSessionsLoading}
+                className="px-3 py-1 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 disabled:bg-indigo-300"
+              >
+                New Session
+              </button>
+            </div>
+            
+            <SessionList 
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              onSessionSelect={handleSessionSelect}
+              onCreateSession={handleCreateSession}
+              onDeleteSession={handleDeleteSession}
+              isLoading={isSessionsLoading}
+              updateSession={updateSession}
+            />
+            
+            {activeSessionId && getSession(activeSessionId) && (
+              <div className="mt-8 space-y-6">
+                <div className="border-t border-gray-200 pt-4">
+                  <h3 className="text-lg font-medium text-gray-800">Session Details</h3>
+                </div>
                 <ParticipantList 
                   participants={getSession(activeSessionId)?.participants || []} 
                   sessionId={activeSessionId}
@@ -301,14 +350,35 @@ function App() {
                     fetchSessions();
                   }}
                 />
-              )}
-              
-              <Transcript transcript={transcript} />
-              {summary && <Summary summary={summary} processingStatus={processingStatus} />}
-            </div>
+                
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <h3 className="text-lg font-medium text-gray-800 mb-4">Transcript</h3>
+                  <Transcript transcript={transcript} />
+                </div>
+                
+                {summary && (
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h3 className="text-lg font-medium text-gray-800 mb-4">Summary</h3>
+                    <Summary summary={summary} processingStatus={processingStatus} />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        </div>
-      </div>
+        );
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Header 
+        activeTab={activeTab} 
+        onTabChange={handleTabChange} 
+      />
+      
+      <Layout>
+        {renderTabContent()}
+      </Layout>
     </div>
   );
 }
