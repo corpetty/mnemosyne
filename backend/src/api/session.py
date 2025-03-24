@@ -41,6 +41,7 @@ class Session:
         self.transcript_file: Optional[str] = None
         self.transcript: List[Dict[str, Any]] = []
         self.summary: str = ""
+        self.notes: str = ""  # Custom notes for the session
         
         # Session state
         self.is_recording = False
@@ -86,7 +87,8 @@ class Session:
             "summary_length": len(self.summary),
             "transcript_length": len(self.transcript),
             "name": self.name,
-            "participants": self.participants
+            "participants": self.participants,
+            "notes": self.notes
         }
         
         # Include full data if requested
@@ -240,7 +242,8 @@ class Session:
             "transcript": self.transcript,
             "summary": self.summary,
             "name": self.name,
-            "participants": self.participants
+            "participants": self.participants,
+            "notes": self.notes
         }
     
     @classmethod
@@ -265,6 +268,7 @@ class Session:
         session.summary = data.get("summary", "")
         session.name = data.get("name")
         session.participants = data.get("participants", [])
+        session.notes = data.get("notes", "")
         
         return session
     

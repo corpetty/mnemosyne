@@ -4,6 +4,7 @@ import { TranscriptSegment, Model, TranscriptFile, Session } from '../types';
 interface UseWebSocketProps {
   setTranscript: React.Dispatch<React.SetStateAction<TranscriptSegment[]>>;
   setSummary: React.Dispatch<React.SetStateAction<string>>;
+  setNotes: React.Dispatch<React.SetStateAction<string>>;
   setIsProcessing: React.Dispatch<React.SetStateAction<boolean>>;
   setProcessingStatus: React.Dispatch<React.SetStateAction<string>>;
   activeSessionId: string | null;
@@ -13,6 +14,7 @@ interface UseWebSocketProps {
 export const useWebSocket = ({
   setTranscript,
   setSummary,
+  setNotes,
   setIsProcessing,
   setProcessingStatus,
   activeSessionId,
@@ -58,12 +60,13 @@ export const useWebSocket = ({
     // Clear current state when switching sessions
     setTranscript([]);
     setSummary('');
+    setNotes('');
     
     sendWebSocketMessage({
       type: 'subscribe',
       session_id: sessionId
     });
-  }, [sendWebSocketMessage, setTranscript, setSummary]);
+  }, [sendWebSocketMessage, setTranscript, setSummary, setNotes]);
 
   const unsubscribeFromSession = useCallback(() => {
     sendWebSocketMessage({
@@ -106,6 +109,8 @@ export const useWebSocket = ({
         setSummary(data.data);
         setIsProcessing(false);
         setProcessingStatus('');
+      } else if (data.type === 'notes_updated' && isActiveSessionMessage) {
+        setNotes(data.notes);
       } else if (data.type === 'status') {
         if (isActiveSessionMessage) {
           setProcessingStatus(data.message);
@@ -147,7 +152,7 @@ export const useWebSocket = ({
     return () => {
       websocket.close();
     };
-  }, [activeSessionId, setTranscript, setSummary, setIsProcessing, setProcessingStatus, subscribeToSession, updateSession]);
+  }, [activeSessionId, setTranscript, setSummary, setNotes, setIsProcessing, setProcessingStatus, subscribeToSession, updateSession]);
 
   // Initialize WebSocket connection
   useEffect(() => {

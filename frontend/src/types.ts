@@ -61,4 +61,5 @@ export interface Session {
   transcript_length?: number;
   name?: string;
   participants?: Participant[];
+  notes?: string;
 }

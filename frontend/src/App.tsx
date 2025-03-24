@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import DeviceSelection from './components/DeviceSelection';
 import Transcript from './components/Transcript';
 import Summary from './components/Summary';
@@ -8,14 +8,17 @@ import Header from './components/Header';
 import Layout from './components/Layout';
 import { useDevices, useWebSocket, useSession } from './hooks';
 import { TranscriptSegment, UploadMode } from './types';
+import Notes from './components/Notes';
 
 function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
   const [summary, setSummary] = useState<string>('');
+  const [notes, setNotes] = useState<string>('');
   const [selectedDevices, setSelectedDevices] = useState<Array<string>>([]);
   const [processingStatus, setProcessingStatus] = useState<string>('');
+  const [isSavingNotes, setIsSavingNotes] = useState<boolean>(false);
   const [uploadMode, setUploadMode] = useState<UploadMode>(UploadMode.Recording);
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [selectedTranscriptFile, setSelectedTranscriptFile] = useState<string>('');
@@ -38,6 +41,7 @@ function App() {
   const webSocketProps = {
     setTranscript,
     setSummary,
+    setNotes,
     setIsProcessing,
     setProcessingStatus,
     activeSessionId,
@@ -74,6 +78,7 @@ function App() {
     // Reset UI for new active session
     setTranscript([]);
     setSummary('');
+    setNotes('');
     
     // Update UI state based on session status
     const session = getSession(sessionId);
@@ -81,6 +86,11 @@ function App() {
       setIsRecording(session.is_recording);
       setIsProcessing(session.status === 'processing');
       setProcessingStatus(session.status === 'processing' ? 'Processing...' : '');
+      
+      // If the session has notes, set them
+      if (session.notes) {
+        setNotes(session.notes);
+      }
       
       // If the session has a transcript file, load the data
       if (session.transcript_file) {
@@ -235,6 +245,41 @@ function App() {
   const handleRefreshDevices = useCallback(() => {
     fetchDevices(true);
   }, [fetchDevices]);
+  
+  // Handle saving notes
+  const handleSaveNotes = async (sessionId: string, newNotes: string) => {
+    setIsSavingNotes(true);
+    try {
+      const response = await fetch(`/sessions/${sessionId}/notes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ notes: newNotes }),
+      });
+      
+      if (response.ok) {
+        setNotes(newNotes);
+        
+        // Immediately update the session in local state with new notes
+        const updatedSession = getSession(sessionId);
+        if (updatedSession) {
+          updatedSession.notes = newNotes;
+          updateSession(updatedSession);
+        }
+        
+        return true;
+      } else {
+        console.error('Failed to save notes:', await response.text());
+        return false;
+      }
+    } catch (error) {
+      console.error('Error saving notes:', error);
+      return false;
+    } finally {
+      setIsSavingNotes(false);
+    }
+  };
 
   const isLoading = isDevicesLoading || isSessionsLoading;
 
@@ -362,6 +407,16 @@ function App() {
                     <Summary summary={summary} processingStatus={processingStatus} />
                   </div>
                 )}
+                
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <h3 className="text-lg font-medium text-gray-800 mb-4">Notes</h3>
+                  <Notes 
+                    notes={notes} 
+                    sessionId={activeSessionId} 
+                    onSave={handleSaveNotes} 
+                    isSaving={isSavingNotes} 
+                  />
+                </div>
               </div>
             )}
           </div>

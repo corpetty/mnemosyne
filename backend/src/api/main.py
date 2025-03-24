@@ -84,6 +84,9 @@ class SessionCreateRequest(BaseModel):
 class RenameSessionRequest(BaseModel):
     name: str
     
+class UpdateNotesRequest(BaseModel):
+    notes: str
+    
 class UpdateParticipantRequest(BaseModel):
     participant_id: str
     name: str
@@ -633,7 +636,7 @@ async def stop_recording(session_id: Optional[str] = None):
     result = await manager.stop_recording(session_id)
     return {"status": "Recording stopped", "session_id": session_id}
 
-# Session renaming and participant management endpoints
+# Session renaming, notes, and participant management endpoints
 @app.post("/sessions/{session_id}/rename")
 async def rename_session(session_id: str, request: RenameSessionRequest):
     """Rename a session"""
@@ -646,6 +649,31 @@ async def rename_session(session_id: str, request: RenameSessionRequest):
         raise HTTPException(status_code=500, detail="Failed to rename session")
     
     return {"success": True, "session_id": session_id, "name": request.name}
+
+@app.post("/sessions/{session_id}/notes")
+async def update_session_notes(session_id: str, request: UpdateNotesRequest):
+    """Update notes for a session"""
+    session = manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    try:
+        session.notes = request.notes
+        success = session.save_to_disk()
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to save session notes")
+        
+        # Broadcast the update to all connections for this session
+        await manager.broadcast({
+            "type": "notes_updated",
+            "session_id": session_id,
+            "notes": request.notes
+        }, session_id)
+        
+        return {"success": True, "session_id": session_id}
+    except Exception as e:
+        logger.error(f"Error updating notes for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error updating notes: {str(e)}")
 
 @app.post("/sessions/{session_id}/participants/extract")
 async def extract_participants(session_id: str):
