@@ -6,6 +6,7 @@ import SessionList from './components/SessionList';
 import ParticipantList from './components/ParticipantList';
 import Header from './components/Header';
 import Layout from './components/Layout';
+import MeetingView from './components/MeetingView';
 import { useDevices, useWebSocket, useSession } from './hooks';
 import { TranscriptSegment, UploadMode } from './types';
 import Notes from './components/Notes';
@@ -290,6 +291,32 @@ function App() {
 
   const renderTabContent = () => {
     switch (activeTab) {
+      case 'meeting':
+        return (
+          <MeetingView
+            sessionId={activeSessionId}
+            notes={notes}
+            transcript={transcript}
+            devices={devices}
+            selectedDevices={selectedDevices}
+            isRecording={isRecording}
+            isProcessing={isProcessing}
+            models={models}
+            selectedModel={selectedModel}
+            processingStatus={processingStatus}
+            sessions={sessions}
+            onSaveNotes={handleSaveNotes}
+            onDeviceToggle={handleDeviceToggle}
+            onStartRecording={startRecording}
+            onStopRecording={stopRecording}
+            onModelChange={setSelectedModel}
+            onSessionSelect={handleSessionSelect}
+            onDeleteSession={handleDeleteSession}
+            isSavingNotes={isSavingNotes}
+            onCreateSession={handleCreateSession}
+            updateSession={updateSession}
+          />
+        );
       case 'recordings':
         return (
           <div className="space-y-6">
@@ -428,7 +455,8 @@ function App() {
     <div className="min-h-screen bg-gray-50">
       <Header 
         activeTab={activeTab} 
-        onTabChange={handleTabChange} 
+        onTabChange={handleTabChange}
+        onCreateSession={handleCreateSession}
       />
       
       <Layout>

@@ -49,29 +49,39 @@ This document provides practical examples of how to use Mnemosyne for different 
 4. The results will appear in a new session
 5. Note: Recordings are automatically converted to OPUS format for storage efficiency
 
-## Use Case: Meeting Transcription
+## Use Case: Meeting Transcription and Note-Taking
+
+### Using the Meeting View
+
+1. Click on the "Meeting" tab in the top navigation bar
+2. If you don't have an active session, click "Create New Session"
+3. The Meeting view provides an integrated interface focusing on note-taking with recording controls
 
 ### Preparing for a Meeting
 
-1. Create a new session before the meeting starts
+1. In the Meeting view, click the "Devices" button to show device selection
 2. Select the appropriate audio devices:
    - For in-person meetings: Select the room microphone
    - For online meetings: Select system audio capture
-3. Test the audio levels to ensure clear recording
+3. Optionally, select a transcription model from the dropdown in the device selection panel
+4. You can hide the device selection panel by clicking the "Devices" button again
 
 ### During the Meeting
 
-1. Click "Start Recording" when the meeting begins
-2. The recording will continue for the duration of the meeting
-3. You can see the recording status at the top of the screen
+1. Click the "Record" button when the meeting begins
+2. Start taking notes directly in the notes editor - no need to switch between tabs
+3. The recording status will be displayed at the top of the notes panel
+4. Click "Show Transcript" to view the live transcript as it's being generated
+5. Continue taking notes as the meeting progresses
+6. Click the "Stop" button when the meeting ends
 
 ### After the Meeting
 
-1. Click "Stop Recording" when the meeting ends
-2. Wait for processing to complete (progress is shown in the status area)
-3. Review the transcript and summary
-4. Rename participants to match their actual names
-5. Save or export the results as needed
+1. Wait for processing to complete (progress is shown in the status area)
+2. The transcript will continue to be accessible by clicking "Show Transcript"
+3. Edit your notes if needed by clicking the "Edit" button
+4. All notes are automatically saved with the session
+5. Switch to the "Sessions" tab if you need to rename participants or view the detailed summary
 
 ## Use Case: Lecture Transcription
 

@@ -212,17 +212,175 @@ interface FileUploadProps {
 }
 ```
 
+### Notes (`Notes.tsx`)
+
+The Notes component provides an interface for taking and editing notes during or after a meeting.
+
+#### Features
+
+- Markdown-based note editor
+- Preview and edit modes
+- Automatic saving of notes
+- Real-time formatting preview
+- Visual indicators for saving status
+
+#### Props
+
+```typescript
+interface NotesProps {
+  notes: string;
+  sessionId: string;
+  onSave: (sessionId: string, notes: string) => Promise<boolean>;
+  isSaving?: boolean;
+}
+```
+
+#### Usage Example
+
+```tsx
+<Notes 
+  notes={sessionNotes} 
+  sessionId={activeSessionId} 
+  onSave={handleSaveNotes} 
+  isSaving={isSavingNotes} 
+/>
+```
+
+### EnhancedNotes (`EnhancedNotes.tsx`)
+
+The EnhancedNotes component extends the Notes component by integrating recording controls directly into the notes interface, allowing users to take notes while managing recordings without switching contexts.
+
+#### Features
+
+- All features of the Notes component
+- Integrated recording controls (start/stop)
+- Audio device selection directly in the notes interface
+- Real-time recording status indicators
+- Collapsible device configuration panel
+- Model selection for transcription
+
+#### Props
+
+```typescript
+interface EnhancedNotesProps {
+  notes: string;
+  sessionId: string;
+  onSave: (sessionId: string, notes: string) => Promise<boolean>;
+  isSaving?: boolean;
+  isRecording: boolean;
+  isProcessing: boolean;
+  devices: AudioDevice[];
+  selectedDevices: string[];
+  models: Model[];
+  selectedModel: string;
+  processingStatus: string;
+  onDeviceToggle: (deviceId: string) => void;
+  onStartRecording: () => Promise<void>;
+  onStopRecording: () => Promise<void>;
+  onModelChange: (modelId: string) => void;
+}
+```
+
+#### Usage Example
+
+```tsx
+<EnhancedNotes 
+  notes={notes}
+  sessionId={sessionId}
+  onSave={handleSaveNotes}
+  isSaving={isSavingNotes}
+  isRecording={isRecording}
+  isProcessing={isProcessing}
+  devices={devices}
+  selectedDevices={selectedDevices}
+  models={models}
+  selectedModel={selectedModel}
+  processingStatus={processingStatus}
+  onDeviceToggle={handleDeviceToggle}
+  onStartRecording={startRecording}
+  onStopRecording={stopRecording}
+  onModelChange={setSelectedModel}
+/>
+```
+
+### MeetingView (`MeetingView.tsx`)
+
+The MeetingView component provides a dedicated interface for note-taking during meetings with integrated recording controls and a collapsible transcript view.
+
+#### Features
+
+- Focus on note-taking with EnhancedNotes component
+- Toggle for showing/hiding live transcript
+- Compact recording controls
+- Session creation from within the view
+- Minimalist interface to reduce distractions
+
+#### Props
+
+```typescript
+interface MeetingViewProps {
+  sessionId: string | null;
+  notes: string;
+  transcript: TranscriptSegment[];
+  devices: AudioDevice[];
+  selectedDevices: string[];
+  isRecording: boolean;
+  isProcessing: boolean;
+  models: Model[];
+  selectedModel: string;
+  processingStatus: string;
+  onSaveNotes: (sessionId: string, notes: string) => Promise<boolean>;
+  onDeviceToggle: (deviceId: string) => void;
+  onStartRecording: () => Promise<void>;
+  onStopRecording: () => Promise<void>;
+  onModelChange: (modelId: string) => void;
+  isSavingNotes: boolean;
+  onCreateSession: () => Promise<void>;
+}
+```
+
+#### Usage Example
+
+```tsx
+<MeetingView
+  sessionId={activeSessionId}
+  notes={notes}
+  transcript={transcript}
+  devices={devices}
+  selectedDevices={selectedDevices}
+  isRecording={isRecording}
+  isProcessing={isProcessing}
+  models={models}
+  selectedModel={selectedModel}
+  processingStatus={processingStatus}
+  onSaveNotes={handleSaveNotes}
+  onDeviceToggle={handleDeviceToggle}
+  onStartRecording={startRecording}
+  onStopRecording={stopRecording}
+  onModelChange={setSelectedModel}
+  isSavingNotes={isSavingNotes}
+  onCreateSession={handleCreateSession}
+/>
+```
+
 ## Component Hierarchy
 
 The components are organized in the following hierarchy:
 
 ```
 App
+├── Header
+│   └── Navigation tabs (Sessions, Meeting, Recordings, Settings)
+├── Layout
 ├── SessionList
+├── MeetingView
+│   ├── EnhancedNotes
+│   └── Collapsible Transcript
 ├── DeviceSelection
 ├── FileUpload (conditionally displayed)
 ├── Transcript
 ├── Summary
+├── Notes
 └── ParticipantList
 ```
 
