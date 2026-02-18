@@ -31,8 +31,8 @@ The Python backend runs as a sidecar process managed by Tauri. The frontend comm
 
 Summarization is LAN-first by default:
 
-- **Ollama** at `bugger.ender.verse:11434` (configurable)
-- **vLLM** at `bugger.ender.verse:8000` (configurable)
+- **Ollama** (configurable URL, default `localhost:11434`)
+- **vLLM** (configurable URL, OpenAI-compatible API)
 - **OpenAI** and **Anthropic** available when API keys are set
 
 ## Prerequisites
@@ -154,8 +154,8 @@ All configuration is via environment variables in `backend/.env`:
 | `WHISPER_MODEL_SIZE` | `medium.en` | WhisperX model size (`base`, `small`, `medium`, `large-v2`, `large-v3`) |
 | `WHISPER_COMPUTE_TYPE` | `float16` | Compute type (`float16`, `int8`) |
 | `WHISPER_BATCH_SIZE` | `8` | Batch size for transcription (lower = less VRAM) |
-| `OLLAMA_URL` | `http://bugger.ender.verse:11434` | Ollama API endpoint |
-| `VLLM_URL` | `http://bugger.ender.verse:8000` | vLLM API endpoint |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
+| `VLLM_URL` | `http://localhost:8000` | vLLM API endpoint |
 | `OPENAI_API_KEY` | (optional) | Enables OpenAI provider |
 | `ANTHROPIC_API_KEY` | (optional) | Enables Anthropic provider |
 | `OBSIDIAN_VAULT_PATH` | (optional) | Path to Obsidian vault for export |

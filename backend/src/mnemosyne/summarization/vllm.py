@@ -6,7 +6,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_URL = "http://bugger.ender.verse:8000"
+DEFAULT_URL = "http://localhost:8000"
 
 
 class VLLMProvider:

@@ -22,11 +22,11 @@ class SummarizationService:
     def _init_providers(self):
         """Initialize all configured providers."""
         # Ollama is always available (LAN default)
-        ollama_url = os.environ.get("OLLAMA_URL", "http://bugger.ender.verse:11434")
+        ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
         self.providers["ollama"] = OllamaProvider(base_url=ollama_url)
 
         # vLLM on LAN
-        vllm_url = os.environ.get("VLLM_URL", "http://bugger.ender.verse:8000")
+        vllm_url = os.environ.get("VLLM_URL", "http://localhost:8000")
         self.providers["vllm"] = VLLMProvider(base_url=vllm_url)
 
         # Cloud providers (only if API keys are set)

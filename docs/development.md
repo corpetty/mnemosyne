@@ -182,8 +182,8 @@ WHISPER_COMPUTE_TYPE=float16    # or int8 for lower VRAM
 WHISPER_BATCH_SIZE=8            # lower for less VRAM usage
 
 # LLM providers (at least one recommended)
-OLLAMA_URL=http://bugger.ender.verse:11434
-VLLM_URL=http://bugger.ender.verse:8000
+OLLAMA_URL=http://localhost:11434
+VLLM_URL=http://localhost:8000
 OPENAI_API_KEY=                 # optional
 ANTHROPIC_API_KEY=              # optional
 
