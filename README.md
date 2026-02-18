@@ -1,269 +1,208 @@
 # Mnemosyne
 
-A real-time audio transcription and diarization system that can capture both system audio and microphone input simultaneously, with enhanced summarization capabilities.
+A real-time audio transcription, diarization, and summarization desktop app for Linux. Built with Tauri v2, SvelteKit, and Python.
 
-## Name meaning
-(from Claude)
->Mnemosyne is the personification of memory in Greek mythology. She was a Titaness, the daughter of Uranus (Heaven) and Gaia (Earth), and the mother of the nine Muses by Zeus. 
->
->The name "Mnemosyne" derives from the Greek word "mnēmē," meaning "memory" or "remembrance." In ancient Greek culture, she represented the concept of memory before writing was widespread, when oral traditions and memorization were essential cultural tools.
->
->Beyond mythology, the term has been used in various contexts:
->
->1. In psychology, the "Mnemosyne effect" sometimes refers to processes related to memory formation and recall
->
->2. "Project Mnemosyne" is an open-source spaced repetition software program designed to help with memorization
->
->3. The term appears in various works of literature, art, and music as a reference to memory or the preservation of knowledge
->
->The concept of Mnemosyne highlights the ancient Greek understanding of memory as a divine force fundamental to cultural preservation, artistic inspiration, and human identity.
+## Name
+
+> Mnemosyne is the personification of memory in Greek mythology. She was a Titaness, the daughter of Uranus and Gaia, and the mother of the nine Muses by Zeus. The name derives from the Greek word "mneme," meaning "memory" or "remembrance."
 
 ## Features
 
-- Real-time audio transcription using OpenAI's Whisper large-v3 model
-- Speaker diarization using pyannote.audio 3.1
-- Advanced summarization using Llama 3.3 (via Ollama) with dynamic prompt selection
-- Supports multiple audio sources simultaneously (e.g., system audio + microphone)
-- Real-time display of transcriptions with speaker identification
-- Intelligent summary depth adjustment based on transcript length
-- Ability to regenerate and update summaries for existing transcripts
-- Exports transcripts in markdown format with timestamps
-- Progress tracking and status updates during processing
+- **Real-time transcription** using WhisperX (faster-whisper + word-level alignment)
+- **Speaker diarization** using pyannote.audio 3.1
+- **Pluggable summarization** via Ollama (LAN default), vLLM, OpenAI, or Anthropic
+- **Multiple audio sources** — capture system audio and microphone simultaneously via PipeWire
+- **Session management** — create, rename, delete sessions with full persistence to disk
+- **Obsidian integration** — export sessions as markdown with YAML frontmatter directly to your vault
+- **Desktop app** — native Linux window via Tauri v2 (not a browser tab)
+- **Storage-friendly** — audio saved as OGG/Opus (~12x smaller than WAV)
 
-## Recent Improvements
+## Architecture
 
-- **Session Persistence**: Sessions are now automatically saved to disk and loaded when the application starts, ensuring they persist between application restarts
-- **Enhanced Summarization**: Implemented a three-tiered prompt system (detailed standard compact) that dynamically adjusts based on transcript length
-- **Token Optimization**: Added automatic token count estimation to select the most appropriate prompt format
-- **Improved Error Handling**: Better detection and handling of token limit errors with automatic fallback mechanisms
-- **Status Feedback**: Added real-time status updates during summary generation with loading indicators
-- **File Overwriting**: Added ability to regenerate summaries and update the original transcript files
-- **UI Enhancements**: Added expand/collapse functionality for large summaries and improved styling for nested elements
+```
+Tauri v2 (Rust)          — Window management, native dialogs
+SvelteKit (Svelte 5)     — Frontend UI, reactive state via runes
+Python FastAPI (sidecar)  — Audio capture, ML inference, API server on :8008
+```
+
+The Python backend runs as a sidecar process managed by Tauri. The frontend communicates with it over HTTP (REST) and WebSocket (real-time transcription streaming).
+
+### LLM Infrastructure
+
+Summarization is LAN-first by default:
+
+- **Ollama** at `bugger.ender.verse:11434` (configurable)
+- **vLLM** at `bugger.ender.verse:8000` (configurable)
+- **OpenAI** and **Anthropic** available when API keys are set
 
 ## Prerequisites
 
-- Python 3.10 (required for compatibility with pyannote.audio)
-- NVIDIA GPU with CUDA support (recommended)
-- PipeWire audio system (for Linux)
-- Node.js and npm (for frontend)
-- Hugging Face account and API token (for diarization model)
-- Ollama with Llama 3.3 model (for summarization)
+- Linux with PipeWire audio (Fedora 43+, Ubuntu 22.04+, etc.)
+- NVIDIA GPU with CUDA support (for WhisperX inference)
+- [Rust](https://rustup.rs/) (1.77+)
+- [Node.js](https://nodejs.org/) 22.x (pinned via `.nvmrc`)
+- [pnpm](https://pnpm.io/) (10+)
+- [uv](https://docs.astral.sh/uv/) (Python project manager)
+- [ffmpeg](https://ffmpeg.org/) (for audio format conversion)
+- Tauri system dependencies:
+  ```bash
+  # Fedora
+  sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file \
+    libappindicator-gtk3-devel librsvg2-devel pango-devel
+  ```
+- HuggingFace account with accepted model licenses:
+  - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+  - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
 
-## Installation
+## Setup
 
-1. Install Ollama and Llama 3.3:
-```bash
-# Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
+1. **Clone and install frontend dependencies:**
+   ```bash
+   git clone <repo-url> && cd mnemosyne
+   nvm use  # uses Node 22 from .nvmrc
+   pnpm install
+   ```
 
-# Pull Llama 3.3 model
-ollama pull llama3.3
+2. **Set up the Python backend:**
+   ```bash
+   cd backend
+   uv sync  # creates venv with Python 3.13, installs deps
+   ```
+
+   For GPU transcription, also install WhisperX and PyTorch (these are heavy and may already be in your venv):
+   ```bash
+   uv pip install torch torchaudio whisperx
+   ```
+
+3. **Configure environment:**
+   ```bash
+   cp backend/.env.example backend/.env
+   # Edit backend/.env and set:
+   #   HF_TOKEN=your_huggingface_token
+   #   OLLAMA_URL=http://your-ollama-server:11434
+   #   OBSIDIAN_VAULT_PATH=/path/to/your/vault  (optional)
+   ```
+
+4. **Run in development mode:**
+   ```bash
+   # Terminal 1: start the Python backend
+   cd backend && uv run uvicorn main:app --host 127.0.0.1 --port 8008 --reload
+
+   # Terminal 2: start the Tauri dev window
+   pnpm tauri dev
+   ```
+
+   Or use the convenience script:
+   ```bash
+   pnpm dev:backend  # starts backend
+   pnpm tauri dev    # starts Tauri + Vite dev server
+   ```
+
+## Usage
+
+1. **Create a session** using the sidebar
+2. **Select audio devices** — check the microphone and/or system audio monitors you want to capture
+3. **Record** — click Record or press `Ctrl+R`; press `Ctrl+S` to stop and transcribe
+4. **View transcript** — diarized segments appear in the Transcript tab with speaker labels and timestamps
+5. **Summarize** — switch to the Summary tab, pick a provider/model, and click Summarize
+6. **Take notes** — use the Notes tab for freeform markdown notes per session
+7. **Export to Obsidian** — configure your vault path in the Export tab and click Export
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+R` | Start recording |
+| `Ctrl+S` | Stop recording & transcribe |
+| `Ctrl+E` | Export to Obsidian |
+| `Ctrl+B` | Toggle sidebar |
+
+## Project Structure
+
 ```
-
-2. Create and activate a Python virtual environment:
-```bash
-python3.10 -m venv venv
-source venv/bin/activate
-```Mnemosyne is the personification of memory in Greek mythology. She was a Titaness, the daughter of Uranus (Heaven) and Gaia (Earth), and the mother of the nine Muses by Zeus. 
-
-The name "Mnemosyne" derives from the Greek word "mnēmē," meaning "memory" or "remembrance." In ancient Greek culture, she represented the concept of memory before writing was widespread, when oral traditions and memorization were essential cultural tools.
-
-Beyond mythology, the term has been used in various contexts:
-
-1. In psychology, the "Mnemosyne effect" sometimes refers to processes related to memory formation and recall
-
-2. "Project Mnemosyne" is an open-source spaced repetition software program designed to help with memorization
-
-3. The term appears in various works of literature, art, and music as a reference to memory or the preservation of knowledge
-
-The concept of Mnemosyne highlights the ancient Greek understanding of memory as a divine force fundamental to cultural preservation, artistic inspiration, and human identity.
-```bash
-pip install Cython
-pip install "numpy>=1.22,<1.24"
-pip install -r backend/requirements.txt
-```
-
-5. Install frontend dependencies:
-```bash
-cd frontend
-npm install
+mnemosyne/
+├── src/                          # SvelteKit frontend
+│   ├── lib/
+│   │   ├── components/           # Svelte 5 components
+│   │   ├── stores/               # Rune-based reactive stores
+│   │   ├── api/                  # Backend HTTP/WS client
+│   │   └── types/                # TypeScript types
+│   └── routes/                   # SPA page
+├── src-tauri/                    # Tauri v2 Rust shell
+│   ├── tauri.conf.json
+│   └── src/lib.rs
+├── backend/                      # Python FastAPI backend
+│   ├── pyproject.toml
+│   ├── main.py
+│   └── src/mnemosyne/
+│       ├── api/                  # FastAPI routes + WebSocket
+│       ├── audio/                # PipeWire capture + Opus encoding
+│       ├── transcription/        # WhisperX engine
+│       ├── summarization/        # Ollama, vLLM, OpenAI, Anthropic providers
+│       ├── export/               # Obsidian markdown exporter
+│       ├── models/               # Pydantic data models
+│       ├── services/             # Session + model lifecycle
+│       └── config.py             # Environment configuration
+├── scripts/                      # Dev helper scripts
+└── data/                         # Runtime data (gitignored)
+    ├── sessions/                 # JSON session files
+    └── recordings/               # Audio files (OGG/Opus)
 ```
 
 ## Configuration
 
-1. Create a `.env` file in the root directory:
-```bash
-HUGGINGFACE_TOKEN=your_token_here
-OLLAMA_URL=http://localhost:11434  # Ollama API endpoint
-OPENAI_API_KEY=your_key_here       # Optional, for OpenAI fallback
+All configuration is via environment variables in `backend/.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HF_TOKEN` | (required) | HuggingFace token for pyannote diarization models |
+| `WHISPER_MODEL_SIZE` | `large-v2` | WhisperX model size |
+| `WHISPER_COMPUTE_TYPE` | `float16` | Compute type (`float16`, `int8`) |
+| `WHISPER_BATCH_SIZE` | `16` | Batch size for transcription |
+| `OLLAMA_URL` | `http://bugger.ender.verse:11434` | Ollama API endpoint |
+| `VLLM_URL` | `http://bugger.ender.verse:8000` | vLLM API endpoint |
+| `OPENAI_API_KEY` | (optional) | Enables OpenAI provider |
+| `ANTHROPIC_API_KEY` | (optional) | Enables Anthropic provider |
+| `OBSIDIAN_VAULT_PATH` | (optional) | Path to Obsidian vault for export |
+| `OBSIDIAN_SUBFOLDER` | `meetings/mnemosyne` | Subfolder within vault |
+
+## Obsidian Export Format
+
+Exported sessions produce markdown files with YAML frontmatter:
+
+```yaml
+---
+title: "Session Name"
+date: 2026-02-18
+type: meeting-note
+source: mnemosyne
+participants: ["SPEAKER_00", "SPEAKER_01"]
+tags: [meeting, mnemosyne]
+---
 ```
 
-2. Hugging Face Setup:
-   - Go to https://huggingface.co/settings/tokens
-   - Create a new token with read access
-   - Copy the token and paste it in your `.env` file
+Followed by sections for Summary, Participants, Notes, and the full Transcript with timestamps.
 
-3. Accept terms for these models:
-   - https://huggingface.co/pyannote/speaker-diarization-3.1
-   - https://huggingface.co/pyannote/segmentation-3.0
+## Tech Stack
 
-4. Verify Ollama setup:
-```bash
-# Check Ollama is running
-curl http://localhost:11434/api/tags
+- **Desktop shell:** [Tauri v2](https://v2.tauri.app/) (Rust)
+- **Frontend:** [SvelteKit](https://svelte.dev/) (Svelte 5 with runes), [Tailwind CSS 4](https://tailwindcss.com/)
+- **Backend:** [FastAPI](https://fastapi.tiangolo.com/) (Python 3.13 via uv)
+- **Transcription:** [WhisperX](https://github.com/m-bain/whisperX) (faster-whisper + pyannote 3.1)
+- **Summarization:** [Ollama](https://ollama.com/), [vLLM](https://docs.vllm.ai/), OpenAI, Anthropic
+- **Audio:** PipeWire (`pw-record`, `pw-dump`), ffmpeg (Opus encoding)
 
-# Verify Llama 3.3 is available
-ollama list
-```
+## Documentation
 
-## Running the Application
+- [Architecture](docs/architecture.md) — System overview, data flows, state management design
+- [API Reference](docs/api-reference.md) — Complete REST and WebSocket API documentation
+- [Development Guide](docs/development.md) — Setup, project structure, adding providers, building
+- [Troubleshooting](docs/troubleshooting.md) — Common issues and solutions
 
-1. Start Ollama (if not running):
-```bash
-systemctl start ollama
-```
+## Status
 
-2. Start the backend:
-```bash
-cd backend
-PYTHONPATH=. uvicorn src.api.main:app --reload
-```
-
-3. Start the frontend (in a new terminal):
-```bash
-cd frontend
-npm start
-```
-
-4. Open http://localhost:3000 in your browser
-
-## Usage
-
-1. Select audio sources:
-   - Choose system audio source(s) to capture desktop audio
-   - Choose microphone input to capture your voice
-   - You can select multiple sources to capture simultaneously
-
-2. Click "Start Recording" to begin transcription
-   - The system will record audio from selected sources
-   - Audio is saved as a WAV file in the recordings directory
-
-3. Click "Stop Recording" when finished
-   - The system will process the recording
-   - Status updates show progress
-   - Transcription appears with speaker identification
-   - A summary is generated using Llama 3.3
-   - Files are saved in the transcripts directory
-
-4. Regenerate Summaries (New Feature):
-   - Select an existing transcript file from the dropdown
-   - Optionally select a different model
-   - Click "Generate New Summary" to create an improved summary
-   - The original transcript file will be updated with the new summary
-
-## Output Files
-
-The system generates several files:
-- `recordings/recording_[timestamp].wav` - The recorded audio file
-- `transcripts/transcript_[timestamp].md` - The transcript with:
-  - Speaker identification
-  - Timestamps
-  - Full transcript
-  - Generated summary
-
-## Features in Detail
-
-### Audio Capture
-- Multiple source recording
-- Proper audio mixing
-- 16-bit WAV format
-- Automatic gain control
-
-### Transcription
-- Using Whisper large-v3 model
-- Word-level timestamps
-- High accuracy for multiple languages
-- Optimized for GPU processing
-
-### Speaker Diarization
-- Using pyannote.audio 3.1
-- Advanced speaker separation
-- Handles multiple speakers
-- Optimized clustering parameters
-
-### Summarization
-- Using Llama 3.3 via Ollama
-- Dynamic prompt selection based on transcript length:
-  - Detailed mode: Comprehensive analysis for shorter transcripts
-  - Standard mode: Balanced detail for medium-length transcripts
-  - Compact mode: Essential information for long transcripts
-- Intelligent token count estimation
-- Error handling with automatic fallback mechanisms
-- Status feedback during generation
-- Ability to overwrite existing summaries
-- Structured output with:
-  - Overview
-  - Participants & dynamics analysis
-  - Detailed key topics with hierarchical organization
-  - Comprehensive decisions & conclusions
-  - Action items with context and dependencies
-
-### User Interface
-- Real-time status updates
-- Clear speaker identification
-- Timestamp display
-- Processing progress indicators
-- Device selection interface
-- Summary regeneration capabilities
-- Expand/collapse functionality for large summaries
-
-## Troubleshooting
-
-### Common Issues
-
-1. **No system audio sources available:**
-   - Make sure PipeWire is running: `systemctl --user status pipewire`
-   - Check available sources: `pw-cli list-objects | grep -A 3 "Monitor"`
-
-2. **GPU memory errors:**
-   - Free up GPU memory by closing other applications
-   - Monitor GPU usage with `nvidia-smi`
-
-3. **Installation errors:**
-   - Make sure you're using Python 3.10
-   - Install PyTorch before other dependencies
-   - Check CUDA compatibility with `nvidia-smi`
-
-4. **Audio quality issues:**
-   - Check input device levels
-   - Verify proper device selection
-   - Monitor audio peaks during recording
-
-5. **Summarization issues:**
-   - Verify Ollama is running: `systemctl status ollama`
-   - Check Llama 3.3 model is installed: `ollama list`
-   - Verify API endpoint in .env file
-   - For token limit errors, try a different model or regenerate with a compact prompt
-   - If using OpenAI fallback, ensure your API key is correctly set in .env
-   - Monitor CPU/GPU usage during summarization as it can be resource-intensive
-
-### Getting Help
-
-If you encounter issues:
-1. Check the console output for error messages
-2. Look for similar issues in the project's issue tracker
-3. Include relevant error messages and system information when reporting issues
+The app is feature-complete for core functionality (Phases 0-7). Packaging as a distributable Linux binary (AppImage/deb) is deferred to Phase 8.
 
 ## License
 
-[Insert License Information]
-
-## Acknowledgments
-
-This project uses:
-- [OpenAI Whisper](https://github.com/openai/whisper) for transcription
-- [Pyannote Audio](https://github.com/pyannote/pyannote-audio) for speaker diarization
-- [Faster Whisper](https://github.com/guillaumekln/faster-whisper) for optimized inference
-- [CTC Forced Aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner) for timestamp alignment
-- [Ollama](https://ollama.com/) for running Llama 3.3
-- [Llama 3.3](https://ai.meta.com/llama/) for summarization
+MIT

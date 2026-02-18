@@ -1,0 +1,20 @@
+[project]
+name = "mnemosyne-backend"
+version = "0.1.0"
+description = "Mnemosyne backend: audio transcription, diarization, and summarization"
+readme = "README.md"
+requires-python = ">=3.10, <3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "websockets>=14.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+    "python-multipart>=0.0.18",
+    "httpx>=0.28",
+    "numpy>=2.0",
+]
+
+[tool.uv]
+managed = true

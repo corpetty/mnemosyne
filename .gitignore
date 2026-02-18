@@ -1,51 +1,40 @@
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+*.pyc
+*.pyo
+backend/.venv/
+backend/uv.lock
 *.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-venv/
-.env
 
-# Node
-node_modules/
-coverage/
-build/
-.DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Tauri
+src-tauri/target/
+src-tauri/Cargo.lock
+src-tauri/gen/
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Project specific
-transcripts/
-*.wav
-*.mp3
-*.ogg
-*.opus
-sessions/
+# Runtime data
+data/
+.claude/
