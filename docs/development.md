@@ -49,26 +49,24 @@ cd ..
 
 ## Running in Development
 
-You need two terminal processes:
+Single terminal — Tauri manages the backend automatically:
 
-**Terminal 1 — Backend:**
-```bash
-cd backend
-uv run uvicorn main:app --host 127.0.0.1 --port 8008 --reload
-```
-
-**Terminal 2 — Frontend + Tauri:**
 ```bash
 pnpm tauri dev
 ```
 
-Or use convenience scripts:
-```bash
-pnpm dev:backend   # Terminal 1
-pnpm tauri dev     # Terminal 2
-```
+This starts:
+1. **Vite dev server** (frontend hot-reload)
+2. **Tauri window** (native desktop shell)
+3. **Python backend** (`uv run uvicorn main:app --host 127.0.0.1 --port 8008 --reload`)
 
-The Tauri dev command starts both Vite (hot-reload) and the Tauri window. The backend runs separately because it manages heavy ML models.
+The Rust shell spawns the backend as a child process, polls TCP port 8008 for readiness, and emits a `backend-ready` event to the frontend. When the window is closed, the backend process tree is killed automatically (using process groups via `setsid`).
+
+To run the backend standalone (e.g., for debugging):
+```bash
+cd backend
+uv run uvicorn main:app --host 127.0.0.1 --port 8008 --reload
+```
 
 ## Project Structure
 
@@ -113,11 +111,12 @@ mnemosyne/
 ├── src-tauri/                # Tauri v2 Rust shell
 │   ├── Cargo.toml            # Rust dependencies
 │   ├── tauri.conf.json       # Window, build, bundle config
+│   ├── binaries/             # PyInstaller output (build artifact, gitignored)
 │   ├── capabilities/
 │   │   └── default.json      # Tauri permissions
 │   └── src/
 │       ├── main.rs           # Entry point
-│       └── lib.rs            # Plugin setup (shell, dialog, log)
+│       └── lib.rs            # Backend lifecycle (spawn, health poll, cleanup)
 │
 ├── backend/                  # Python FastAPI backend
 │   ├── pyproject.toml        # Python deps (uv project)
@@ -160,7 +159,9 @@ mnemosyne/
 │           └── summarization_service.py  # Summarization orchestrator
 │
 ├── scripts/
-│   └── dev-backend.sh        # Backend dev script
+│   ├── build-backend.sh      # PyInstaller backend build
+│   ├── build-all.sh          # Frontend + backend build orchestrator
+│   └── package.sh            # Full packaging (AppImage/deb)
 │
 └── data/                     # Runtime data (gitignored)
     ├── sessions/             # JSON session files
@@ -176,9 +177,9 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 HF_TOKEN=hf_your_token_here
 
 # WhisperX settings
-WHISPER_MODEL_SIZE=large-v2     # or base, small, medium, large-v3
+WHISPER_MODEL_SIZE=medium.en    # safe default; use large-v2 with 24GB+ VRAM
 WHISPER_COMPUTE_TYPE=float16    # or int8 for lower VRAM
-WHISPER_BATCH_SIZE=16           # lower for less VRAM usage
+WHISPER_BATCH_SIZE=8            # lower for less VRAM usage
 
 # LLM providers (at least one recommended)
 OLLAMA_URL=http://bugger.ender.verse:11434
@@ -228,22 +229,21 @@ uv sync
 
 ### VRAM Usage
 
-The full WhisperX pipeline (transcription + alignment + diarization) requires significant GPU memory:
+The WhisperX pipeline loads up to three models simultaneously at peak: the Whisper model, wav2vec2 alignment model, and pyannote diarization model.
 
-| Model | Approximate VRAM |
-|-------|-----------------|
-| `base` | ~2 GB |
-| `small` | ~3 GB |
-| `medium` | ~5 GB |
-| `large-v2` | ~7 GB |
-| `large-v3` | ~7 GB |
+| Model | Whisper VRAM | Peak Pipeline VRAM (with diarization) |
+|-------|-------------|--------------------------------------|
+| `base` | ~1 GB | ~3 GB |
+| `small` | ~2 GB | ~4 GB |
+| `medium` / `medium.en` | ~3 GB | ~5 GB |
+| `large-v2` / `large-v3` | ~5 GB | ~9-11 GB |
 
-With diarization models loaded, add ~2 GB. An RTX 2080 Ti (11 GB) can run `large-v2` with diarization.
+The default `medium.en` is safe for GPUs with 8+ GB VRAM. Using `large-v2` on an RTX 2080 Ti (11 GB) may cause OOM during the alignment step when all three models are loaded. Users with 24+ GB VRAM can override to `large-v2` / batch 16 in their `.env`.
 
 To reduce VRAM usage:
-- Use a smaller model: `WHISPER_MODEL_SIZE=medium`
+- Use a smaller model: `WHISPER_MODEL_SIZE=small`
 - Use int8 quantization: `WHISPER_COMPUTE_TYPE=int8`
-- Reduce batch size: `WHISPER_BATCH_SIZE=8`
+- Reduce batch size: `WHISPER_BATCH_SIZE=4`
 
 ## Adding a New Summarization Provider
 
@@ -278,16 +278,48 @@ class SummarizationService:
 
 ## Building for Production
 
-### Frontend Build
+### Backend Sidecar (PyInstaller)
+
+The Python backend is bundled as a self-contained binary using PyInstaller `--onedir` mode:
 
 ```bash
-pnpm build   # Outputs static files to build/
+bash scripts/build-backend.sh
 ```
 
-### Tauri Build
+This:
+1. Syncs dependencies with `uv sync`
+2. Runs PyInstaller with `--collect-all` for torch, whisperx, pyannote, etc.
+3. Copies the output directory to `src-tauri/binaries/mnemosyne-backend-dir/`
+
+The output is ~7 GB due to PyTorch CUDA libraries. The binary accepts `--host` and `--port` CLI arguments.
+
+### Full Package
 
 ```bash
-pnpm tauri build   # Creates AppImage/deb in src-tauri/target/release/bundle/
+bash scripts/package.sh
 ```
 
-**Note:** Packaging the Python backend as a sidecar binary (via PyInstaller) is deferred to Phase 8. For now, the backend must be started separately.
+This builds the backend sidecar, then runs `pnpm tauri build` which:
+1. Builds the SvelteKit frontend (`pnpm build`)
+2. Compiles the Rust shell
+3. Bundles everything into AppImage and/or deb packages
+
+Artifacts are placed in `src-tauri/target/release/bundle/`.
+
+### How Packaging Works
+
+The Tauri shell does **not** use the formal `externalBin` sidecar mechanism. Instead:
+
+- PyInstaller produces a **directory** (`mnemosyne-backend` binary + `_internal/` with shared libs)
+- The entire directory is bundled as a Tauri **resource** (configured in `tauri.conf.json`)
+- At runtime, Rust spawns the binary via `std::process::Command` with `current_dir` set to the resource directory (so `_internal/` is found correctly)
+- Process groups (`setsid`) ensure the backend and all its children are killed on app exit
+
+### System Requirements (Target Machine)
+
+The packaged app bundles Python, PyTorch, and all ML libraries, but requires:
+
+- **PipeWire** (`pw-record`, `pw-dump`) — system audio stack, cannot be meaningfully bundled
+- **ffmpeg** — audio format conversion
+- **NVIDIA drivers + CUDA runtime** — for GPU transcription
+- ML models (~3-5 GB) — downloaded from HuggingFace on first transcription

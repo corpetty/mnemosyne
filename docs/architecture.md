@@ -8,6 +8,7 @@ Mnemosyne is a desktop application for real-time audio transcription, speaker di
 ┌─────────────────────────────────────────────────────┐
 │  Tauri v2 Shell (Rust)                              │
 │  - Native window management (1200x800 default)      │
+│  - Backend lifecycle (spawn, health poll, cleanup)  │
 │  - File dialogs (tauri-plugin-dialog)               │
 │  - Shell commands (tauri-plugin-shell)              │
 │  - Logging (tauri-plugin-log)                       │
@@ -157,6 +158,42 @@ Heavy ML models (WhisperX, pyannote) are loaded lazily on first use:
 4. The `unload()` method frees GPU memory and clears CUDA cache
 
 This allows the backend to start instantly without waiting for multi-gigabyte model downloads.
+
+## Backend Lifecycle
+
+The Tauri Rust shell manages the Python backend as a child process:
+
+```
+App Start
+  └─ setup() callback
+       ├─ Spawn backend process (in new process group via setsid)
+       │    ├─ Dev:     uv run uvicorn main:app --reload  (from backend/ dir)
+       │    └─ Release: mnemosyne-backend --host --port   (from resource dir)
+       ├─ Store Child in Mutex<Option<Child>>
+       └─ Spawn async health poll task
+            └─ TcpStream::connect("127.0.0.1:8008") every 500ms, 30s timeout
+                 └─ Emit "backend-ready" event to frontend
+
+App Exit (window closed)
+  └─ RunEvent::Exit handler
+       └─ kill_process_tree()
+            ├─ kill(-pid, SIGTERM)   ← kills entire process group
+            ├─ sleep 500ms
+            ├─ kill(-pid, SIGKILL)   ← force kill stragglers
+            └─ wait()                ← reap zombie
+```
+
+### Why Process Groups?
+
+In dev mode, `uv run uvicorn` spawns `uvicorn` as a child process. Killing only the `uv` process leaves `uvicorn` orphaned. By spawning in a new process group (`setsid`) and killing the group (`kill(-pid, ...)`), both processes are terminated cleanly.
+
+### Packaging Architecture
+
+The app does **not** use Tauri's `externalBin` sidecar mechanism. PyInstaller `--onedir` produces a directory (binary + `_internal/` with shared libs), not a single file. Instead:
+
+- The PyInstaller output directory is bundled as a Tauri **resource**
+- Rust spawns it via `std::process::Command` with `current_dir` set to the resource directory
+- This ensures the binary finds its `_internal/` folder at runtime
 
 ## Security Model
 

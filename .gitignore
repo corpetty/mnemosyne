@@ -38,3 +38,14 @@ src-tauri/gen/
 # Runtime data
 data/
 .claude/
+
+# PyInstaller
+backend/dist/
+backend/build/
+backend/*.spec
+
+# Tauri sidecar binaries (built artifacts, keep the placeholder dir)
+src-tauri/binaries/*
+!src-tauri/binaries/mnemosyne-backend-dir/
+src-tauri/binaries/mnemosyne-backend-dir/*
+!src-tauri/binaries/mnemosyne-backend-dir/.gitkeep

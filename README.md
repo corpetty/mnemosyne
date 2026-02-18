@@ -83,20 +83,12 @@ Summarization is LAN-first by default:
    #   OBSIDIAN_VAULT_PATH=/path/to/your/vault  (optional)
    ```
 
-4. **Run in development mode:**
+4. **Run in development mode (single terminal):**
    ```bash
-   # Terminal 1: start the Python backend
-   cd backend && uv run uvicorn main:app --host 127.0.0.1 --port 8008 --reload
-
-   # Terminal 2: start the Tauri dev window
    pnpm tauri dev
    ```
 
-   Or use the convenience script:
-   ```bash
-   pnpm dev:backend  # starts backend
-   pnpm tauri dev    # starts Tauri + Vite dev server
-   ```
+   Tauri automatically spawns the Python backend (via `uv run uvicorn`) and manages its lifecycle. The backend starts on `127.0.0.1:8008` with hot-reload enabled. When you close the window, the backend is automatically shut down.
 
 ## Usage
 
@@ -143,7 +135,10 @@ mnemosyne/
 │       ├── models/               # Pydantic data models
 │       ├── services/             # Session + model lifecycle
 │       └── config.py             # Environment configuration
-├── scripts/                      # Dev helper scripts
+├── scripts/                      # Build and dev scripts
+│   ├── build-backend.sh          # PyInstaller backend build
+│   ├── build-all.sh              # Frontend + backend build orchestrator
+│   └── package.sh                # Full packaging (AppImage/deb)
 └── data/                         # Runtime data (gitignored)
     ├── sessions/                 # JSON session files
     └── recordings/               # Audio files (OGG/Opus)
@@ -156,15 +151,50 @@ All configuration is via environment variables in `backend/.env`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HF_TOKEN` | (required) | HuggingFace token for pyannote diarization models |
-| `WHISPER_MODEL_SIZE` | `large-v2` | WhisperX model size |
+| `WHISPER_MODEL_SIZE` | `medium.en` | WhisperX model size (`base`, `small`, `medium`, `large-v2`, `large-v3`) |
 | `WHISPER_COMPUTE_TYPE` | `float16` | Compute type (`float16`, `int8`) |
-| `WHISPER_BATCH_SIZE` | `16` | Batch size for transcription |
+| `WHISPER_BATCH_SIZE` | `8` | Batch size for transcription (lower = less VRAM) |
 | `OLLAMA_URL` | `http://bugger.ender.verse:11434` | Ollama API endpoint |
 | `VLLM_URL` | `http://bugger.ender.verse:8000` | vLLM API endpoint |
 | `OPENAI_API_KEY` | (optional) | Enables OpenAI provider |
 | `ANTHROPIC_API_KEY` | (optional) | Enables Anthropic provider |
 | `OBSIDIAN_VAULT_PATH` | (optional) | Path to Obsidian vault for export |
 | `OBSIDIAN_SUBFOLDER` | `meetings/mnemosyne` | Subfolder within vault |
+
+## Building & Packaging
+
+### Development
+
+```bash
+pnpm tauri dev    # Starts Tauri + Vite + Python backend (all in one)
+```
+
+### Build the Backend Sidecar
+
+The Python backend is bundled as a self-contained binary using PyInstaller:
+
+```bash
+bash scripts/build-backend.sh
+```
+
+This produces `src-tauri/binaries/mnemosyne-backend-dir/` (~7 GB, includes PyTorch CUDA libraries).
+
+### Build Distributable
+
+```bash
+bash scripts/package.sh    # Builds backend + frontend + Tauri → AppImage/deb
+```
+
+Artifacts are placed in `src-tauri/target/release/bundle/`.
+
+### System Requirements (Target Machine)
+
+The packaged app bundles the Python backend and all ML libraries, but requires:
+
+- **PipeWire** (`pw-record`, `pw-dump`) — system audio stack
+- **ffmpeg** — audio format conversion
+- **NVIDIA drivers + CUDA runtime** — GPU transcription
+- ML models (~3-5 GB) are downloaded from HuggingFace on first transcription
 
 ## Obsidian Export Format
 
@@ -201,7 +231,7 @@ Followed by sections for Summary, Participants, Notes, and the full Transcript w
 
 ## Status
 
-The app is feature-complete for core functionality (Phases 0-7). Packaging as a distributable Linux binary (AppImage/deb) is deferred to Phase 8.
+The app is feature-complete with packaging support (Phases 0-8). The Tauri shell manages the Python backend lifecycle automatically — single-command dev workflow and distributable AppImage/deb builds.
 
 ## License
 

@@ -85,12 +85,20 @@ uv pip install 'av<14'
 
 ### CUDA out of memory
 
-Reduce model size and batch size in `backend/.env`:
+The WhisperX pipeline loads up to three models simultaneously (whisper + wav2vec2 alignment + pyannote diarization). With `large-v2`, peak VRAM can reach 9-11 GB, causing OOM on GPUs with 11 GB or less.
+
+The default `medium.en` with batch size 8 is safe for 8+ GB GPUs. To further reduce VRAM:
 
 ```
-WHISPER_MODEL_SIZE=medium
+WHISPER_MODEL_SIZE=small
 WHISPER_COMPUTE_TYPE=int8
-WHISPER_BATCH_SIZE=8
+WHISPER_BATCH_SIZE=4
+```
+
+For GPUs with 24+ GB VRAM, you can use larger models:
+```
+WHISPER_MODEL_SIZE=large-v2
+WHISPER_BATCH_SIZE=16
 ```
 
 ### Diarization shows only SPEAKER_00
@@ -199,3 +207,57 @@ Obsidian needs to detect the new file. Try:
 1. Click in the Obsidian vault folder pane to refresh
 2. Check the export path matches your vault root
 3. Look in the subfolder (default: `meetings/mnemosyne/`)
+
+---
+
+## Build & Packaging Issues
+
+### PyInstaller build fails with missing hidden imports
+
+PyInstaller may miss dynamic imports from torch, whisperx, or uvicorn. Add the missing module to `scripts/build-backend.sh`:
+
+```bash
+--hidden-import "missing.module.name"
+```
+
+Common ones already included: `torch._C`, `torch._C._jit`, `uvicorn.logging`, `uvicorn.loops.auto`, etc.
+
+### PyInstaller output is very large (~7 GB)
+
+This is expected. PyTorch CUDA libraries alone are ~2 GB. The `--collect-all torch` flag includes all backends. To reduce size:
+- Use `--exclude-module` for unused torch backends (e.g., `torch.distributed`)
+- Consider building without CUDA for CPU-only deployment (not recommended for transcription performance)
+
+### Standalone backend binary can't find `_internal/`
+
+The PyInstaller `--onedir` binary must be run from the directory containing it. The Tauri shell sets `current_dir` to the binary's parent directory. If running manually:
+
+```bash
+cd src-tauri/binaries/mnemosyne-backend-dir
+./mnemosyne-backend --port 8008
+```
+
+### Backend doesn't start when launched from Tauri
+
+Check the Tauri logs for spawn errors:
+1. In dev mode, ensure `uv` is on PATH
+2. In release mode, ensure the resource directory contains the PyInstaller output
+3. Check if port 8008 is already in use: `lsof -i :8008`
+
+### Orphan backend processes after crash
+
+If the app is killed with SIGKILL (or crashes), the `RunEvent::Exit` handler doesn't run and the backend may be orphaned. To clean up:
+
+```bash
+pkill -f mnemosyne-backend    # Kill PyInstaller binary
+pkill -f "uvicorn main:app"   # Kill dev mode backend
+```
+
+### `resource path 'binaries/mnemosyne-backend-dir' doesn't exist` during Tauri build
+
+Tauri validates resource paths at compile time. Run `scripts/build-backend.sh` first, or ensure the placeholder directory exists:
+
+```bash
+mkdir -p src-tauri/binaries/mnemosyne-backend-dir
+touch src-tauri/binaries/mnemosyne-backend-dir/.gitkeep
+```
