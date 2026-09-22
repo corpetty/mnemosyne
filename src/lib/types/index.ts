@@ -113,11 +113,25 @@ export interface SummarizeResponse {
 
 export interface SettingsValues {
   data_dir: string;
+  transcriber: 'whisperx' | 'parakeet' | 'remote';
+  diarizer: 'pyannote' | 'none';
+  language: string;
+  min_speakers: number | null;
+  max_speakers: number | null;
+  auto_transcribe: boolean;
+  local_speaker_name: string;
+  per_source_transcription: boolean;
   hf_token: string;
   whisper_model_size: string;
   whisper_compute_type: string;
   whisper_batch_size: number;
-  auto_transcribe: boolean;
+  parakeet_model: string;
+  parakeet_quantization: string;
+  onnx_provider: 'cpu' | 'cuda';
+  remote_stt_url: string;
+  remote_stt_model: string;
+  remote_stt_api_key: string;
+  diarization_model: string;
   ollama_url: string;
   vllm_url: string;
   openai_api_key: string;

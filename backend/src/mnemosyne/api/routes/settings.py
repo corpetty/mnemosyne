@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 from ...config import SECRET_FIELDS, Settings, config_file_path, save_settings
 from ..context import AppContext, get_ctx
@@ -19,22 +19,14 @@ class SettingsResponse(BaseModel):
     obsidian_vault_exists: bool
 
 
-class SettingsUpdate(BaseModel):
-    """Partial update. Secret fields: empty string means keep, null means clear."""
-
-    whisper_model_size: str | None = None
-    whisper_compute_type: str | None = None
-    whisper_batch_size: int | None = None
-    auto_transcribe: bool | None = None
-    hf_token: str | None = None
-    ollama_url: str | None = None
-    vllm_url: str | None = None
-    openai_api_key: str | None = None
-    anthropic_api_key: str | None = None
-    default_provider: str | None = None
-    default_model: str | None = None
-    obsidian_vault_path: str | None = None
-    obsidian_subfolder: str | None = None
+# Every Settings field except data_dir, all optional. Derived from Settings so a
+# new field is updatable without touching this file. Secrets: "" keeps, null clears.
+_UPDATABLE = {
+    name: (field.annotation | None, None)
+    for name, field in Settings.model_fields.items()
+    if name != "data_dir"
+}
+SettingsUpdate = create_model("SettingsUpdate", **_UPDATABLE)
 
 
 def _response(settings: Settings) -> SettingsResponse:
@@ -63,7 +55,9 @@ async def update_settings(update: SettingsUpdate, ctx: AppContext = Depends(get_
                 current[key] = ""
             elif value != "":
                 current[key] = value
-        elif value is not None:
+        else:
+            # null is a real value for optional fields (e.g. min_speakers);
+            # validation below rejects it for required ones.
             current[key] = value
 
     try:

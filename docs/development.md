@@ -260,6 +260,32 @@ To reduce VRAM usage:
 - Use int8 quantization: `WHISPER_COMPUTE_TYPE=int8`
 - Reduce batch size: `WHISPER_BATCH_SIZE=4`
 
+## Choosing a Transcription Engine
+
+Settings (`Settings` UI or `~/.config/mnemosyne/config.toml`):
+
+| `transcriber` | Needs | Notes |
+|---|---|---|
+| `whisperx` (default) | `uv sync --extra gpu`, NVIDIA GPU | Best word timings; ~5 GB VRAM for `medium.en` |
+| `parakeet` | `uv sync --extra onnx` | Parakeet TDT 0.6B v3, faster than realtime on CPU, no torch. First run downloads the model (~2.4 GB fp32, ~0.6 GB with `parakeet_quantization = "int8"`) |
+| `remote` | a server | Set `remote_stt_url` to an OpenAI-compatible base URL (e.g. `http://127.0.0.1:8484/v1` for earheart-stt, or speaches / whisper.cpp / OpenAI) |
+
+| `diarizer` | Needs | Notes |
+|---|---|---|
+| `pyannote` (default) | `--extra gpu`, `HF_TOKEN` with the model license accepted | `pyannote/speaker-diarization-community-1` |
+| `none` | nothing | single speaker |
+
+Any transcriber works with any diarizer. `parakeet` + `none` or `remote` + `none` run with no torch installed.
+
+## Adding a Transcriber or Diarizer
+
+1. Implement the `Transcriber` or `Diarizer` Protocol from `transcription/engine.py` in
+   `transcription/transcribers/` or `transcription/diarizers/`. Keep heavy imports inside methods.
+2. Add a branch in `transcription/registry.py` and any new settings to `config.py::Settings`
+   (they become editable in the UI automatically; add them to `ENGINE_SETTINGS` so changing them
+   reloads the engine).
+3. Test against `tests/fakes.py::FakeTranscriber` / `FakeDiarizer` patterns; see `tests/test_engine.py`.
+
 ## Adding a New Summarization Provider
 
 1. Create `backend/src/mnemosyne/summarization/my_provider.py`:

@@ -56,7 +56,7 @@ def config_file_path() -> Path:
     return Path(xdg) / "mnemosyne" / "config.toml"
 
 
-SECRET_FIELDS = frozenset({"hf_token", "openai_api_key", "anthropic_api_key"})
+SECRET_FIELDS = frozenset({"hf_token", "openai_api_key", "anthropic_api_key", "remote_stt_api_key"})
 
 
 class Settings(BaseSettings):
@@ -68,12 +68,37 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MNEMOSYNE_DATA_DIR", "data_dir"),
     )
 
-    # Transcription
+    # Transcription pipeline
+    transcriber: str = "whisperx"  # whisperx | parakeet | remote
+    diarizer: str = "pyannote"  # pyannote | none
+    language: str = ""  # blank = auto-detect
+    min_speakers: int | None = None
+    max_speakers: int | None = 10
+    auto_transcribe: bool = True
+    # When mic and system audio are captured separately, the mic file is
+    # labelled with this name instead of being diarized.
+    local_speaker_name: str = "Me"
+    per_source_transcription: bool = True
+
+    # whisperx transcriber
     hf_token: str = ""
     whisper_model_size: str = "medium.en"
     whisper_compute_type: str = "float16"
     whisper_batch_size: int = 8
-    auto_transcribe: bool = True
+    whisper_vad: str = "silero"  # silero | pyannote
+
+    # parakeet transcriber (ONNX Runtime, no torch)
+    parakeet_model: str = "nemo-parakeet-tdt-0.6b-v3"
+    parakeet_quantization: str = ""  # "" (fp32) or "int8"
+    onnx_provider: str = "cpu"  # cpu | cuda
+
+    # remote transcriber: any OpenAI-compatible /audio/transcriptions server
+    remote_stt_url: str = ""  # e.g. http://127.0.0.1:8484/v1
+    remote_stt_model: str = "whisper-1"
+    remote_stt_api_key: str = ""
+
+    # pyannote diarizer
+    diarization_model: str = "pyannote/speaker-diarization-community-1"
 
     # LLM providers
     ollama_url: str = "http://localhost:11434"
@@ -146,6 +171,8 @@ def save_settings(settings: Settings, path: Path | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = settings.model_dump(mode="json")
     data["data_dir"] = str(settings.data_dir)
+    # TOML has no null; omitted keys fall back to defaults on load.
+    data = {k: v for k, v in data.items() if v is not None}
     tmp = path.with_suffix(".toml.tmp")
     tmp.write_text(tomli_w.dumps(data))
     os.chmod(tmp, 0o600)

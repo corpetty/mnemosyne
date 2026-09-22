@@ -32,8 +32,12 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
   add `backend/` to the path). Keep that consistent until the package layout is fixed.
 - ML code is imported lazily inside functions so the API starts without torch. Keep it that way;
   tests rely on it (`tests/fakes.py` provides `FakeEngine` / `FakeProvider`).
-- Engines and providers implement the Protocols in `transcription/engine.py` and
-  `summarization/provider.py`. New implementations go behind those, not into routes.
+- Transcription is two pluggable stages: `Transcriber` and `Diarizer` Protocols in
+  `transcription/engine.py`, joined by `ComposedEngine`, built from settings in
+  `transcription/registry.py`. LLM providers implement `summarization/provider.py`.
+  New implementations go behind those Protocols, never into routes or the pipeline.
+- Long work runs as a Job (`jobs.py`) submitted from a route; progress flows over the
+  `EventBus` to the WebSocket. Routes never call ML code directly.
 - `MNEMOSYNE_DATA_DIR` overrides the data directory; tests set it to a temp dir in `conftest.py`.
 - Frontend state is class-based rune stores in `src/lib/stores/*.svelte.ts`. Cross-store
   communication is via callbacks, not imports, to avoid cycles.
@@ -47,14 +51,15 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
 - Diarization needs `HF_TOKEN` with the pyannote model licenses accepted.
 - `src-tauri/binaries/`, `src-tauri/target/` and `backend/.venv/` are multi-GB build
   artifacts, all gitignored. Do not try to read or grep them.
-- The WebSocket `transcribe` handler runs the whole pipeline inline; nothing else on that
-  socket is processed until it finishes. Known limitation, see the roadmap.
+- WhisperX's default pyannote VAD can report "no speech" on quiet recordings; the
+  `whisper_vad` setting defaults to `silero` for that reason.
 
 ## Roadmap (agreed 2026-09-22)
 
-0. Hygiene: lockfile, GPU extra, ruff, pytest with fakes, this file.
-1. Service refactor: job runner + event stream, SQLite sessions, persisted config, keep
-   per-source audio separate, stop passing file paths from the UI.
-2. Engine interface: WhisperX behind it, pyannote community-1, remote/OpenAI-compatible engine.
+0. Done: lockfile, GPU extra, ruff, pytest with fakes, this file.
+1. Done: job runner + event stream, SQLite sessions, persisted config, per-source audio,
+   UI never passes file paths.
+2. Done: Transcriber/Diarizer protocols; whisperx, parakeet (onnx), remote transcribers;
+   pyannote community-1; per-source speaker labelling.
 3. Live mode: chunked capture into a streaming engine with post-stop refinement.
 4. Packaging: ship the app without torch (engine installed via uv on first run, or remote).

@@ -79,7 +79,12 @@ def test_start_stop_records_sources_and_queues_job(client, ctx, fake_pipewire, f
         ("mic", "Built-in Mic"),
         ("system", "Speakers"),
     ]
-    assert fake_engine.transcribed_paths == [session["audio_file"]]
+    # Per-source transcription: mic labelled as the local speaker, system diarized.
+    assert fake_engine.transcribed_paths == [r["path"] for r in session["recordings"]]
+    assert [(s.kind, s.speaker_label) for s in fake_engine.sources[0]] == [
+        ("mic", "Me"),
+        ("system", None),
+    ]
     assert client.get(f"/api/sessions/{sid}").json()["status"] == "completed"
     assert client.get(f"/api/audio/status/{sid}").json()["exists"] is False
 

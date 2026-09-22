@@ -145,16 +145,38 @@ file (`$XDG_CONFIG_HOME/mnemosyne/config.toml`) → defaults. The Settings UI wr
 reports which fields the environment is overriding. `MNEMOSYNE_DATA_DIR` and `MNEMOSYNE_CONFIG_FILE`
 relocate the data directory and config file (tests use both).
 
-## ML Model Management
+## Transcription Engine
 
-Heavy ML models (WhisperX, pyannote) are loaded lazily on first use:
+Transcription is two pluggable stages behind Protocols in `transcription/engine.py`:
 
-1. `services/model_service.py` imports the engine inside a function, so the API starts without torch
-2. Models are loaded into GPU memory when the first transcription job runs
-3. Models remain in memory for subsequent transcriptions
-4. `unload()` frees GPU memory; changing whisper settings via the API unloads so the next job reloads
+| Stage | Protocol | Implementations |
+|---|---|---|
+| Speech to text | `Transcriber` | `whisperx` (faster-whisper + wav2vec2 alignment, GPU), `parakeet` (NVIDIA Parakeet TDT via onnx-asr, CPU or CUDA, no torch), `remote` (any OpenAI-compatible `/audio/transcriptions` server) |
+| Who spoke | `Diarizer` | `pyannote` (community-1 by default, GPU), `none` |
 
-This allows the backend to start instantly without waiting for multi-gigabyte model downloads.
+`ComposedEngine` (`transcription/composed.py`) joins one of each. `transcription/registry.py` builds it
+from settings (`transcriber`, `diarizer`, and per-implementation options). Heavy imports happen inside
+the builders, so `remote` + `none` never imports torch.
+
+### Per-source speaker attribution
+
+The recorder keeps each captured source as its own file. `services/pipeline.py::sources_for_session`
+turns them into `AudioSource`s:
+
+- mic + system captured: the mic file is labelled `local_speaker_name` (default "Me") and not diarized;
+  the system file is diarized. This gives a guaranteed "you" label and keeps diarization to the remote
+  side, where it matters.
+- mic only: it may contain a whole room, so it is diarized.
+- otherwise: the mixed file is used.
+
+Segments from all sources are merged by start time. `transcription/assign.py` maps diarization turns
+onto segments by time overlap, using word timings for a majority vote when available.
+
+### Model lifecycle
+
+`services/model_service.py` builds the engine lazily on first job (so the API starts without torch),
+keeps it loaded across jobs, and drops it when any engine-related setting changes so the next job
+rebuilds with the new configuration. `unload()` frees GPU memory.
 
 ## Backend Lifecycle
 

@@ -1,26 +1,87 @@
-"""Transcription engine protocol."""
+"""Transcription interfaces.
+
+The work is split into two independently pluggable stages:
+
+- `Transcriber`: audio -> text segments with timestamps (and words when available).
+- `Diarizer`:    audio -> speaker turns.
+
+`TranscriptionEngine` is what the pipeline consumes. `ComposedEngine` builds one
+from a Transcriber and a Diarizer and handles per-source speaker labelling.
+"""
+
+from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Literal, Protocol, runtime_checkable
+
+from pydantic import BaseModel
 
 from ..models.transcript import TranscriptSegment
 
 
+class SpeakerTurn(BaseModel):
+    start: float
+    end: float
+    speaker: str
+
+
+SourceKind = Literal["mic", "system", "mixed"]
+
+
+@dataclass(frozen=True)
+class AudioSource:
+    """One audio file to transcribe.
+
+    `speaker_label` set means "everything in this file is this speaker" and the
+    diarizer is skipped for it (the local mic when system audio is captured
+    separately). Otherwise the file is diarized.
+    """
+
+    path: str
+    kind: SourceKind = "mixed"
+    speaker_label: str | None = None
+
+
+class _Loadable(Protocol):
+    name: str
+
+    def is_loaded(self) -> bool: ...
+
+    async def load(self) -> None: ...
+
+    async def unload(self) -> None: ...
+
+
+@runtime_checkable
+class Transcriber(_Loadable, Protocol):
+    async def transcribe(
+        self, audio_path: str, language: str | None = None
+    ) -> list[TranscriptSegment]:
+        """Return time-ordered segments. `speaker` is left as "UNKNOWN"."""
+        ...
+
+
+@runtime_checkable
+class Diarizer(_Loadable, Protocol):
+    async def diarize(
+        self,
+        audio_path: str,
+        min_speakers: int | None = None,
+        max_speakers: int | None = None,
+    ) -> list[SpeakerTurn]: ...
+
+
+@runtime_checkable
 class TranscriptionEngine(Protocol):
-    """Interface for transcription + diarization engines."""
+    """What the pipeline stage drives."""
 
-    async def transcribe(self, audio_path: str) -> AsyncIterator[TranscriptSegment]:
-        """Transcribe audio file, yielding segments as they complete."""
-        ...
+    def is_loaded(self) -> bool: ...
 
-    def is_loaded(self) -> bool:
-        """Whether the ML models are loaded in memory."""
-        ...
+    async def load(self) -> None: ...
 
-    async def load(self) -> None:
-        """Load ML models into GPU memory."""
-        ...
+    async def unload(self) -> None: ...
 
-    async def unload(self) -> None:
-        """Unload ML models and free GPU memory."""
+    def transcribe_sources(self, sources: list[AudioSource]) -> AsyncIterator[TranscriptSegment]:
+        """Transcribe one or more sources, yielding segments in time order."""
         ...

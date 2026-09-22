@@ -22,15 +22,10 @@ class ModelService:
     def engine(self) -> TranscriptionEngine:
         if self._engine is None:
             # Imported lazily so the API starts without torch.
-            from ..transcription.whisperx_engine import WhisperXEngine
+            from ..transcription.registry import build_engine
 
-            s = self.settings
-            self._engine = WhisperXEngine(
-                model_size=s.whisper_model_size,
-                compute_type=s.whisper_compute_type,
-                batch_size=s.whisper_batch_size,
-                hf_token=s.hf_token,
-            )
+            self._engine = build_engine(self.settings)
+            logger.info("Built transcription engine: %s", getattr(self._engine, "name", "?"))
         return self._engine
 
     async def ensure_loaded(self) -> TranscriptionEngine:
@@ -45,16 +40,9 @@ class ModelService:
             self._engine = None
 
     async def apply_settings(self, settings: Settings) -> None:
-        """Adopt new settings; drop the loaded engine if its config changed."""
+        """Adopt new settings; drop the engine if anything it was built from changed."""
+        from ..transcription.registry import ENGINE_SETTINGS
+
         old, self.settings = self.settings, settings
-        changed = any(
-            getattr(old, f) != getattr(settings, f)
-            for f in (
-                "whisper_model_size",
-                "whisper_compute_type",
-                "whisper_batch_size",
-                "hf_token",
-            )
-        )
-        if changed:
+        if any(getattr(old, f) != getattr(settings, f) for f in ENGINE_SETTINGS):
             await self.unload()

@@ -8,11 +8,13 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 
 ## Features
 
-- **Real-time transcription** using WhisperX (faster-whisper + word-level alignment)
-- **Speaker diarization** using pyannote.audio 3.1
+- **Pluggable transcription**: WhisperX (GPU), NVIDIA Parakeet TDT via ONNX (CPU, no torch), or any OpenAI-compatible speech server
+- **Speaker diarization** using pyannote.audio (community-1), or none
+- **Per-source attribution**: mic and system audio are captured separately, so your own speech is labelled with your name and only the remote side is diarized
 - **Pluggable summarization** via Ollama (LAN default), vLLM, OpenAI, or Anthropic
 - **Multiple audio sources** — capture system audio and microphone simultaneously via PipeWire
-- **Session management** — create, rename, delete sessions with full persistence to disk
+- **Session management** — SQLite-backed sessions; transcription runs as background jobs with live progress
+- **Settings UI** — engine, models, providers and keys are configured in-app and persisted to `~/.config/mnemosyne/config.toml`
 - **Obsidian integration** — export sessions as markdown with YAML frontmatter directly to your vault
 - **Desktop app** — native Linux window via Tauri v2 (not a browser tab)
 - **Storage-friendly** — audio saved as OGG/Opus (~12x smaller than WAV)
@@ -126,7 +128,9 @@ mnemosyne/
 │   └── src/mnemosyne/
 │       ├── api/                  # FastAPI routes + WebSocket
 │       ├── audio/                # PipeWire capture + Opus encoding
-│       ├── transcription/        # WhisperX engine
+│       ├── transcription/        # Transcriber/Diarizer protocols, whisperx, parakeet, remote, pyannote
+│       ├── storage/              # SQLite session repository
+│       ├── jobs.py, events.py    # Background jobs + event bus
 │       ├── summarization/        # Ollama, vLLM, OpenAI, Anthropic providers
 │       ├── export/               # Obsidian markdown exporter
 │       ├── models/               # Pydantic data models
@@ -137,8 +141,8 @@ mnemosyne/
 │   ├── build-all.sh              # Frontend + backend build orchestrator
 │   └── package.sh                # Full packaging (AppImage/deb)
 └── data/                         # Runtime data (gitignored)
-    ├── sessions/                 # JSON session files
-    └── recordings/               # Audio files (OGG/Opus)
+    ├── mnemosyne.db              # SQLite: sessions, segments, recordings
+    └── recordings/               # Audio files (OGG/Opus), one per source + mixed
 ```
 
 ## Configuration

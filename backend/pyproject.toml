@@ -25,6 +25,10 @@ gpu = [
     "torchaudio==2.8.0",
     "whisperx>=3.8.1,<4",
 ]
+# Parakeet via ONNX Runtime (CPU). No torch. Add onnxruntime-gpu yourself for CUDA.
+onnx = [
+    "onnx-asr[cpu,hub]>=0.12",
+]
 
 [dependency-groups]
 dev = [
