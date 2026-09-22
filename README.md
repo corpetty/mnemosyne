@@ -122,7 +122,7 @@ mnemosyne/
 │   └── routes/                   # SPA page
 ├── src-tauri/                    # Tauri v2 Rust shell
 │   ├── tauri.conf.json
-│   └── src/lib.rs
+│   └── src/lib.rs                # Backend install (uv) + lifecycle
 ├── backend/                      # Python FastAPI backend
 │   ├── pyproject.toml
 │   ├── main.py
@@ -138,9 +138,10 @@ mnemosyne/
 │       ├── services/             # Session + model lifecycle
 │       └── config.py             # Environment configuration
 ├── scripts/                      # Build and dev scripts
-│   ├── build-backend.sh          # PyInstaller backend build
-│   ├── build-all.sh              # Frontend + backend build orchestrator
-│   └── package.sh                # Full packaging (AppImage/deb)
+│   ├── stage-backend.sh          # Copy backend source + lockfile into the bundle
+│   ├── fetch-uv.sh               # Download the pinned uv sidecar
+│   ├── build-all.sh              # Frontend + stage + fetch (Tauri beforeBuildCommand)
+│   └── package.sh                # pnpm tauri build wrapper
 └── data/                         # Runtime data (gitignored)
     ├── mnemosyne.db              # SQLite: sessions, segments, recordings
     └── recordings/               # Audio files (OGG/Opus), one per source + mixed
@@ -174,32 +175,34 @@ pnpm test:backend   # Backend tests (no GPU needed; ML is faked)
 pnpm lint:backend   # ruff
 ```
 
-### Build the Backend Sidecar
-
-The Python backend is bundled as a self-contained binary using PyInstaller:
-
-```bash
-bash scripts/build-backend.sh
-```
-
-This produces `src-tauri/binaries/mnemosyne-backend-dir/` (~7 GB, includes PyTorch CUDA libraries).
-
 ### Build Distributable
 
 ```bash
-bash scripts/package.sh    # Builds backend + frontend + Tauri → AppImage/deb
+bash scripts/package.sh                 # AppImage + deb + rpm
+bash scripts/package.sh --bundles deb   # just one
 ```
 
-Artifacts are placed in `src-tauri/target/release/bundle/`.
+Tauri runs `scripts/build-all.sh` first, which builds the frontend, stages the backend source tree
+and lockfile into `src-tauri/resources/backend/`, and downloads the pinned `uv` release as a sidecar.
+Artifacts land in `src-tauri/target/release/bundle/`. Bundles are small (tens of MB): **no Python, no
+torch, no models are shipped**.
+
+### First launch on a target machine
+
+The app installs its own backend into `~/.local/share/com.corpetty.mnemosyne/`:
+
+1. `uv sync` creates a venv with a managed Python 3.13 and the locked dependencies (`onnx` extra always;
+   `gpu` extra when `nvidia-smi` is on the PATH). Progress is shown in the window. Needs internet once;
+   later launches reuse it until an update changes `uv.lock`.
+2. The backend starts from that venv. Session data lives in `.../data/`, settings in
+   `~/.config/mnemosyne/config.toml`.
+3. ML models download from HuggingFace on first use (Parakeet int8 ~0.6 GB; WhisperX + pyannote 3 to 5 GB).
 
 ### System Requirements (Target Machine)
 
-The packaged app bundles the Python backend and all ML libraries, but requires:
-
-- **PipeWire** (`pw-record`, `pw-dump`) — system audio stack
-- **ffmpeg** — audio format conversion
-- **NVIDIA drivers + CUDA runtime** — GPU transcription
-- ML models (~3-5 GB) are downloaded from HuggingFace on first transcription
+- **PipeWire** (`pw-record`, `pw-dump`) and **ffmpeg** (declared as package dependencies)
+- **NVIDIA drivers** if you want the GPU engines; CPU-only machines run Parakeet
+- Internet on first launch and first transcription
 
 ## Obsidian Export Format
 
@@ -236,7 +239,9 @@ Followed by sections for Summary, Participants, Notes, and the full Transcript w
 
 ## Status
 
-The app is feature-complete with packaging support (Phases 0-8). The Tauri shell manages the Python backend lifecycle automatically — single-command dev workflow and distributable AppImage/deb builds.
+v3 (2026-09): background jobs and event stream, SQLite sessions, in-app settings, pluggable
+transcription engines (WhisperX, Parakeet ONNX, remote), pyannote community-1, live transcript while
+recording, and torch-free packaging (the app installs its backend with uv on first launch).
 
 ## License
 

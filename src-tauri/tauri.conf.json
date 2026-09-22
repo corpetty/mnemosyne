@@ -1,13 +1,13 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Mnemosyne",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.corpetty.mnemosyne",
   "build": {
     "frontendDist": "../build",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "bash ../scripts/build-all.sh"
+    "beforeBuildCommand": "bash scripts/build-all.sh"
   },
   "app": {
     "windows": [
@@ -25,7 +25,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage", "deb"],
+    "targets": [
+      "appimage",
+      "deb",
+      "rpm"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -34,15 +38,27 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "binaries/mnemosyne-backend-dir": "backend"
+      "resources/backend": "backend"
     },
     "linux": {
       "deb": {
-        "depends": ["pipewire", "ffmpeg"]
+        "depends": [
+          "pipewire",
+          "ffmpeg"
+        ]
       },
       "appimage": {
         "bundleMediaFramework": false
+      },
+      "rpm": {
+        "depends": [
+          "pipewire",
+          "ffmpeg"
+        ]
       }
-    }
+    },
+    "externalBin": [
+      "binaries/mnemosyne-uv"
+    ]
   }
 }

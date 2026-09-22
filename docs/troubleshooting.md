@@ -4,7 +4,7 @@
 
 ### `ModuleNotFoundError: No module named 'torch'`
 
-WhisperX and PyTorch live in the optional `gpu` extra. Install it:
+WhisperX and PyTorch live in the optional `gpu` extra (dev). Install it:
 
 ```bash
 cd backend

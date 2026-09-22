@@ -34,11 +34,12 @@ onnx = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.9",
-    "pyinstaller>=6.19",
 ]
 
 [tool.uv]
 managed = true
+# The backend is an application, not an installable package.
+package = false
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

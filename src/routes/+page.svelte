@@ -17,6 +17,10 @@
 	import { toastState } from '$lib/stores/toast.svelte.js';
 
 	let backendStatus = $state<'checking' | 'connected' | 'unreachable'>('checking');
+	// Progress from the Tauri shell while it installs/starts the backend (release builds).
+	let shellStage = $state<'installing' | 'starting' | 'ready' | 'error' | null>(null);
+	let shellMessage = $state('');
+	let shellLog = $state<string[]>([]);
 	let showSettings = $state(false);
 	let sidebarCollapsed = $state(false);
 
@@ -26,26 +30,66 @@
 
 	$effect(() => {
 		let unsubscribeSessions: (() => void) | null = null;
-		getHealth()
-			.then(() => {
-				backendStatus = 'connected';
-				wsState.connect();
-				transcriptState.init();
-				transcriptState.onComplete((sessionId) => {
-					if (sessionState.activeSession?.id === sessionId) sessionState.refreshActive();
-					sessionState.loadSessions();
-					toastState.success('Transcription complete');
-				});
-				// Keep the sidebar in step with backend session state changes.
-				unsubscribeSessions = wsState.onMessage((msg) => {
-					if (msg.type === 'session') sessionState.loadSessions();
-				});
-			})
-			.catch(() => {
-				backendStatus = 'unreachable';
+		let unlistenShell: (() => void) | null = null;
+		let cancelled = false;
+		let attempts = 0;
+
+		function onConnected() {
+			backendStatus = 'connected';
+			wsState.connect();
+			transcriptState.init();
+			transcriptState.onComplete((sessionId) => {
+				if (sessionState.activeSession?.id === sessionId) sessionState.refreshActive();
+				sessionState.loadSessions();
+				toastState.success('Transcription complete');
 			});
+			// Keep the sidebar in step with backend session state changes.
+			unsubscribeSessions = wsState.onMessage((msg) => {
+				if (msg.type === 'session') sessionState.loadSessions();
+			});
+		}
+
+		// Poll until the backend answers. In release builds the first launch
+		// installs dependencies and can take minutes; the shell reports progress.
+		async function connect() {
+			while (!cancelled) {
+				try {
+					await getHealth();
+					if (!cancelled) onConnected();
+					return;
+				} catch {
+					attempts++;
+					if (attempts >= 3 && shellStage !== 'installing' && shellStage !== 'starting') {
+						backendStatus = 'unreachable';
+					}
+					await new Promise((r) => setTimeout(r, 2000));
+				}
+			}
+		}
+
+		// Shell events only exist inside Tauri; ignore when running in a plain browser.
+		import('@tauri-apps/api/event')
+			.then(({ listen }) =>
+				listen<{ stage: typeof shellStage; message: string }>('backend-status', (e) => {
+					shellStage = e.payload.stage;
+					shellMessage = e.payload.message;
+					if (e.payload.stage === 'installing') {
+						shellLog = [...shellLog.slice(-7), e.payload.message];
+					}
+					if (e.payload.stage === 'error') backendStatus = 'unreachable';
+				})
+			)
+			.then((un) => {
+				if (cancelled) un();
+				else unlistenShell = un;
+			})
+			.catch(() => {});
+
+		connect();
 
 		return () => {
+			cancelled = true;
+			unlistenShell?.();
 			unsubscribeSessions?.();
 			transcriptState.destroy();
 			wsState.disconnect();
@@ -251,17 +295,28 @@
 						<h2 class="text-2xl font-light text-gray-400">Mnemosyne</h2>
 						<p class="text-sm text-gray-500">Real-time transcription, diarization, and summarization</p>
 						{#if backendStatus === 'checking'}
-							<div class="flex items-center justify-center gap-2 text-yellow-500">
-								<span class="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></span>
-								<span class="text-sm">Connecting to backend...</span>
+							<div class="space-y-2">
+								<div class="flex items-center justify-center gap-2 text-yellow-500">
+									<span class="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></span>
+									<span class="text-sm">
+										{#if shellStage === 'installing'}Installing backend (first run){:else if shellStage === 'starting'}Starting backend{:else}Connecting to backend{/if}...
+									</span>
+								</div>
+								{#if shellStage === 'installing' && shellLog.length > 0}
+									<pre class="mx-auto max-w-lg text-left text-[11px] leading-4 text-gray-600 bg-gray-900 border border-gray-800 rounded p-2 overflow-hidden whitespace-pre-wrap">{shellLog.join('\n')}</pre>
+								{/if}
 							</div>
 						{:else if backendStatus === 'unreachable'}
 							<div class="space-y-2">
 								<div class="flex items-center justify-center gap-2 text-red-400">
 									<span class="w-2 h-2 rounded-full bg-red-500"></span>
-									<span class="text-sm">Backend unreachable on port 8008</span>
+									<span class="text-sm">{shellStage === 'error' ? 'Backend failed to start' : 'Backend unreachable on port 8008'}</span>
 								</div>
-								<p class="text-xs text-gray-600">Make sure the Python backend is running</p>
+								{#if shellStage === 'error'}
+									<pre class="mx-auto max-w-lg text-left text-[11px] leading-4 text-red-300/80 bg-gray-900 border border-gray-800 rounded p-2 whitespace-pre-wrap">{shellMessage}</pre>
+								{:else}
+									<p class="text-xs text-gray-600">Make sure the Python backend is running (still retrying)</p>
+								{/if}
 							</div>
 						{:else}
 							<button

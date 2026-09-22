@@ -319,48 +319,33 @@ class SummarizationService:
 
 ## Building for Production
 
-### Backend Sidecar (PyInstaller)
-
-The Python backend is bundled as a self-contained binary using PyInstaller `--onedir` mode:
-
 ```bash
-bash scripts/build-backend.sh
+bash scripts/package.sh                # AppImage + deb + rpm into src-tauri/target/release/bundle/
+bash scripts/package.sh --bundles deb  # one target
 ```
 
-This:
-1. Syncs dependencies with `uv sync`
-2. Runs PyInstaller with `--collect-all` for torch, whisperx, pyannote, etc.
-3. Copies the output directory to `src-tauri/binaries/mnemosyne-backend-dir/`
+`pnpm tauri build` runs `scripts/build-all.sh` first:
 
-The output is ~7 GB due to PyTorch CUDA libraries. The binary accepts `--host` and `--port` CLI arguments.
+1. `pnpm build` – static frontend into `build/`
+2. `scripts/stage-backend.sh` – copies `backend/{pyproject.toml,uv.lock,main.py,.python-version,src/}`
+   into `src-tauri/resources/backend/` (no `__pycache__`, no tests, no venv)
+3. `scripts/fetch-uv.sh` – downloads the pinned uv release (checksum verified) to
+   `src-tauri/binaries/mnemosyne-uv-<triple>`; Tauri bundles it as the `mnemosyne-uv` sidecar
 
-### Full Package
+There is no PyInstaller step any more. See `docs/architecture.md` ("Backend Lifecycle") for what the
+app does on first launch. To force a reinstall on a machine, delete
+`~/.local/share/com.corpetty.mnemosyne/venv`.
+
+### Testing a bundle without installing it
 
 ```bash
-bash scripts/package.sh
+mkdir -p /tmp/mn && cd /tmp/mn
+ar x ../path/to/mnemosyne_0.2.0_amd64.deb && tar -xf data.tar.gz
+./usr/bin/mnemosyne      # resources resolve relative to the binary
 ```
-
-This builds the backend sidecar, then runs `pnpm tauri build` which:
-1. Builds the SvelteKit frontend (`pnpm build`)
-2. Compiles the Rust shell
-3. Bundles everything into AppImage and/or deb packages
-
-Artifacts are placed in `src-tauri/target/release/bundle/`.
-
-### How Packaging Works
-
-The Tauri shell does **not** use the formal `externalBin` sidecar mechanism. Instead:
-
-- PyInstaller produces a **directory** (`mnemosyne-backend` binary + `_internal/` with shared libs)
-- The entire directory is bundled as a Tauri **resource** (configured in `tauri.conf.json`)
-- At runtime, Rust spawns the binary via `std::process::Command` with `current_dir` set to the resource directory (so `_internal/` is found correctly)
-- Process groups (`setsid`) ensure the backend and all its children are killed on app exit
 
 ### System Requirements (Target Machine)
 
-The packaged app bundles Python, PyTorch, and all ML libraries, but requires:
-
-- **PipeWire** (`pw-record`, `pw-dump`) — system audio stack, cannot be meaningfully bundled
-- **ffmpeg** — audio format conversion
-- **NVIDIA drivers + CUDA runtime** — for GPU transcription
-- ML models (~3-5 GB) — downloaded from HuggingFace on first transcription
+- **PipeWire** (`pw-record`, `pw-dump`) and **ffmpeg**
+- **NVIDIA drivers** for the GPU engines (the installer adds the `gpu` extra when `nvidia-smi` exists)
+- Internet on first launch (Python + wheels) and first transcription (models)

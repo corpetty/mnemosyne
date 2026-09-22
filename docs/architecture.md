@@ -191,39 +191,44 @@ rebuilds with the new configuration. `unload()` frees GPU memory.
 
 ## Backend Lifecycle
 
-The Tauri Rust shell manages the Python backend as a child process:
+The Tauri Rust shell (`src-tauri/src/lib.rs`) supervises the Python backend from a worker thread and
+reports progress to the UI as `backend-status` events (`installing`, `starting`, `ready`, `error`):
 
 ```
 App Start
-  └─ setup() callback
-       ├─ Spawn backend process (in new process group via setsid)
-       │    ├─ Dev:     uv run uvicorn main:app --reload  (from backend/ dir)
-       │    └─ Release: mnemosyne-backend --host --port   (from resource dir)
-       ├─ Store Child in Mutex<Option<Child>>
-       └─ Spawn async health poll task
-            └─ TcpStream::connect("127.0.0.1:8008") every 500ms, 30s timeout
-                 └─ Emit "backend-ready" event to frontend
+  └─ setup() -> supervisor thread
+       ├─ Dev:     uv run uvicorn main:app --reload      (from backend/)
+       └─ Release:
+            ├─ resolve layout: resources/backend (source + uv.lock), sidecar mnemosyne-uv,
+            │                  ~/.local/share/com.corpetty.mnemosyne/{venv,data}
+            ├─ if venv missing or .installed-uv.lock != uv.lock:
+            │     uv sync --frozen --no-dev --extra onnx [--extra gpu if nvidia-smi on PATH]
+            │     (stderr lines streamed as "installing" events; stamp written on success)
+            └─ venv/bin/python main.py --host 127.0.0.1 --port 8008
+                  env MNEMOSYNE_DATA_DIR=.../data, cwd=resources/backend
+       ├─ Child stored in Mutex<Option<Child>> (spawned in its own process group via setsid)
+       └─ TCP poll on :8008 (120 s) -> "ready" / "error", plus legacy "backend-ready"
 
-App Exit (window closed)
-  └─ RunEvent::Exit handler
-       └─ kill_process_tree()
-            ├─ kill(-pid, SIGTERM)   ← kills entire process group
-            ├─ sleep 500ms
-            ├─ kill(-pid, SIGKILL)   ← force kill stragglers
-            └─ wait()                ← reap zombie
+App Exit
+  └─ RunEvent::Exit -> kill(-pgid, SIGTERM) ... SIGKILL ... wait()
 ```
 
-### Why Process Groups?
+### Packaging
 
-In dev mode, `uv run uvicorn` spawns `uvicorn` as a child process. Killing only the `uv` process leaves `uvicorn` orphaned. By spawning in a new process group (`setsid`) and killing the group (`kill(-pid, ...)`), both processes are terminated cleanly.
+Nothing heavy is shipped. The bundle contains the frontend, the Rust shell, the backend *source*
+and `uv.lock` as resources, and a pinned `uv` binary as a Tauri `externalBin` sidecar (installed
+as `mnemosyne-uv` so it never shadows a user's own `uv`). Python itself comes from uv's managed
+python-build-standalone download on first run; ML wheels come from the locked indexes; models come
+from HuggingFace on first use.
 
-### Packaging Architecture
+Consequences:
+- Bundles are tens of MB instead of 7 GB, and a release does not have to embed CUDA libraries.
+- The same bundle works on CPU-only machines (Parakeet) and GPU machines (WhisperX + pyannote).
+- Updating the app re-runs `uv sync` only when `uv.lock` changed.
+- The install needs network once. An offline installer would pre-seed uv's cache; not done yet.
 
-The app does **not** use Tauri's `externalBin` sidecar mechanism. PyInstaller `--onedir` produces a directory (binary + `_internal/` with shared libs), not a single file. Instead:
-
-- The PyInstaller output directory is bundled as a Tauri **resource**
-- Rust spawns it via `std::process::Command` with `current_dir` set to the resource directory
-- This ensures the binary finds its `_internal/` folder at runtime
+`scripts/build-all.sh` (Tauri's `beforeBuildCommand`) builds the frontend, stages the backend into
+`src-tauri/resources/backend/`, and fetches the sidecar into `src-tauri/binaries/`.
 
 ## Security Model
 
