@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..engine import SpeakerTurn
+from ..engine import DiarizationResult
 
 
 class NoDiarizer:
@@ -22,5 +22,5 @@ class NoDiarizer:
         audio_path: str,
         min_speakers: int | None = None,
         max_speakers: int | None = None,
-    ) -> list[SpeakerTurn]:
-        return []
+    ) -> DiarizationResult:
+        return DiarizationResult(turns=[])

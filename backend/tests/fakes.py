@@ -8,7 +8,7 @@ so the API and services can be exercised without torch, CUDA, or network access.
 from collections.abc import AsyncIterator
 
 from src.mnemosyne.models.transcript import TranscriptSegment
-from src.mnemosyne.transcription.engine import AudioSource, SpeakerTurn
+from src.mnemosyne.transcription.engine import AudioSource, DiarizationResult, SpeakerTurn
 
 FAKE_SEGMENTS = [
     TranscriptSegment(text="Hello everyone.", speaker="SPEAKER_00", start=0.0, end=1.2),
@@ -26,6 +26,8 @@ class FakeEngine:
         self.loaded = False
         self.transcribed_paths: list[str] = []
         self.sources: list[list[AudioSource]] = []
+        self.last_speaker_embeddings: dict[str, list[float]] = {}
+        self.last_dropped_echo = 0
 
     def is_loaded(self) -> bool:
         return self.loaded
@@ -79,7 +81,11 @@ class FakeTranscriber:
 class FakeDiarizer:
     name = "fake-diarizer"
 
-    def __init__(self, turns: list[SpeakerTurn] | None = None):
+    def __init__(
+        self,
+        turns: list[SpeakerTurn] | None = None,
+        embeddings: dict[str, list[float]] | None = None,
+    ):
         self.turns = (
             turns
             if turns is not None
@@ -89,6 +95,7 @@ class FakeDiarizer:
                 SpeakerTurn(start=3.1, end=5.0, speaker="SPEAKER_00"),
             ]
         )
+        self.embeddings = embeddings or {}
         self.loaded = False
         self.calls: list[str] = []
 
@@ -103,7 +110,7 @@ class FakeDiarizer:
 
     async def diarize(self, audio_path: str, min_speakers=None, max_speakers=None):
         self.calls.append(audio_path)
-        return list(self.turns)
+        return DiarizationResult(turns=list(self.turns), embeddings=dict(self.embeddings))
 
 
 class FakeProvider:

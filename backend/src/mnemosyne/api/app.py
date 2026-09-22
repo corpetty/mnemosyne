@@ -12,6 +12,7 @@ from .routes.jobs import router as jobs_router
 from .routes.models import router as models_router
 from .routes.sessions import router as sessions_router
 from .routes.settings import router as settings_router
+from .routes.speakers import router as speakers_router
 from .websocket import router as ws_router
 
 
@@ -39,6 +40,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(export_router)
     app.include_router(settings_router)
     app.include_router(jobs_router)
+    app.include_router(speakers_router)
     app.include_router(ws_router)
 
     @app.get("/health")

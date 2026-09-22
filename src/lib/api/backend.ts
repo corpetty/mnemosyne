@@ -4,9 +4,11 @@ import type {
   ProviderModels,
   RecordingStatus,
   SessionDetail,
+  SessionSpeaker,
   SessionSummary,
   SettingsResponse,
   SettingsUpdate,
+  SpeakerProfile,
   StartRecordingResponse,
   StopRecordingResponse,
   SummarizeResponse
@@ -143,4 +145,33 @@ export async function getSettings(): Promise<SettingsResponse> {
 
 export async function updateSettings(update: SettingsUpdate): Promise<SettingsResponse> {
   return request('/api/settings', { method: 'PUT', body: JSON.stringify(update) });
+}
+
+// Speakers
+export async function getSessionSpeakers(sessionId: string): Promise<SessionSpeaker[]> {
+  return request(`/api/sessions/${sessionId}/speakers`);
+}
+
+export async function renameSessionSpeaker(
+  sessionId: string,
+  label: string,
+  name: string,
+  enroll = true
+): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/speakers/rename`, {
+    method: 'POST',
+    body: JSON.stringify({ label, name, enroll })
+  });
+}
+
+export async function listSpeakers(): Promise<SpeakerProfile[]> {
+  return request('/api/speakers');
+}
+
+export async function renameSpeakerProfile(id: string, name: string): Promise<SpeakerProfile> {
+  return request(`/api/speakers/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+}
+
+export async function deleteSpeakerProfile(id: string): Promise<void> {
+  return request(`/api/speakers/${id}`, { method: 'DELETE' });
 }

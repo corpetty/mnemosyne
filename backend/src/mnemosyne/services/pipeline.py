@@ -89,12 +89,33 @@ def transcribe_session(app: AppContext, session_id: str):
                     }
                 )
 
+            embeddings = dict(getattr(engine, "last_speaker_embeddings", {}) or {})
+            mapping = app.speakers.match(embeddings) if settings.auto_label_speakers else {}
+            if embeddings:
+                # Store under the final labels so a later rename can still enroll.
+                app.repo.set_session_embeddings(
+                    session_id, {mapping.get(k, k): v for k, v in embeddings.items()}
+                )
+            if mapping:
+                segments = [
+                    s.model_copy(update={"speaker": mapping.get(s.speaker, s.speaker)})
+                    for s in segments
+                ]
+                ctx.emit(
+                    {
+                        "type": "status",
+                        "session_id": session_id,
+                        "message": "Recognized " + ", ".join(sorted(mapping.values())),
+                    }
+                )
+            dropped = getattr(engine, "last_dropped_echo", 0)
+
             app.sessions.set_transcript(session_id, segments)
             ctx.update("Transcription complete")
             ctx.emit(
                 {"type": "status", "session_id": session_id, "message": "Transcription complete"}
             )
-            return {"segments": len(segments), "sources": len(sources)}
+            return {"segments": len(segments), "sources": len(sources), "echo_dropped": dropped}
         except Exception as e:
             app.sessions.set_status(session_id, SessionStatus.ERROR)
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})

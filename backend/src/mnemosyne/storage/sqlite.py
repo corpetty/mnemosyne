@@ -14,11 +14,12 @@ from datetime import datetime
 from pathlib import Path
 
 from ..models.session import Recording, Session, SessionStatus, SessionSummary
+from ..models.speaker import SpeakerProfile
 from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -57,6 +58,20 @@ CREATE TABLE IF NOT EXISTS recordings (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_recordings_session ON recordings(session_id);
+CREATE TABLE IF NOT EXISTS speakers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    embedding TEXT NOT NULL,
+    sample_count INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_speakers (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    embedding TEXT NOT NULL,
+    PRIMARY KEY (session_id, label)
+);
 """
 
 
@@ -249,6 +264,114 @@ class SessionRepository:
         with self._lock, self._conn:
             cur = self._conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
         return cur.rowcount > 0
+
+    # ---- speakers ------------------------------------------------------
+
+    def set_session_embeddings(self, session_id: str, embeddings: dict[str, list[float]]) -> None:
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO session_speakers(session_id, label, embedding)"
+                " VALUES (?,?,?)",
+                [(session_id, label, json.dumps(vec)) for label, vec in embeddings.items()],
+            )
+
+    def get_session_embeddings(self, session_id: str) -> dict[str, list[float]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT label, embedding FROM session_speakers WHERE session_id=?", (session_id,)
+            ).fetchall()
+        return {r["label"]: json.loads(r["embedding"]) for r in rows}
+
+    def relabel_session_speaker(self, session_id: str, old: str, new: str) -> Session | None:
+        """Rename a speaker label everywhere in one session (segments, words,
+        participants, stored embedding)."""
+        session = self.get(session_id)
+        if session is None:
+            return None
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE segments SET speaker=? WHERE session_id=? AND speaker=?",
+                (new, session_id, old),
+            )
+            self._conn.execute(
+                "UPDATE OR REPLACE session_speakers SET label=? WHERE session_id=? AND label=?",
+                (new, session_id, old),
+            )
+            participants = [new if p == old else p for p in session.participants]
+            participants = list(dict.fromkeys(participants))
+            self._conn.execute(
+                "UPDATE sessions SET participants=?, updated_at=? WHERE id=?",
+                (json.dumps(participants), datetime.now().isoformat(), session_id),
+            )
+        return self.get(session_id)
+
+    def list_speakers(self) -> list[SpeakerProfile]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM speakers ORDER BY name").fetchall()
+        return [self._speaker(r) for r in rows]
+
+    def get_speaker(self, speaker_id: str) -> SpeakerProfile | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM speakers WHERE id=?", (speaker_id,)).fetchone()
+        return self._speaker(row) if row else None
+
+    def get_speaker_by_name(self, name: str) -> SpeakerProfile | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM speakers WHERE name=?", (name,)).fetchone()
+        return self._speaker(row) if row else None
+
+    def upsert_speaker_sample(self, name: str, embedding: list[float]) -> SpeakerProfile:
+        """Add one voice sample to `name`, keeping a running mean embedding."""
+        existing = self.get_speaker_by_name(name)
+        now = datetime.now().isoformat()
+        with self._lock, self._conn:
+            if existing is None:
+                profile = SpeakerProfile(name=name, embedding=embedding, sample_count=1)
+                self._conn.execute(
+                    "INSERT INTO speakers"
+                    "(id, name, embedding, sample_count, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (profile.id, name, json.dumps(embedding), 1, now, now),
+                )
+                return profile
+            n = existing.sample_count
+            if len(existing.embedding) == len(embedding):
+                mean = [
+                    (o * n + v) / (n + 1)
+                    for o, v in zip(existing.embedding, embedding, strict=True)
+                ]
+            else:
+                mean = embedding  # embedding model changed; start over
+                n = 0
+            self._conn.execute(
+                "UPDATE speakers SET embedding=?, sample_count=?, updated_at=? WHERE id=?",
+                (json.dumps(mean), n + 1, now, existing.id),
+            )
+        return self.get_speaker(existing.id)
+
+    def rename_speaker(self, speaker_id: str, name: str) -> SpeakerProfile | None:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE speakers SET name=?, updated_at=? WHERE id=?",
+                (name, datetime.now().isoformat(), speaker_id),
+            )
+        return self.get_speaker(speaker_id) if cur.rowcount else None
+
+    def delete_speaker(self, speaker_id: str) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute("DELETE FROM speakers WHERE id=?", (speaker_id,))
+        return cur.rowcount > 0
+
+    @staticmethod
+    def _speaker(row) -> SpeakerProfile:
+        return SpeakerProfile(
+            id=row["id"],
+            name=row["name"],
+            embedding=json.loads(row["embedding"]),
+            sample_count=row["sample_count"],
+            created_at=_dt(row["created_at"]),
+            updated_at=_dt(row["updated_at"]),
+        )
 
     # ---- internals -----------------------------------------------------
 

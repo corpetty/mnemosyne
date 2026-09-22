@@ -143,6 +143,39 @@ Queue a transcription job for the session's `audio_file`. **Response:** `Job`.
 
 **Errors:** `400` no audio, `404` unknown session, `409` a job is already active for the session.
 
+### `GET /api/sessions/{session_id}/speakers`
+
+Speaker labels in the session and whether a voice embedding is stored for each (only diarized
+speakers have one; the local mic channel does not).
+
+```json
+[ { "label": "SPEAKER_00", "has_voice": true }, { "label": "Me", "has_voice": false } ]
+```
+
+### `POST /api/sessions/{session_id}/speakers/rename`
+
+```json
+{ "label": "SPEAKER_00", "name": "Alice", "enroll": true }
+```
+
+Renames the label everywhere in this session (segments, participants). With `enroll` (default) and a
+stored embedding, the voice is added to the `Alice` profile (running mean), so future sessions label
+her automatically. Renaming to an existing participant's name merges them. **Response:** `SessionDetail`.
+
+---
+
+## Speaker profiles
+
+Known voices, built from renames. Vectors are never returned.
+
+- `GET /api/speakers` → `[{ "id", "name", "sample_count", "created_at", "updated_at" }]`
+- `PATCH /api/speakers/{id}` `{ "name": "..." }` (`409` if the name is taken)
+- `DELETE /api/speakers/{id}` (existing transcripts keep the name)
+
+Auto-labelling happens at the end of each transcription job when `auto_label_speakers` is on: each
+diarized speaker's embedding is compared (cosine) against all profiles and assigned greedily above
+`speaker_match_threshold`, one person per label. A `status` event `Recognized Alice, Bob` is emitted.
+
 ---
 
 ## Jobs
@@ -165,7 +198,7 @@ Queue a transcription job for the session's `audio_file`. **Response:** `Job`.
 `status`: `queued`, `running`, `completed`, `failed`, `cancelled`. Only one `transcribe` job runs at a time;
 others wait in `queued`.
 
-- `GET /api/jobs?session_id=&active_only=` list jobs
+- `GET /api/jobs?session_id=&active_only=` list jobs. A completed `transcribe` job's `result` is `{ "segments", "sources", "echo_dropped" }`.
 - `GET /api/jobs/{job_id}`
 - `POST /api/jobs/{job_id}/cancel` (`409` if not running)
 

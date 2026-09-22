@@ -11,6 +11,8 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Live transcript while recording** (a few seconds behind speech, Parakeet on CPU), replaced by the full diarized transcript after stop
 - **Pluggable transcription**: WhisperX (GPU), NVIDIA Parakeet TDT via ONNX (CPU, no torch), or any OpenAI-compatible speech server
 - **Speaker diarization** using pyannote.audio (community-1), or none
+- **Speakers that stick**: rename a speaker once and the app remembers the voice, labelling that person automatically in future meetings
+- **Echo-safe**: mic segments that merely repeat what came out of the speakers are dropped, so no-headphones calls still attribute correctly
 - **Per-source attribution**: mic and system audio are captured separately, so your own speech is labelled with your name and only the remote side is diarized
 - **Pluggable summarization** via Ollama (LAN default), vLLM, OpenAI, or Anthropic
 - **Multiple audio sources** — capture system audio and microphone simultaneously via PipeWire

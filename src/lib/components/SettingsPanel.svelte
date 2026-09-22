@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { getSettings, listModels, updateSettings } from '$lib/api/backend.js';
+	import { deleteSpeakerProfile, getSettings, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
-	import type { ProviderModels, SettingsResponse, SettingsUpdate } from '$lib/types/index.js';
+	import type { ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	let settings = $state<SettingsResponse | null>(null);
 	let providers = $state<ProviderModels[]>([]);
+	let voices = $state<SpeakerProfile[]>([]);
 	let loading = $state(false);
 	let saving = $state(false);
 	let error = $state('');
@@ -42,6 +43,10 @@
 				max_speakers: v.max_speakers,
 				local_speaker_name: v.local_speaker_name,
 				remote_speaker_name: v.remote_speaker_name,
+				echo_dedup: v.echo_dedup,
+				echo_similarity: v.echo_similarity,
+				auto_label_speakers: v.auto_label_speakers,
+				speaker_match_threshold: v.speaker_match_threshold,
 				per_source_transcription: v.per_source_transcription,
 				live_transcription: v.live_transcription,
 				live_transcriber: v.live_transcriber,
@@ -62,6 +67,7 @@
 				default_model: v.default_model
 			};
 			providers = await listModels();
+			voices = await listSpeakers();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load settings';
 		} finally {
@@ -100,6 +106,23 @@
 	$effect(() => {
 		load();
 	});
+
+	async function renameVoice(v: SpeakerProfile) {
+		const name = prompt('Rename speaker', v.name);
+		if (!name || name === v.name) return;
+		try {
+			await renameSpeakerProfile(v.id, name);
+			voices = await listSpeakers();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Rename failed';
+		}
+	}
+
+	async function forgetVoice(v: SpeakerProfile) {
+		if (!confirm(`Forget ${v.name}'s voice? Existing transcripts keep the name.`)) return;
+		await deleteSpeakerProfile(v.id);
+		voices = await listSpeakers();
+	}
 
 	const inputClass =
 		'bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 disabled:opacity-60 w-full';
@@ -228,6 +251,47 @@
 					<input type="checkbox" bind:checked={form.auto_transcribe} disabled={locked('auto_transcribe')} class="rounded border-gray-600 bg-gray-800" />
 					<span class="text-sm text-gray-300">Transcribe automatically after recording</span>
 				</label>
+			</div>
+		</section>
+
+		<!-- Speakers -->
+		<section>
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">Speakers</h3>
+			<p class="text-xs text-gray-500 mb-3">Rename a speaker in a transcript to teach the app their voice; matching voices are labelled automatically afterwards.</p>
+			<div class="grid grid-cols-2 gap-3">
+				<label class="flex items-center gap-2">
+					<input type="checkbox" bind:checked={form.auto_label_speakers} disabled={locked('auto_label_speakers')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Label known voices automatically</span>
+				</label>
+				<label>
+					<span class={labelClass}>Voice match threshold (cosine, 0.4 loose … 0.8 strict)</span>
+					<input type="number" min="0.3" max="0.95" step="0.05" bind:value={form.speaker_match_threshold} disabled={locked('speaker_match_threshold')} class={inputClass} />
+				</label>
+				<label class="flex items-center gap-2">
+					<input type="checkbox" bind:checked={form.echo_dedup} disabled={locked('echo_dedup')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Drop mic segments that repeat the speakers (no headphones)</span>
+				</label>
+				<label>
+					<span class={labelClass}>Echo text similarity (0.6 aggressive … 0.95 strict)</span>
+					<input type="number" min="0.5" max="1" step="0.05" bind:value={form.echo_similarity} disabled={locked('echo_similarity')} class={inputClass} />
+				</label>
+			</div>
+			<div class="mt-3">
+				<h4 class="text-sm font-semibold text-gray-300 mb-1">Known voices</h4>
+				{#if voices.length === 0}
+					<p class="text-xs text-gray-600">None yet. Rename a speaker in a transcript with "remember voice" ticked.</p>
+				{:else}
+					<div class="flex flex-wrap gap-2">
+						{#each voices as v (v.id)}
+							<div class="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs">
+								<span class="text-gray-200 font-medium">{v.name}</span>
+								<span class="text-gray-600">{v.sample_count} sample{v.sample_count !== 1 ? 's' : ''}</span>
+								<button onclick={() => renameVoice(v)} class="text-gray-500 hover:text-gray-200">rename</button>
+								<button onclick={() => forgetVoice(v)} class="text-gray-500 hover:text-red-400">forget</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
 			</div>
 		</section>
 

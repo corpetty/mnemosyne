@@ -2,6 +2,7 @@
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import LiveTranscript from './LiveTranscript.svelte';
+	import SpeakerBar from './SpeakerBar.svelte';
 
 	function formatTime(seconds: number): string {
 		const m = Math.floor(seconds / 60);
@@ -55,6 +56,8 @@
 
 	{#if transcriptState.segments.length === 0}
 		<LiveTranscript />
+	{:else}
+		<SpeakerBar />
 	{/if}
 
 	<div bind:this={container} class="max-h-[500px] overflow-y-auto space-y-3 pr-2">

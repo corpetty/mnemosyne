@@ -26,6 +26,12 @@ class SpeakerTurn(BaseModel):
     speaker: str
 
 
+class DiarizationResult(BaseModel):
+    turns: list[SpeakerTurn]
+    # One embedding vector per speaker label, when the diarizer can produce them.
+    embeddings: dict[str, list[float]] = {}
+
+
 SourceKind = Literal["mic", "system", "mixed"]
 
 
@@ -69,7 +75,7 @@ class Diarizer(_Loadable, Protocol):
         audio_path: str,
         min_speakers: int | None = None,
         max_speakers: int | None = None,
-    ) -> list[SpeakerTurn]: ...
+    ) -> DiarizationResult: ...
 
 
 @runtime_checkable
@@ -83,5 +89,9 @@ class TranscriptionEngine(Protocol):
     async def unload(self) -> None: ...
 
     def transcribe_sources(self, sources: list[AudioSource]) -> AsyncIterator[TranscriptSegment]:
-        """Transcribe one or more sources, yielding segments in time order."""
+        """Transcribe one or more sources, yielding segments in time order.
+
+        After the iterator is exhausted, `last_speaker_embeddings` (if the engine
+        defines it) holds {speaker_label: vector} for the diarized speakers.
+        """
         ...

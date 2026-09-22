@@ -122,6 +122,10 @@ export interface SettingsValues {
   auto_transcribe: boolean;
   local_speaker_name: string;
   remote_speaker_name: string;
+  echo_dedup: boolean;
+  echo_similarity: number;
+  auto_label_speakers: boolean;
+  speaker_match_threshold: number;
   per_source_transcription: boolean;
   live_transcription: boolean;
   live_transcriber: 'parakeet' | 'whisperx' | 'remote';
@@ -172,3 +176,16 @@ export type BackendEvent =
   | { type: 'live_segment'; session_id: string; source: string; segment: TranscriptSegment }
   | { type: 'live_partial'; session_id: string; source: string; speaker: string; text: string }
   | { type: 'live_status'; session_id: string; message: string };
+
+export interface SpeakerProfile {
+  id: string;
+  name: string;
+  sample_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SessionSpeaker {
+  label: string;
+  has_voice: boolean;
+}

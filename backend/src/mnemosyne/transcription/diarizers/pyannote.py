@@ -8,7 +8,7 @@ import logging
 from typing import Any
 
 from ...audio.mixer import decode_audio
-from ..engine import SpeakerTurn
+from ..engine import DiarizationResult, SpeakerTurn
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class PyannoteDiarizer:
         audio_path: str,
         min_speakers: int | None = None,
         max_speakers: int | None = None,
-    ) -> list[SpeakerTurn]:
+    ) -> DiarizationResult:
         if not self.is_loaded():
             await self.load()
 
@@ -76,12 +76,12 @@ class PyannoteDiarizer:
             if max_speakers is not None:
                 kwargs["max_speakers"] = max_speakers
             output = self._pipeline({"waveform": waveform, "sample_rate": 16000}, **kwargs)
-            return _turns_from_output(output)
+            return _result_from_output(output)
 
         return await asyncio.to_thread(_run)
 
 
-def _turns_from_output(output: Any) -> list[SpeakerTurn]:
+def _result_from_output(output: Any) -> DiarizationResult:
     """Handle pyannote 4.x (DiarizeOutput) and 3.x (Annotation) return types."""
     annotation = getattr(output, "speaker_diarization", output)
     turns = []
@@ -96,4 +96,19 @@ def _turns_from_output(output: Any) -> list[SpeakerTurn]:
                 SpeakerTurn(start=float(segment.start), end=float(segment.end), speaker=speaker)
             )
     turns.sort(key=lambda t: t.start)
-    return turns
+
+    embeddings: dict[str, list[float]] = {}
+    raw = getattr(output, "speaker_embeddings", None)
+    labels = list(annotation.labels()) if hasattr(annotation, "labels") else []
+    if raw is not None and labels:
+        try:
+            import numpy as np
+
+            arr = np.asarray(raw, dtype=float)
+            if arr.ndim == 2 and arr.shape[0] == len(labels):
+                for label, row in zip(labels, arr, strict=True):
+                    if not np.isnan(row).any():
+                        embeddings[label] = row.tolist()
+        except Exception:
+            logger.debug("Could not read speaker embeddings", exc_info=True)
+    return DiarizationResult(turns=turns, embeddings=embeddings)

@@ -78,6 +78,13 @@ class Settings(BaseSettings):
     # When mic and system audio are captured separately, the mic file is
     # labelled with this name instead of being diarized.
     local_speaker_name: str = "Me"
+    # Drop mic segments that repeat what came out of the speakers (no headphones).
+    echo_dedup: bool = True
+    echo_similarity: float = 0.8
+    # Voice profiles: auto-label diarized speakers whose embedding matches a
+    # known speaker with cosine similarity >= this.
+    auto_label_speakers: bool = True
+    speaker_match_threshold: float = 0.6
     remote_speaker_name: str = "Remote"  # live label for the system channel
     per_source_transcription: bool = True
 

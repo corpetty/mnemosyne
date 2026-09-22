@@ -183,6 +183,23 @@ retried on the next tick, so words cut by a chunk boundary are not lost. With mi
 separately the labels are `local_speaker_name` and `remote_speaker_name`; no diarization runs live.
 Stop cancels the job (a final flush tick runs) before the final `transcribe` job replaces everything.
 
+### Speaker bleed removal
+
+Without headphones the mic hears the remote participants through the speakers, so the mic transcript
+repeats the system transcript. `transcription/dedup.py::remove_echo` runs in `ComposedEngine` after
+per-source transcription: a labelled (mic) segment is dropped when the diarized segments overlapping
+it in time (±1 s) contain its words with similarity ≥ `echo_similarity`. Only genuinely local speech
+survives on the mic channel. The job result reports `echo_dropped`.
+
+### Voice profiles
+
+pyannote returns one embedding per diarized speaker. The pipeline stores them per session
+(`session_speakers`) and, when `auto_label_speakers` is on, `services/speaker_service.py` matches
+them against known profiles (`speakers` table, cosine ≥ `speaker_match_threshold`, greedy one-to-one)
+and relabels the transcript before it is saved. Renaming a speaker in the UI relabels the session and,
+if that label has an embedding, enrolls it into the named profile as a running mean. Profiles are
+managed in Settings.
+
 ### Model lifecycle
 
 `services/model_service.py` builds the engine lazily on first job (so the API starts without torch),

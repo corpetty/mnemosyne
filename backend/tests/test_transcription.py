@@ -52,7 +52,7 @@ def test_transcribe_job_streams_and_persists(client, ctx, fake_engine):
 
     done = client.get(f"/api/jobs/{job['id']}").json()
     assert done["status"] == "completed"
-    assert done["result"] == {"segments": len(FAKE_SEGMENTS), "sources": 1}
+    assert done["result"] == {"segments": len(FAKE_SEGMENTS), "sources": 1, "echo_dropped": 0}
 
 
 def test_engine_failure_marks_job_and_session(client, ctx):

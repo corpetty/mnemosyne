@@ -70,6 +70,8 @@ def build_engine(settings: Settings) -> ComposedEngine:
         language=settings.language or None,
         min_speakers=settings.min_speakers,
         max_speakers=settings.max_speakers,
+        echo_dedup=settings.echo_dedup,
+        echo_similarity=settings.echo_similarity,
     )
 
 
@@ -91,6 +93,8 @@ ENGINE_SETTINGS = (
     "language",
     "min_speakers",
     "max_speakers",
+    "echo_dedup",
+    "echo_similarity",
 )
 
 LIVE_SETTINGS = (

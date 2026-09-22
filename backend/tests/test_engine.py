@@ -55,7 +55,7 @@ def test_assign_without_turns_is_unknown():
 @pytest.mark.anyio
 async def test_composed_diarizes_unlabelled_and_relabels_labelled():
     t, d = FakeTranscriber(), FakeDiarizer()
-    engine = ComposedEngine(t, d)
+    engine = ComposedEngine(t, d, echo_dedup=False)  # dedup is covered in test_speakers
     assert engine.name == "fake-transcriber+fake-diarizer"
     assert not engine.is_loaded()
 
