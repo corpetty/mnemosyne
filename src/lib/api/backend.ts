@@ -12,7 +12,8 @@ import type {
   SpeakerProfile,
   StartRecordingResponse,
   StopRecordingResponse,
-  SummarizeResponse
+  SummarizeResponse,
+  SummaryStyle
 } from '$lib/types/index.js';
 
 const BASE_URL = 'http://127.0.0.1:8008';
@@ -124,12 +125,21 @@ export async function listModels(): Promise<ProviderModels[]> {
 export async function summarizeSession(
   sessionId: string,
   provider = '',
-  model = ''
+  model = '',
+  style = ''
 ): Promise<SummarizeResponse> {
   return request(`/api/sessions/${sessionId}/summarize`, {
     method: 'POST',
-    body: JSON.stringify({ provider, model })
+    body: JSON.stringify({ provider, model, style })
   });
+}
+
+export async function listSummaryStyles(): Promise<SummaryStyle[]> {
+  return request('/api/summary-styles');
+}
+
+export async function getExportMarkdown(sessionId: string): Promise<{ markdown: string }> {
+  return request(`/api/sessions/${sessionId}/export/markdown`);
 }
 
 // Export

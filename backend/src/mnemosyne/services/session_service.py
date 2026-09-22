@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 from ..events import EventBus
-from ..models.session import Recording, Session, SessionStatus, SessionSummary
+from ..models.session import Recording, Session, SessionStatus, SessionSummary, SummaryData
 from ..models.transcript import TranscriptSegment
 from ..storage.sqlite import SessionRepository
 
@@ -75,5 +75,7 @@ class SessionService:
             )
         )
 
-    def set_summary(self, session_id: str, summary: str) -> Session | None:
-        return self._notify(self.repo.update_fields(session_id, summary=summary))
+    def set_summary(
+        self, session_id: str, summary: str, data: SummaryData | None = None
+    ) -> Session | None:
+        return self._notify(self.repo.update_fields(session_id, summary=summary, summary_data=data))

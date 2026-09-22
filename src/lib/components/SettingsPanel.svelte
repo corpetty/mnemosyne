@@ -64,7 +64,12 @@
 				ollama_url: v.ollama_url,
 				vllm_url: v.vllm_url,
 				default_provider: v.default_provider,
-				default_model: v.default_model
+				default_model: v.default_model,
+				summary_style: v.summary_style,
+				summary_instructions: v.summary_instructions,
+				obsidian_tags: v.obsidian_tags,
+				obsidian_link_people: v.obsidian_link_people,
+				obsidian_include_transcript: v.obsidian_include_transcript
 			};
 			providers = await listModels();
 			voices = await listSpeakers();
@@ -250,6 +255,39 @@
 				<label class="flex items-center gap-2 col-span-2">
 					<input type="checkbox" bind:checked={form.auto_transcribe} disabled={locked('auto_transcribe')} class="rounded border-gray-600 bg-gray-800" />
 					<span class="text-sm text-gray-300">Transcribe automatically after recording</span>
+				</label>
+			</div>
+		</section>
+
+		<!-- Summaries & export -->
+		<section>
+			<h3 class="text-lg font-semibold text-gray-200 mb-3">Summaries and export</h3>
+			<div class="grid grid-cols-2 gap-3">
+				<label>
+					<span class={labelClass}>Default summary style</span>
+					<select bind:value={form.summary_style} disabled={locked('summary_style')} class={inputClass}>
+						<option value="meeting">meeting</option>
+						<option value="standup">standup</option>
+						<option value="interview">interview</option>
+						<option value="lecture">lecture</option>
+						<option value="brainstorm">brainstorm</option>
+					</select>
+				</label>
+				<label>
+					<span class={labelClass}>Obsidian tags (comma-separated)</span>
+					<input type="text" bind:value={form.obsidian_tags} disabled={locked('obsidian_tags')} class={inputClass} />
+				</label>
+				<label class="col-span-2">
+					<span class={labelClass}>Extra instructions for every summary (project names, jargon, what to emphasize)</span>
+					<textarea bind:value={form.summary_instructions} disabled={locked('summary_instructions')} rows="3" class={inputClass}></textarea>
+				</label>
+				<label class="flex items-center gap-2">
+					<input type="checkbox" bind:checked={form.obsidian_link_people} disabled={locked('obsidian_link_people')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Link named participants as [[Person]]</span>
+				</label>
+				<label class="flex items-center gap-2">
+					<input type="checkbox" bind:checked={form.obsidian_include_transcript} disabled={locked('obsidian_include_transcript')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Include the full transcript in exported notes</span>
 				</label>
 			</div>
 		</section>

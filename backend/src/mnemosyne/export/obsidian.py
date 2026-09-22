@@ -13,9 +13,36 @@ logger = logging.getLogger(__name__)
 class ObsidianExporter:
     """Exports sessions as markdown files to an Obsidian vault."""
 
-    def __init__(self, vault_path: str, subfolder: str = "meetings/mnemosyne"):
+    def __init__(
+        self,
+        vault_path: str,
+        subfolder: str = "meetings/mnemosyne",
+        tags: list[str] | None = None,
+        link_people: bool = True,
+        include_transcript: bool = True,
+    ):
         self.vault_path = Path(vault_path)
         self.subfolder = subfolder
+        self.tags = tags
+        self.link_people = link_people
+        self.include_transcript = include_transcript
+
+    def render(self, session: Session) -> str:
+        transcript = session.transcript
+        duration = max((s.end for s in transcript), default=None)
+        return render_meeting_note(
+            title=session.name,
+            date=session.created_at,
+            participants=session.participants,
+            transcript_segments=[seg.model_dump() for seg in transcript],
+            summary=session.summary,
+            notes=session.notes,
+            summary_data=session.summary_data,
+            tags=self.tags,
+            link_people=self.link_people,
+            include_transcript=self.include_transcript,
+            duration_seconds=duration,
+        )
 
     def _sanitize_filename(self, name: str) -> str:
         """Remove characters that are problematic in filenames."""
@@ -41,16 +68,6 @@ class ObsidianExporter:
         filename = f"{date_str}-{safe_name}.md"
         output_path = output_dir / filename
 
-        # Render content
-        content = render_meeting_note(
-            title=session.name,
-            date=session.created_at,
-            participants=session.participants,
-            transcript_segments=[seg.model_dump() for seg in session.transcript],
-            summary=session.summary,
-            notes=session.notes,
-        )
-
-        output_path.write_text(content, encoding="utf-8")
+        output_path.write_text(self.render(session), encoding="utf-8")
         logger.info("Exported session %s to %s", session.id, output_path)
         return output_path

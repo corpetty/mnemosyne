@@ -56,6 +56,21 @@ export interface Recording {
   created_at: string;
 }
 
+export interface ActionItem {
+  text: string;
+  owner: string | null;
+}
+
+export interface SummaryData {
+  style: string;
+  provider: string;
+  model: string;
+  topics: string[];
+  decisions: string[];
+  action_items: ActionItem[];
+  open_questions: string[];
+}
+
 export interface SessionDetail {
   id: string;
   name: string;
@@ -66,6 +81,7 @@ export interface SessionDetail {
   recordings: Recording[];
   transcript: TranscriptSegment[];
   summary: string;
+  summary_data: SummaryData | null;
   notes: string;
   participants: string[];
 }
@@ -108,8 +124,14 @@ export interface ProviderModels {
 
 export interface SummarizeResponse {
   summary: string;
+  data: SummaryData;
   provider: string;
   model: string;
+}
+
+export interface SummaryStyle {
+  id: string;
+  description: string;
 }
 
 export interface SettingsValues {
@@ -147,8 +169,13 @@ export interface SettingsValues {
   anthropic_api_key: string;
   default_provider: string;
   default_model: string;
+  summary_style: string;
+  summary_instructions: string;
   obsidian_vault_path: string;
   obsidian_subfolder: string;
+  obsidian_tags: string;
+  obsidian_link_people: boolean;
+  obsidian_include_transcript: boolean;
 }
 
 export interface SettingsResponse {

@@ -18,6 +18,27 @@ class ExportResponse(BaseModel):
     message: str
 
 
+def _exporter(ctx: AppContext, vault_path: str) -> ObsidianExporter:
+    st = ctx.settings
+    tags = [t.strip() for t in st.obsidian_tags.split(",") if t.strip()]
+    return ObsidianExporter(
+        vault_path,
+        st.obsidian_subfolder,
+        tags=tags or None,
+        link_people=st.obsidian_link_people,
+        include_transcript=st.obsidian_include_transcript,
+    )
+
+
+@router.get("/sessions/{session_id}/export/markdown")
+async def export_markdown(session_id: str, ctx: AppContext = Depends(get_ctx)):
+    """The note as it would be written to the vault (for preview / clipboard)."""
+    session = ctx.sessions.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"markdown": _exporter(ctx, ctx.settings.obsidian_vault_path or ".").render(session)}
+
+
 @router.post("/sessions/{session_id}/export/obsidian", response_model=ExportResponse)
 async def export_to_obsidian(session_id: str, ctx: AppContext = Depends(get_ctx)):
     vault_path = ctx.settings.obsidian_vault_path
@@ -29,8 +50,7 @@ async def export_to_obsidian(session_id: str, ctx: AppContext = Depends(get_ctx)
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        exporter = ObsidianExporter(vault_path, ctx.settings.obsidian_subfolder)
-        path = exporter.export(session)
+        path = _exporter(ctx, vault_path).export(session)
         return ExportResponse(path=str(path), message="Exported successfully")
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

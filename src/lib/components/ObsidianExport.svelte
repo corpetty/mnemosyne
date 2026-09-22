@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { exportToObsidian, getSettings, updateSettings } from '$lib/api/backend.js';
+	import { exportToObsidian, getExportMarkdown, getSettings, updateSettings } from '$lib/api/backend.js';
+	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 
 	let vaultPath = $state('');
@@ -10,6 +11,27 @@
 	let exportResult = $state('');
 	let error = $state('');
 	let configLoaded = $state(false);
+	let preview = $state('');
+	let showPreview = $state(false);
+
+	async function loadPreview() {
+		const session = sessionState.activeSession;
+		if (!session) return;
+		try {
+			preview = (await getExportMarkdown(session.id)).markdown;
+			showPreview = !showPreview || preview !== '';
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Preview failed';
+		}
+	}
+
+	async function copyMarkdown() {
+		const session = sessionState.activeSession;
+		if (!session) return;
+		const md = (await getExportMarkdown(session.id)).markdown;
+		await navigator.clipboard.writeText(md);
+		toastState.info('Note copied as markdown');
+	}
 
 	async function loadConfig() {
 		try {
@@ -116,13 +138,22 @@
 		{/if}
 	</div>
 
-	<button
-		onclick={handleExport}
-		disabled={exporting || !vaultPath || !vaultExists}
-		class="px-4 py-1.5 text-sm rounded bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium transition-colors"
-	>
-		{exporting ? 'Exporting...' : 'Export to Obsidian'}
-	</button>
+	<div class="flex items-center gap-2">
+		<button
+			onclick={handleExport}
+			disabled={exporting || !vaultPath || !vaultExists}
+			class="px-4 py-1.5 text-sm rounded bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium transition-colors"
+		>
+			{exporting ? 'Exporting...' : 'Export to Obsidian'}
+		</button>
+		<button onclick={loadPreview} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Preview</button>
+		<button onclick={copyMarkdown} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Copy markdown</button>
+	</div>
+	<p class="text-xs text-gray-600">Tags, [[people]] links and transcript inclusion are configured in Settings.</p>
+
+	{#if showPreview}
+		<pre class="max-h-96 overflow-auto text-[11px] leading-4 text-gray-400 bg-gray-900 border border-gray-800 rounded p-3 whitespace-pre-wrap">{preview}</pre>
+	{/if}
 
 	{#if exportResult}
 		<p class="text-green-400 text-sm">Exported to: <code class="text-green-300">{exportResult}</code></p>

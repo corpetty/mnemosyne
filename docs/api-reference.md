@@ -249,24 +249,49 @@ others wait in `queued`.
 
 Cloud providers appear only when their API key is set. Embedding-only Ollama models are filtered out.
 
+### `GET /api/summary-styles`
+
+`[{ "id": "meeting", "description": "..." }, ...]` — `meeting`, `standup`, `interview`, `lecture`, `brainstorm`.
+
 ### `POST /api/sessions/{session_id}/summarize`
 
 ```json
-{ "provider": "ollama", "model": "llama3.1:latest" }
+{ "provider": "ollama", "model": "llama3.1:latest", "style": "meeting", "instructions": null }
 ```
 
-Both fields optional; blank values fall back to `default_provider` / `default_model` from settings, and a
-blank model uses the provider's first listed model. Runs synchronously and saves the summary to the session.
+All fields optional: blanks fall back to `default_provider`, `default_model`, `summary_style` and
+`summary_instructions` from settings. The model is asked for JSON; the reply is parsed tolerantly (a
+non-JSON reply becomes the summary text with empty structured fields). Saved to the session as
+`summary` (markdown) and `summary_data`.
 
-**Response:** `{ "summary": "...", "provider": "ollama", "model": "llama3.1:latest" }`
+```json
+{
+  "summary": "## Key points\n...",
+  "data": {
+    "style": "meeting", "provider": "ollama", "model": "llama3.1:latest",
+    "topics": ["release"], "decisions": ["Ship Friday"],
+    "action_items": [ { "text": "Update docs", "owner": "Alice" } ],
+    "open_questions": ["Who reviews?"]
+  },
+  "provider": "ollama", "model": "llama3.1:latest"
+}
+```
 
 ---
 
 ## Export
 
+### `GET /api/sessions/{session_id}/export/markdown`
+
+`{ "markdown": "..." }` — the note exactly as export would write it (preview, clipboard).
+
 ### `POST /api/sessions/{session_id}/export/obsidian`
 
-Writes `<vault>/<subfolder>/YYYY-MM-DD-<name>.md` using the configured vault.
+Writes `<vault>/<subfolder>/YYYY-MM-DD-<name>.md` using the configured vault. The note has YAML
+frontmatter (`participants`, `people` as `[[links]]` for named speakers when `obsidian_link_people`,
+`topics`, `tags` from `obsidian_tags`, `duration_minutes`), then Summary, Decisions, Action Items as
+`- [ ]` tasks with owners, Open Questions, Notes, and the Transcript unless
+`obsidian_include_transcript` is off.
 
 **Response:** `{ "path": "...", "message": "Exported successfully" }`
 **Errors:** `400` vault not configured or missing, `404` session.

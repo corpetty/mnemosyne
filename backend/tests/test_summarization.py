@@ -3,8 +3,7 @@
 import pytest
 from src.mnemosyne.services.summarization_service import SummarizationService
 from src.mnemosyne.summarization.prompts import (
-    COMPACT_SYSTEM_PROMPT,
-    SYSTEM_PROMPT,
+    STYLES,
     format_transcript_for_llm,
     get_system_prompt,
 )
@@ -23,8 +22,9 @@ def test_format_transcript_for_llm():
 
 
 def test_prompt_selection_by_length():
-    assert get_system_prompt(3) == COMPACT_SYSTEM_PROMPT
-    assert get_system_prompt(10) == SYSTEM_PROMPT
+    assert "very brief" in get_system_prompt(3)
+    assert "very brief" not in get_system_prompt(10)
+    assert get_system_prompt(10).startswith(STYLES["meeting"])
 
 
 @pytest.mark.anyio
@@ -36,7 +36,9 @@ async def test_service_uses_first_model_when_unspecified():
     result = await service.summarize(
         segments=[{"speaker": "S", "start": 0, "text": "x"}], provider_name="fake"
     )
-    assert result == {"summary": provider.summary, "provider": "fake", "model": "m1"}
+    assert result["summary"] == provider.summary
+    assert result["provider"] == "fake" and result["model"] == "m1"
+    assert result["data"].provider == "fake"
     assert provider.calls[0]["transcript"] == "[00:00] S: x"
 
 
@@ -83,11 +85,9 @@ def test_summarize_uses_default_provider_from_settings(
     ctx.settings.default_model = "fake-model-b"
     resp = client.post(f"/api/sessions/{transcribed_session['id']}/summarize", json={})
     assert resp.status_code == 200
-    assert resp.json() == {
-        "summary": fake_provider.summary,
-        "provider": "fake",
-        "model": "fake-model-b",
-    }
+    body = resp.json()
+    assert body["summary"] == fake_provider.summary
+    assert body["provider"] == "fake" and body["model"] == "fake-model-b"
 
 
 def test_summarize_unknown_provider_is_400(client, fake_provider, transcribed_session):

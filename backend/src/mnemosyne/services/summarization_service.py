@@ -8,7 +8,11 @@ from ..config import Settings
 from ..summarization.anthropic_provider import AnthropicProvider
 from ..summarization.ollama import OllamaProvider
 from ..summarization.openai_provider import OpenAIProvider
-from ..summarization.prompts import format_transcript_for_llm, get_system_prompt
+from ..summarization.prompts import (
+    format_transcript_for_llm,
+    get_system_prompt,
+    parse_summary_response,
+)
 from ..summarization.provider import SummarizationProvider
 from ..summarization.vllm import VLLMProvider
 
@@ -41,6 +45,8 @@ class SummarizationService:
         segments: list[dict],
         provider_name: str = "ollama",
         model: str = "",
+        style: str = "meeting",
+        instructions: str = "",
     ) -> dict:
         provider = self.providers.get(provider_name)
         if provider is None:
@@ -54,8 +60,16 @@ class SummarizationService:
             model = models[0]
 
         transcript_text = format_transcript_for_llm(segments)
-        system_prompt = get_system_prompt(len(segments))
+        system_prompt = get_system_prompt(len(segments), style=style, extra=instructions)
 
-        logger.info("Summarizing with %s/%s (%d segments)", provider_name, model, len(segments))
-        summary = await provider.summarize(transcript_text, model, system_prompt)
-        return {"summary": summary, "provider": provider_name, "model": model}
+        logger.info(
+            "Summarizing with %s/%s style=%s (%d segments)",
+            provider_name,
+            model,
+            style,
+            len(segments),
+        )
+        raw = await provider.summarize(transcript_text, model, system_prompt)
+        summary, data = parse_summary_response(raw, style=style)
+        data.provider, data.model = provider_name, model
+        return {"summary": summary, "data": data, "provider": provider_name, "model": model}

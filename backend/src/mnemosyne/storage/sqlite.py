@@ -16,13 +16,13 @@ from datetime import datetime
 from pathlib import Path
 
 from ..models.search import SearchHit, SegmentHit
-from ..models.session import Recording, Session, SessionStatus, SessionSummary
+from ..models.session import Recording, Session, SessionStatus, SessionSummary, SummaryData
 from ..models.speaker import SpeakerProfile
 from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at TEXT NOT NULL,
     audio_file TEXT,
     summary TEXT NOT NULL DEFAULT '',
+    summary_data TEXT,
     notes TEXT NOT NULL DEFAULT '',
     participants TEXT NOT NULL DEFAULT '[]'
 );
@@ -132,12 +133,20 @@ class SessionRepository:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
+        self._migrate_columns()
         self._conn.execute(
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
         )
         self._conn.commit()
         self._backfill_fts()
+
+    def _migrate_columns(self) -> None:
+        """Additive column migrations for databases created by older schemas."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(sessions)")}
+        if "summary_data" not in cols:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN summary_data TEXT")
+            self._conn.commit()
 
     def _backfill_fts(self) -> None:
         """Index rows that predate the FTS tables (databases from schema < 3)."""
@@ -209,6 +218,11 @@ class SessionRepository:
             updated_at=_dt(row["updated_at"]),
             audio_file=row["audio_file"],
             summary=row["summary"],
+            summary_data=(
+                SummaryData.model_validate_json(row["summary_data"])
+                if row["summary_data"]
+                else None
+            ),
             notes=row["notes"],
             participants=json.loads(row["participants"]),
             transcript=[
@@ -242,11 +256,12 @@ class SessionRepository:
         with self._lock, self._conn:
             self._conn.execute(
                 """INSERT INTO sessions(id, name, status, created_at, updated_at, audio_file,
-                                        summary, notes, participants)
-                   VALUES (?,?,?,?,?,?,?,?,?)
+                                        summary, summary_data, notes, participants)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      name=excluded.name, status=excluded.status, updated_at=excluded.updated_at,
                      audio_file=excluded.audio_file, summary=excluded.summary,
+                     summary_data=excluded.summary_data,
                      notes=excluded.notes, participants=excluded.participants""",
                 (
                     session.id,
@@ -256,6 +271,7 @@ class SessionRepository:
                     session.updated_at.isoformat(),
                     session.audio_file,
                     session.summary,
+                    session.summary_data.model_dump_json() if session.summary_data else None,
                     session.notes,
                     json.dumps(session.participants),
                 ),
@@ -267,7 +283,15 @@ class SessionRepository:
     def update_fields(self, session_id: str, **fields) -> Session | None:
         """Cheap metadata update. Valid keys: name, status, audio_file, summary, notes,
         participants."""
-        allowed = {"name", "status", "audio_file", "summary", "notes", "participants"}
+        allowed = {
+            "name",
+            "status",
+            "audio_file",
+            "summary",
+            "summary_data",
+            "notes",
+            "participants",
+        }
         bad = set(fields) - allowed
         if bad:
             raise ValueError(f"Cannot update fields: {sorted(bad)}")
@@ -280,6 +304,8 @@ class SessionRepository:
                 value = value.value
             if key == "participants":
                 value = json.dumps(value)
+            if key == "summary_data":
+                value = value.model_dump_json() if isinstance(value, SummaryData) else value
             sets.append(f"{key}=?")
             values.append(value)
         sets.append("updated_at=?")

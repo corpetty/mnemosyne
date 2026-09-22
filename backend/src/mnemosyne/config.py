@@ -122,9 +122,16 @@ class Settings(BaseSettings):
     default_provider: str = "ollama"
     default_model: str = ""
 
+    # Summaries
+    summary_style: str = "meeting"  # see summarization/prompts.py STYLES
+    summary_instructions: str = ""  # appended to every summary prompt
+
     # Export
     obsidian_vault_path: str = ""
     obsidian_subfolder: str = "meetings/mnemosyne"
+    obsidian_tags: str = "meeting, mnemosyne"  # comma-separated
+    obsidian_link_people: bool = True  # participants as [[Name]] links
+    obsidian_include_transcript: bool = True
 
     @classmethod
     def settings_customise_sources(

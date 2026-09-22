@@ -1,26 +1,33 @@
 <script lang="ts">
-	import { listModels, summarizeSession } from '$lib/api/backend.js';
+	import { listModels, listSummaryStyles, summarizeSession, getSettings } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
-	import type { ProviderModels } from '$lib/types/index.js';
+	import { toastState } from '$lib/stores/toast.svelte.js';
+	import type { ProviderModels, SummaryStyle } from '$lib/types/index.js';
 
 	let providers = $state<ProviderModels[]>([]);
-	let selectedProvider = $state('ollama');
+	let styles = $state<SummaryStyle[]>([]);
+	let selectedProvider = $state('');
 	let selectedModel = $state('');
+	let selectedStyle = $state('');
 	let loading = $state(false);
 	let error = $state('');
-	let modelsLoaded = $state(false);
+	let loaded = $state(false);
 
-	async function loadModels() {
+	async function load() {
 		try {
-			providers = await listModels();
-			modelsLoaded = true;
-			// Auto-select first model of selected provider
-			const p = providers.find((p) => p.provider === selectedProvider);
-			if (p && p.models.length > 0 && !selectedModel) {
-				selectedModel = p.models[0];
+			const [p, s, settings] = await Promise.all([listModels(), listSummaryStyles(), getSettings()]);
+			providers = p;
+			styles = s;
+			selectedProvider = settings.values.default_provider || p[0]?.provider || '';
+			selectedModel = settings.values.default_model || '';
+			selectedStyle = settings.values.summary_style || 'meeting';
+			if (!selectedModel) {
+				const prov = providers.find((x) => x.provider === selectedProvider);
+				if (prov?.models.length) selectedModel = prov.models[0];
 			}
+			loaded = true;
 		} catch (e) {
-			console.error('Failed to load models:', e);
+			console.error('Failed to load summary options:', e);
 		}
 	}
 
@@ -36,11 +43,10 @@
 	async function handleSummarize() {
 		const session = sessionState.activeSession;
 		if (!session) return;
-
 		loading = true;
 		error = '';
 		try {
-			await summarizeSession(session.id, selectedProvider, selectedModel);
+			await summarizeSession(session.id, selectedProvider, selectedModel, selectedStyle);
 			await sessionState.refreshActive();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Summarization failed';
@@ -50,52 +56,93 @@
 	}
 
 	async function copyToClipboard() {
-		const summary = sessionState.activeSession?.summary;
-		if (summary) {
-			await navigator.clipboard.writeText(summary);
+		const s = sessionState.activeSession;
+		if (!s?.summary) return;
+		const d = s.summary_data;
+		let text = s.summary;
+		if (d) {
+			if (d.decisions.length) text += '\n\n## Decisions\n' + d.decisions.map((x) => `- ${x}`).join('\n');
+			if (d.action_items.length)
+				text += '\n\n## Action Items\n' + d.action_items.map((a) => `- [ ] ${a.text}${a.owner ? ` (${a.owner})` : ''}`).join('\n');
+			if (d.open_questions.length) text += '\n\n## Open Questions\n' + d.open_questions.map((x) => `- ${x}`).join('\n');
 		}
+		await navigator.clipboard.writeText(text);
+		toastState.info('Summary copied');
 	}
 
 	$effect(() => {
-		if (!modelsLoaded) {
-			loadModels();
-		}
+		if (!loaded) load();
 	});
+
+	const data = $derived(sessionState.activeSession?.summary_data ?? null);
 </script>
 
 <div class="space-y-3">
 	{#if sessionState.activeSession?.summary}
-		<div class="relative">
-			<div class="bg-gray-900 border border-gray-700 rounded-lg p-4 prose prose-invert prose-sm max-w-none">
-				{@html ''}
+		<div class="relative space-y-3">
+			{#if data && data.topics.length}
+				<div class="flex flex-wrap gap-1">
+					{#each data.topics as t}
+						<span class="text-[11px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700">{t}</span>
+					{/each}
+				</div>
+			{/if}
+			<div class="bg-gray-900 border border-gray-700 rounded-lg p-4">
 				<pre class="whitespace-pre-wrap text-sm text-gray-200 font-sans">{sessionState.activeSession.summary}</pre>
 			</div>
+			{#if data}
+				<div class="grid gap-3 md:grid-cols-2">
+					{#if data.decisions.length}
+						<section class="bg-gray-900 border border-gray-700 rounded-lg p-3">
+							<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Decisions</h4>
+							<ul class="space-y-1 text-sm text-gray-200 list-disc list-inside">
+								{#each data.decisions as d}<li>{d}</li>{/each}
+							</ul>
+						</section>
+					{/if}
+					{#if data.action_items.length}
+						<section class="bg-gray-900 border border-gray-700 rounded-lg p-3">
+							<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Action items</h4>
+							<ul class="space-y-1 text-sm text-gray-200">
+								{#each data.action_items as a}
+									<li class="flex gap-2"><span class="text-gray-600">☐</span><span>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}</span></li>
+								{/each}
+							</ul>
+						</section>
+					{/if}
+					{#if data.open_questions.length}
+						<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 md:col-span-2">
+							<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Open questions</h4>
+							<ul class="space-y-1 text-sm text-gray-200 list-disc list-inside">
+								{#each data.open_questions as q}<li>{q}</li>{/each}
+							</ul>
+						</section>
+					{/if}
+				</div>
+				<p class="text-[11px] text-gray-600">{data.style} summary · {data.provider}/{data.model}</p>
+			{/if}
 			<button
 				onclick={copyToClipboard}
-				class="absolute top-2 right-2 text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
-				title="Copy to clipboard"
+				class="absolute top-0 right-0 text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
+				title="Copy summary as markdown"
 			>
 				Copy
 			</button>
 		</div>
 	{/if}
 
-	<!-- Summarize controls -->
-	<div class="flex items-center gap-3">
-		<select
-			bind:value={selectedProvider}
-			onchange={handleProviderChange}
-			class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200"
-		>
+	<div class="flex flex-wrap items-center gap-3">
+		<select bind:value={selectedStyle} class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200" title="Summary style">
+			{#each styles as s}
+				<option value={s.id}>{s.id}</option>
+			{/each}
+		</select>
+		<select bind:value={selectedProvider} onchange={handleProviderChange} class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200">
 			{#each providers as p}
 				<option value={p.provider}>{p.provider}</option>
 			{/each}
 		</select>
-
-		<select
-			bind:value={selectedModel}
-			class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 min-w-[200px]"
-		>
+		<select bind:value={selectedModel} class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 min-w-[200px]">
 			{#each availableModels() as model}
 				<option value={model}>{model}</option>
 			{/each}
@@ -103,7 +150,6 @@
 				<option value="">No models available</option>
 			{/if}
 		</select>
-
 		<button
 			onclick={handleSummarize}
 			disabled={loading || !sessionState.activeSession?.transcript?.length}

@@ -34,6 +34,24 @@ class Recording(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
+class ActionItem(BaseModel):
+    text: str
+    owner: str | None = None
+
+
+class SummaryData(BaseModel):
+    """Structured summary produced by the LLM. `summary` on the session keeps
+    the markdown body for compatibility."""
+
+    style: str = "meeting"
+    provider: str = ""
+    model: str = ""
+    topics: list[str] = Field(default_factory=list)
+    decisions: list[str] = Field(default_factory=list)
+    action_items: list[ActionItem] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+
+
 class Session(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4())[:8])
     name: str = "Untitled Session"
@@ -44,6 +62,7 @@ class Session(BaseModel):
     recordings: list[Recording] = Field(default_factory=list)
     transcript: list[TranscriptSegment] = Field(default_factory=list)
     summary: str = ""
+    summary_data: SummaryData | None = None
     notes: str = ""
     participants: list[str] = Field(default_factory=list)
 
