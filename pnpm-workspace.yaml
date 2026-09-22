@@ -1,0 +1,3 @@
+# pnpm 10 blocks dependency postinstall scripts unless allowlisted.
+allowBuilds:
+  esbuild: true
