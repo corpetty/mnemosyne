@@ -66,13 +66,10 @@ Summarization is LAN-first by default:
 2. **Set up the Python backend:**
    ```bash
    cd backend
-   uv sync  # creates venv with Python 3.13, installs deps
+   uv sync --extra gpu --group dev  # Python 3.13 venv, API deps, torch (CUDA 12.8) + WhisperX, test tools
    ```
 
-   For GPU transcription, also install WhisperX and PyTorch (these are heavy and may already be in your venv):
-   ```bash
-   uv pip install torch torchaudio whisperx
-   ```
+   The `gpu` extra is several GB. Omit it to run the API without transcription (tests and UI work still function).
 
 3. **Configure environment:**
    ```bash
@@ -166,7 +163,10 @@ All configuration is via environment variables in `backend/.env`:
 ### Development
 
 ```bash
-pnpm tauri dev    # Starts Tauri + Vite + Python backend (all in one)
+pnpm tauri dev      # Starts Tauri + Vite + Python backend (all in one)
+pnpm check          # Frontend type check
+pnpm test:backend   # Backend tests (no GPU needed; ML is faked)
+pnpm lint:backend   # ruff
 ```
 
 ### Build the Backend Sidecar

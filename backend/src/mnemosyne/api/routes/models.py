@@ -60,7 +60,7 @@ async def summarize_session(session_id: str, request: SummarizeRequest):
             model=result["model"],
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.exception("Summarization failed")
-        raise HTTPException(status_code=500, detail=f"Summarization failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Summarization failed: {e}") from e

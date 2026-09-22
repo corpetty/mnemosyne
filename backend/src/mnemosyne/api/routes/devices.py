@@ -24,7 +24,7 @@ async def get_devices():
     try:
         devices = list_devices()
     except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     return [
         DeviceResponse(

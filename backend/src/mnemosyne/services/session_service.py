@@ -1,7 +1,6 @@
 """Session lifecycle management."""
 
 import logging
-from pathlib import Path
 
 from ..config import DATA_DIR
 from ..models.session import Session, SessionStatus
@@ -75,6 +74,7 @@ class SessionService:
         recording_dir = DATA_DIR / "recordings" / session_id
         if recording_dir.exists():
             import shutil
+
             shutil.rmtree(recording_dir)
 
         path.unlink()
@@ -99,9 +99,7 @@ class SessionService:
         session.save(DATA_DIR)
         return session
 
-    def set_transcript(
-        self, session_id: str, segments: list[dict]
-    ) -> Session | None:
+    def set_transcript(self, session_id: str, segments: list[dict]) -> Session | None:
         """Set transcript segments for a session."""
         from ..models.transcript import TranscriptSegment
 
@@ -111,9 +109,9 @@ class SessionService:
         session.transcript = [TranscriptSegment.model_validate(s) for s in segments]
 
         # Extract unique speakers as participants
-        speakers = list(dict.fromkeys(
-            seg.speaker for seg in session.transcript if seg.speaker != "UNKNOWN"
-        ))
+        speakers = list(
+            dict.fromkeys(seg.speaker for seg in session.transcript if seg.speaker != "UNKNOWN")
+        )
         session.participants = speakers
         session.status = SessionStatus.COMPLETED
         session.save(DATA_DIR)

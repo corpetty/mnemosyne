@@ -27,8 +27,9 @@ __pycache__/
 *.pyc
 *.pyo
 backend/.venv/
-backend/uv.lock
 *.egg-info/
+.pytest_cache/
+.ruff_cache/
 
 # Tauri
 src-tauri/target/
@@ -37,7 +38,7 @@ src-tauri/gen/
 
 # Runtime data
 data/
-.claude/
+.claude/settings.local.json
 
 # PyInstaller
 backend/dist/

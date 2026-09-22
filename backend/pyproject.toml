@@ -16,5 +16,44 @@ dependencies = [
     "numpy>=2.0",
 ]
 
+[project.optional-dependencies]
+# ML inference stack. Install with: uv sync --extra gpu
+# torch/torchaudio are pinned to the CUDA 12.8 wheel index (see [[tool.uv.index]]).
+gpu = [
+    "torch==2.8.0",
+    "torchaudio==2.8.0",
+    "whisperx>=3.8.1,<4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.9",
+    "pyinstaller>=6.19",
+]
+
 [tool.uv]
 managed = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = ["build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

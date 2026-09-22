@@ -48,10 +48,10 @@ async def export_to_obsidian(session_id: str):
         path = exporter.export(session)
         return ExportResponse(path=str(path), message="Exported successfully")
     except FileNotFoundError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.exception("Export failed")
-        raise HTTPException(status_code=500, detail=f"Export failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {e}") from e
 
 
 @router.get("/settings/obsidian", response_model=VaultConfigResponse)

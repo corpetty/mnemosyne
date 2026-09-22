@@ -4,21 +4,16 @@
 
 ### `ModuleNotFoundError: No module named 'torch'`
 
-WhisperX and PyTorch are heavy dependencies not in the base `pyproject.toml`. Install them manually:
+WhisperX and PyTorch live in the optional `gpu` extra. Install it:
 
 ```bash
 cd backend
-uv pip install torch torchaudio whisperx
+uv sync --extra gpu --group dev
 ```
 
 ### `ModuleNotFoundError: No module named 'whisperx'`
 
-Same as above. WhisperX depends on torch, torchaudio, and several other packages:
-
-```bash
-cd backend
-uv pip install whisperx
-```
+Same as above: `uv sync --extra gpu --group dev`.
 
 ### Backend starts but models fail to load
 

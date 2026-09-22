@@ -49,7 +49,10 @@ class AnthropicProvider:
                     "max_tokens": 4096,
                     "system": system_prompt,
                     "messages": [
-                        {"role": "user", "content": f"Please summarize this transcript:\n\n{transcript}"},
+                        {
+                            "role": "user",
+                            "content": f"Please summarize this transcript:\n\n{transcript}",
+                        },
                     ],
                 },
             )

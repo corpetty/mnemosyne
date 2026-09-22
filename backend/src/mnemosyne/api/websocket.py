@@ -45,49 +45,59 @@ async def broadcast_transcription(audio_path: str, session_id: str | None = None
     If session_id is provided, saves transcript to the session on completion.
     """
     try:
-        await manager.broadcast({
-            "type": "status",
-            "session_id": session_id,
-            "message": "Loading models...",
-        })
+        await manager.broadcast(
+            {
+                "type": "status",
+                "session_id": session_id,
+                "message": "Loading models...",
+            }
+        )
 
         engine = await model_service.ensure_loaded()
 
-        await manager.broadcast({
-            "type": "status",
-            "session_id": session_id,
-            "message": "Transcribing...",
-        })
+        await manager.broadcast(
+            {
+                "type": "status",
+                "session_id": session_id,
+                "message": "Transcribing...",
+            }
+        )
 
         segments = []
         async for segment in engine.transcribe(audio_path):
             seg_dict = segment.model_dump()
             segments.append(seg_dict)
-            await manager.broadcast({
-                "type": "transcription",
-                "session_id": session_id,
-                "segment": seg_dict,
-            })
+            await manager.broadcast(
+                {
+                    "type": "transcription",
+                    "session_id": session_id,
+                    "segment": seg_dict,
+                }
+            )
 
         # Save to session if we have one
         if session_id and segments:
             session_service.set_transcript(session_id, segments)
 
-        await manager.broadcast({
-            "type": "status",
-            "session_id": session_id,
-            "message": "Transcription complete",
-        })
+        await manager.broadcast(
+            {
+                "type": "status",
+                "session_id": session_id,
+                "message": "Transcription complete",
+            }
+        )
 
         return segments
 
     except Exception as e:
         logger.exception("Transcription failed")
-        await manager.broadcast({
-            "type": "error",
-            "session_id": session_id,
-            "message": str(e),
-        })
+        await manager.broadcast(
+            {
+                "type": "error",
+                "session_id": session_id,
+                "message": str(e),
+            }
+        )
         return []
 
 

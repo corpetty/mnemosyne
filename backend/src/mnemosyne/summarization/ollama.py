@@ -19,7 +19,9 @@ class OllamaProvider:
 
     # Families that are embedding-only and can't do chat
     EMBEDDING_FAMILIES = {
-        "bert", "nomic-bert", "nomic-bert-moe",
+        "bert",
+        "nomic-bert",
+        "nomic-bert-moe",
     }
     EMBEDDING_KEYWORDS = {"embed", "embedding"}
 
@@ -59,7 +61,10 @@ class OllamaProvider:
                     "model": model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Please summarize this transcript:\n\n{transcript}"},
+                        {
+                            "role": "user",
+                            "content": f"Please summarize this transcript:\n\n{transcript}",
+                        },
                     ],
                     "stream": False,
                 },

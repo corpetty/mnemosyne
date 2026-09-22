@@ -1,6 +1,7 @@
 """Transcription engine protocol."""
 
-from typing import Protocol, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Protocol
 
 from ..models.transcript import TranscriptSegment
 

@@ -19,7 +19,7 @@ def render_meeting_note(
     participant_list = ", ".join(f'"{p}"' for p in participants)
     frontmatter = f"""---
 title: "{title}"
-date: {date.strftime('%Y-%m-%d')}
+date: {date.strftime("%Y-%m-%d")}
 type: meeting-note
 source: mnemosyne
 participants: [{participant_list}]

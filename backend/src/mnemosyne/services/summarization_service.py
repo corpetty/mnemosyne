@@ -63,9 +63,7 @@ class SummarizationService:
         provider = self.providers.get(provider_name)
         if provider is None:
             available = list(self.providers.keys())
-            raise ValueError(
-                f"Provider '{provider_name}' not available. Available: {available}"
-            )
+            raise ValueError(f"Provider '{provider_name}' not available. Available: {available}")
 
         # If no model specified, pick first available
         if not model:

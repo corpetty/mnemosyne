@@ -10,10 +10,18 @@ def decode_audio(path: Path, sample_rate: int = 48000) -> np.ndarray:
     """Decode any audio file to raw PCM float32 mono using ffmpeg."""
     result = subprocess.run(
         [
-            "ffmpeg", "-i", str(path),
-            "-f", "f32le", "-acodec", "pcm_f32le",
-            "-ac", "1", "-ar", str(sample_rate),
-            "-"
+            "ffmpeg",
+            "-i",
+            str(path),
+            "-f",
+            "f32le",
+            "-acodec",
+            "pcm_f32le",
+            "-ac",
+            "1",
+            "-ar",
+            str(sample_rate),
+            "-",
         ],
         capture_output=True,
         timeout=60,
@@ -33,9 +41,20 @@ def encode_opus(
     pcm_bytes = (audio * 32767).astype(np.int16).tobytes()
     result = subprocess.run(
         [
-            "ffmpeg", "-y",
-            "-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "-i", "-",
-            "-c:a", "libopus", "-b:a", bitrate,
+            "ffmpeg",
+            "-y",
+            "-f",
+            "s16le",
+            "-ar",
+            str(sample_rate),
+            "-ac",
+            "1",
+            "-i",
+            "-",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            bitrate,
             str(output_path),
         ],
         input=pcm_bytes,

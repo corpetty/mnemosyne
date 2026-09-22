@@ -6,7 +6,7 @@ import uvicorn
 # Suppress noisy torchcodec/pyannote FFmpeg warnings
 warnings.filterwarnings("ignore", message=".*torchcodec.*")
 
-from src.mnemosyne.api.app import create_app
+from src.mnemosyne.api.app import create_app  # noqa: E402
 
 app = create_app()
 

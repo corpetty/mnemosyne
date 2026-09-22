@@ -26,12 +26,15 @@ WHISPER_BATCH_SIZE: int = int(os.environ.get("WHISPER_BATCH_SIZE", "8"))
 def _get_data_dir() -> Path:
     """Resolve data directory.
 
-    When bundled via PyInstaller, the sidecar binary lives inside the Tauri
-    resource directory (e.g. .../resources/backend/mnemosyne-backend).
-    Data goes in a sibling 'data' directory next to the app binary.
-
-    When running in dev, data goes in the project root's data/ directory.
+    Precedence:
+    1. MNEMOSYNE_DATA_DIR environment variable (used by tests and custom setups).
+    2. PyInstaller bundle: a sibling 'data' directory next to the app binary
+       (the sidecar lives in .../resources/backend/mnemosyne-backend).
+    3. Dev: the project root's data/ directory.
     """
+    override = os.environ.get("MNEMOSYNE_DATA_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
     if getattr(sys, "frozen", False):
         # PyInstaller: resources/backend/mnemosyne-backend -> resources/data
         return Path(sys.executable).resolve().parent.parent / "data"

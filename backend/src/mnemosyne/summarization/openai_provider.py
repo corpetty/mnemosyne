@@ -55,7 +55,10 @@ class OpenAIProvider:
                     "model": model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Please summarize this transcript:\n\n{transcript}"},
+                        {
+                            "role": "user",
+                            "content": f"Please summarize this transcript:\n\n{transcript}",
+                        },
                     ],
                 },
             )

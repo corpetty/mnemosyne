@@ -19,8 +19,8 @@ class ObsidianExporter:
 
     def _sanitize_filename(self, name: str) -> str:
         """Remove characters that are problematic in filenames."""
-        name = re.sub(r'[<>:"/\\|?*]', '', name)
-        name = name.strip('. ')
+        name = re.sub(r'[<>:"/\\|?*]', "", name)
+        name = name.strip(". ")
         return name or "untitled"
 
     def export(self, session: Session) -> Path:

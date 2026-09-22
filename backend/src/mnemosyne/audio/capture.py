@@ -6,7 +6,6 @@ import subprocess
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -43,9 +42,7 @@ class RecordingSession:
 
 def list_devices() -> list[AudioDevice]:
     """List available PipeWire audio devices using pw-dump."""
-    result = subprocess.run(
-        ["pw-dump"], capture_output=True, text=True, timeout=5
-    )
+    result = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5)
     if result.returncode != 0:
         raise RuntimeError(f"pw-dump failed: {result.stderr}")
 
@@ -64,17 +61,13 @@ def list_devices() -> list[AudioDevice]:
             continue
 
         node_name = props.get("node.name", "")
-        is_monitor = ".monitor" in node_name or "Monitor" in props.get(
-            "node.description", ""
-        )
+        is_monitor = ".monitor" in node_name or "Monitor" in props.get("node.description", "")
 
         devices.append(
             AudioDevice(
                 id=obj["id"],
                 name=node_name,
-                description=props.get(
-                    "node.description", props.get("node.name", "unknown")
-                ),
+                description=props.get("node.description", props.get("node.name", "unknown")),
                 media_class=media_class,
                 is_monitor=is_monitor,
             )
@@ -102,9 +95,7 @@ async def start_recording(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     session_id = str(uuid.uuid4())[:8]
-    session = RecordingSession(
-        session_id=session_id, output_dir=output_dir
-    )
+    session = RecordingSession(session_id=session_id, output_dir=output_dir)
 
     devices = {d.id: d for d in list_devices()}
 
@@ -155,8 +146,14 @@ async def convert_to_opus(wav_path: Path, bitrate: str = "64k") -> Path:
     """Convert a WAV file to OGG/Opus and remove the original WAV."""
     opus_path = wav_path.with_suffix(".ogg")
     process = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-y", "-i", str(wav_path),
-        "-c:a", "libopus", "-b:a", bitrate,
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(wav_path),
+        "-c:a",
+        "libopus",
+        "-b:a",
+        bitrate,
         str(opus_path),
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,

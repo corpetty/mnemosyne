@@ -42,7 +42,9 @@ class WhisperXEngine:
 
         logger.info(
             "Loading WhisperX model=%s device=%s compute=%s",
-            self.model_size, self.device, self.compute_type,
+            self.model_size,
+            self.device,
+            self.compute_type,
         )
 
         def _load():
@@ -91,9 +93,7 @@ class WhisperXEngine:
 
             # Step 1: Transcribe
             logger.info("Transcribing...")
-            result = self._whisper_model.transcribe(
-                audio, batch_size=self.batch_size
-            )
+            result = self._whisper_model.transcribe(audio, batch_size=self.batch_size)
             language = result.get("language", "en")
             logger.info("Detected language: %s", language)
 
@@ -119,7 +119,7 @@ class WhisperXEngine:
             logger.info(
                 "Diarization found %d segments, speakers: %s",
                 len(diarize_segments),
-                diarize_segments['speaker'].unique().tolist() if len(diarize_segments) > 0 else [],
+                diarize_segments["speaker"].unique().tolist() if len(diarize_segments) > 0 else [],
             )
 
             # Step 4: Assign speakers

@@ -41,9 +41,8 @@ pnpm install
 
 # Backend setup
 cd backend
-uv sync                  # Creates venv with Python 3.13
-uv pip install torch torchaudio whisperx  # GPU dependencies
-cp .env.example .env     # Configure environment
+uv sync --extra gpu --group dev   # Python 3.13 venv + torch/WhisperX + pytest/ruff
+cp .env.example .env              # Configure environment
 cd ..
 ```
 
@@ -167,6 +166,22 @@ mnemosyne/
     ├── sessions/             # JSON session files
     └── recordings/           # OGG/Opus audio files
 ```
+
+## Testing and Linting
+
+```bash
+cd backend
+uv run pytest            # API, services, export, mixer (ffmpeg) - no GPU or network
+uv run ruff check .
+uv run ruff format .
+```
+
+ML inference is never exercised by the test suite. `tests/fakes.py` provides `FakeEngine` and
+`FakeProvider`, which satisfy the same Protocols as WhisperX and the LLM providers. Tests set
+`MNEMOSYNE_DATA_DIR` to a temp directory so they never touch `data/`.
+
+Dependencies are locked in `backend/uv.lock` (committed). To add or upgrade a package, edit
+`pyproject.toml` and run `uv lock`, then `uv sync --extra gpu --group dev`.
 
 ## Environment Configuration
 
