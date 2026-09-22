@@ -80,3 +80,15 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
    CPU by default), replaced by the final job after stop.
 4. Done: no PyInstaller; backend source + uv.lock + uv sidecar in the bundle, installed
    into a per-user venv on first launch (gpu extra only when nvidia-smi exists).
+
+Added after the phases (all on main, 2026-09-22): echo dedup between mic and system
+transcripts (transcription/dedup.py); voice profiles with auto-labelling
+(services/speaker_service.py, `speakers` tables); transcript editing (routes/segments.py);
+FTS5 search (routes/search.py); structured summaries with styles and instructions
+(summarization/prompts.py, `summary_data`); Obsidian export with [[people]] links and tasks;
+audio playback with range requests and file import (routes/audio.py); CI + tag releases
+(.github/workflows).
+
+Candidates next: server mode (frontend `backend_url` to a remote backend); PipeWire
+echo-cancel module integration; live diarization (Sortformer/WhisperLiveKit); calendar-based
+session naming; Tauri updater; offline installer (pre-seeded uv cache).
