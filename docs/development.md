@@ -317,6 +317,19 @@ class SummarizationService:
 
 3. The new provider will automatically appear in the frontend's provider dropdown via `GET /api/models`.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and PR: backend ruff + pytest (no GPU; ML is faked),
+`pnpm check` + `pnpm build`, and `cargo check` for the shell. `.github/workflows/release.yml` builds
+the deb and AppImage on `ubuntu-22.04` when a `vX.Y.Z` tag is pushed and attaches them, with a
+`SHA256SUMS` file, to the GitHub release:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+Bump the version in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` first.
+
 ## Building for Production
 
 ```bash

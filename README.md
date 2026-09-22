@@ -1,5 +1,7 @@
 # Mnemosyne
 
+[![CI](https://github.com/corpetty/mnemosyne/actions/workflows/ci.yml/badge.svg)](https://github.com/corpetty/mnemosyne/actions/workflows/ci.yml)
+
 A real-time audio transcription, diarization, and summarization desktop app for Linux. Built with Tauri v2, SvelteKit, and Python.
 
 ## Name
@@ -182,6 +184,11 @@ pnpm check          # Frontend type check
 pnpm test:backend   # Backend tests (no GPU needed; ML is faked)
 pnpm lint:backend   # ruff
 ```
+
+### Releases
+
+Pushing a `vX.Y.Z` tag builds the deb and AppImage in GitHub Actions and attaches them to a release
+(see `docs/development.md`). Download from the Releases page instead of building locally.
 
 ### Build Distributable
 

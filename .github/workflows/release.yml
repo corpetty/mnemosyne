@@ -1,0 +1,54 @@
+name: Release
+
+# Tag a commit `vX.Y.Z` to build the Linux bundles and attach them to a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: Build deb + AppImage
+    runs-on: ubuntu-22.04 # oldest glibc we ship; AppImage runs on anything newer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev \
+            libfuse2 file
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build bundles
+        env:
+          NO_STRIP: "true" # linuxdeploy's bundled strip fails on .relr.dyn sections
+        run: pnpm tauri build --bundles deb,appimage
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          cp src-tauri/target/release/bundle/deb/*.deb dist/
+          cp src-tauri/target/release/bundle/appimage/*.AppImage dist/
+          (cd dist && sha256sum * > SHA256SUMS)
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mnemosyne-linux
+          path: dist/*
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
