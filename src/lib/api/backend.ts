@@ -222,3 +222,30 @@ export async function splitSegment(
 export async function search(q: string, limit = 20): Promise<SearchHit[]> {
   return request(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 }
+
+// Playback & import
+export function audioUrl(sessionId: string, recordingId?: string): string {
+  const q = recordingId ? `?recording=${encodeURIComponent(recordingId)}` : '';
+  return `${BASE_URL}/api/audio/file/${sessionId}${q}`;
+}
+
+export async function importAudio(
+  file: File,
+  opts: { name?: string; transcribe?: boolean } = {}
+): Promise<StopRecordingResponse> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  if (opts.name) form.append('name', opts.name);
+  if (opts.transcribe === false) form.append('transcribe', 'false');
+  const res = await fetch(`${BASE_URL}/api/audio/import`, { method: 'POST', body: form });
+  if (!res.ok) {
+    let detail = await res.text();
+    try {
+      detail = JSON.parse(detail).detail ?? detail;
+    } catch {
+      /* plain text */
+    }
+    throw new Error(`${res.status}: ${detail}`);
+  }
+  return res.json();
+}

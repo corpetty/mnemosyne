@@ -2,6 +2,9 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import type { SessionSummary } from '$lib/types/index.js';
 	import SearchBox from './SearchBox.svelte';
+	import { importAudio } from '$lib/api/backend.js';
+	import { toastState } from '$lib/stores/toast.svelte.js';
+	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 
 	const statusBadge: Record<string, string> = {
 		created: 'bg-gray-700 text-gray-300',
@@ -33,16 +36,69 @@
 	$effect(() => {
 		sessionState.loadSessions();
 	});
+
+	let fileInput = $state<HTMLInputElement>();
+	let importing = $state(false);
+	let dragOver = $state(false);
+
+	async function importFiles(files: FileList | File[] | null) {
+		if (!files || files.length === 0) return;
+		importing = true;
+		let last: string | null = null;
+		for (const file of Array.from(files)) {
+			try {
+				toastState.info(`Importing ${file.name}…`);
+				const res = await importAudio(file);
+				last = res.session.id;
+				if (res.job_id) transcriptState.expectJob(res.session.id);
+			} catch (e) {
+				toastState.error(`${file.name}: ${e instanceof Error ? e.message : 'import failed'}`);
+			}
+		}
+		importing = false;
+		await sessionState.loadSessions();
+		if (last) await sessionState.selectSession(last);
+	}
+
+	function onDrop(e: DragEvent) {
+		e.preventDefault();
+		dragOver = false;
+		importFiles(e.dataTransfer?.files ?? null);
+	}
 </script>
 
-<div class="space-y-2">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="space-y-2 rounded-lg transition-colors {dragOver ? 'ring-2 ring-blue-500/60 bg-blue-950/20' : ''}"
+	ondragover={(e) => { e.preventDefault(); dragOver = true; }}
+	ondragleave={() => (dragOver = false)}
+	ondrop={onDrop}
+>
 	<SearchBox />
-	<button
-		onclick={handleNew}
-		class="w-full px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
-	>
-		New Session
-	</button>
+	<div class="flex gap-2">
+		<button
+			onclick={handleNew}
+			class="flex-1 px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+		>
+			New Session
+		</button>
+		<button
+			onclick={() => fileInput?.click()}
+			disabled={importing}
+			title="Import an audio or video file (or drop it here)"
+			class="px-3 py-2 text-sm rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 transition-colors disabled:opacity-50"
+		>
+			{importing ? '…' : 'Import'}
+		</button>
+		<input
+			bind:this={fileInput}
+			type="file"
+			accept="audio/*,video/*,.ogg,.opus,.wav,.mp3,.m4a,.flac,.webm,.mp4,.mkv"
+			multiple
+			onchange={(e) => { importFiles((e.currentTarget as HTMLInputElement).files); (e.currentTarget as HTMLInputElement).value = ''; }}
+			class="hidden"
+		/>
+	</div>
 
 	{#if sessionState.loading}
 		<p class="text-gray-500 text-sm px-2">Loading...</p>

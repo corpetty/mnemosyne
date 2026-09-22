@@ -71,6 +71,19 @@ Terminates capture, encodes each source to OGG/Opus, records each as a `Recordin
 
 `job_id` is `null` when transcription was not queued.
 
+### `GET /api/audio/file/{session_id}?recording=`
+
+Streams the session's mixed audio (or one recording by id) with the right media type and HTTP range
+support, so an `<audio>` element can seek. `404` when the session has no audio.
+
+### `POST /api/audio/import`
+
+Multipart form: `file` (audio or video; wav, ogg, opus, mp3, m4a, flac, webm, mp4, mkv, aac, wma),
+optional `name` (defaults to the file stem) and `transcribe` (default true). Creates a session,
+stores the upload as a `Recording` with `source: import`, transcodes it to the mixed Opus file, and
+queues transcription. Response is the same shape as stop-recording (`session`, `job_id`, `message`).
+`400` for unsupported, empty, or undecodable files.
+
 ### `GET /api/audio/status/{session_id}`
 
 ```json

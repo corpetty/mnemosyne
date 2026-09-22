@@ -13,6 +13,8 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Speaker diarization** using pyannote.audio (community-1), or none
 - **Structured summaries**: decisions, action items with owners, open questions and topics as data, with styles (meeting, standup, interview, lecture, brainstorm) and your own standing instructions
 - **Obsidian-native export**: `[[people]]` links, tags, topics in frontmatter, action items as tasks, optional transcript
+- **Playback synced to the transcript**: click any timestamp to hear that moment; the line being played is highlighted
+- **Import** existing audio or video files (button or drag-and-drop) through the same pipeline
 - **Editable transcripts**: fix text, reassign a line to another speaker, merge or split segments in place
 - **Search** across every transcript, summary and note, with jump-to-segment
 - **Speakers that stick**: rename a speaker once and the app remembers the voice, labelling that person automatically in future meetings

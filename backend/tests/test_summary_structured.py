@@ -43,6 +43,12 @@ def test_parse_fenced_and_messy_json():
     assert data.topics == []
 
 
+def test_parse_unescapes_double_escaped_newlines():
+    raw = '{"summary": "- one\\\\n- two", "topics": []}'
+    summary, _ = parse_summary_response(raw)
+    assert summary == "- one\n- two"
+
+
 def test_parse_fallback_to_plain_text():
     summary, data = parse_summary_response("## Meeting\n- talked about stuff")
     assert summary.startswith("## Meeting")

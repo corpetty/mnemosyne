@@ -49,7 +49,7 @@ export interface SessionSummary {
 
 export interface Recording {
   id: string;
-  source: 'mic' | 'system';
+  source: 'mic' | 'system' | 'import';
   device_id: number;
   device_name: string;
   path: string;

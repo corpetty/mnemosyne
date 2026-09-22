@@ -6,6 +6,8 @@
 	import type { SessionDetail } from '$lib/types/index.js';
 	import LiveTranscript from './LiveTranscript.svelte';
 	import SpeakerBar from './SpeakerBar.svelte';
+	import AudioPlayer from './AudioPlayer.svelte';
+	import { playerState } from '$lib/stores/player.svelte.js';
 
 	function formatTime(seconds: number): string {
 		const m = Math.floor(seconds / 60);
@@ -161,6 +163,7 @@
 	{#if transcriptState.segments.length === 0}
 		<LiveTranscript />
 	{:else}
+		<AudioPlayer />
 		<SpeakerBar />
 		{#if canEdit}
 			<p class="text-[11px] text-gray-600">Click text to edit (Enter saves, Esc cancels). Speaker menus reassign a line. Hover a line for merge and delete.</p>
@@ -169,9 +172,15 @@
 
 	<div bind:this={container} class="max-h-[500px] overflow-y-auto space-y-1 pr-2">
 		{#each transcriptState.segments as segment, idx (idx)}
-			<div data-idx={idx} class="group flex gap-3 text-sm rounded px-1 py-1 transition-colors {editingIdx === idx ? 'bg-gray-900' : 'hover:bg-gray-900/50'}">
+			{@const playingHere = playerState.playing && playerState.currentTime >= segment.start && playerState.currentTime < segment.end}
+			<div data-idx={idx} class="group flex gap-3 text-sm rounded px-1 py-1 transition-colors {editingIdx === idx ? 'bg-gray-900' : playingHere ? 'bg-blue-950/40' : 'hover:bg-gray-900/50'}">
 				<div class="flex-shrink-0 w-14 text-right pt-0.5">
-					<span class="text-gray-500 font-mono text-xs">{formatTime(segment.start)}</span>
+					<button
+						onclick={() => playerState.seek(segment.start)}
+						disabled={!playerState.available}
+						title={playerState.available ? 'Play from here' : ''}
+						class="text-gray-500 font-mono text-xs {playerState.available ? 'hover:text-blue-400' : 'cursor-default'}"
+					>{formatTime(segment.start)}</button>
 				</div>
 				<div class="flex-shrink-0 w-28">
 					{#if canEdit}

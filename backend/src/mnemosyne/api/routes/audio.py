@@ -1,6 +1,11 @@
 """Audio recording endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException
+import re
+import shutil
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ...audio.capture import list_devices, start_recording, stop_recording
@@ -140,3 +145,101 @@ async def status(session_id: str, ctx: AppContext = Depends(get_ctx)):
         "exists": True,
         "device_count": len(recording.processes),
     }
+
+
+# ---- playback + import -------------------------------------------------------
+
+_MEDIA_TYPES = {
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".flac": "audio/flac",
+    ".webm": "audio/webm",
+}
+
+
+@router.get("/file/{session_id}")
+async def get_audio(
+    session_id: str, recording: str | None = None, ctx: AppContext = Depends(get_ctx)
+):
+    """Stream a session's audio (the mixed file by default, or one recording by id).
+    Supports HTTP range requests so the player can seek."""
+    session = ctx.sessions.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    path = session.audio_file
+    if recording:
+        match = next((r for r in session.recordings if r.id == recording), None)
+        if match is None:
+            raise HTTPException(status_code=404, detail="Recording not found")
+        path = match.path
+    if not path or not Path(path).is_file():
+        raise HTTPException(status_code=404, detail="No audio file for this session")
+    media = _MEDIA_TYPES.get(Path(path).suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media, filename=Path(path).name)
+
+
+_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
+IMPORT_EXTENSIONS = {
+    ".wav",
+    ".ogg",
+    ".opus",
+    ".mp3",
+    ".m4a",
+    ".flac",
+    ".webm",
+    ".mp4",
+    ".mkv",
+    ".aac",
+    ".wma",
+}
+
+
+@router.post("/import", response_model=StopRecordingResponse)
+async def import_audio(
+    file: UploadFile = File(...),
+    name: str | None = Form(None),
+    transcribe: bool = Form(True),
+    ctx: AppContext = Depends(get_ctx),
+):
+    """Create a session from an uploaded audio/video file and (by default) transcribe it."""
+    original = Path(file.filename or "import")
+    if original.suffix.lower() not in IMPORT_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type {original.suffix!r}")
+
+    session = ctx.sessions.create_session(name or original.stem)
+    out_dir = ctx.settings.recordings_dir / session.id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    saved = out_dir / ("import_" + (_SAFE.sub("_", original.name) or "file"))
+    with saved.open("wb") as f:
+        shutil.copyfileobj(file.file, f, length=1024 * 1024)
+    if saved.stat().st_size == 0:
+        saved.unlink(missing_ok=True)
+        ctx.sessions.delete_session(session.id)
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    ctx.sessions.set_status(session.id, SessionStatus.ENCODING)
+    try:
+        mixed = mix_audio_files([saved], out_dir / "import_mixed.ogg")
+    except Exception as e:
+        ctx.sessions.set_status(session.id, SessionStatus.ERROR)
+        raise HTTPException(status_code=400, detail=f"Could not decode audio: {e}") from e
+
+    ctx.sessions.set_audio(
+        session.id,
+        str(mixed),
+        [Recording(source="import", device_id=-1, device_name=original.name, path=str(saved))],
+    )
+    ctx.sessions.set_status(session.id, SessionStatus.CREATED)
+
+    job_id = None
+    if transcribe:
+        job = ctx.jobs.submit("transcribe", transcribe_session(ctx, session.id), session.id)
+        job_id = job.id
+    return StopRecordingResponse(
+        session=ctx.sessions.get_session(session.id),
+        job_id=job_id,
+        message=f"Imported {original.name}",
+    )

@@ -19,7 +19,7 @@ class SessionStatus(StrEnum):
     ERROR = "error"
 
 
-RecordingSource = Literal["mic", "system"]
+RecordingSource = Literal["mic", "system", "import"]
 
 
 class Recording(BaseModel):

@@ -133,6 +133,9 @@ def parse_summary_response(text: str, style: str = "meeting") -> tuple[str, Summ
         summary = "\n".join(f"- {s}" for s in _str_list(summary))
     if not isinstance(summary, str):
         summary = ""
+    if "\\n" in summary and "\n" not in summary:
+        # Some models double-escape newlines inside the JSON string.
+        summary = summary.replace("\\n", "\n")
     data = SummaryData(
         style=style,
         topics=_str_list(obj.get("topics")),
