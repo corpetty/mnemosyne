@@ -174,7 +174,7 @@ async def stop_recording(session: RecordingSession) -> list[Path]:
             rec.process.terminate()
             try:
                 await asyncio.wait_for(rec.process.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 rec.process.kill()
                 await rec.process.wait()
 

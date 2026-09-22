@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { exportToObsidian, getVaultConfig, setVaultConfig } from '$lib/api/backend.js';
+	import { exportToObsidian, getSettings, updateSettings } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 
 	let vaultPath = $state('');
 	let subfolder = $state('meetings/mnemosyne');
 	let vaultExists = $state(false);
+	let lockedByEnv = $state(false);
 	let exporting = $state(false);
 	let exportResult = $state('');
 	let error = $state('');
@@ -12,32 +13,33 @@
 
 	async function loadConfig() {
 		try {
-			const config = await getVaultConfig();
-			vaultPath = config.vault_path;
-			subfolder = config.subfolder;
-			vaultExists = config.exists;
+			const s = await getSettings();
+			vaultPath = s.values.obsidian_vault_path;
+			subfolder = s.values.obsidian_subfolder;
+			vaultExists = s.obsidian_vault_exists;
+			lockedByEnv = s.env_overrides.includes('obsidian_vault_path');
 			configLoaded = true;
 		} catch (e) {
-			console.error('Failed to load vault config:', e);
+			console.error('Failed to load settings:', e);
 		}
 	}
 
 	async function saveConfig() {
 		error = '';
 		try {
-			const config = await setVaultConfig(vaultPath, subfolder);
-			vaultExists = config.exists;
-			if (!vaultExists) {
-				error = 'Vault path does not exist';
-			}
+			const s = await updateSettings({
+				obsidian_vault_path: vaultPath,
+				obsidian_subfolder: subfolder
+			});
+			vaultExists = s.obsidian_vault_exists;
+			if (vaultPath && !vaultExists) error = 'Vault path does not exist';
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to save config';
+			error = e instanceof Error ? e.message : 'Failed to save settings';
 		}
 	}
 
 	async function pickDirectory() {
 		try {
-			// Use Tauri dialog if available, fallback to manual input
 			const { open } = await import('@tauri-apps/plugin-dialog');
 			const selected = await open({ directory: true, title: 'Select Obsidian Vault' });
 			if (selected) {
@@ -45,7 +47,6 @@
 				await saveConfig();
 			}
 		} catch {
-			// Not in Tauri environment, user edits manually
 			console.log('Directory picker not available (not running in Tauri)');
 		}
 	}
@@ -53,7 +54,6 @@
 	async function handleExport() {
 		const session = sessionState.activeSession;
 		if (!session) return;
-
 		exporting = true;
 		error = '';
 		exportResult = '';
@@ -68,30 +68,30 @@
 	}
 
 	$effect(() => {
-		if (!configLoaded) {
-			loadConfig();
-		}
+		if (!configLoaded) loadConfig();
 	});
 </script>
 
 <div class="space-y-3">
-	<!-- Vault config -->
 	<div class="flex items-center gap-2">
 		<input
 			type="text"
 			bind:value={vaultPath}
+			disabled={lockedByEnv}
 			placeholder="/path/to/obsidian/vault"
-			class="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600"
+			class="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 disabled:opacity-60"
 		/>
 		<button
 			onclick={pickDirectory}
-			class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 transition-colors"
+			disabled={lockedByEnv}
+			class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 transition-colors disabled:opacity-50"
 		>
 			Browse
 		</button>
 		<button
 			onclick={saveConfig}
-			class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 transition-colors"
+			disabled={lockedByEnv}
+			class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 transition-colors disabled:opacity-50"
 		>
 			Save
 		</button>
@@ -111,9 +111,11 @@
 				{vaultExists ? 'Vault found' : 'Vault not found'}
 			</span>
 		{/if}
+		{#if lockedByEnv}
+			<span class="text-xs text-yellow-500">Set by OBSIDIAN_VAULT_PATH in the environment</span>
+		{/if}
 	</div>
 
-	<!-- Export button -->
 	<button
 		onclick={handleExport}
 		disabled={exporting || !vaultPath || !vaultExists}

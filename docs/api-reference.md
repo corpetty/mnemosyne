@@ -1,16 +1,17 @@
 # API Reference
 
 The Mnemosyne backend runs a FastAPI server on `http://127.0.0.1:8008`. All REST endpoints return JSON.
+Interactive docs are served at `/docs` (Swagger) and `/openapi.json` while the backend runs.
 
-## Health Check
+Long-running work (transcription) never runs inside a request. Endpoints that start such work return a
+**Job** immediately; progress and results arrive over the WebSocket, or by polling `/api/jobs/{id}`.
+
+## Health
 
 ### `GET /health`
 
-Returns backend status.
-
-**Response:**
 ```json
-{ "status": "ok" }
+{ "status": "ok", "version": "0.2.0" }
 ```
 
 ---
@@ -21,34 +22,16 @@ Returns backend status.
 
 List available PipeWire audio devices.
 
-**Response:** `AudioDevice[]`
 ```json
 [
-  {
-    "id": 76,
-    "name": "alsa_input.pci-0000_00_1f.3.analog-stereo",
-    "description": "Built-in Audio Analog Stereo",
-    "media_class": "Audio/Source",
-    "is_input": true,
-    "is_output": false,
-    "is_monitor": false
-  },
-  {
-    "id": 42,
-    "name": "alsa_output.pci-0000_00_1f.3.analog-stereo",
-    "description": "Built-in Audio Analog Stereo",
-    "media_class": "Audio/Sink",
-    "is_input": false,
-    "is_output": true,
-    "is_monitor": false
-  }
+  { "id": 76, "name": "alsa_input....", "description": "Built-in Audio Analog Stereo",
+    "media_class": "Audio/Source", "is_input": true, "is_output": false, "is_monitor": false },
+  { "id": 42, "name": "alsa_output....", "description": "Built-in Audio Analog Stereo",
+    "media_class": "Audio/Sink", "is_input": false, "is_output": true, "is_monitor": false }
 ]
 ```
 
-**Notes:**
-- Input devices (`Audio/Source`) are microphones and other capture devices
-- Output devices (`Audio/Sink`) can be selected to capture system audio via their monitor source
-- Monitor sources are auto-detected and flagged with `is_monitor: true`
+Input devices are microphones. Output devices are selected to capture system audio via their monitor source.
 
 ---
 
@@ -56,111 +39,65 @@ List available PipeWire audio devices.
 
 ### `POST /api/audio/start`
 
-Start recording from selected audio devices.
-
-**Request body:**
 ```json
-{
-  "device_ids": [76, 42],
-  "session_id": "a1b2c3d4"  // optional, creates new session if omitted
-}
+{ "device_ids": [76, 42], "session_id": "a1b2c3d4" }
 ```
 
-**Response:**
-```json
-{
-  "session_id": "a1b2c3d4",
-  "recording_id": "e5f6g7h8",
-  "message": "Recording started from 2 device(s)"
-}
-```
+`session_id` is optional; a new session is created if omitted. Spawns one `pw-record` per device
+(48 kHz mono 16-bit WAV). Session status becomes `recording`.
 
-**Behavior:**
-- Spawns `pw-record` processes for each device
-- For sink (output) devices, automatically uses the monitor source
-- Records as 48kHz, mono, 16-bit PCM WAV
-- Sets session status to `recording`
+**Response:** `{ "session_id": "...", "recording_id": "...", "message": "..." }`
+
+**Errors:** `400` no devices, `404` unknown session, `409` session already recording.
 
 ### `POST /api/audio/stop/{session_id}`
 
-Stop recording and process audio.
+Optional body: `{ "transcribe": true | false }`. Omit to follow the `auto_transcribe` setting.
 
-**Response:**
+Terminates capture, encodes each source to OGG/Opus, records each as a `Recording` on the session
+(`source` is `mic` for input devices and `system` for output monitors), mixes all sources into a single
+`audio_file`, and by default queues a transcription job.
+
 ```json
 {
-  "session_id": "a1b2c3d4",
-  "recording_id": "e5f6g7h8",
-  "output_file": "/path/to/data/recordings/a1b2c3d4/e5f6g7h8_mixed.ogg",
-  "individual_files": [
-    "/path/to/data/recordings/a1b2c3d4/e5f6g7h8_device_76.ogg",
-    "/path/to/data/recordings/a1b2c3d4/e5f6g7h8_device_42.ogg"
-  ],
-  "message": "Recording stopped. 2 file(s) captured."
+  "session": { "...full SessionDetail..." },
+  "job_id": "j1k2l3m4",
+  "message": "Recording stopped. 2 source(s) captured."
 }
 ```
 
-**Behavior:**
-- Terminates all `pw-record` processes
-- Converts WAV files to OGG/Opus via ffmpeg (64k bitrate)
-- Mixes multiple sources into a single file via numpy
-- Sets session status to `processing`
+`job_id` is `null` when transcription was not queued.
 
 ### `GET /api/audio/status/{session_id}`
 
-Check recording status.
-
-**Response:**
 ```json
-{
-  "session_id": "a1b2c3d4",
-  "is_recording": true,
-  "exists": true,
-  "device_count": 2
-}
+{ "session_id": "a1b2c3d4", "is_recording": true, "exists": true, "device_count": 2 }
 ```
 
 ---
 
 ## Sessions
 
+Session `status` is one of: `created`, `recording`, `encoding`, `transcribing`, `completed`, `error`.
+
 ### `GET /api/sessions`
 
-List all sessions (summary view).
+Summary list, newest first. Never includes transcripts.
 
-**Response:** `SessionSummary[]`
 ```json
 [
-  {
-    "id": "a1b2c3d4",
-    "name": "Team Standup",
-    "status": "completed",
-    "created_at": "2026-02-18T10:30:00",
-    "updated_at": "2026-02-18T11:00:00",
-    "has_transcript": true,
-    "has_summary": true,
-    "participant_count": 3
-  }
+  { "id": "a1b2c3d4", "name": "Team Standup", "status": "completed",
+    "created_at": "2026-02-18T10:30:00", "updated_at": "2026-02-18T11:00:00",
+    "has_transcript": true, "has_summary": true, "participant_count": 3 }
 ]
 ```
 
 ### `POST /api/sessions`
 
-Create a new session.
-
-**Request body:**
-```json
-{
-  "name": "Team Standup"  // optional, defaults to "Untitled Session"
-}
-```
-
-**Response:** `SessionDetail` (see GET by ID below)
+`{ "name": "Team Standup" }` (optional). **Response:** `SessionDetail`.
 
 ### `GET /api/sessions/{session_id}`
 
-Get full session details including transcript.
-
-**Response:** `SessionDetail`
 ```json
 {
   "id": "a1b2c3d4",
@@ -168,19 +105,16 @@ Get full session details including transcript.
   "status": "completed",
   "created_at": "2026-02-18T10:30:00",
   "updated_at": "2026-02-18T11:00:00",
-  "audio_file": "/path/to/recording.ogg",
+  "audio_file": "/path/to/data/recordings/a1b2c3d4/e5f6g7h8_mixed.ogg",
+  "recordings": [
+    { "id": "r1", "source": "mic", "device_id": 76, "device_name": "Built-in Mic",
+      "path": "/path/.../e5f6g7h8_device_76.ogg", "created_at": "..." },
+    { "id": "r2", "source": "system", "device_id": 42, "device_name": "Speakers",
+      "path": "/path/.../e5f6g7h8_device_42.ogg", "created_at": "..." }
+  ],
   "transcript": [
-    {
-      "text": "Good morning everyone.",
-      "speaker": "SPEAKER_00",
-      "start": 0.5,
-      "end": 2.1,
-      "words": [
-        { "word": "Good", "start": 0.5, "end": 0.8, "score": 0.95 },
-        { "word": "morning", "start": 0.82, "end": 1.3, "score": 0.97 },
-        { "word": "everyone.", "start": 1.35, "end": 2.1, "score": 0.92 }
-      ]
-    }
+    { "text": "Good morning everyone.", "speaker": "SPEAKER_00", "start": 0.5, "end": 2.1,
+      "words": [ { "word": "Good", "start": 0.5, "end": 0.8, "score": 0.95 } ] }
   ],
   "summary": "## Meeting Summary\n...",
   "notes": "User notes here",
@@ -190,34 +124,46 @@ Get full session details including transcript.
 
 ### `PATCH /api/sessions/{session_id}`
 
-Rename a session.
-
-**Request body:**
-```json
-{ "name": "New Name" }
-```
-
-**Response:** `SessionDetail`
+`{ "name": "New Name" }` → `SessionDetail`.
 
 ### `DELETE /api/sessions/{session_id}`
 
-Delete a session and its data.
-
-**Response:**
-```json
-{ "message": "Session deleted" }
-```
+Deletes the session, its transcript, and its recordings directory. → `{ "message": "Session deleted" }`
 
 ### `POST /api/sessions/{session_id}/notes`
 
-Update session notes.
+`{ "notes": "..." }` → `SessionDetail`.
 
-**Request body:**
+### `POST /api/sessions/{session_id}/transcribe`
+
+Queue a transcription job for the session's `audio_file`. **Response:** `Job`.
+
+**Errors:** `400` no audio, `404` unknown session, `409` a job is already active for the session.
+
+---
+
+## Jobs
+
 ```json
-{ "notes": "Updated notes content" }
+{
+  "id": "j1k2l3m4",
+  "kind": "transcribe",
+  "session_id": "a1b2c3d4",
+  "status": "running",
+  "message": "Transcribing...",
+  "progress": null,
+  "error": null,
+  "result": null,
+  "created_at": "...", "started_at": "...", "finished_at": null
+}
 ```
 
-**Response:** `SessionDetail`
+`status`: `queued`, `running`, `completed`, `failed`, `cancelled`. Only one `transcribe` job runs at a time;
+others wait in `queued`.
+
+- `GET /api/jobs?session_id=&active_only=` list jobs
+- `GET /api/jobs/{job_id}`
+- `POST /api/jobs/{job_id}/cancel` (`409` if not running)
 
 ---
 
@@ -225,100 +171,81 @@ Update session notes.
 
 ### `GET /api/models`
 
-List available LLM models from all configured providers.
-
-**Response:** `ProviderModels[]`
 ```json
 [
-  {
-    "provider": "ollama",
-    "models": ["llama3.1:latest", "mistral:latest", "qwen3:32b"]
-  },
-  {
-    "provider": "openai",
-    "models": ["gpt-4o", "gpt-4o-mini"]
-  }
+  { "provider": "ollama", "models": ["llama3.1:latest", "qwen3:32b"] },
+  { "provider": "vllm", "models": [] }
 ]
 ```
 
-**Notes:**
-- Ollama models are filtered to exclude embedding-only models (BERT family, models with "embed" in name)
-- Providers with no API key configured return empty model lists
-- vLLM uses OpenAI-compatible `/v1/models` endpoint
+Cloud providers appear only when their API key is set. Embedding-only Ollama models are filtered out.
 
 ### `POST /api/sessions/{session_id}/summarize`
 
-Generate a summary for a session's transcript.
-
-**Request body:**
 ```json
-{
-  "provider": "ollama",   // "ollama", "vllm", "openai", "anthropic"
-  "model": "llama3.1:latest"  // optional, uses first available if empty
-}
+{ "provider": "ollama", "model": "llama3.1:latest" }
 ```
 
-**Response:**
-```json
-{
-  "summary": "## Meeting Summary\n\n### Key Points\n...",
-  "provider": "ollama",
-  "model": "llama3.1:latest"
-}
-```
+Both fields optional; blank values fall back to `default_provider` / `default_model` from settings, and a
+blank model uses the provider's first listed model. Runs synchronously and saves the summary to the session.
 
-**Behavior:**
-- Formats transcript into text with speaker labels and timestamps
-- Selects system prompt based on transcript length (compact for short, detailed for long)
-- Saves summary to session on success
+**Response:** `{ "summary": "...", "provider": "ollama", "model": "llama3.1:latest" }`
 
 ---
 
-## Obsidian Export
+## Export
 
 ### `POST /api/sessions/{session_id}/export/obsidian`
 
-Export a session as a markdown file to the configured Obsidian vault.
+Writes `<vault>/<subfolder>/YYYY-MM-DD-<name>.md` using the configured vault.
 
-**Response:**
+**Response:** `{ "path": "...", "message": "Exported successfully" }`
+**Errors:** `400` vault not configured or missing, `404` session.
+
+---
+
+## Settings
+
+Settings are loaded from environment variables (highest precedence, including `backend/.env`), then the
+user config file (`$XDG_CONFIG_HOME/mnemosyne/config.toml`, or `MNEMOSYNE_CONFIG_FILE`), then defaults.
+
+### `GET /api/settings`
+
 ```json
 {
-  "path": "/home/user/vault/meetings/mnemosyne/2026-02-18-Team-Standup.md",
-  "message": "Exported successfully"
+  "values": {
+    "data_dir": "/home/me/mnemosyne/data",
+    "hf_token": "",
+    "whisper_model_size": "medium.en",
+    "whisper_compute_type": "float16",
+    "whisper_batch_size": 8,
+    "auto_transcribe": true,
+    "ollama_url": "http://localhost:11434",
+    "vllm_url": "http://localhost:8000",
+    "openai_api_key": "",
+    "anthropic_api_key": "",
+    "default_provider": "ollama",
+    "default_model": "",
+    "obsidian_vault_path": "",
+    "obsidian_subfolder": "meetings/mnemosyne"
+  },
+  "secrets_set": { "hf_token": true, "openai_api_key": false, "anthropic_api_key": false },
+  "env_overrides": ["hf_token"],
+  "config_file": "/home/me/.config/mnemosyne/config.toml",
+  "obsidian_vault_exists": false
 }
 ```
 
-**Errors:**
-- `400` if vault path not configured
-- `400` if vault path doesn't exist
-- `404` if session not found
+Secret values are never returned; `secrets_set` says whether each is configured. `env_overrides` lists
+fields currently forced by the environment (saving them has no effect until the variable is removed).
 
-### `GET /api/settings/obsidian`
+### `PUT /api/settings`
 
-Get current Obsidian vault configuration.
+Partial update; only provided fields change. For secret fields, `""` keeps the current value and `null`
+clears it. Persists to the config file (mode 0600) and applies immediately: providers are rebuilt, and the
+transcription engine is unloaded if its configuration changed.
 
-**Response:**
-```json
-{
-  "vault_path": "/home/user/vault",
-  "subfolder": "meetings/mnemosyne",
-  "exists": true
-}
-```
-
-### `POST /api/settings/obsidian`
-
-Update Obsidian vault configuration (runtime only, not persisted to .env).
-
-**Request body:**
-```json
-{
-  "vault_path": "/home/user/vault",
-  "subfolder": "meetings/mnemosyne"
-}
-```
-
-**Response:** Same as GET.
+**Response:** same shape as `GET`. **Errors:** `422` invalid value.
 
 ---
 
@@ -326,60 +253,24 @@ Update Obsidian vault configuration (runtime only, not persisted to .env).
 
 ### `ws://127.0.0.1:8008/ws`
 
-Real-time transcription streaming endpoint.
+A read-mostly event stream. The only client message is `{ "type": "ping" }` (answered with `pong`).
+Work is started over HTTP.
 
-#### Client Messages
+On connect the server sends a snapshot of in-flight jobs:
 
-**Start transcription:**
 ```json
-{
-  "type": "transcribe",
-  "audio_path": "/path/to/recording.ogg",
-  "session_id": "a1b2c3d4"
-}
+{ "type": "hello", "jobs": [ { "...Job..." } ] }
 ```
 
-**Ping (keepalive):**
-```json
-{ "type": "ping" }
-```
+Then every backend event, in order:
 
-#### Server Messages
+| `type` | Payload | When |
+|---|---|---|
+| `job` | `job: Job` | Any job state or message change |
+| `session` | `session_id`, `status` (session status or `"deleted"`) | Session created, status changed, deleted |
+| `transcription` | `session_id`, `segment: TranscriptSegment` | Each segment as the engine yields it |
+| `status` | `session_id`, `message` | Human-readable stage text (`Loading models...`, `Transcribing...`, `Transcription complete`) |
+| `error` | `session_id`, `message` | A stage failed |
+| `pong` | | Reply to `ping` |
 
-**Status updates:**
-```json
-{
-  "type": "status",
-  "session_id": "a1b2c3d4",
-  "message": "Loading models..."  // or "Transcribing...", "Transcription complete"
-}
-```
-
-**Transcript segments (streamed one at a time):**
-```json
-{
-  "type": "transcription",
-  "session_id": "a1b2c3d4",
-  "segment": {
-    "text": "Good morning everyone.",
-    "speaker": "SPEAKER_00",
-    "start": 0.5,
-    "end": 2.1,
-    "words": [...]
-  }
-}
-```
-
-**Errors:**
-```json
-{
-  "type": "error",
-  "session_id": "a1b2c3d4",
-  "message": "Transcription failed: ..."
-}
-```
-
-**Pong:**
-```json
-{ "type": "pong" }
-```
+Clients should filter `transcription`/`status`/`error` by `session_id` and use `job` events for state.

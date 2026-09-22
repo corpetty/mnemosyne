@@ -8,8 +8,7 @@
 	import ObsidianExport from '$lib/components/ObsidianExport.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
 	import ToastContainer from '$lib/components/ToastContainer.svelte';
-	import { getHealth } from '$lib/api/backend.js';
-	import { exportToObsidian } from '$lib/api/backend.js';
+	import { getHealth, exportToObsidian } from '$lib/api/backend.js';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
@@ -25,14 +24,20 @@
 	let activeTab = $state<Tab>('recording');
 
 	$effect(() => {
+		let unsubscribeSessions: (() => void) | null = null;
 		getHealth()
 			.then(() => {
 				backendStatus = 'connected';
 				wsState.connect();
 				transcriptState.init();
-				transcriptState.onComplete(() => {
-					sessionState.refreshActive();
+				transcriptState.onComplete((sessionId) => {
+					if (sessionState.activeSession?.id === sessionId) sessionState.refreshActive();
 					sessionState.loadSessions();
+					toastState.success('Transcription complete');
+				});
+				// Keep the sidebar in step with backend session state changes.
+				unsubscribeSessions = wsState.onMessage((msg) => {
+					if (msg.type === 'session') sessionState.loadSessions();
 				});
 			})
 			.catch(() => {
@@ -40,12 +45,13 @@
 			});
 
 		return () => {
+			unsubscribeSessions?.();
 			transcriptState.destroy();
 			wsState.disconnect();
 		};
 	});
 
-	// Load transcript from active session when switching sessions
+	// Show the active session's transcript when switching sessions
 	let lastLoadedSessionId = $state<string | null>(null);
 	$effect(() => {
 		const session = sessionState.activeSession;
@@ -55,11 +61,7 @@
 		}
 		if (session.id !== lastLoadedSessionId) {
 			lastLoadedSessionId = session.id;
-			if (session.transcript.length > 0 && !transcriptState.isProcessing) {
-				transcriptState.loadFromSession(session.transcript);
-			} else if (session.transcript.length === 0 && !transcriptState.isProcessing) {
-				transcriptState.clear();
-			}
+			transcriptState.showSession(session.id, session.transcript);
 			showSettings = false;
 		}
 	});
@@ -76,11 +78,16 @@
 	}
 
 	async function handleStopAndTranscribe() {
+		const sessionId = audioState.activeSessionId;
 		const result = await audioState.stopRecording();
-		if (result?.output_file && result?.session_id) {
-			toastState.info('Processing audio...');
-			transcriptState.startTranscription(result.output_file, result.session_id);
+		if (!result || !sessionId) return;
+		sessionState.activeSession = result.session;
+		if (result.job_id) {
+			toastState.info('Transcription queued');
+			transcriptState.expectJob(sessionId);
 			activeTab = 'transcript';
+		} else {
+			toastState.info('Recording saved');
 		}
 	}
 

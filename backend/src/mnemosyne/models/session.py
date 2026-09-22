@@ -1,9 +1,8 @@
-"""Session data model with JSON persistence."""
+"""Session data models."""
 
-import json
 from datetime import datetime
-from enum import Enum
-from pathlib import Path
+from enum import StrEnum
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -11,12 +10,28 @@ from pydantic import BaseModel, Field
 from .transcript import TranscriptSegment
 
 
-class SessionStatus(str, Enum):
+class SessionStatus(StrEnum):
     CREATED = "created"
     RECORDING = "recording"
-    PROCESSING = "processing"
+    ENCODING = "encoding"
+    TRANSCRIBING = "transcribing"
     COMPLETED = "completed"
     ERROR = "error"
+
+
+RecordingSource = Literal["mic", "system"]
+
+
+class Recording(BaseModel):
+    """One captured audio source. Sources are kept separate on disk so a later
+    stage can attribute the mic channel to the local user and diarize only the rest."""
+
+    id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    source: RecordingSource
+    device_id: int
+    device_name: str
+    path: str
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class Session(BaseModel):
@@ -25,23 +40,22 @@ class Session(BaseModel):
     status: SessionStatus = SessionStatus.CREATED
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
-    audio_file: str | None = None
+    audio_file: str | None = None  # mixed file used for transcription
+    recordings: list[Recording] = Field(default_factory=list)
     transcript: list[TranscriptSegment] = Field(default_factory=list)
     summary: str = ""
     notes: str = ""
     participants: list[str] = Field(default_factory=list)
 
-    def save(self, data_dir: Path) -> Path:
-        """Persist session to a JSON file."""
-        sessions_dir = data_dir / "sessions"
-        sessions_dir.mkdir(parents=True, exist_ok=True)
-        path = sessions_dir / f"{self.id}.json"
-        self.updated_at = datetime.now()
-        path.write_text(self.model_dump_json(indent=2))
-        return path
 
-    @classmethod
-    def load(cls, path: Path) -> "Session":
-        """Load a session from a JSON file."""
-        data = json.loads(path.read_text())
-        return cls.model_validate(data)
+class SessionSummary(BaseModel):
+    """Sidebar view of a session. Never carries the transcript."""
+
+    id: str
+    name: str
+    status: SessionStatus
+    created_at: datetime
+    updated_at: datetime
+    has_transcript: bool
+    has_summary: bool
+    participant_count: int

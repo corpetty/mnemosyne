@@ -38,11 +38,12 @@ Mnemosyne is a desktop application for real-time audio transcription, speaker di
 ## Component Communication
 
 ```
-Frontend ──HTTP REST──> FastAPI Backend
-Frontend ──WebSocket──> FastAPI Backend (real-time transcription)
+Frontend ──HTTP REST──> FastAPI Backend (all commands, incl. "start transcription")
+Frontend <─WebSocket─── FastAPI Backend (event stream: jobs, sessions, segments)
 Backend  ──PipeWire───> System Audio (pw-record, pw-dump)
 Backend  ──HTTP───────> Ollama/vLLM/OpenAI/Anthropic
-Backend  ──File I/O───> data/ (sessions, recordings)
+Backend  ──SQLite─────> data/mnemosyne.db (sessions, segments, recordings)
+Backend  ──File I/O───> data/recordings/ (Opus audio), ~/.config/mnemosyne/config.toml
 Backend  ──File I/O───> Obsidian vault (markdown export)
 ```
 
@@ -52,14 +53,21 @@ The frontend communicates with the backend over HTTP on `127.0.0.1:8008`. All en
 
 ### WebSocket
 
-A single WebSocket connection at `ws://127.0.0.1:8008/ws` handles real-time transcription streaming. The frontend sends a `transcribe` message with an audio file path, and the backend streams `transcription` messages back as segments are processed.
+A single connection at `ws://127.0.0.1:8008/ws` streams backend events to the UI. The client never
+starts work over the socket; it only sends `ping`. Every connection gets its own bounded queue on the
+in-process `EventBus`, so a slow client drops events instead of stalling the backend.
 
-Message types:
-- **Client -> Server:** `{ type: "transcribe", audio_path: "...", session_id: "..." }`
-- **Client -> Server:** `{ type: "ping" }`
-- **Server -> Client:** `{ type: "transcription", segment: {...}, session_id: "..." }`
-- **Server -> Client:** `{ type: "status", message: "...", session_id: "..." }`
-- **Server -> Client:** `{ type: "error", message: "...", session_id: "..." }`
+Event types: `hello` (snapshot of active jobs on connect), `job`, `session`, `transcription`, `status`,
+`error`, `pong`. See `docs/api-reference.md`.
+
+### Jobs
+
+Anything that takes more than a moment runs as a **Job** (`jobs.py`). A route submits a runner
+coroutine to the `JobManager`, gets a `Job` record back immediately, and the manager runs it as an
+asyncio task. The runner reports progress through a `JobContext`, which publishes `job` events.
+Per-kind concurrency limits serialize GPU work: only one `transcribe` job runs at a time.
+
+Pipeline stages live in `services/pipeline.py` and are the only place ML work is invoked.
 
 ## Data Flow
 
@@ -67,23 +75,23 @@ Message types:
 
 1. User selects audio devices (microphone, system audio monitors)
 2. Frontend calls `POST /api/audio/start` with device IDs and session ID
-3. Backend spawns `pw-record` processes (one per device)
-4. When stopped via `POST /api/audio/stop/{id}`:
-   - Each WAV recording is converted to OGG/Opus via ffmpeg
-   - Multiple sources are mixed into a single file via numpy
-   - Session status moves to "processing"
+3. Backend spawns `pw-record` processes (one per device); session status `recording`
+4. `POST /api/audio/stop/{id}`:
+   - status `encoding`; each WAV is converted to OGG/Opus via ffmpeg
+   - each source is stored on the session as a `Recording` with `source: mic | system`, so later
+     stages can attribute the mic channel to the local user
+   - all sources are mixed into a single mono `audio_file` (what the current engine consumes)
+   - unless disabled, a `transcribe` job is queued and its id returned
 
 ### Transcription Flow
 
-1. After recording stops, frontend sends WebSocket message: `{ type: "transcribe", audio_path: "...", session_id: "..." }`
-2. Backend loads WhisperX model (lazy, first use only)
-3. Pipeline runs in order:
-   - **Transcribe** with faster-whisper (batch size 16)
-   - **Align** timestamps with wav2vec2
-   - **Diarize** with pyannote speaker-diarization-3.1
-   - **Assign speakers** to word-level segments (fill_nearest=True)
-4. Each segment is broadcast via WebSocket as it's ready
-5. Full transcript is saved to the session JSON file
+1. A `transcribe` job starts (from stop-recording, or `POST /api/sessions/{id}/transcribe`)
+2. Session status `transcribing`; `status` events mark stages
+3. `ModelService` lazily loads WhisperX (first use only)
+4. Pipeline: transcribe (faster-whisper) → align (wav2vec2) → diarize (pyannote) → assign speakers
+5. Each segment is published as a `transcription` event as the engine yields it
+6. Transcript and participants are saved; session status `completed`; job `completed`
+7. On failure: session status `error`, an `error` event, job `failed` with the message
 
 ### Summarization Flow
 
@@ -100,62 +108,51 @@ The frontend uses Svelte 5 runes (`$state`, `$effect`) in class-based stores:
 |-------|------|---------------|
 | `audioState` | `stores/audio.svelte.ts` | Device list, selection, recording status, duration |
 | `sessionState` | `stores/session.svelte.ts` | Session CRUD, active session, session list |
-| `transcriptState` | `stores/transcript.svelte.ts` | Transcript segments, speaker colors, processing status |
+| `transcriptState` | `stores/transcript.svelte.ts` | Transcript for the shown session; follows its `transcribe` job via WS events |
 | `wsState` | `stores/websocket.svelte.ts` | WebSocket connection, auto-reconnect, message dispatch |
-| `toastState` | `stores/toast.svelte.ts` | Toast notifications (info, success, error) |
+| `toastState` | `stores/toast.svelte.ts` | Toast notifications |
 
-### Reactivity Design
-
-Cross-store communication uses a callback pattern to avoid circular imports:
-
-```
-transcriptState.onComplete(() => {
-    sessionState.refreshActive();    // reload session from backend
-    sessionState.loadSessions();     // refresh sidebar list
-});
-```
-
-Session switching uses an ID-based guard to prevent infinite `$effect` loops:
-
-```typescript
-let lastLoadedSessionId = $state<string | null>(null);
-$effect(() => {
-    const session = sessionState.activeSession;
-    if (session && session.id !== lastLoadedSessionId) {
-        lastLoadedSessionId = session.id;
-        transcriptState.loadFromSession(session.transcript);
-    }
-});
-```
+`transcriptState` holds a `sessionId` and ignores events for other sessions, so a job for one session
+never leaks into another's view. Cross-store communication uses callbacks and the page wiring
+(`+page.svelte`), not store-to-store imports. `session` events trigger a sidebar refresh.
 
 ## Persistence
 
-### Sessions
+### Database
 
-Sessions are persisted as JSON files in `data/sessions/{id}.json`. Each session contains:
-- Metadata (id, name, status, timestamps)
-- Audio file path
-- Full transcript (array of segments)
-- Summary text
-- User notes
-- Participant list
+Sessions live in `data/mnemosyne.db` (SQLite, WAL mode, stdlib `sqlite3`), via
+`storage/sqlite.py::SessionRepository`:
+
+- `sessions`: metadata, summary, notes, participants, mixed `audio_file`
+- `segments`: one row per transcript segment (word timings as JSON), cascade-deleted
+- `recordings`: one row per captured source (`mic` / `system`), cascade-deleted
+
+Listing sessions never reads `segments`. On startup, any legacy `data/sessions/*.json` files from v2 are
+imported once (files are left in place).
 
 ### Audio Files
 
 Recordings are stored in `data/recordings/{session_id}/`:
-- Individual device recordings: `{recording_id}_device_{device_id}.ogg`
-- Mixed output: `{recording_id}_mixed.ogg`
+- Individual sources: `{recording_id}_device_{device_id}.ogg`
+- Mixed: `{recording_id}_mixed.ogg`
 
 Audio is captured as WAV, then converted to OGG/Opus (~12x smaller) via ffmpeg.
+
+### Configuration
+
+`config.py::Settings` (pydantic-settings). Precedence: environment (incl. `backend/.env`) → user config
+file (`$XDG_CONFIG_HOME/mnemosyne/config.toml`) → defaults. The Settings UI writes the file; the API
+reports which fields the environment is overriding. `MNEMOSYNE_DATA_DIR` and `MNEMOSYNE_CONFIG_FILE`
+relocate the data directory and config file (tests use both).
 
 ## ML Model Management
 
 Heavy ML models (WhisperX, pyannote) are loaded lazily on first use:
 
-1. `model_service.py` uses `TYPE_CHECKING` for compile-time type safety without import-time loading
-2. Models are loaded into GPU memory when the first transcription is requested
+1. `services/model_service.py` imports the engine inside a function, so the API starts without torch
+2. Models are loaded into GPU memory when the first transcription job runs
 3. Models remain in memory for subsequent transcriptions
-4. The `unload()` method frees GPU memory and clears CUDA cache
+4. `unload()` frees GPU memory; changing whisper settings via the API unloads so the next job reloads
 
 This allows the backend to start instantly without waiting for multi-gigabyte model downloads.
 

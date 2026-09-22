@@ -1,36 +1,36 @@
-import { wsState } from "./websocket.svelte.js";
-
-export interface TranscriptSegment {
-  text: string;
-  speaker: string;
-  start: number;
-  end: number;
-}
+import type { BackendEvent, Job, TranscriptSegment } from '$lib/types/index.js';
+import * as api from '$lib/api/backend.js';
+import { wsState } from './websocket.svelte.js';
 
 const SPEAKER_COLORS = [
-  "text-blue-400",
-  "text-green-400",
-  "text-purple-400",
-  "text-orange-400",
-  "text-pink-400",
-  "text-cyan-400",
-  "text-yellow-400",
-  "text-red-400",
+  'text-blue-400',
+  'text-green-400',
+  'text-purple-400',
+  'text-orange-400',
+  'text-pink-400',
+  'text-cyan-400',
+  'text-yellow-400',
+  'text-red-400'
 ];
 
+/**
+ * Transcript for the session currently shown in the UI.
+ *
+ * Segments arrive over the WebSocket as the backend transcription job runs.
+ * Only events for `sessionId` are applied, so jobs for other sessions do not
+ * bleed into the view.
+ */
 class TranscriptState {
   segments = $state<TranscriptSegment[]>([]);
-  status = $state<string>("");
+  status = $state<string>('');
   isProcessing = $state(false);
   error = $state<string | null>(null);
+  sessionId = $state<string | null>(null);
+  activeJob = $state<Job | null>(null);
 
   private speakerColorMap = new Map<string, string>();
   private unsubscribe: (() => void) | null = null;
-  private _onCompleteCallback: (() => void) | null = null;
-
-  get speakerColors(): Map<string, string> {
-    return this.speakerColorMap;
-  }
+  private _onCompleteCallback: ((sessionId: string) => void) | null = null;
 
   getSpeakerColor(speaker: string): string {
     if (!this.speakerColorMap.has(speaker)) {
@@ -41,27 +41,7 @@ class TranscriptState {
   }
 
   init() {
-    this.unsubscribe = wsState.onMessage((msg) => {
-      const type = msg.type as string;
-
-      if (type === "transcription") {
-        const seg = msg.segment as TranscriptSegment;
-        this.segments = [...this.segments, seg];
-        this.getSpeakerColor(seg.speaker);
-      } else if (type === "status") {
-        this.status = msg.message as string;
-        if (this.status === "Transcribing...") {
-          this.isProcessing = true;
-        } else if (this.status === "Transcription complete") {
-          this.isProcessing = false;
-          // Notify listeners that transcription is done
-          this._onCompleteCallback?.();
-        }
-      } else if (type === "error") {
-        this.error = msg.message as string;
-        this.isProcessing = false;
-      }
-    });
+    this.unsubscribe = wsState.onMessage((raw) => this.handle(raw as BackendEvent));
   }
 
   destroy() {
@@ -69,34 +49,111 @@ class TranscriptState {
     this.unsubscribe = null;
   }
 
-  onComplete(callback: () => void) {
+  onComplete(callback: (sessionId: string) => void) {
     this._onCompleteCallback = callback;
   }
 
-  clear() {
-    this.segments = [];
+  private handle(msg: BackendEvent) {
+    switch (msg.type) {
+      case 'hello': {
+        const job = msg.jobs.find((j) => j.kind === 'transcribe' && j.session_id === this.sessionId);
+        if (job) this.applyJob(job);
+        break;
+      }
+      case 'job':
+        if (msg.job.kind === 'transcribe' && msg.job.session_id === this.sessionId) {
+          this.applyJob(msg.job);
+        }
+        break;
+      case 'transcription':
+        if (msg.session_id === this.sessionId) {
+          this.segments = [...this.segments, msg.segment];
+          this.getSpeakerColor(msg.segment.speaker);
+        }
+        break;
+      case 'status':
+        if (msg.session_id === this.sessionId) this.status = msg.message;
+        break;
+      case 'error':
+        if (msg.session_id === this.sessionId) {
+          this.error = msg.message;
+          this.isProcessing = false;
+        }
+        break;
+    }
+  }
+
+  private applyJob(job: Job) {
+    this.activeJob = job;
+    switch (job.status) {
+      case 'queued':
+        this.isProcessing = true;
+        this.status = 'Queued...';
+        this.error = null;
+        break;
+      case 'running':
+        this.isProcessing = true;
+        if (job.message) this.status = job.message;
+        break;
+      case 'completed':
+        this.isProcessing = false;
+        this.status = 'Transcription complete';
+        this._onCompleteCallback?.(job.session_id!);
+        break;
+      case 'failed':
+        this.isProcessing = false;
+        this.error = job.error ?? 'Transcription failed';
+        break;
+      case 'cancelled':
+        this.isProcessing = false;
+        this.status = 'Cancelled';
+        break;
+    }
+  }
+
+  /** Switch the view to a session, loading its stored transcript. */
+  showSession(sessionId: string, segments: TranscriptSegment[]) {
+    if (sessionId === this.sessionId && this.isProcessing) return;
+    this.sessionId = sessionId;
     this.speakerColorMap.clear();
-    this.status = "";
+    this.segments = segments;
+    for (const seg of segments) this.getSpeakerColor(seg.speaker);
+    this.status = '';
     this.error = null;
     this.isProcessing = false;
+    this.activeJob = null;
   }
 
-  loadFromSession(segments: TranscriptSegment[]) {
+  clear() {
+    this.sessionId = null;
+    this.segments = [];
     this.speakerColorMap.clear();
-    for (const seg of segments) {
-      this.getSpeakerColor(seg.speaker);
-    }
-    this.segments = segments;
+    this.status = '';
+    this.error = null;
+    this.isProcessing = false;
+    this.activeJob = null;
   }
 
-  startTranscription(audioPath: string, sessionId?: string) {
-    this.clear();
+  /** Called when a transcription job has been queued for `sessionId`. */
+  expectJob(sessionId: string) {
+    this.sessionId = sessionId;
+    this.segments = [];
+    this.speakerColorMap.clear();
+    this.error = null;
     this.isProcessing = true;
-    wsState.send({
-      type: "transcribe",
-      audio_path: audioPath,
-      session_id: sessionId,
-    });
+    this.status = 'Queued...';
+  }
+
+  /** Ask the backend to (re)transcribe the session's stored audio. */
+  async transcribe(sessionId: string) {
+    this.expectJob(sessionId);
+    try {
+      const job = await api.transcribeSession(sessionId);
+      this.applyJob(job);
+    } catch (e) {
+      this.isProcessing = false;
+      this.error = e instanceof Error ? e.message : 'Failed to start transcription';
+    }
   }
 }
 

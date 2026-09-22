@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
+	import { sessionState } from '$lib/stores/session.svelte.js';
 
 	function formatTime(seconds: number): string {
 		const m = Math.floor(seconds / 60);
@@ -15,26 +16,43 @@
 			container.scrollTop = container.scrollHeight;
 		}
 	});
+
+	const canTranscribe = $derived(
+		!!sessionState.activeSession?.audio_file && !transcriptState.isProcessing
+	);
+
+	async function handleTranscribe() {
+		const session = sessionState.activeSession;
+		if (session) await transcriptState.transcribe(session.id);
+	}
 </script>
 
 <div class="space-y-2">
-	{#if transcriptState.status}
-		<div class="flex items-center gap-2 text-sm text-gray-400">
+	<div class="flex items-center justify-between gap-3">
+		<div class="flex items-center gap-2 text-sm text-gray-400 min-h-5">
 			{#if transcriptState.isProcessing}
 				<span class="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></span>
 			{/if}
-			<span>{transcriptState.status}</span>
+			{#if transcriptState.status}
+				<span>{transcriptState.status}</span>
+			{/if}
 		</div>
-	{/if}
+		{#if canTranscribe}
+			<button
+				onclick={handleTranscribe}
+				class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 transition-colors"
+				title="Run transcription on this session's audio"
+			>
+				{transcriptState.segments.length > 0 ? 'Re-transcribe' : 'Transcribe'}
+			</button>
+		{/if}
+	</div>
 
 	{#if transcriptState.error}
 		<p class="text-sm text-red-400">{transcriptState.error}</p>
 	{/if}
 
-	<div
-		bind:this={container}
-		class="max-h-[500px] overflow-y-auto space-y-3 pr-2"
-	>
+	<div bind:this={container} class="max-h-[500px] overflow-y-auto space-y-3 pr-2">
 		{#each transcriptState.segments as segment}
 			<div class="flex gap-3 text-sm">
 				<div class="flex-shrink-0 w-20 text-right">
@@ -55,7 +73,11 @@
 
 		{#if transcriptState.segments.length === 0 && !transcriptState.isProcessing}
 			<p class="text-gray-500 text-sm text-center py-8">
-				No transcript yet. Record audio and it will be transcribed automatically.
+				{#if sessionState.activeSession?.audio_file}
+					No transcript yet. Click Transcribe to process the recorded audio.
+				{:else}
+					No transcript yet. Record audio and it will be transcribed automatically.
+				{/if}
 			</p>
 		{/if}
 	</div>

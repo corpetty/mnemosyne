@@ -20,12 +20,10 @@ class DeviceResponse(BaseModel):
 
 @router.get("", response_model=list[DeviceResponse])
 async def get_devices():
-    """List available PipeWire audio devices."""
     try:
         devices = list_devices()
-    except RuntimeError as e:
+    except (RuntimeError, FileNotFoundError) as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
-
     return [
         DeviceResponse(
             id=d.id,

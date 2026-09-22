@@ -1,45 +1,154 @@
-"""Application configuration loaded from environment variables."""
+"""Application settings.
 
+Precedence, highest first:
+1. Environment variables (including backend/.env, loaded below).
+2. The user config file (TOML) at MNEMOSYNE_CONFIG_FILE or
+   $XDG_CONFIG_HOME/mnemosyne/config.toml.
+3. Defaults.
+
+The Settings UI writes the config file. Anything also set in the environment
+keeps winning until it is removed from the environment; `env_overrides()`
+tells the UI which fields are in that state.
+"""
+
+from __future__ import annotations
+
+import logging
 import os
 import sys
 from pathlib import Path
 
+import tomli_w
 from dotenv import load_dotenv
+from pydantic import AliasChoices, Field
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
 
-# Load .env from the backend directory
-if getattr(sys, "frozen", False):
-    # PyInstaller bundle: .env lives next to the executable
-    _backend_dir = Path(sys.executable).resolve().parent
-else:
-    _backend_dir = Path(__file__).resolve().parents[2]
-load_dotenv(_backend_dir / ".env")
-
-# HuggingFace
-HF_TOKEN: str = os.environ.get("HF_TOKEN", "")
-
-# WhisperX
-WHISPER_MODEL_SIZE: str = os.environ.get("WHISPER_MODEL_SIZE", "medium.en")
-WHISPER_COMPUTE_TYPE: str = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
-WHISPER_BATCH_SIZE: int = int(os.environ.get("WHISPER_BATCH_SIZE", "8"))
+logger = logging.getLogger(__name__)
 
 
-def _get_data_dir() -> Path:
-    """Resolve data directory.
-
-    Precedence:
-    1. MNEMOSYNE_DATA_DIR environment variable (used by tests and custom setups).
-    2. PyInstaller bundle: a sibling 'data' directory next to the app binary
-       (the sidecar lives in .../resources/backend/mnemosyne-backend).
-    3. Dev: the project root's data/ directory.
-    """
-    override = os.environ.get("MNEMOSYNE_DATA_DIR")
-    if override:
-        return Path(override).expanduser().resolve()
+def backend_dir() -> Path:
     if getattr(sys, "frozen", False):
-        # PyInstaller: resources/backend/mnemosyne-backend -> resources/data
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+# Load backend/.env so its variables are visible to the env settings source.
+load_dotenv(backend_dir() / ".env")
+
+
+def default_data_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        # resources/backend/mnemosyne-backend -> resources/data
         return Path(sys.executable).resolve().parent.parent / "data"
-    else:
-        return Path(__file__).resolve().parents[2].parent / "data"
+    return backend_dir().parent / "data"
 
 
-DATA_DIR: Path = _get_data_dir()
+def config_file_path() -> Path:
+    override = os.environ.get("MNEMOSYNE_CONFIG_FILE")
+    if override:
+        return Path(override).expanduser()
+    xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(xdg) / "mnemosyne" / "config.toml"
+
+
+SECRET_FIELDS = frozenset({"hf_token", "openai_api_key", "anthropic_api_key"})
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
+
+    # Paths
+    data_dir: Path = Field(
+        default_factory=default_data_dir,
+        validation_alias=AliasChoices("MNEMOSYNE_DATA_DIR", "data_dir"),
+    )
+
+    # Transcription
+    hf_token: str = ""
+    whisper_model_size: str = "medium.en"
+    whisper_compute_type: str = "float16"
+    whisper_batch_size: int = 8
+    auto_transcribe: bool = True
+
+    # LLM providers
+    ollama_url: str = "http://localhost:11434"
+    vllm_url: str = "http://localhost:8000"
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    default_provider: str = "ollama"
+    default_model: str = ""
+
+    # Export
+    obsidian_vault_path: str = ""
+    obsidian_subfolder: str = "meetings/mnemosyne"
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        toml = TomlConfigSettingsSource(settings_cls, toml_file=config_file_path())
+        return (init_settings, env_settings, toml)
+
+    # ---- helpers -------------------------------------------------------
+
+    @property
+    def sessions_dir(self) -> Path:
+        return self.data_dir / "sessions"
+
+    @property
+    def recordings_dir(self) -> Path:
+        return self.data_dir / "recordings"
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "mnemosyne.db"
+
+    def env_overrides(self) -> list[str]:
+        """Field names whose value is being forced by the environment."""
+        names = []
+        for name in type(self).model_fields:
+            if name == "data_dir":
+                if os.environ.get("MNEMOSYNE_DATA_DIR"):
+                    names.append(name)
+                continue
+            if os.environ.get(name.upper()):
+                names.append(name)
+        return names
+
+    def secrets_set(self) -> dict[str, bool]:
+        return {name: bool(getattr(self, name)) for name in SECRET_FIELDS}
+
+    def public_dict(self) -> dict:
+        """Serializable view with secrets blanked."""
+        data = self.model_dump(mode="json")
+        for name in SECRET_FIELDS:
+            data[name] = ""
+        return data
+
+
+def load_settings() -> Settings:
+    return Settings()
+
+
+def save_settings(settings: Settings, path: Path | None = None) -> Path:
+    """Persist all settings to the TOML config file (mode 0600)."""
+    path = path or config_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = settings.model_dump(mode="json")
+    data["data_dir"] = str(settings.data_dir)
+    tmp = path.with_suffix(".toml.tmp")
+    tmp.write_text(tomli_w.dumps(data))
+    os.chmod(tmp, 0o600)
+    tmp.replace(path)
+    logger.info("Saved settings to %s", path)
+    return path

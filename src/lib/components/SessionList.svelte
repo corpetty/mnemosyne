@@ -5,7 +5,8 @@
 	const statusBadge: Record<string, string> = {
 		created: 'bg-gray-700 text-gray-300',
 		recording: 'bg-red-900 text-red-300',
-		processing: 'bg-yellow-900 text-yellow-300',
+		encoding: 'bg-yellow-900 text-yellow-300',
+		transcribing: 'bg-yellow-900 text-yellow-300',
 		completed: 'bg-green-900 text-green-300',
 		error: 'bg-red-900 text-red-300'
 	};

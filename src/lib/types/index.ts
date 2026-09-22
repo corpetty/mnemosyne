@@ -15,10 +15,8 @@ export interface StartRecordingResponse {
 }
 
 export interface StopRecordingResponse {
-  session_id: string;
-  recording_id: string;
-  output_file: string;
-  individual_files: string[];
+  session: SessionDetail;
+  job_id: string | null;
   message: string;
 }
 
@@ -30,11 +28,12 @@ export interface RecordingStatus {
 }
 
 export type SessionStatus =
-  | "created"
-  | "recording"
-  | "processing"
-  | "completed"
-  | "error";
+  | 'created'
+  | 'recording'
+  | 'encoding'
+  | 'transcribing'
+  | 'completed'
+  | 'error';
 
 export interface SessionSummary {
   id: string;
@@ -47,6 +46,15 @@ export interface SessionSummary {
   participant_count: number;
 }
 
+export interface Recording {
+  id: string;
+  source: 'mic' | 'system';
+  device_id: number;
+  device_name: string;
+  path: string;
+  created_at: string;
+}
+
 export interface SessionDetail {
   id: string;
   name: string;
@@ -54,10 +62,18 @@ export interface SessionDetail {
   created_at: string;
   updated_at: string;
   audio_file: string | null;
+  recordings: Recording[];
   transcript: TranscriptSegment[];
   summary: string;
   notes: string;
   participants: string[];
+}
+
+export interface WordSegment {
+  word: string;
+  start: number;
+  end: number;
+  score: number;
 }
 
 export interface TranscriptSegment {
@@ -65,6 +81,23 @@ export interface TranscriptSegment {
   speaker: string;
   start: number;
   end: number;
+  words?: WordSegment[] | null;
+}
+
+export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface Job {
+  id: string;
+  kind: string;
+  session_id: string | null;
+  status: JobStatus;
+  message: string;
+  progress: number | null;
+  error: string | null;
+  result: Record<string, unknown> | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
 }
 
 export interface ProviderModels {
@@ -77,3 +110,43 @@ export interface SummarizeResponse {
   provider: string;
   model: string;
 }
+
+export interface SettingsValues {
+  data_dir: string;
+  hf_token: string;
+  whisper_model_size: string;
+  whisper_compute_type: string;
+  whisper_batch_size: number;
+  auto_transcribe: boolean;
+  ollama_url: string;
+  vllm_url: string;
+  openai_api_key: string;
+  anthropic_api_key: string;
+  default_provider: string;
+  default_model: string;
+  obsidian_vault_path: string;
+  obsidian_subfolder: string;
+}
+
+export interface SettingsResponse {
+  values: SettingsValues;
+  secrets_set: Record<string, boolean>;
+  env_overrides: string[];
+  config_file: string;
+  obsidian_vault_exists: boolean;
+}
+
+/** Partial update. For secrets: '' keeps the current value, null clears it. */
+export type SettingsUpdate = Partial<{
+  [K in keyof Omit<SettingsValues, 'data_dir'>]: SettingsValues[K] | null;
+}>;
+
+/** Events pushed by the backend over /ws. */
+export type BackendEvent =
+  | { type: 'hello'; jobs: Job[] }
+  | { type: 'pong' }
+  | { type: 'job'; job: Job }
+  | { type: 'session'; session_id: string; status: SessionStatus | 'deleted' }
+  | { type: 'status'; session_id: string | null; message: string }
+  | { type: 'transcription'; session_id: string | null; segment: TranscriptSegment }
+  | { type: 'error'; session_id: string | null; message: string };

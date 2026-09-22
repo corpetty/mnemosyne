@@ -49,22 +49,26 @@ def test_exporter_requires_existing_vault(tmp_path):
         ObsidianExporter(str(tmp_path / "missing")).export(Session())
 
 
-def test_vault_config_roundtrip_and_export_endpoint(client, tmp_path, session_with_transcript):
-    sid = session_with_transcript["id"]
-
-    resp = client.post(
-        "/api/settings/obsidian", json={"vault_path": str(tmp_path), "subfolder": "notes"}
+def test_export_endpoint_uses_settings(client, ctx, tmp_path, transcribed_session):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    resp = client.put(
+        "/api/settings", json={"obsidian_vault_path": str(vault), "obsidian_subfolder": "notes"}
     )
-    assert resp.json() == {"vault_path": str(tmp_path), "subfolder": "notes", "exists": True}
-    assert client.get("/api/settings/obsidian").json()["vault_path"] == str(tmp_path)
+    assert resp.json()["obsidian_vault_exists"] is True
 
-    resp = client.post(f"/api/sessions/{sid}/export/obsidian")
+    resp = client.post(f"/api/sessions/{transcribed_session['id']}/export/obsidian")
     assert resp.status_code == 200
-    assert (tmp_path / "notes").is_dir()
-    assert any(p.suffix == ".md" for p in (tmp_path / "notes").iterdir())
+    assert any(p.suffix == ".md" for p in (vault / "notes").iterdir())
 
 
-def test_export_without_vault_configured_is_400(client, monkeypatch, session_with_transcript):
-    monkeypatch.delenv("OBSIDIAN_VAULT_PATH", raising=False)
-    resp = client.post(f"/api/sessions/{session_with_transcript['id']}/export/obsidian")
+def test_export_without_vault_configured_is_400(client, ctx, transcribed_session):
+    ctx.settings.obsidian_vault_path = ""
+    resp = client.post(f"/api/sessions/{transcribed_session['id']}/export/obsidian")
+    assert resp.status_code == 400
+
+
+def test_export_missing_vault_is_400(client, ctx, tmp_path, transcribed_session):
+    ctx.settings.obsidian_vault_path = str(tmp_path / "missing")
+    resp = client.post(f"/api/sessions/{transcribed_session['id']}/export/obsidian")
     assert resp.status_code == 400

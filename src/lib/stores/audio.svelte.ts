@@ -75,9 +75,8 @@ class AudioState {
         clearInterval(this.durationInterval);
         this.durationInterval = null;
       }
-      const sessionId = this.activeSessionId;
       this.activeSessionId = null;
-      return { ...res, session_id: sessionId };
+      return res;
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Failed to stop recording";
     }

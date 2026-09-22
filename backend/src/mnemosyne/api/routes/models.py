@@ -2,11 +2,10 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ...services.session_service import session_service
-from ...services.summarization_service import summarization_service
+from ..context import AppContext, get_ctx
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ class ProviderModels(BaseModel):
 
 
 class SummarizeRequest(BaseModel):
-    provider: str = "ollama"
+    provider: str = ""
     model: str = ""
 
 
@@ -30,35 +29,30 @@ class SummarizeResponse(BaseModel):
 
 
 @router.get("/models", response_model=list[ProviderModels])
-async def list_models():
-    """List available models from all configured providers."""
-    return await summarization_service.list_all_models()
+async def list_models(ctx: AppContext = Depends(get_ctx)):
+    return await ctx.summarizer.list_all_models()
 
 
 @router.post("/sessions/{session_id}/summarize", response_model=SummarizeResponse)
-async def summarize_session(session_id: str, request: SummarizeRequest):
-    """Generate a summary for a session's transcript."""
-    session = session_service.get_session(session_id)
+async def summarize_session(
+    session_id: str, request: SummarizeRequest, ctx: AppContext = Depends(get_ctx)
+):
+    session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     if not session.transcript:
         raise HTTPException(status_code=400, detail="Session has no transcript")
 
+    provider = request.provider or ctx.settings.default_provider
+    model = request.model or ctx.settings.default_model
     try:
-        result = await summarization_service.summarize(
+        result = await ctx.summarizer.summarize(
             segments=[seg.model_dump() for seg in session.transcript],
-            provider_name=request.provider,
-            model=request.model,
+            provider_name=provider,
+            model=model,
         )
-
-        # Save summary to session
-        session_service.set_summary(session_id, result["summary"])
-
-        return SummarizeResponse(
-            summary=result["summary"],
-            provider=result["provider"],
-            model=result["model"],
-        )
+        ctx.sessions.set_summary(session_id, result["summary"])
+        return SummarizeResponse(**result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

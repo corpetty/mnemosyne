@@ -62,8 +62,8 @@ def test_models_endpoint_lists_providers(client, fake_provider):
     ]
 
 
-def test_summarize_endpoint_saves_summary(client, fake_provider, session_with_transcript):
-    sid = session_with_transcript["id"]
+def test_summarize_endpoint_saves_summary(client, fake_provider, transcribed_session):
+    sid = transcribed_session["id"]
     resp = client.post(f"/api/sessions/{sid}/summarize", json={"provider": "fake"})
     assert resp.status_code == 200
     assert resp.json()["model"] == "fake-model-a"
@@ -76,7 +76,21 @@ def test_summarize_requires_transcript(client, fake_provider):
     assert resp.status_code == 400
 
 
-def test_summarize_unknown_provider_is_400(client, fake_provider, session_with_transcript):
-    sid = session_with_transcript["id"]
+def test_summarize_uses_default_provider_from_settings(
+    client, ctx, fake_provider, transcribed_session
+):
+    ctx.settings.default_provider = "fake"
+    ctx.settings.default_model = "fake-model-b"
+    resp = client.post(f"/api/sessions/{transcribed_session['id']}/summarize", json={})
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "summary": fake_provider.summary,
+        "provider": "fake",
+        "model": "fake-model-b",
+    }
+
+
+def test_summarize_unknown_provider_is_400(client, fake_provider, transcribed_session):
+    sid = transcribed_session["id"]
     resp = client.post(f"/api/sessions/{sid}/summarize", json={"provider": "nope"})
     assert resp.status_code == 400
