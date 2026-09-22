@@ -59,6 +59,12 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
   `whisper_vad` setting defaults to `silero` for that reason.
 - Parakeet defaults to the int8 model: the fp32 one uses an external-data file that ONNX
   Runtime refuses to follow through the HuggingFace cache symlink.
+- When testing a bundle with a fake `HOME`, put it on real disk (e.g. `~/.cache/...`), never
+  under `/tmp`: `/tmp` is tmpfs here, uv cannot hardlink across filesystems and copies the
+  7 GB venv into RAM, which has frozen the machine.
+- AppImage: build with `NO_STRIP=true` (linuxdeploy's strip chokes on `.relr.dyn`). The
+  AppRun exports `PYTHONHOME`, `LD_LIBRARY_PATH` etc. for the GUI; `lib.rs` scrubs them
+  before spawning uv/Python or the backend dies with "No module named encodings".
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.

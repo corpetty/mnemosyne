@@ -6,7 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_ROOT"
-WEBKIT_DISABLE_DMABUF_RENDERER=1 pnpm tauri build "$@"
+# NO_STRIP: linuxdeploy's bundled strip (2024) cannot parse .relr.dyn sections in
+# current glibc/zstd builds and aborts the AppImage; the binaries are fine unstripped.
+NO_STRIP=true WEBKIT_DISABLE_DMABUF_RENDERER=1 pnpm tauri build "$@"
 
 echo ""
 echo "Artifacts:"

@@ -332,11 +332,17 @@ bash scripts/package.sh --bundles deb  # one target
 3. `scripts/fetch-uv.sh` – downloads the pinned uv release (checksum verified) to
    `src-tauri/binaries/mnemosyne-uv-<triple>`; Tauri bundles it as the `mnemosyne-uv` sidecar
 
-There is no PyInstaller step any more. See `docs/architecture.md` ("Backend Lifecycle") for what the
+`package.sh` sets `NO_STRIP=true` because linuxdeploy's bundled `strip` fails on modern
+`.relr.dyn` sections (seen on Fedora 44). Both the deb and the AppImage have been exercised
+end to end (first-launch install + backend health). There is no PyInstaller step any more. See `docs/architecture.md` ("Backend Lifecycle") for what the
 app does on first launch. To force a reinstall on a machine, delete
 `~/.local/share/com.corpetty.mnemosyne/venv`.
 
 ### Testing a bundle without installing it
+
+Use a throwaway `HOME` on real disk (not `/tmp`, which is tmpfs: uv then copies the multi-GB
+venv into RAM instead of hardlinking from its cache). Optionally cap it:
+`systemd-run --user --scope -p MemoryMax=8G -p CPUQuota=400% ./Mnemosyne_0.2.0_amd64.AppImage`.
 
 ```bash
 mkdir -p /tmp/mn && cd /tmp/mn

@@ -85,6 +85,47 @@ async fn wait_for_backend(timeout_secs: u64) -> bool {
     false
 }
 
+/// Environment variables the AppImage runtime (AppRun + linuxdeploy hooks) sets for
+/// the GUI process. They must not reach uv, Python, or the tools Python spawns
+/// (ffmpeg, pw-record): the bundled GTK-era libs shadow system ones and break them.
+const RUNTIME_ENV_TO_SCRUB: &[&str] = &[
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "GTK_PATH",
+    "GTK_DATA_PREFIX",
+    "GTK_EXE_PREFIX",
+    "GTK_IM_MODULE_FILE",
+    "GDK_PIXBUF_MODULE_FILE",
+    "GDK_PIXBUF_MODULEDIR",
+    "GIO_MODULE_DIR",
+    "GSETTINGS_SCHEMA_DIR",
+    "GST_PLUGIN_SYSTEM_PATH",
+    "GST_PLUGIN_SYSTEM_PATH_1_0",
+    "GST_PLUGIN_SCANNER",
+    "PERLLIB",
+    "QT_PLUGIN_PATH",
+    "XDG_DATA_DIRS",
+];
+
+fn scrub_runtime_env(cmd: &mut StdCommand) {
+    for key in RUNTIME_ENV_TO_SCRUB {
+        cmd.env_remove(key);
+    }
+    // AppRun keeps the pre-launch value here; hand it back to children.
+    if let Ok(orig) = std::env::var("APPIMAGE_ORIGINAL_LD_LIBRARY_PATH") {
+        if !orig.is_empty() {
+            cmd.env("LD_LIBRARY_PATH", orig);
+        }
+    }
+    if let Ok(orig) = std::env::var("APPIMAGE_ORIGINAL_XDG_DATA_DIRS") {
+        if !orig.is_empty() {
+            cmd.env("XDG_DATA_DIRS", orig);
+        }
+    }
+}
+
 fn on_path(binary: &str) -> bool {
     std::env::var_os("PATH")
         .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(binary).is_file()))
@@ -177,6 +218,7 @@ fn install_backend(app: &AppHandle, layout: &ReleaseLayout) -> Result<(), String
     );
 
     let mut cmd = StdCommand::new(&layout.uv);
+    scrub_runtime_env(&mut cmd);
     cmd.args(["sync", "--frozen", "--no-dev", "--extra", "onnx"]);
     if gpu {
         cmd.args(["--extra", "gpu"]);
@@ -222,6 +264,7 @@ fn release_command(layout: &ReleaseLayout) -> StdCommand {
         layout.backend_dir
     );
     let mut cmd = StdCommand::new(layout.python());
+    scrub_runtime_env(&mut cmd);
     cmd.args(["main.py", "--host", "127.0.0.1", "--port", &BACKEND_PORT.to_string()])
         .current_dir(&layout.backend_dir)
         .env("MNEMOSYNE_DATA_DIR", &layout.data_dir)

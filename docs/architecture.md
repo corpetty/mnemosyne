@@ -227,6 +227,11 @@ Consequences:
 - Updating the app re-runs `uv sync` only when `uv.lock` changed.
 - The install needs network once. An offline installer would pre-seed uv's cache; not done yet.
 
+The AppImage runtime's AppRun exports `PYTHONHOME`, `PYTHONPATH`, `LD_LIBRARY_PATH` and GTK/GIO
+paths for the GUI process. `lib.rs::scrub_runtime_env` removes them from the uv and Python child
+commands (restoring `APPIMAGE_ORIGINAL_*` values) so the venv Python and the tools it spawns
+(ffmpeg, pw-record) see the host environment.
+
 `scripts/build-all.sh` (Tauri's `beforeBuildCommand`) builds the frontend, stages the backend into
 `src-tauri/resources/backend/`, and fetches the sidecar into `src-tauri/binaries/`.
 
