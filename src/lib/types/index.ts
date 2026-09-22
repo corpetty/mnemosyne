@@ -189,3 +189,19 @@ export interface SessionSpeaker {
   label: string;
   has_voice: boolean;
 }
+
+export interface SegmentHit {
+  idx: number;
+  speaker: string;
+  start: number;
+  snippet: string; // matches wrapped in [[ ]]
+}
+
+export interface SearchHit {
+  session_id: string;
+  session_name: string;
+  created_at: string;
+  score: number;
+  session_snippet: string | null;
+  segments: SegmentHit[];
+}

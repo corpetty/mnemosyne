@@ -32,6 +32,8 @@ class TranscriptState {
   liveSegments = $state<TranscriptSegment[]>([]);
   livePartials = $state<Record<string, { speaker: string; text: string }>>({});
   liveStatus = $state<string>('');
+  /** Segment index to scroll to and flash (set by search). */
+  highlightIndex = $state<number | null>(null);
 
   private speakerColorMap = new Map<string, string>();
   private unsubscribe: (() => void) | null = null;

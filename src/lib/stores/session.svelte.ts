@@ -6,6 +6,8 @@ class SessionState {
 	activeSession = $state<SessionDetail | null>(null);
 	loading = $state(false);
 	error = $state<string | null>(null);
+	/** Set by search: open this session on the transcript tab at this segment. */
+	pendingOpen = $state<{ sessionId: string; idx: number | null } | null>(null);
 
 	async loadSessions() {
 		this.loading = true;

@@ -8,18 +8,21 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import threading
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from ..models.search import SearchHit, SegmentHit
 from ..models.session import Recording, Session, SessionStatus, SessionSummary
 from ..models.speaker import SpeakerProfile
 from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -66,6 +69,32 @@ CREATE TABLE IF NOT EXISTS speakers (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
+    text, session_id UNINDEXED, idx UNINDEXED,
+    tokenize='unicode61 remove_diacritics 2'
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
+    name, summary, notes, session_id UNINDEXED,
+    tokenize='unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER IF NOT EXISTS segments_ai AFTER INSERT ON segments BEGIN
+    INSERT INTO segments_fts(text, session_id, idx) VALUES (new.text, new.session_id, new.idx);
+END;
+CREATE TRIGGER IF NOT EXISTS segments_ad AFTER DELETE ON segments BEGIN
+    DELETE FROM segments_fts WHERE session_id = old.session_id AND idx = old.idx;
+END;
+CREATE TRIGGER IF NOT EXISTS sessions_ai AFTER INSERT ON sessions BEGIN
+    INSERT INTO sessions_fts(name, summary, notes, session_id)
+    VALUES (new.name, new.summary, new.notes, new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE OF name, summary, notes ON sessions BEGIN
+    DELETE FROM sessions_fts WHERE session_id = old.id;
+    INSERT INTO sessions_fts(name, summary, notes, session_id)
+    VALUES (new.name, new.summary, new.notes, new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
+    DELETE FROM sessions_fts WHERE session_id = old.id;
+END;
 CREATE TABLE IF NOT EXISTS session_speakers (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     label TEXT NOT NULL,
@@ -77,6 +106,20 @@ CREATE TABLE IF NOT EXISTS session_speakers (
 
 def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value)
+
+
+_TERM = re.compile(r"[\w']+", re.UNICODE)
+
+
+def fts_query(user_query: str) -> str:
+    """Turn free text into a safe FTS5 query: every term quoted and required,
+    the last one as a prefix so results appear while typing."""
+    terms = _TERM.findall(user_query)
+    if not terms:
+        return ""
+    quoted = [f'"{t}"' for t in terms]
+    quoted[-1] = quoted[-1] + "*"
+    return " ".join(quoted)
 
 
 class SessionRepository:
@@ -94,6 +137,24 @@ class SessionRepository:
             (str(SCHEMA_VERSION),),
         )
         self._conn.commit()
+        self._backfill_fts()
+
+    def _backfill_fts(self) -> None:
+        """Index rows that predate the FTS tables (databases from schema < 3)."""
+        with self._lock, self._conn:
+            if self._conn.execute("SELECT count(*) FROM segments_fts").fetchone()[0] == 0:
+                self._conn.execute(
+                    "INSERT INTO segments_fts(text, session_id, idx)"
+                    " SELECT text, session_id, idx FROM segments"
+                )
+            if self._conn.execute("SELECT count(*) FROM sessions_fts").fetchone()[0] == 0:
+                self._conn.execute(
+                    "INSERT INTO sessions_fts(name, summary, notes, session_id)"
+                    " SELECT name, summary, notes, id FROM sessions"
+                )
+            self._conn.execute(
+                "UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),)
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -264,6 +325,101 @@ class SessionRepository:
         with self._lock, self._conn:
             cur = self._conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
         return cur.rowcount > 0
+
+    # ---- editing -------------------------------------------------------
+
+    def edit_segments(
+        self, session_id: str, edit: Callable[[list[TranscriptSegment]], list[TranscriptSegment]]
+    ) -> Session | None:
+        """Apply `edit` to the transcript, then recompute participants."""
+        session = self.get(session_id)
+        if session is None:
+            return None
+        segments = edit(list(session.transcript))
+        speakers = list(dict.fromkeys(s.speaker for s in segments if s.speaker != "UNKNOWN"))
+        # Keep participants that still appear, in their existing order, then new ones.
+        participants = [p for p in session.participants if p in speakers]
+        participants += [s for s in speakers if s not in participants]
+        with self._lock, self._conn:
+            self._write_segments(session_id, segments)
+            self._conn.execute(
+                "UPDATE sessions SET participants=?, updated_at=? WHERE id=?",
+                (json.dumps(participants), datetime.now().isoformat(), session_id),
+            )
+        return self.get(session_id)
+
+    # ---- search --------------------------------------------------------
+
+    def search(self, query: str, limit: int = 50, per_session: int = 5) -> list[SearchHit]:
+        """Full-text search over transcript segments and session name/summary/notes."""
+        fts = fts_query(query)
+        if not fts:
+            return []
+        with self._lock:
+            seg_rows = self._conn.execute(
+                """SELECT session_id, idx, snippet(segments_fts, 0, '[[', ']]', '…', 12) AS snip,
+                          bm25(segments_fts) AS score
+                   FROM segments_fts WHERE segments_fts MATCH ?
+                   ORDER BY score LIMIT ?""",
+                (fts, limit * 4),
+            ).fetchall()
+            sess_rows = self._conn.execute(
+                """SELECT session_id, snippet(sessions_fts, -1, '[[', ']]', '…', 12) AS snip,
+                          bm25(sessions_fts) AS score
+                   FROM sessions_fts WHERE sessions_fts MATCH ?
+                   ORDER BY score LIMIT ?""",
+                (fts, limit),
+            ).fetchall()
+            # speaker/start for segment hits
+            details = {}
+            for r in seg_rows:
+                d = self._conn.execute(
+                    "SELECT speaker, start FROM segments WHERE session_id=? AND idx=?",
+                    (r["session_id"], r["idx"]),
+                ).fetchone()
+                if d:
+                    details[(r["session_id"], r["idx"])] = d
+
+        summaries = {x.id: x for x in self.list_summaries()}
+        hits: dict[str, SearchHit] = {}
+        order: list[str] = []
+
+        def hit(session_id: str) -> SearchHit | None:
+            if session_id not in summaries:
+                return None
+            if session_id not in hits:
+                sm = summaries[session_id]
+                hits[session_id] = SearchHit(
+                    session_id=session_id,
+                    session_name=sm.name,
+                    created_at=sm.created_at,
+                    score=0.0,
+                )
+                order.append(session_id)
+            return hits[session_id]
+
+        for r in sess_rows:
+            h = hit(r["session_id"])
+            if h is not None:
+                h.session_snippet = r["snip"]
+                h.score += -float(r["score"])
+        for r in seg_rows:
+            h = hit(r["session_id"])
+            if h is None or len(h.segments) >= per_session:
+                continue
+            d = details.get((r["session_id"], r["idx"]))
+            h.segments.append(
+                SegmentHit(
+                    idx=r["idx"],
+                    speaker=d["speaker"] if d else "",
+                    start=float(d["start"]) if d else 0.0,
+                    snippet=r["snip"],
+                )
+            )
+            h.score += -float(r["score"])
+        results = [hits[i] for i in order]
+        results.sort(key=lambda h: h.score, reverse=True)
+        return results[:limit]
 
     # ---- speakers ------------------------------------------------------
 

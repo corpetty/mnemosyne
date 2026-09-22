@@ -162,6 +162,38 @@ Renames the label everywhere in this session (segments, participants). With `enr
 stored embedding, the voice is added to the `Alice` profile (running mean), so future sessions label
 her automatically. Renaming to an existing participant's name merges them. **Response:** `SessionDetail`.
 
+### Transcript editing
+
+All return the updated `SessionDetail`, recompute `participants`, and emit a `session` event.
+
+- `PATCH /api/sessions/{id}/segments/{idx}` `{ "text"?: "...", "speaker"?: "..." }`. Changing text
+  drops that segment's word timings. `400` on empty values, `404` on a bad index.
+- `DELETE /api/sessions/{id}/segments/{idx}`
+- `POST /api/sessions/{id}/segments/{idx}/merge` merges segment `idx` into the previous one (keeps the
+  earlier speaker; `400` for the first segment).
+- `POST /api/sessions/{id}/segments/{idx}/split` `{ "offset": 42 }` splits at a character offset; the
+  boundary time is the last word before the split when word timings exist, else proportional.
+
+---
+
+## Search
+
+### `GET /api/search?q=...&limit=20`
+
+Full-text search (SQLite FTS5) over transcript segments and session name, summary and notes. Every
+term is required; the last term matches as a prefix so results appear while typing. Matches are
+wrapped in `[[ ]]` inside snippets.
+
+```json
+[
+  {
+    "session_id": "a1b2c3d4", "session_name": "Planning sync", "created_at": "...", "score": 3.1,
+    "session_snippet": null,
+    "segments": [ { "idx": 12, "speaker": "Alice", "start": 61.2, "snippet": "…ship the [[release]] on…" } ]
+  }
+]
+```
+
 ---
 
 ## Speaker profiles

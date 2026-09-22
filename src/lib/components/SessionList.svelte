@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import type { SessionSummary } from '$lib/types/index.js';
+	import SearchBox from './SearchBox.svelte';
 
 	const statusBadge: Record<string, string> = {
 		created: 'bg-gray-700 text-gray-300',
@@ -35,6 +36,7 @@
 </script>
 
 <div class="space-y-2">
+	<SearchBox />
 	<button
 		onclick={handleNew}
 		class="w-full px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"

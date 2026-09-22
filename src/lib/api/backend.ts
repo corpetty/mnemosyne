@@ -3,6 +3,7 @@ import type {
   Job,
   ProviderModels,
   RecordingStatus,
+  SearchHit,
   SessionDetail,
   SessionSpeaker,
   SessionSummary,
@@ -174,4 +175,40 @@ export async function renameSpeakerProfile(id: string, name: string): Promise<Sp
 
 export async function deleteSpeakerProfile(id: string): Promise<void> {
   return request(`/api/speakers/${id}`, { method: 'DELETE' });
+}
+
+// Transcript editing
+export async function updateSegment(
+  sessionId: string,
+  idx: number,
+  update: { text?: string; speaker?: string }
+): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/segments/${idx}`, {
+    method: 'PATCH',
+    body: JSON.stringify(update)
+  });
+}
+
+export async function deleteSegment(sessionId: string, idx: number): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/segments/${idx}`, { method: 'DELETE' });
+}
+
+export async function mergeSegmentUp(sessionId: string, idx: number): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/segments/${idx}/merge`, { method: 'POST' });
+}
+
+export async function splitSegment(
+  sessionId: string,
+  idx: number,
+  offset: number
+): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/segments/${idx}/split`, {
+    method: 'POST',
+    body: JSON.stringify({ offset })
+  });
+}
+
+// Search
+export async function search(q: string, limit = 20): Promise<SearchHit[]> {
+  return request(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 }

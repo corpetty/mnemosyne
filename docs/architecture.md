@@ -130,6 +130,12 @@ Sessions live in `data/mnemosyne.db` (SQLite, WAL mode, stdlib `sqlite3`), via
 Listing sessions never reads `segments`. On startup, any legacy `data/sessions/*.json` files from v2 are
 imported once (files are left in place).
 
+### Search
+
+`segments_fts` and `sessions_fts` (FTS5, unicode61 tokenizer) are kept in sync by triggers on
+`segments` and `sessions`. Databases created before schema 3 are backfilled on open. User input is
+turned into a safe query by quoting every term (`storage/sqlite.py::fts_query`).
+
 ### Audio Files
 
 Recordings are stored in `data/recordings/{session_id}/`:

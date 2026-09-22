@@ -109,6 +109,15 @@
 			transcriptState.showSession(session.id, session.transcript);
 			showSettings = false;
 		}
+		const pending = sessionState.pendingOpen;
+		if (pending && pending.sessionId === session.id) {
+			sessionState.pendingOpen = null;
+			activeTab = 'transcript';
+			if (pending.idx !== null) {
+				const idx = pending.idx;
+				setTimeout(() => (transcriptState.highlightIndex = idx), 50);
+			}
+		}
 	});
 
 	async function handleStartRecording() {
