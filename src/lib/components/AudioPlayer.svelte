@@ -19,11 +19,16 @@
 		return () => playerState.attach(null);
 	});
 
+	// Reset only when a different session is shown; edits replace the session
+	// object without changing its id and must not disturb playback.
+	let lastSessionId: string | null = null;
 	$effect(() => {
-		// Reset when the session changes
-		session?.id;
-		sourceId = 'mixed';
-		playerState.reset();
+		const id = session?.id ?? null;
+		if (id !== lastSessionId) {
+			lastSessionId = id;
+			sourceId = 'mixed';
+			playerState.reset();
+		}
 	});
 
 	function fmt(t: number): string {
