@@ -41,7 +41,11 @@
 				language: v.language,
 				max_speakers: v.max_speakers,
 				local_speaker_name: v.local_speaker_name,
+				remote_speaker_name: v.remote_speaker_name,
 				per_source_transcription: v.per_source_transcription,
+				live_transcription: v.live_transcription,
+				live_transcriber: v.live_transcriber,
+				live_interval_seconds: v.live_interval_seconds,
 				whisper_model_size: v.whisper_model_size,
 				whisper_compute_type: v.whisper_compute_type,
 				whisper_batch_size: v.whisper_batch_size,
@@ -151,8 +155,8 @@
 					<label>
 						<span class={labelClass}>Quantization</span>
 						<select bind:value={form.parakeet_quantization} disabled={locked('parakeet_quantization')} class={inputClass}>
-							<option value="">fp32 (best)</option>
-							<option value="int8">int8 (smaller, faster on CPU)</option>
+							<option value="">fp32 (larger; needs a non-symlinked model cache)</option>
+							<option value="int8">int8 (default: smaller, faster on CPU)</option>
 						</select>
 					</label>
 					<label>
@@ -223,6 +227,34 @@
 				<label class="flex items-center gap-2 col-span-2">
 					<input type="checkbox" bind:checked={form.auto_transcribe} disabled={locked('auto_transcribe')} class="rounded border-gray-600 bg-gray-800" />
 					<span class="text-sm text-gray-300">Transcribe automatically after recording</span>
+				</label>
+			</div>
+		</section>
+
+		<!-- Live -->
+		<section>
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">Live transcript</h3>
+			<p class="text-xs text-gray-500 mb-3">Provisional text while recording, a few seconds behind speech. The final transcription replaces it.</p>
+			<div class="grid grid-cols-2 gap-3">
+				<label class="flex items-center gap-2 col-span-2">
+					<input type="checkbox" bind:checked={form.live_transcription} disabled={locked('live_transcription')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Show live transcript while recording</span>
+				</label>
+				<label>
+					<span class={labelClass}>Live transcriber</span>
+					<select bind:value={form.live_transcriber} disabled={locked('live_transcriber')} class={inputClass}>
+						<option value="parakeet">Parakeet (ONNX, CPU, recommended)</option>
+						<option value="remote">Remote server</option>
+						<option value="whisperx">WhisperX (GPU, competes with final jobs)</option>
+					</select>
+				</label>
+				<label>
+					<span class={labelClass}>Update interval (seconds)</span>
+					<input type="number" min="2" max="30" step="1" bind:value={form.live_interval_seconds} disabled={locked('live_interval_seconds')} class={inputClass} />
+				</label>
+				<label>
+					<span class={labelClass}>Label for the system-audio channel</span>
+					<input type="text" bind:value={form.remote_speaker_name} disabled={locked('remote_speaker_name')} class={inputClass} />
 				</label>
 			</div>
 		</section>

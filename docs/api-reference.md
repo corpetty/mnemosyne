@@ -46,7 +46,10 @@ Input devices are microphones. Output devices are selected to capture system aud
 `session_id` is optional; a new session is created if omitted. Spawns one `pw-record` per device
 (48 kHz mono 16-bit WAV). Session status becomes `recording`.
 
-**Response:** `{ "session_id": "...", "recording_id": "...", "message": "..." }`
+**Response:** `{ "session_id": "...", "recording_id": "...", "live_job_id": "..." | null, "message": "..." }`
+
+When `live_transcription` is enabled a `live` job starts alongside the recording and streams
+provisional text (see WebSocket `live_*` events). It is cancelled by stop.
 
 **Errors:** `400` no devices, `404` unknown session, `409` session already recording.
 
@@ -158,6 +161,7 @@ Queue a transcription job for the session's `audio_file`. **Response:** `Job`.
 }
 ```
 
+`kind`: `transcribe` (final pipeline) or `live` (provisional text while recording).
 `status`: `queued`, `running`, `completed`, `failed`, `cancelled`. Only one `transcribe` job runs at a time;
 others wait in `queued`.
 
@@ -271,6 +275,10 @@ Then every backend event, in order:
 | `transcription` | `session_id`, `segment: TranscriptSegment` | Each segment as the engine yields it |
 | `status` | `session_id`, `message` | Human-readable stage text (`Loading models...`, `Transcribing...`, `Transcription complete`) |
 | `error` | `session_id`, `message` | A stage failed |
+| `live_status` | `session_id`, `message` | Live transcriber state (`Loading live transcriber...`, `Live`) |
+| `live_segment` | `session_id`, `source` (`mic`/`system`/`mixed`), `segment` | A provisional segment committed by the live transcriber (absolute times, no words) |
+| `live_partial` | `session_id`, `source`, `speaker`, `text` | The still-changing tail for that source; replaces the previous partial (may be empty) |
 | `pong` | | Reply to `ping` |
 
-Clients should filter `transcription`/`status`/`error` by `session_id` and use `job` events for state.
+Clients should filter `transcription`/`status`/`error`/`live_*` by `session_id` and use `job` events for
+state. Live segments are provisional: discard them when the session's final `transcribe` job starts.

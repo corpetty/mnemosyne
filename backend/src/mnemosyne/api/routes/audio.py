@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from ...audio.capture import list_devices, start_recording, stop_recording
 from ...audio.mixer import mix_audio_files
 from ...models.session import Recording, Session, SessionStatus
-from ...services.pipeline import transcribe_session
+from ...services.pipeline import live_transcribe, transcribe_session
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/audio", tags=["audio"])
@@ -20,6 +20,7 @@ class StartRecordingRequest(BaseModel):
 class StartRecordingResponse(BaseModel):
     session_id: str
     recording_id: str
+    live_job_id: str | None = None
     message: str
 
 
@@ -55,9 +56,15 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
     ctx.active_recordings[session.id] = recording
     ctx.sessions.set_status(session.id, SessionStatus.RECORDING)
 
+    live_job_id = None
+    if ctx.settings.live_transcription:
+        job = ctx.jobs.submit("live", live_transcribe(ctx, session.id, recording), session.id)
+        live_job_id = job.id
+
     return StartRecordingResponse(
         session_id=session.id,
         recording_id=recording.session_id,
+        live_job_id=live_job_id,
         message=f"Recording started from {len(recording.processes)} device(s)",
     )
 
@@ -72,6 +79,11 @@ async def stop(
     recording = ctx.active_recordings.get(session_id)
     if recording is None or not recording.is_recording:
         raise HTTPException(status_code=404, detail="No active recording for this session")
+
+    # Stop live transcription first so it does not race the encoder for the files.
+    for job in ctx.jobs.list(session_id=session_id, active_only=True):
+        if job.kind == "live":
+            await ctx.jobs.cancel(job.id)
 
     ctx.sessions.set_status(session_id, SessionStatus.ENCODING)
     devices = {d.id: d for d in list_devices()}

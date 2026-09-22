@@ -172,6 +172,17 @@ turns them into `AudioSource`s:
 Segments from all sources are merged by start time. `transcription/assign.py` maps diarization turns
 onto segments by time overlap, using word timings for a majority vote when available.
 
+### Live transcription
+
+While recording, a `live` job (`transcription/live.py`) tails each source's WAV file as pw-record
+writes it, keeps a buffer of not-yet-committed audio per source, and every `live_interval_seconds`
+runs a separate `Transcriber` instance (`live_transcriber`, Parakeet on CPU by default) over the
+buffer. Segments that end at least one second before the buffer edge are committed and streamed as
+`live_segment` events with absolute times; the remainder is sent as a replaceable `live_partial` and
+retried on the next tick, so words cut by a chunk boundary are not lost. With mic and system captured
+separately the labels are `local_speaker_name` and `remote_speaker_name`; no diarization runs live.
+Stop cancels the job (a final flush tick runs) before the final `transcribe` job replaces everything.
+
 ### Model lifecycle
 
 `services/model_service.py` builds the engine lazily on first job (so the API starts without torch),

@@ -78,7 +78,13 @@ class Settings(BaseSettings):
     # When mic and system audio are captured separately, the mic file is
     # labelled with this name instead of being diarized.
     local_speaker_name: str = "Me"
+    remote_speaker_name: str = "Remote"  # live label for the system channel
     per_source_transcription: bool = True
+
+    # Live transcription while recording (provisional; replaced by the final job)
+    live_transcription: bool = True
+    live_transcriber: str = "parakeet"  # parakeet | whisperx | remote
+    live_interval_seconds: float = 5.0
 
     # whisperx transcriber
     hf_token: str = ""
@@ -89,7 +95,8 @@ class Settings(BaseSettings):
 
     # parakeet transcriber (ONNX Runtime, no torch)
     parakeet_model: str = "nemo-parakeet-tdt-0.6b-v3"
-    parakeet_quantization: str = ""  # "" (fp32) or "int8"
+    # "int8" (default: 4x smaller, single file) or "" (fp32, external-data file)
+    parakeet_quantization: str = "int8"
     onnx_provider: str = "cpu"  # cpu | cuda
 
     # remote transcriber: any OpenAI-compatible /audio/transcriptions server

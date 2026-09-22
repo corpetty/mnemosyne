@@ -1,56 +1,6 @@
 """Recording start/stop with PipeWire and ffmpeg replaced by fakes."""
 
-from pathlib import Path
-
-import pytest
-from src.mnemosyne.api.routes import audio as audio_routes
-from src.mnemosyne.audio.capture import AudioDevice, RecordingProcess, RecordingSession
-
 from tests.conftest import drain_until_job
-
-
-class _FakeProc:
-    returncode = 0
-
-
-@pytest.fixture
-def fake_pipewire(monkeypatch, tmp_path):
-    devices = [
-        AudioDevice(id=1, name="mic", description="Built-in Mic", media_class="Audio/Source"),
-        AudioDevice(id=2, name="spk", description="Speakers", media_class="Audio/Sink"),
-    ]
-
-    async def start_recording(device_ids, output_dir, **_):
-        output_dir.mkdir(parents=True, exist_ok=True)
-        session = RecordingSession(session_id="rec00001", output_dir=output_dir)
-        for d in device_ids:
-            session.processes.append(
-                RecordingProcess(
-                    device_id=d, process=_FakeProc(), output_path=output_dir / f"dev{d}.wav"
-                )
-            )
-        session.is_recording = True
-        return session
-
-    async def stop_recording(session):
-        session.is_recording = False
-        files = []
-        for p in session.processes:
-            path = p.output_path.with_suffix(".ogg")
-            path.write_bytes(b"ogg")
-            files.append(path)
-        return files
-
-    def mix_audio_files(inputs, output):
-        output = Path(output).with_suffix(".ogg")
-        output.write_bytes(b"mixed")
-        return output
-
-    monkeypatch.setattr(audio_routes, "list_devices", lambda: devices)
-    monkeypatch.setattr(audio_routes, "start_recording", start_recording)
-    monkeypatch.setattr(audio_routes, "stop_recording", stop_recording)
-    monkeypatch.setattr(audio_routes, "mix_audio_files", mix_audio_files)
-    return devices
 
 
 def test_start_requires_devices(client, fake_pipewire):
@@ -94,7 +44,7 @@ def test_stop_without_transcribe(client, ctx, fake_pipewire):
     stopped = client.post(f"/api/audio/stop/{sid}", json={"transcribe": False}).json()
     assert stopped["job_id"] is None
     assert stopped["session"]["status"] == "created"
-    assert client.get("/api/jobs").json() == []
+    assert [j for j in client.get("/api/jobs").json() if j["kind"] == "transcribe"] == []
 
 
 def test_auto_transcribe_setting_respected(client, ctx, fake_pipewire):

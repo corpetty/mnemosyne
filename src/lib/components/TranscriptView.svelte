@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
+	import LiveTranscript from './LiveTranscript.svelte';
 
 	function formatTime(seconds: number): string {
 		const m = Math.floor(seconds / 60);
@@ -8,7 +9,7 @@
 		return `${m}:${String(s).padStart(2, '0')}`;
 	}
 
-	let container: HTMLDivElement;
+	let container = $state<HTMLDivElement>();
 
 	$effect(() => {
 		// Auto-scroll to bottom when new segments arrive
@@ -50,6 +51,10 @@
 
 	{#if transcriptState.error}
 		<p class="text-sm text-red-400">{transcriptState.error}</p>
+	{/if}
+
+	{#if transcriptState.segments.length === 0}
+		<LiveTranscript />
 	{/if}
 
 	<div bind:this={container} class="max-h-[500px] overflow-y-auto space-y-3 pr-2">

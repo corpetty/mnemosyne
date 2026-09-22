@@ -14,8 +14,8 @@ TRANSCRIBERS = ("whisperx", "parakeet", "remote")
 DIARIZERS = ("pyannote", "none")
 
 
-def build_transcriber(settings: Settings) -> Transcriber:
-    kind = settings.transcriber
+def build_transcriber(settings: Settings, kind: str | None = None) -> Transcriber:
+    kind = kind or settings.transcriber
     if kind == "whisperx":
         from .transcribers.whisperx import WhisperXTranscriber
 
@@ -44,6 +44,12 @@ def build_transcriber(settings: Settings) -> Transcriber:
             api_key=settings.remote_stt_api_key,
         )
     raise ValueError(f"Unknown transcriber '{kind}'. Choose one of {TRANSCRIBERS}")
+
+
+def build_live_transcriber(settings: Settings) -> Transcriber:
+    """A separate transcriber instance for live use, so it never shares state
+    with the engine running final jobs."""
+    return build_transcriber(settings, settings.live_transcriber)
 
 
 def build_diarizer(settings: Settings) -> Diarizer | None:
@@ -85,4 +91,18 @@ ENGINE_SETTINGS = (
     "language",
     "min_speakers",
     "max_speakers",
+)
+
+LIVE_SETTINGS = (
+    "live_transcriber",
+    "parakeet_model",
+    "parakeet_quantization",
+    "onnx_provider",
+    "whisper_model_size",
+    "whisper_compute_type",
+    "whisper_batch_size",
+    "whisper_vad",
+    "remote_stt_url",
+    "remote_stt_model",
+    "remote_stt_api_key",
 )

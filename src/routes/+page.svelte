@@ -8,6 +8,7 @@
 	import ObsidianExport from '$lib/components/ObsidianExport.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
 	import ToastContainer from '$lib/components/ToastContainer.svelte';
+	import LiveTranscript from '$lib/components/LiveTranscript.svelte';
 	import { getHealth, exportToObsidian } from '$lib/api/backend.js';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
@@ -71,9 +72,13 @@
 			await sessionState.createSession();
 		}
 		if (sessionState.activeSession) {
-			await audioState.startRecording(sessionState.activeSession.id);
-			toastState.info('Recording started');
-			activeTab = 'recording';
+			const sessionId = sessionState.activeSession.id;
+			const res = await audioState.startRecording(sessionId);
+			if (res) {
+				transcriptState.startLive(sessionId);
+				toastState.info(res.live_job_id ? 'Recording started, live transcript on' : 'Recording started');
+				activeTab = 'recording';
+			}
 		}
 	}
 
@@ -221,6 +226,7 @@
 									Shortcuts: <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+R</kbd> Record
 									&middot; <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+S</kbd> Stop
 								</p>
+								<LiveTranscript />
 							</div>
 						{:else if activeTab === 'transcript'}
 							<TranscriptView />

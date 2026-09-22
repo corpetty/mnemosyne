@@ -135,6 +135,8 @@ class JobManager:
             job.status = JobStatus.COMPLETED
             job.progress = 1.0
         except asyncio.CancelledError:
+            # Runners that catch cancellation and return normally are completed
+            # (live transcription ends this way); others are cancelled.
             job.status = JobStatus.CANCELLED
             job.message = "Cancelled"
         except Exception as e:

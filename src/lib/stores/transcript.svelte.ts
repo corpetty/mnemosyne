@@ -28,6 +28,11 @@ class TranscriptState {
   sessionId = $state<string | null>(null);
   activeJob = $state<Job | null>(null);
 
+  /** Provisional segments streamed while recording; replaced by the final job. */
+  liveSegments = $state<TranscriptSegment[]>([]);
+  livePartials = $state<Record<string, { speaker: string; text: string }>>({});
+  liveStatus = $state<string>('');
+
   private speakerColorMap = new Map<string, string>();
   private unsubscribe: (() => void) | null = null;
   private _onCompleteCallback: ((sessionId: string) => void) | null = null;
@@ -80,7 +85,36 @@ class TranscriptState {
           this.isProcessing = false;
         }
         break;
+      case 'live_segment':
+        if (msg.session_id === this.sessionId) {
+          this.liveSegments = [...this.liveSegments, msg.segment].sort((a, b) => a.start - b.start);
+          this.getSpeakerColor(msg.segment.speaker);
+        }
+        break;
+      case 'live_partial':
+        if (msg.session_id === this.sessionId) {
+          this.livePartials = { ...this.livePartials, [msg.source]: { speaker: msg.speaker, text: msg.text } };
+          this.getSpeakerColor(msg.speaker);
+        }
+        break;
+      case 'live_status':
+        if (msg.session_id === this.sessionId) this.liveStatus = msg.message;
+        break;
     }
+  }
+
+  /** Recording started for `sessionId`: reset live state and follow its events. */
+  startLive(sessionId: string) {
+    this.sessionId = sessionId;
+    this.liveSegments = [];
+    this.livePartials = {};
+    this.liveStatus = 'Starting...';
+  }
+
+  clearLive() {
+    this.liveSegments = [];
+    this.livePartials = {};
+    this.liveStatus = '';
   }
 
   private applyJob(job: Job) {
@@ -114,6 +148,7 @@ class TranscriptState {
   /** Switch the view to a session, loading its stored transcript. */
   showSession(sessionId: string, segments: TranscriptSegment[]) {
     if (sessionId === this.sessionId && this.isProcessing) return;
+    if (sessionId !== this.sessionId) this.clearLive();
     this.sessionId = sessionId;
     this.speakerColorMap.clear();
     this.segments = segments;
@@ -126,6 +161,7 @@ class TranscriptState {
 
   clear() {
     this.sessionId = null;
+    this.clearLive();
     this.segments = [];
     this.speakerColorMap.clear();
     this.status = '';
@@ -137,6 +173,8 @@ class TranscriptState {
   /** Called when a transcription job has been queued for `sessionId`. */
   expectJob(sessionId: string) {
     this.sessionId = sessionId;
+    this.liveStatus = '';
+    this.livePartials = {};
     this.segments = [];
     this.speakerColorMap.clear();
     this.error = null;

@@ -53,6 +53,11 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
   artifacts, all gitignored. Do not try to read or grep them.
 - WhisperX's default pyannote VAD can report "no speech" on quiet recordings; the
   `whisper_vad` setting defaults to `silero` for that reason.
+- Parakeet defaults to the int8 model: the fp32 one uses an external-data file that ONNX
+  Runtime refuses to follow through the HuggingFace cache symlink.
+- Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
+  `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
+  killing the `uv` wrapper; kill by port.
 
 ## Roadmap (agreed 2026-09-22)
 
@@ -61,5 +66,6 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
    UI never passes file paths.
 2. Done: Transcriber/Diarizer protocols; whisperx, parakeet (onnx), remote transcribers;
    pyannote community-1; per-source speaker labelling.
-3. Live mode: chunked capture into a streaming engine with post-stop refinement.
+3. Done: live provisional transcript while recording (transcription/live.py, Parakeet on
+   CPU by default), replaced by the final job after stop.
 4. Packaging: ship the app without torch (engine installed via uv on first run, or remote).

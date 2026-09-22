@@ -11,6 +11,7 @@ export interface AudioDevice {
 export interface StartRecordingResponse {
   session_id: string;
   recording_id: string;
+  live_job_id: string | null;
   message: string;
 }
 
@@ -120,7 +121,11 @@ export interface SettingsValues {
   max_speakers: number | null;
   auto_transcribe: boolean;
   local_speaker_name: string;
+  remote_speaker_name: string;
   per_source_transcription: boolean;
+  live_transcription: boolean;
+  live_transcriber: 'parakeet' | 'whisperx' | 'remote';
+  live_interval_seconds: number;
   hf_token: string;
   whisper_model_size: string;
   whisper_compute_type: string;
@@ -163,4 +168,7 @@ export type BackendEvent =
   | { type: 'session'; session_id: string; status: SessionStatus | 'deleted' }
   | { type: 'status'; session_id: string | null; message: string }
   | { type: 'transcription'; session_id: string | null; segment: TranscriptSegment }
-  | { type: 'error'; session_id: string | null; message: string };
+  | { type: 'error'; session_id: string | null; message: string }
+  | { type: 'live_segment'; session_id: string; source: string; segment: TranscriptSegment }
+  | { type: 'live_partial'; session_id: string; source: string; speaker: string; text: string }
+  | { type: 'live_status'; session_id: string; message: string };
