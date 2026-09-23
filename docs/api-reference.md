@@ -403,6 +403,11 @@ with empty structured fields). `summary_data` shape:
 **Errors:** `400` no transcript or unknown style, `404` session, `409` a summary is already running for
 the session.
 
+`summary_data.source_hash` fingerprints the transcript (speakers + text) the summary was made from;
+`SessionDetail.summary_stale` is true once the transcript has changed since. With
+`obsidian_auto_export` on and a vault configured, the note is exported when the summary lands (the job
+result's `exported` is the file path, or `null`; export errors never fail the job).
+
 With the `auto_summarize` setting on, a summarize job is queued automatically after every successful
 transcription, using the defaults.
 

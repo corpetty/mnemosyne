@@ -85,7 +85,12 @@ def test_summarize_uses_default_provider_from_settings(
     ctx.settings.default_provider = "fake"
     ctx.settings.default_model = "fake-model-b"
     job = run_summarize(client, transcribed_session["id"])
-    assert job["result"] == {"provider": "fake", "model": "fake-model-b", "title": ""}
+    assert job["result"] == {
+        "provider": "fake",
+        "model": "fake-model-b",
+        "title": "",
+        "exported": None,
+    }
     assert fake_provider.calls[-1]["model"] == "fake-model-b"
 
 

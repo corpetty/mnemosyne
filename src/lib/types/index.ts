@@ -65,6 +65,7 @@ export interface ActionItem {
 
 export interface SummaryData {
   title: string;
+  source_hash: string;
   style: string;
   provider: string;
   model: string;
@@ -88,6 +89,7 @@ export interface SessionDetail {
   notes: string;
   participants: string[];
   attendees: string[];
+  summary_stale: boolean;
 }
 
 export interface WordSegment {
@@ -180,6 +182,7 @@ export interface SettingsValues {
   obsidian_tags: string;
   obsidian_link_people: boolean;
   obsidian_include_transcript: boolean;
+  obsidian_auto_export: boolean;
 }
 
 export interface SettingsResponse {

@@ -1,11 +1,12 @@
 """Session data models."""
 
+import hashlib
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from .transcript import TranscriptSegment
 
@@ -36,6 +37,13 @@ class Recording(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
+def transcript_hash(segments: list[TranscriptSegment]) -> str:
+    h = hashlib.sha1()
+    for seg in segments:
+        h.update(f"{seg.speaker}\x1f{seg.text}\x1e".encode())
+    return h.hexdigest()[:16]
+
+
 class ActionItem(BaseModel):
     text: str
     owner: str | None = None
@@ -46,6 +54,8 @@ class SummaryData(BaseModel):
     the markdown body for compatibility."""
 
     title: str = ""  # short name suggested by the model; used to name untitled sessions
+    # Fingerprint of the transcript (speakers + text) the summary was made from.
+    source_hash: str = ""
     style: str = "meeting"
     provider: str = ""
     model: str = ""
@@ -70,6 +80,14 @@ class Session(BaseModel):
     participants: list[str] = Field(default_factory=list)
     # Invitees from the calendar event this session was recorded during (names).
     attendees: list[str] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def summary_stale(self) -> bool:
+        """True when the transcript changed (text or speakers) after it was summarized."""
+        if not self.summary or self.summary_data is None or not self.summary_data.source_hash:
+            return False
+        return self.summary_data.source_hash != transcript_hash(self.transcript)
 
 
 class SessionSummary(BaseModel):

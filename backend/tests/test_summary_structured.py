@@ -181,3 +181,37 @@ def test_auto_name_can_be_disabled(client, ctx, fake_provider):
     ctx.sessions.set_transcript(sid, [TranscriptSegment(text="hi", speaker="S", start=0, end=1)])
     run_summarize(client, sid, {"provider": "fake"})
     assert client.get(f"/api/sessions/{sid}").json()["name"] == "Untitled Session"
+
+
+def test_summary_goes_stale_when_transcript_changes(
+    client, ctx, fake_provider, transcribed_session
+):
+    sid = transcribed_session["id"]
+    run_summarize(client, sid, {"provider": "fake"})
+    s = client.get(f"/api/sessions/{sid}").json()
+    assert s["summary_stale"] is False and s["summary_data"]["source_hash"]
+    client.patch(f"/api/sessions/{sid}/segments/0", json={"speaker": "Alice"})
+    assert client.get(f"/api/sessions/{sid}").json()["summary_stale"] is True
+    run_summarize(client, sid, {"provider": "fake"})
+    assert client.get(f"/api/sessions/{sid}").json()["summary_stale"] is False
+    # no summary -> never stale
+    other = client.post("/api/sessions", json={}).json()
+    assert other["summary_stale"] is False
+
+
+def test_auto_export_after_summary(client, ctx, fake_provider, transcribed_session, tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    ctx.settings.obsidian_vault_path = str(vault)
+    ctx.settings.obsidian_subfolder = "m"
+    job = run_summarize(client, transcribed_session["id"], {"provider": "fake"})
+    assert job["result"]["exported"] is None  # off by default
+    assert not (vault / "m").exists()
+    ctx.settings.obsidian_auto_export = True
+    job = run_summarize(client, transcribed_session["id"], {"provider": "fake"})
+    assert job["result"]["exported"].endswith(".md")
+    assert "## Summary" in open(job["result"]["exported"]).read()
+    # a missing vault never fails the summary
+    ctx.settings.obsidian_vault_path = str(tmp_path / "gone")
+    job = run_summarize(client, transcribed_session["id"], {"provider": "fake"})
+    assert job["status"] == "completed" and job["result"]["exported"] is None

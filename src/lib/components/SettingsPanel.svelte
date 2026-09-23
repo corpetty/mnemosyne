@@ -84,7 +84,8 @@
 				summary_instructions: v.summary_instructions,
 				obsidian_tags: v.obsidian_tags,
 				obsidian_link_people: v.obsidian_link_people,
-				obsidian_include_transcript: v.obsidian_include_transcript
+				obsidian_include_transcript: v.obsidian_include_transcript,
+				obsidian_auto_export: v.obsidian_auto_export
 			};
 			providers = await listModels();
 			voices = await listSpeakers();
@@ -378,6 +379,10 @@
 				<label class="flex items-center gap-2">
 					<input type="checkbox" bind:checked={form.obsidian_include_transcript} disabled={locked('obsidian_include_transcript')} class="rounded border-gray-600 bg-gray-800" />
 					<span class="text-sm text-gray-300">Include the full transcript in exported notes</span>
+				</label>
+				<label class="flex items-center gap-2 col-span-2">
+					<input type="checkbox" bind:checked={form.obsidian_auto_export} disabled={locked('obsidian_auto_export')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Export to Obsidian automatically after each summary (overwrites that session's note)</span>
 				</label>
 			</div>
 		</section>

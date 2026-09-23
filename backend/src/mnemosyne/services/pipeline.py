@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..jobs import JobContext
-from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus
+from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus, transcript_hash
 from ..transcription.engine import AudioSource
 
 if TYPE_CHECKING:
@@ -128,6 +128,20 @@ def transcribe_session(app: AppContext, session_id: str):
     return run
 
 
+def _auto_export(app: AppContext, session_id: str) -> str | None:
+    """Export to Obsidian after a summary; failures are logged, never raised."""
+    from ..api.routes.export import build_exporter
+
+    try:
+        session = app.sessions.get_session(session_id)
+        path = build_exporter(app, app.settings.obsidian_vault_path).export(session)
+        logger.info("Auto-exported session %s to %s", session_id, path)
+        return str(path)
+    except Exception:
+        logger.warning("Auto-export failed for session %s", session_id, exc_info=True)
+        return None
+
+
 def summarize_session(
     app: AppContext,
     session_id: str,
@@ -169,6 +183,7 @@ def summarize_session(
         except Exception as e:
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})
             raise
+        result["data"].source_hash = transcript_hash(session.transcript)
         app.sessions.set_summary(session_id, result["summary"], result["data"])
         title = result["data"].title
         # Re-read: the user may have renamed the session while the LLM was running.
@@ -180,8 +195,16 @@ def summarize_session(
             and current.name == DEFAULT_SESSION_NAME
         ):
             app.sessions.rename_session(session_id, title)
+        exported = None
+        if st.obsidian_auto_export and st.obsidian_vault_path:
+            exported = _auto_export(app, session_id)
         ctx.update("Summary ready")
-        return {"provider": result["provider"], "model": result["model"], "title": title}
+        return {
+            "provider": result["provider"],
+            "model": result["model"],
+            "title": title,
+            "exported": exported,
+        }
 
     return run
 

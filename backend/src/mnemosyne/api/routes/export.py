@@ -18,7 +18,7 @@ class ExportResponse(BaseModel):
     message: str
 
 
-def _exporter(ctx: AppContext, vault_path: str) -> ObsidianExporter:
+def build_exporter(ctx: AppContext, vault_path: str) -> ObsidianExporter:
     st = ctx.settings
     tags = [t.strip() for t in st.obsidian_tags.split(",") if t.strip()]
     return ObsidianExporter(
@@ -36,7 +36,9 @@ async def export_markdown(session_id: str, ctx: AppContext = Depends(get_ctx)):
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return {"markdown": _exporter(ctx, ctx.settings.obsidian_vault_path or ".").render(session)}
+    return {
+        "markdown": build_exporter(ctx, ctx.settings.obsidian_vault_path or ".").render(session)
+    }
 
 
 @router.post("/sessions/{session_id}/export/obsidian", response_model=ExportResponse)
@@ -50,7 +52,7 @@ async def export_to_obsidian(session_id: str, ctx: AppContext = Depends(get_ctx)
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        path = _exporter(ctx, vault_path).export(session)
+        path = build_exporter(ctx, vault_path).export(session)
         return ExportResponse(path=str(path), message="Exported successfully")
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

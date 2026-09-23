@@ -377,6 +377,9 @@
 									: 'border-transparent text-gray-500 hover:text-gray-300 hover:bg-gray-900/50'}"
 							>
 								{tab.label}
+								{#if tab.id === 'summary' && sessionState.activeSession.summary_stale}
+									<span class="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-yellow-500 align-middle" title="Summary is out of date"></span>
+								{/if}
 								{#if tab.id === 'transcript' && sessionState.activeSession.transcript.length > 0}
 									<span class="ml-1 text-xs text-gray-600">({sessionState.activeSession.transcript.length})</span>
 								{/if}

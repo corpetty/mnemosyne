@@ -158,6 +158,7 @@ class Settings(BaseSettings):
     obsidian_tags: str = "meeting, mnemosyne"  # comma-separated
     obsidian_link_people: bool = True  # participants as [[Name]] links
     obsidian_include_transcript: bool = True
+    obsidian_auto_export: bool = False  # export after every summary
 
     @classmethod
     def settings_customise_sources(

@@ -173,6 +173,12 @@
 		</button>
 	</div>
 
+	{#if sessionState.activeSession?.summary_stale && !activeJob}
+		<p class="text-xs text-yellow-500">
+			The transcript changed (text or speaker names) since this summary was made. Re-summarize to update it.
+		</p>
+	{/if}
+
 	{#if activeJob}
 		<p class="flex items-center gap-2 text-sm text-gray-400">
 			<span class="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></span>
