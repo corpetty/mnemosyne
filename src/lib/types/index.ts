@@ -231,3 +231,23 @@ export interface SearchHit {
   session_snippet: string | null;
   segments: SegmentHit[];
 }
+
+export interface Citation {
+  n: number;
+  session_id: string;
+  session_name: string;
+  created_at: string;
+  idx: number | null;
+  start: number | null;
+  excerpt: string;
+}
+
+export interface Ask {
+  id: string;
+  question: string;
+  answer: string;
+  citations: Citation[];
+  provider: string;
+  model: string;
+  created_at: string;
+}

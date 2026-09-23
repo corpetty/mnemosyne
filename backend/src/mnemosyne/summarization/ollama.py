@@ -4,6 +4,8 @@ import logging
 
 import httpx
 
+from .provider import summarize_user_prompt
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_URL = "http://localhost:11434"
@@ -47,13 +49,11 @@ class OllamaProvider:
             logger.warning("Failed to list Ollama models: %s", e)
             return []
 
-    async def summarize(
-        self,
-        transcript: str,
-        model: str,
-        system_prompt: str,
-    ) -> str:
-        """Generate summary using Ollama chat API."""
+    async def summarize(self, transcript: str, model: str, system_prompt: str) -> str:
+        return await self.complete(system_prompt, summarize_user_prompt(transcript), model)
+
+    async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
+        """One chat turn: system + user message, returns the assistant text."""
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
                 f"{self.base_url}/api/chat",
@@ -63,7 +63,7 @@ class OllamaProvider:
                         {"role": "system", "content": system_prompt},
                         {
                             "role": "user",
-                            "content": f"Please summarize this transcript:\n\n{transcript}",
+                            "content": user_prompt,
                         },
                     ],
                     "stream": False,

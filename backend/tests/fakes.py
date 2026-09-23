@@ -121,10 +121,17 @@ class FakeProvider:
     def __init__(self, models: list[str] | None = None, summary: str = "## Summary\n- fake"):
         self.models = models if models is not None else ["fake-model-a", "fake-model-b"]
         self.summary = summary
+        self.reply: str | None = None  # returned by complete() when set
         self.calls: list[dict] = []
 
     async def list_models(self) -> list[str]:
         return list(self.models)
+
+    async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
+        self.calls.append(
+            {"transcript": user_prompt, "model": model, "system_prompt": system_prompt}
+        )
+        return self.reply if self.reply is not None else self.summary
 
     async def summarize(self, transcript: str, model: str, system_prompt: str) -> str:
         self.calls.append(

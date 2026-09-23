@@ -1,4 +1,5 @@
 import type {
+  Ask,
   AudioDevice,
   Job,
   ProviderModels,
@@ -277,4 +278,17 @@ export async function getEchoCancel(): Promise<EchoCancelStatus> {
 
 export async function setEchoCancel(enabled: boolean): Promise<EchoCancelStatus> {
   return request('/api/audio/echo-cancel', { method: 'POST', body: JSON.stringify({ enabled }) });
+}
+
+// Ask across meetings
+export async function askQuestion(question: string, provider = '', model = ''): Promise<Job> {
+  return request('/api/ask', { method: 'POST', body: JSON.stringify({ question, provider, model }) });
+}
+
+export async function listAsks(limit = 50): Promise<Ask[]> {
+  return request(`/api/asks?limit=${limit}`);
+}
+
+export async function deleteAsk(id: string): Promise<void> {
+  return request(`/api/asks/${id}`, { method: 'DELETE' });
 }

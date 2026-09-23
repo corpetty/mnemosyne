@@ -28,15 +28,19 @@
 </script>
 
 <script lang="ts">
-	let { text = '' }: { text?: string } = $props();
+	let {
+		text = '',
+		onAnchor
+	}: { text?: string; onAnchor?: (id: string) => void } = $props();
 	const html = $derived(renderMarkdown(text));
 
 	function onClick(e: MouseEvent) {
 		const a = (e.target as HTMLElement).closest('a');
 		const href = a?.getAttribute('href');
-		if (!a || !href || href.startsWith('#')) return;
+		if (!a || !href) return;
 		e.preventDefault();
-		openExternal(href);
+		if (href.startsWith('#')) onAnchor?.(href.slice(1));
+		else openExternal(href);
 	}
 </script>
 

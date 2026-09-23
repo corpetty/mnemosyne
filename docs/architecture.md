@@ -136,6 +136,14 @@ imported once (files are left in place).
 `segments` and `sessions`. Databases created before schema 3 are backfilled on open. User input is
 turned into a safe query by quoting every term (`storage/sqlite.py::fts_query`).
 
+### Ask across meetings
+
+`storage/sqlite.py::retrieve` ranks transcript windows and session summaries for a question
+(any-term FTS5 + bm25, context lines merged, each window remembering its best-matching line);
+`services/ask_service.py` numbers the passages into a budgeted prompt, calls the provider's generic
+`complete()`, and maps `[n]` markers back to citations. Answers are stored in the `asks` table.
+LLM providers expose `complete(system, user, model)`; `summarize` is a wrapper over it.
+
 ### Audio Files
 
 Recordings are stored in `data/recordings/{session_id}/`:

@@ -96,8 +96,9 @@ bearer tokens (api/auth.py, frontend stores/connection.svelte.ts). Quick-wins sp
 (`auto_name_sessions`); summaries and notes render as markdown (components/Markdown.svelte);
 released as v0.2.1.
 
-Candidates next: ask-across-meetings (LLM over search hits); storage management and audio
-retention; global hotkey + tray; live diarization (Sortformer/WhisperLiveKit); calendar-based
+Ask across meetings (routes/ask.py, services/ask_service.py, components/AskPanel.svelte).
+
+Candidates next: storage management and audio retention; global hotkey + tray; live diarization (Sortformer/WhisperLiveKit); calendar-based
 session naming; Tauri updater; offline installer (pre-seeded uv cache).
 
 Frontend package manager: pnpm is pinned via `packageManager` (corepack). If `pnpm` complains

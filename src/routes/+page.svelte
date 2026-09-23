@@ -17,6 +17,8 @@
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
+	import { askState } from '$lib/stores/ask.svelte.js';
+	import AskPanel from '$lib/components/AskPanel.svelte';
 
 	let backendStatus = $state<'checking' | 'connected' | 'unreachable'>('checking');
 	// Progress from the Tauri shell while it installs/starts the backend (release builds).
@@ -24,6 +26,13 @@
 	let shellMessage = $state('');
 	let shellLog = $state<string[]>([]);
 	let showSettings = $state(false);
+	let showAsk = $state(false);
+
+	function openAsk() {
+		showAsk = true;
+		showSettings = false;
+		sessionState.activeSession = null;
+	}
 	let sidebarCollapsed = $state(false);
 
 	// Active tab for session detail view
@@ -41,6 +50,7 @@
 			wsState.connect();
 			transcriptState.init();
 			jobsState.init();
+			askState.init();
 			jobsState.onComplete((job) => {
 				if (job.kind !== 'summarize' || !job.session_id) return;
 				if (sessionState.activeSession?.id === job.session_id) sessionState.refreshActive();
@@ -104,6 +114,7 @@
 			unsubscribeSessions?.();
 			transcriptState.destroy();
 			jobsState.destroy();
+			askState.destroy();
 			wsState.disconnect();
 		};
 	});
@@ -120,6 +131,7 @@
 			lastLoadedSessionId = session.id;
 			transcriptState.showSession(session.id, session.transcript);
 			showSettings = false;
+			showAsk = false;
 		}
 		const pending = sessionState.pendingOpen;
 		if (pending && pending.sessionId === session.id) {
@@ -185,6 +197,9 @@
 		} else if (e.ctrlKey && e.key === 'e') {
 			e.preventDefault();
 			handleExportShortcut();
+		} else if (e.ctrlKey && e.key === 'k') {
+			e.preventDefault();
+			openAsk();
 		} else if (e.ctrlKey && e.key === 'b') {
 			e.preventDefault();
 			sidebarCollapsed = !sidebarCollapsed;
@@ -229,7 +244,15 @@
 				</div>
 			{/if}
 			<button
-				onclick={() => { showSettings = !showSettings; if (showSettings) sessionState.activeSession = null; }}
+				onclick={() => (showAsk ? (showAsk = false) : openAsk())}
+				title="Ask across all meetings (Ctrl+K)"
+				class="px-2.5 py-1 rounded text-xs font-medium transition-colors
+					{showAsk ? 'bg-gray-700 text-gray-200' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}"
+			>
+				Ask
+			</button>
+			<button
+				onclick={() => { showSettings = !showSettings; if (showSettings) { showAsk = false; sessionState.activeSession = null; } }}
 				class="px-2.5 py-1 rounded text-xs font-medium transition-colors
 					{showSettings ? 'bg-gray-700 text-gray-200' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}"
 			>
@@ -304,6 +327,12 @@
 						{/if}
 					</div>
 				</div>
+			{:else if showAsk}
+				<div class="flex-1 overflow-y-auto p-6">
+					<div class="max-w-3xl">
+						<AskPanel onOpenSession={() => (showAsk = false)} />
+					</div>
+				</div>
 			{:else if showSettings}
 				<div class="flex-1 overflow-y-auto p-6">
 					<div class="max-w-2xl">
@@ -352,6 +381,7 @@
 							<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">Ctrl+R</kbd> Start recording</p>
 							<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">Ctrl+S</kbd> Stop &amp; transcribe</p>
 							<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">Ctrl+E</kbd> Export to Obsidian</p>
+							<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">Ctrl+K</kbd> Ask your meetings</p>
 							<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">Ctrl+B</kbd> Toggle sidebar</p>
 						</div>
 					</div>

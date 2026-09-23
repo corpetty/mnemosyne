@@ -231,6 +231,41 @@ wrapped in `[[ ]]` inside snippets.
 
 ---
 
+## Ask across meetings
+
+### `POST /api/ask`
+
+```json
+{ "question": "When does the Waku migration ship?", "provider": "", "model": "" }
+```
+
+Queues an `ask` job (at most two at once) and returns it. The runner retrieves passages with an
+any-term FTS query over the question's meaningful words (stopwords dropped, longer words
+prefix-matched), widens each matching line by two lines either side, merges overlapping windows (at
+most six per session), adds matching session summaries, and sends up to ~16k characters of numbered
+excerpts to the LLM with instructions to answer only from them and cite `[n]`. With no matches it
+answers without calling the model. The job `result` is the saved `Ask`:
+
+```json
+{
+  "id": "a1b2c3d4", "question": "...", "answer": "Ships in the second week of October [2] ...",
+  "citations": [
+    { "n": 2, "session_id": "...", "session_name": "Infra weekly", "created_at": "...",
+      "idx": 3, "start": 36.0, "excerpt": "Me: Then let's slip the migration by one week ..." }
+  ],
+  "provider": "vllm", "model": "qwen3.8-27b", "created_at": "..."
+}
+```
+
+A citation's `idx`/`start` point at the best-matching line in its excerpt (`null` for a summary).
+`400` for an empty or over-2000-character question; provider errors fail the job.
+
+- `GET /api/asks?limit=50` — saved questions and answers, newest first.
+- `DELETE /api/asks/{id}`
+- `GET /api/ask/passages?q=...` — what retrieval would send for a question (debugging).
+
+---
+
 ## Speaker profiles
 
 Known voices, built from renames. Vectors are never returned.
@@ -261,7 +296,7 @@ diarized speaker's embedding is compared (cosine) against all profiles and assig
 }
 ```
 
-`kind`: `transcribe` (final pipeline), `summarize` (LLM summary), or `live` (provisional text while recording).
+`kind`: `transcribe` (final pipeline), `summarize` (LLM summary), `ask` (question across meetings; `session_id` is null), or `live` (provisional text while recording).
 `status`: `queued`, `running`, `completed`, `failed`, `cancelled`. Only one `transcribe` job and at most two
 `summarize` jobs run at a time; others wait in `queued`.
 

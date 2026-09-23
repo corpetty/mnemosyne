@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from ..config import Settings, load_settings
 from .auth import TokenAuthMiddleware
 from .context import AppContext
+from .routes.ask import router as ask_router
 from .routes.audio import router as audio_router
 from .routes.devices import router as devices_router
 from .routes.export import router as export_router
@@ -49,6 +50,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(speakers_router)
     app.include_router(segments_router)
     app.include_router(search_router)
+    app.include_router(ask_router)
     app.include_router(ws_router)
 
     @app.get("/health")

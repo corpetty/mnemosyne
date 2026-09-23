@@ -1,11 +1,15 @@
-"""Summarization provider protocol."""
+"""LLM provider protocol."""
 
 from typing import Protocol, runtime_checkable
 
 
+def summarize_user_prompt(transcript: str) -> str:
+    return f"Please summarize this transcript:\n\n{transcript}"
+
+
 @runtime_checkable
 class SummarizationProvider(Protocol):
-    """Interface for LLM summarization providers."""
+    """Interface for LLM providers (Ollama, vLLM, OpenAI, Anthropic)."""
 
     name: str
 
@@ -13,20 +17,10 @@ class SummarizationProvider(Protocol):
         """Return available model names from this provider."""
         ...
 
-    async def summarize(
-        self,
-        transcript: str,
-        model: str,
-        system_prompt: str,
-    ) -> str:
-        """Generate a summary from a transcript.
+    async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
+        """One chat turn (system + user message); returns the assistant's text."""
+        ...
 
-        Args:
-            transcript: The formatted transcript text.
-            model: The model name to use.
-            system_prompt: The system prompt for summarization.
-
-        Returns:
-            The generated summary as markdown text.
-        """
+    async def summarize(self, transcript: str, model: str, system_prompt: str) -> str:
+        """complete() with the standard summarize user message."""
         ...

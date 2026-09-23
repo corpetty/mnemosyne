@@ -180,6 +180,25 @@ def summarize_session(
     return run
 
 
+def ask_question(app: AppContext, question: str, provider: str = "", model: str = ""):
+    """Build the ask job runner; the saved Ask is the job result."""
+
+    async def run(ctx: JobContext) -> dict:
+        from .ask_service import answer_question
+
+        st = app.settings
+        prov = provider or st.default_provider
+        ctx.update("Searching your meetings...")
+        ask = await answer_question(
+            app.repo, app.summarizer, question, prov, model or st.default_model
+        )
+        app.repo.save_ask(ask)
+        ctx.update("Answer ready")
+        return ask.model_dump(mode="json")
+
+    return run
+
+
 def live_transcribe(app: AppContext, session_id: str, recording):
     """Build the live-transcription job runner for an active RecordingSession.
 

@@ -15,6 +15,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from ..models.ask import Ask, Citation, Passage, PassageLine
 from ..models.search import SearchHit, SegmentHit
 from ..models.session import Recording, Session, SessionStatus, SessionSummary, SummaryData
 from ..models.speaker import SpeakerProfile
@@ -22,7 +23,7 @@ from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -96,6 +97,15 @@ END;
 CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
     DELETE FROM sessions_fts WHERE session_id = old.id;
 END;
+CREATE TABLE IF NOT EXISTS asks (
+    id TEXT PRIMARY KEY,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    citations TEXT NOT NULL DEFAULT '[]',
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS session_speakers (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     label TEXT NOT NULL,
@@ -110,6 +120,32 @@ def _dt(value: str) -> datetime:
 
 
 _TERM = re.compile(r"[\w']+", re.UNICODE)
+
+
+# Words that carry no retrieval signal in questions about meetings.
+STOPWORDS = frozenset(
+    """a about above after again against all am an and any are as at be because been before
+    being below between both but by can could did do does doing down during each few for from
+    further had has have having he her here hers him his how i if in into is it its itself
+    just me more most my no nor not now of off on once only or other our ours out over own
+    same she should so some such than that the their theirs them then there these they this
+    those through to too under until up very was we were what when where which while who whom
+    why will with would you your yours yourself anything something everything tell said say
+    says talk talked talking discuss discussed meeting meetings call calls did we us last
+    week weeks month months day days ago recently""".split()
+)
+
+
+def fts_any_query(question: str) -> str:
+    """OR-query of the question's meaningful words (prefix-matched when long enough),
+    for ranking passages by relevance rather than requiring every word."""
+    terms = []
+    for t in _TERM.findall(question.lower()):
+        t = t.strip("'")
+        if len(t) < 3 or t in STOPWORDS or t in terms:
+            continue
+        terms.append(t)
+    return " OR ".join(f'"{t}"*' if len(t) >= 4 else f'"{t}"' for t in terms[:24])
 
 
 def fts_query(user_query: str) -> str:
@@ -446,6 +482,140 @@ class SessionRepository:
         results = [hits[i] for i in order]
         results.sort(key=lambda h: h.score, reverse=True)
         return results[:limit]
+
+    # ---- retrieval for ask ---------------------------------------------
+
+    def retrieve(
+        self, question: str, limit: int = 20, context: int = 2, per_session: int = 6
+    ) -> list[Passage]:
+        """Best-matching transcript windows (each hit plus `context` lines either side,
+        overlapping windows merged) and session summaries, most relevant first."""
+        fts = fts_any_query(question)
+        if not fts:
+            return []
+        with self._lock:
+            seg_hits = self._conn.execute(
+                """SELECT session_id, idx, bm25(segments_fts) AS score FROM segments_fts
+                   WHERE segments_fts MATCH ? ORDER BY score LIMIT ?""",
+                (fts, limit * 4),
+            ).fetchall()
+            sess_hits = self._conn.execute(
+                """SELECT session_id, bm25(sessions_fts) AS score FROM sessions_fts
+                   WHERE sessions_fts MATCH ? ORDER BY score LIMIT ?""",
+                (fts, max(3, limit // 4)),
+            ).fetchall()
+            meta = {
+                r["id"]: r
+                for r in self._conn.execute(
+                    "SELECT id, name, created_at, summary FROM sessions"
+                ).fetchall()
+            }
+
+            # Merge hit windows per session, keeping each window's best score.
+            windows: dict[str, list[list]] = {}
+            counts: dict[str, int] = {}
+            for h in seg_hits:
+                sid, idx, score = h["session_id"], h["idx"], -float(h["score"])
+                if sid not in meta:
+                    continue
+                lo, hi = idx - context, idx + context
+                spans = windows.setdefault(sid, [])
+                for span in spans:
+                    if lo <= span[1] + 1 and hi >= span[0] - 1:
+                        span[0], span[1] = min(span[0], lo), max(span[1], hi)
+                        if score > span[2]:
+                            span[2], span[3] = score, idx
+                        break
+                else:
+                    if counts.get(sid, 0) >= per_session:
+                        continue
+                    counts[sid] = counts.get(sid, 0) + 1
+                    spans.append([lo, hi, score, idx])
+
+            passages: list[Passage] = []
+            for sid, spans in windows.items():
+                m = meta[sid]
+                for lo, hi, score, focus in spans:
+                    rows = self._conn.execute(
+                        """SELECT idx, speaker, start, text FROM segments
+                           WHERE session_id=? AND idx BETWEEN ? AND ? ORDER BY idx""",
+                        (sid, max(lo, 0), hi),
+                    ).fetchall()
+                    passages.append(
+                        Passage(
+                            session_id=sid,
+                            session_name=m["name"],
+                            created_at=_dt(m["created_at"]),
+                            lines=[
+                                PassageLine(
+                                    idx=r["idx"],
+                                    speaker=r["speaker"],
+                                    start=r["start"],
+                                    text=r["text"],
+                                )
+                                for r in rows
+                            ],
+                            score=score,
+                            focus_idx=focus,
+                        )
+                    )
+            for h in sess_hits:
+                m = meta.get(h["session_id"])
+                if m is not None and m["summary"].strip():
+                    passages.append(
+                        Passage(
+                            session_id=m["id"],
+                            session_name=m["name"],
+                            created_at=_dt(m["created_at"]),
+                            kind="summary",
+                            text=m["summary"].strip(),
+                            score=-float(h["score"]),
+                        )
+                    )
+        passages.sort(key=lambda p: p.score, reverse=True)
+        return passages[:limit]
+
+    # ---- asks ------------------------------------------------------------
+
+    def save_ask(self, ask: Ask) -> Ask:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO asks(id, question, answer, citations, provider, model,
+                                               created_at) VALUES (?,?,?,?,?,?,?)""",
+                (
+                    ask.id,
+                    ask.question,
+                    ask.answer,
+                    json.dumps([c.model_dump(mode="json") for c in ask.citations]),
+                    ask.provider,
+                    ask.model,
+                    ask.created_at.isoformat(),
+                ),
+            )
+        return ask
+
+    def list_asks(self, limit: int = 50) -> list[Ask]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM asks ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [
+            Ask(
+                id=r["id"],
+                question=r["question"],
+                answer=r["answer"],
+                citations=[Citation.model_validate(c) for c in json.loads(r["citations"])],
+                provider=r["provider"],
+                model=r["model"],
+                created_at=_dt(r["created_at"]),
+            )
+            for r in rows
+        ]
+
+    def delete_ask(self, ask_id: str) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute("DELETE FROM asks WHERE id=?", (ask_id,))
+        return cur.rowcount > 0
 
     # ---- speakers ------------------------------------------------------
 
