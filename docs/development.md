@@ -340,10 +340,10 @@ the deb and AppImage on `ubuntu-22.04` when a `vX.Y.Z` tag is pushed and attache
 `SHA256SUMS` file, to the GitHub release:
 
 ```bash
-git tag v0.2.1 && git push origin v0.2.1
+git tag v0.3.0 && git push origin v0.3.0
 ```
 
-Bump the version in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` first.
+Bump the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `package.json`, `backend/pyproject.toml` and `backend/src/mnemosyne/api/app.py` first (then `cargo check` and `uv lock`). Put release notes in `docs/releases/vX.Y.Z.md`; the workflow uses them as the release body, falling back to GitHub's generated notes.
 
 ## Building for Production
 
@@ -370,11 +370,11 @@ app does on first launch. To force a reinstall on a machine, delete
 
 Use a throwaway `HOME` on real disk (not `/tmp`, which is tmpfs: uv then copies the multi-GB
 venv into RAM instead of hardlinking from its cache). Optionally cap it:
-`systemd-run --user --scope -p MemoryMax=8G -p CPUQuota=400% ./Mnemosyne_0.2.1_amd64.AppImage`.
+`systemd-run --user --scope -p MemoryMax=8G -p CPUQuota=400% ./Mnemosyne_0.3.0_amd64.AppImage`.
 
 ```bash
 mkdir -p /tmp/mn && cd /tmp/mn
-ar x ../path/to/Mnemosyne_0.2.1_amd64.deb && tar -xf data.tar.gz
+ar x ../path/to/Mnemosyne_0.3.0_amd64.deb && tar -xf data.tar.gz
 ./usr/bin/mnemosyne      # resources resolve relative to the binary
 ```
 
