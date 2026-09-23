@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..jobs import JobContext
-from ..models.session import Session, SessionStatus
+from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus
 from ..transcription.engine import AudioSource
 
 if TYPE_CHECKING:
@@ -164,8 +164,18 @@ def summarize_session(
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})
             raise
         app.sessions.set_summary(session_id, result["summary"], result["data"])
+        title = result["data"].title
+        # Re-read: the user may have renamed the session while the LLM was running.
+        current = app.sessions.get_session(session_id)
+        if (
+            st.auto_name_sessions
+            and title
+            and current is not None
+            and current.name == DEFAULT_SESSION_NAME
+        ):
+            app.sessions.rename_session(session_id, title)
         ctx.update("Summary ready")
-        return {"provider": result["provider"], "model": result["model"]}
+        return {"provider": result["provider"], "model": result["model"], "title": title}
 
     return run
 

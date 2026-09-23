@@ -21,6 +21,8 @@ class SessionStatus(StrEnum):
 
 RecordingSource = Literal["mic", "system", "import"]
 
+DEFAULT_SESSION_NAME = "Untitled Session"
+
 
 class Recording(BaseModel):
     """One captured audio source. Sources are kept separate on disk so a later
@@ -43,6 +45,7 @@ class SummaryData(BaseModel):
     """Structured summary produced by the LLM. `summary` on the session keeps
     the markdown body for compatibility."""
 
+    title: str = ""  # short name suggested by the model; used to name untitled sessions
     style: str = "meeting"
     provider: str = ""
     model: str = ""
@@ -54,7 +57,7 @@ class SummaryData(BaseModel):
 
 class Session(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4())[:8])
-    name: str = "Untitled Session"
+    name: str = DEFAULT_SESSION_NAME
     status: SessionStatus = SessionStatus.CREATED
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)

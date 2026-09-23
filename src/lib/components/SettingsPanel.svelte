@@ -71,6 +71,7 @@
 				diarization_model: v.diarization_model,
 				auto_transcribe: v.auto_transcribe,
 				auto_summarize: v.auto_summarize,
+				auto_name_sessions: v.auto_name_sessions,
 				ollama_url: v.ollama_url,
 				vllm_url: v.vllm_url,
 				default_provider: v.default_provider,
@@ -320,6 +321,10 @@
 				<label class="flex items-center gap-2 col-span-2">
 					<input type="checkbox" bind:checked={form.auto_summarize} disabled={locked('auto_summarize')} class="rounded border-gray-600 bg-gray-800" />
 					<span class="text-sm text-gray-300">Summarize automatically after transcription (uses the default provider, model and style)</span>
+				</label>
+				<label class="flex items-center gap-2 col-span-2">
+					<input type="checkbox" bind:checked={form.auto_name_sessions} disabled={locked('auto_name_sessions')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Name untitled sessions from the summary</span>
 				</label>
 				<label class="flex items-center gap-2">
 					<input type="checkbox" bind:checked={form.obsidian_link_people} disabled={locked('obsidian_link_people')} class="rounded border-gray-600 bg-gray-800" />

@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     max_speakers: int | None = 10
     auto_transcribe: bool = True
     auto_summarize: bool = False  # queue a summary after each transcription
+    auto_name_sessions: bool = True  # rename untitled sessions from the summary title
     # When mic and system audio are captured separately, the mic file is
     # labelled with this name instead of being diarized.
     local_speaker_name: str = "Me"

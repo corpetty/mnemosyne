@@ -7,7 +7,14 @@ import shutil
 from pathlib import Path
 
 from ..events import EventBus
-from ..models.session import Recording, Session, SessionStatus, SessionSummary, SummaryData
+from ..models.session import (
+    DEFAULT_SESSION_NAME,
+    Recording,
+    Session,
+    SessionStatus,
+    SessionSummary,
+    SummaryData,
+)
 from ..models.transcript import TranscriptSegment
 from ..storage.sqlite import SessionRepository
 
@@ -35,7 +42,7 @@ class SessionService:
     def get_session(self, session_id: str) -> Session | None:
         return self.repo.get(session_id)
 
-    def create_session(self, name: str = "Untitled Session") -> Session:
+    def create_session(self, name: str = DEFAULT_SESSION_NAME) -> Session:
         session = self.repo.save(Session(name=name))
         logger.info("Created session %s: %s", session.id, session.name)
         return self._notify(session)

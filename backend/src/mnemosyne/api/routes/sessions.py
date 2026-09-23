@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ...jobs import Job
-from ...models.session import Session, SessionSummary
+from ...models.session import DEFAULT_SESSION_NAME, Session, SessionSummary
 from ...services.pipeline import transcribe_session
 from ..context import AppContext, get_ctx
 
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
 class CreateSessionRequest(BaseModel):
-    name: str = "Untitled Session"
+    name: str = DEFAULT_SESSION_NAME
 
 
 class RenameRequest(BaseModel):

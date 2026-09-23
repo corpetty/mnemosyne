@@ -138,3 +138,46 @@ def test_markdown_preview_endpoint(client, ctx, transcribed_session):
     )
     md = client.get(f"/api/sessions/{transcribed_session['id']}/export/markdown").json()["markdown"]
     assert "tags: [x, y]" in md and "## Transcript" not in md
+
+
+TITLED = (
+    '{"title": "  \\"Release planning sync.\\" ", "summary": "Body", "topics": [],'
+    ' "decisions": [], "action_items": [], "open_questions": []}'
+)
+
+
+def test_title_parsed_cleaned_and_truncated():
+    _, data = parse_summary_response(TITLED)
+    assert data.title == "Release planning sync"
+    long = '{"title": "' + "word " * 40 + '", "summary": "x"}'
+    assert len(parse_summary_response(long)[1].title) <= 80
+    assert parse_summary_response('{"summary": "x"}')[1].title == ""
+    assert parse_summary_response('{"title": 5, "summary": "x"}')[1].title == ""
+
+
+def test_summarize_names_untitled_session(client, ctx, fake_provider, fake_engine):
+    fake_provider.summary = TITLED
+    sid = client.post("/api/sessions", json={}).json()["id"]
+    assert client.get(f"/api/sessions/{sid}").json()["name"] == "Untitled Session"
+    ctx.sessions.set_transcript(sid, [TranscriptSegment(text="hi", speaker="S", start=0, end=1)])
+    job = run_summarize(client, sid, {"provider": "fake"})
+    assert job["result"]["title"] == "Release planning sync"
+    session = client.get(f"/api/sessions/{sid}").json()
+    assert session["name"] == "Release planning sync"
+    assert session["summary_data"]["title"] == "Release planning sync"
+
+
+def test_summarize_keeps_custom_name(client, ctx, fake_provider, transcribed_session):
+    fake_provider.summary = TITLED
+    sid = transcribed_session["id"]  # named "Transcribed" by the fixture
+    run_summarize(client, sid, {"provider": "fake"})
+    assert client.get(f"/api/sessions/{sid}").json()["name"] == "Transcribed"
+
+
+def test_auto_name_can_be_disabled(client, ctx, fake_provider):
+    ctx.settings.auto_name_sessions = False
+    fake_provider.summary = TITLED
+    sid = client.post("/api/sessions", json={}).json()["id"]
+    ctx.sessions.set_transcript(sid, [TranscriptSegment(text="hi", speaker="S", start=0, end=1)])
+    run_summarize(client, sid, {"provider": "fake"})
+    assert client.get(f"/api/sessions/{sid}").json()["name"] == "Untitled Session"

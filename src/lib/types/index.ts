@@ -63,6 +63,7 @@ export interface ActionItem {
 }
 
 export interface SummaryData {
+  title: string;
   style: string;
   provider: string;
   model: string;
@@ -137,6 +138,7 @@ export interface SettingsValues {
   max_speakers: number | null;
   auto_transcribe: boolean;
   auto_summarize: boolean;
+  auto_name_sessions: boolean;
   local_speaker_name: string;
   remote_speaker_name: string;
   echo_cancel: boolean;

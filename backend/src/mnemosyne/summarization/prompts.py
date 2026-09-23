@@ -38,6 +38,7 @@ STYLES: dict[str, str] = {
 FORMAT_INSTRUCTIONS = """\
 Respond with ONLY a JSON object, no prose before or after, with exactly these keys:
 {
+  "title": "<3 to 7 word title for this conversation, no quotes or trailing punctuation>",
   "summary": "<markdown: 1-3 short paragraphs or bullet points covering the key discussion>",
   "topics": ["<3-8 short topic labels>"],
   "decisions": ["<decisions or agreements reached, one per item; empty if none>"],
@@ -136,7 +137,10 @@ def parse_summary_response(text: str, style: str = "meeting") -> tuple[str, Summ
     if "\\n" in summary and "\n" not in summary:
         # Some models double-escape newlines inside the JSON string.
         summary = summary.replace("\\n", "\n")
+    title = obj.get("title")
+    title = " ".join(title.split()).strip(" \"'.")[:80] if isinstance(title, str) else ""
     data = SummaryData(
+        title=title,
         style=style,
         topics=_str_list(obj.get("topics")),
         decisions=_str_list(obj.get("decisions")),

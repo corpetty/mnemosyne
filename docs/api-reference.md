@@ -319,6 +319,9 @@ the session.
 With the `auto_summarize` setting on, a summarize job is queued automatically after every successful
 transcription, using the defaults.
 
+With `auto_name_sessions` on (default), a session still called "Untitled Session" is renamed to
+`summary_data.title` when the summary lands; custom names are never overwritten.
+
 ---
 
 ## Export
