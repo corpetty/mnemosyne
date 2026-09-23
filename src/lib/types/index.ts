@@ -87,6 +87,7 @@ export interface SessionDetail {
   summary_data: SummaryData | null;
   notes: string;
   participants: string[];
+  attendees: string[];
 }
 
 export interface WordSegment {
@@ -170,6 +171,8 @@ export interface SettingsValues {
   default_provider: string;
   default_model: string;
   audio_retention_days: number;
+  calendar_ics_url: string;
+  calendar_auto_name: boolean;
   summary_style: string;
   summary_instructions: string;
   obsidian_vault_path: string;
@@ -275,4 +278,20 @@ export interface CleanupResult {
   dry_run: boolean;
   sessions: SessionUsage[];
   freed_bytes: number;
+}
+
+export interface CalendarEvent {
+  uid: string;
+  title: string;
+  start: string;
+  end: string;
+  location: string;
+  attendees: string[];
+}
+
+export interface CalendarResponse {
+  configured: boolean;
+  error: string | null;
+  current: CalendarEvent | null;
+  upcoming: CalendarEvent[];
 }

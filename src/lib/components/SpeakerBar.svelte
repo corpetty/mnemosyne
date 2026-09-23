@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getSessionSpeakers, renameSessionSpeaker } from '$lib/api/backend.js';
+	import { getSessionSpeakers, listSpeakers, renameSessionSpeaker } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -10,6 +10,14 @@
 	let draft = $state('');
 	let remember = $state(true);
 	let loadedFor = $state<string | null>(null);
+	let knownVoices = $state<string[]>([]);
+
+	// Names to offer: invitees of this meeting first, then everyone with a saved voice.
+	const suggestions = $derived(
+		[...new Set([...(sessionState.activeSession?.attendees ?? []), ...knownVoices])].filter(
+			(n) => !speakers.some((s) => s.label === n)
+		)
+	);
 
 	async function load(sessionId: string) {
 		try {
@@ -29,6 +37,12 @@
 			loadedFor = key;
 			load(session.id);
 		}
+	});
+
+	$effect(() => {
+		listSpeakers()
+			.then((v) => (knownVoices = v.map((x) => x.name)))
+			.catch(() => {});
 	});
 
 	function startEdit(s: SessionSpeaker) {
@@ -55,6 +69,10 @@
 	}
 </script>
 
+<datalist id="speaker-name-suggestions">
+	{#each suggestions as n}<option value={n}></option>{/each}
+</datalist>
+
 {#if speakers.length > 0}
 	<div class="flex flex-wrap items-center gap-2 text-xs">
 		<span class="text-gray-600">Speakers:</span>
@@ -65,6 +83,7 @@
 					<input
 						bind:value={draft}
 						placeholder="Name"
+						list="speaker-name-suggestions"
 						autofocus
 						onkeydown={(e) => { if (e.key === 'Escape') editing = null; }}
 						class="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-200 w-32"

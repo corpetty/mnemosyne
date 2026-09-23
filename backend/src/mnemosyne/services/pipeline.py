@@ -149,6 +149,12 @@ def summarize_session(
         mdl = model or st.default_model
         sty = style or st.summary_style
         instr = st.summary_instructions if instructions is None else instructions
+        if session.attendees:
+            instr = (
+                f'{instr}\nScheduled attendees of "{session.name}": '
+                f"{', '.join(session.attendees)}. Speaker labels are not necessarily these "
+                "people; only attribute to a name when the transcript makes it clear."
+            ).strip()
 
         ctx.update(f"Summarizing with {prov}/{mdl or 'default model'}")
         ctx.emit({"type": "status", "session_id": session_id, "message": "Summarizing..."})

@@ -19,6 +19,8 @@
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { askState } from '$lib/stores/ask.svelte.js';
 	import AskPanel from '$lib/components/AskPanel.svelte';
+	import CalendarCard from '$lib/components/CalendarCard.svelte';
+	import { calendarState } from '$lib/stores/calendar.svelte.js';
 
 	let backendStatus = $state<'checking' | 'connected' | 'unreachable'>('checking');
 	// Progress from the Tauri shell while it installs/starts the backend (release builds).
@@ -51,6 +53,7 @@
 			transcriptState.init();
 			jobsState.init();
 			askState.init();
+			calendarState.start();
 			jobsState.onComplete((job) => {
 				if (job.kind !== 'summarize' || !job.session_id) return;
 				if (sessionState.activeSession?.id === job.session_id) sessionState.refreshActive();
@@ -119,6 +122,7 @@
 			transcriptState.destroy();
 			jobsState.destroy();
 			askState.destroy();
+			calendarState.stop();
 			wsState.disconnect();
 		};
 	});
@@ -328,6 +332,17 @@
 		</div>
 	</header>
 
+	{#if calendarState.starting && !audioState.isRecording}
+		{@const ev = calendarState.starting}
+		<div class="flex items-center justify-between gap-3 border-b border-blue-900 bg-blue-950/50 px-4 py-2 text-sm flex-shrink-0">
+			<span class="text-blue-100"><span class="font-medium">{ev.title}</span> is starting{#if ev.attendees.length}<span class="text-blue-300">&nbsp;· {ev.attendees.length} invited</span>{/if}</span>
+			<div class="flex items-center gap-2">
+				<button onclick={() => { calendarState.dismiss(ev.uid); handleRemoteAction('start-record'); }} class="px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs font-medium">Record</button>
+				<button onclick={() => calendarState.dismiss(ev.uid)} class="text-xs text-blue-300 hover:text-blue-100">Dismiss</button>
+			</div>
+		</div>
+	{/if}
+
 	<div class="flex flex-1 overflow-hidden">
 		<!-- Sidebar -->
 		{#if !sidebarCollapsed}
@@ -349,6 +364,9 @@
 							{new Date(sessionState.activeSession.created_at).toLocaleString()}
 						</span>
 					</div>
+					{#if sessionState.activeSession.attendees.length}
+						<p class="-mt-2 mb-2 text-xs text-gray-500 truncate">Invited: {sessionState.activeSession.attendees.join(', ')}</p>
+					{/if}
 					<nav class="flex gap-1">
 						{#each tabs as tab}
 							<button
@@ -372,6 +390,7 @@
 					<div class="max-w-4xl">
 						{#if activeTab === 'recording'}
 							<div class="space-y-4">
+								<CalendarCard />
 								<DeviceSelector />
 								<AudioControls
 									onStartOverride={handleStartRecording}

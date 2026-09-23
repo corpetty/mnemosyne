@@ -19,6 +19,7 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Import** existing audio or video files (button or drag-and-drop) through the same pipeline
 - **Editable transcripts**: fix text, reassign a line to another speaker, merge or split segments in place
 - **Search** across every transcript, summary and note, with jump-to-segment
+- **Calendar-aware**: paste your calendar's private ICS link and recordings are named after the meeting in progress, invitees are offered as speaker names, and a banner offers to record when a meeting starts
 - **Storage control**: see what audio takes space, delete audio but keep the transcript, or keep audio for N days only
 - **Ask your meetings** (Ctrl+K): questions answered from your transcripts with numbered citations that jump to the exact moment; history is kept
 - **Speakers that stick**: rename a speaker once and the app remembers the voice, labelling that person automatically in future meetings

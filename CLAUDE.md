@@ -103,8 +103,9 @@ Storage report, per-session audio deletion and audio retention (services/storage
 Tray + `mnemosyne --toggle|--start|--stop` via single-instance (src-tauri/src/lib.rs); device
 selection remembered by node name.
 
-Candidates next: live diarization (Sortformer/WhisperLiveKit); calendar-based
-session naming; Tauri updater; offline installer (pre-seeded uv cache).
+Calendar via ICS feed (services/calendar_service.py): session naming, attendees, start banner.
+
+Candidates next: live diarization (Sortformer/WhisperLiveKit); Tauri updater; offline installer (pre-seeded uv cache).
 
 Frontend package manager: pnpm is pinned via `packageManager` (corepack). If `pnpm` complains
 about an unexpected store location, run `pnpm install --config.confirmModulesPurge=false`.

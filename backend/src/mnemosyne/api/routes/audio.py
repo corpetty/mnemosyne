@@ -1,5 +1,7 @@
 """Audio recording endpoints."""
 
+import asyncio
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -10,9 +12,11 @@ from pydantic import BaseModel
 
 from ...audio.capture import list_devices, start_recording, stop_recording
 from ...audio.mixer import mix_audio_files
-from ...models.session import Recording, Session, SessionStatus
+from ...models.session import DEFAULT_SESSION_NAME, Recording, Session, SessionStatus
 from ...services.pipeline import live_transcribe, transcribe_session
 from ..context import AppContext, get_ctx
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/audio", tags=["audio"])
 
@@ -39,6 +43,24 @@ class StopRecordingResponse(BaseModel):
     message: str
 
 
+async def _apply_calendar(ctx: AppContext, session: Session) -> Session:
+    """Name an untitled session after the meeting in progress and keep its attendees.
+    Calendar problems never block recording."""
+    if not (ctx.calendar.configured and ctx.settings.calendar_auto_name):
+        return session
+    if session.name != DEFAULT_SESSION_NAME:
+        return session
+    try:
+        event = await asyncio.wait_for(ctx.calendar.current(), timeout=5)
+    except Exception:
+        logger.warning("Calendar lookup failed at recording start", exc_info=True)
+        return session
+    if event is None:
+        return session
+    ctx.repo.update_fields(session.id, attendees=event.attendees)
+    return ctx.sessions.rename_session(session.id, event.title) or session
+
+
 @router.post("/start", response_model=StartRecordingResponse)
 async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ctx)):
     if not request.device_ids:
@@ -50,6 +72,8 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
             raise HTTPException(status_code=404, detail="Session not found")
     else:
         session = ctx.sessions.create_session()
+
+    session = await _apply_calendar(ctx, session)
 
     if session.id in ctx.active_recordings:
         raise HTTPException(status_code=409, detail="Session is already recording")

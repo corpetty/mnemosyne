@@ -3,6 +3,7 @@
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
 	import StorageSettings from './StorageSettings.svelte';
+	import { calendarState } from '$lib/stores/calendar.svelte.js';
 	import type { ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	let settings = $state<SettingsResponse | null>(null);
@@ -15,14 +16,15 @@
 	// Editable copy of the values
 	let form = $state<SettingsUpdate>({});
 	// Secret inputs are separate: '' = keep current, text = replace
-	type SecretKey = 'hf_token' | 'openai_api_key' | 'anthropic_api_key' | 'remote_stt_api_key' | 'api_token';
-	const SECRET_KEYS: SecretKey[] = ['hf_token', 'openai_api_key', 'anthropic_api_key', 'remote_stt_api_key', 'api_token'];
+	type SecretKey = 'hf_token' | 'openai_api_key' | 'anthropic_api_key' | 'remote_stt_api_key' | 'api_token' | 'calendar_ics_url';
+	const SECRET_KEYS: SecretKey[] = ['hf_token', 'openai_api_key', 'anthropic_api_key', 'remote_stt_api_key', 'api_token', 'calendar_ics_url'];
 	const emptySecrets = (): Record<SecretKey, string> => ({
 		hf_token: '',
 		openai_api_key: '',
 		anthropic_api_key: '',
 		remote_stt_api_key: '',
-		api_token: ''
+		api_token: '',
+		calendar_ics_url: ''
 	});
 	let connUrl = $state(connectionState.url);
 	let connToken = $state(connectionState.token);
@@ -73,6 +75,7 @@
 				auto_transcribe: v.auto_transcribe,
 				auto_summarize: v.auto_summarize,
 				auto_name_sessions: v.auto_name_sessions,
+				calendar_auto_name: v.calendar_auto_name,
 				ollama_url: v.ollama_url,
 				vllm_url: v.vllm_url,
 				default_provider: v.default_provider,
@@ -109,6 +112,17 @@
 		} finally {
 			saving = false;
 		}
+	}
+
+	let calTest = $state<string | null>(null);
+	async function testCalendar() {
+		calTest = 'Checking…';
+		await calendarState.refresh(true);
+		calTest = !calendarState.configured
+			? 'No calendar configured (save first).'
+			: calendarState.error
+				? `Error: ${calendarState.error}`
+				: `OK: ${calendarState.upcoming.length} meeting(s) in the next 12 hours${calendarState.current ? `, now: ${calendarState.current.title}` : ''}.`;
 	}
 
 	async function clearSecret(key: SecretKey) {
@@ -294,6 +308,36 @@
 					<input type="checkbox" bind:checked={form.auto_transcribe} disabled={locked('auto_transcribe')} class="rounded border-gray-600 bg-gray-800" />
 					<span class="text-sm text-gray-300">Transcribe automatically after recording</span>
 				</label>
+			</div>
+		</section>
+
+		<!-- Calendar -->
+		<section>
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">Calendar</h3>
+			<p class="text-xs text-gray-500 mb-3">
+				Paste your calendar's private ICS address (Google: Settings → your calendar → "Secret address in iCal format"; Fastmail, Proton, Outlook and Nextcloud have the same). Recordings started during a meeting are named after it, and its invitees are offered when you name speakers. A local .ics path also works.
+			</p>
+			<div class="grid grid-cols-2 gap-3">
+				<label class="col-span-2">
+					<span class={labelClass}>
+						ICS address
+						{#if settings.secrets_set.calendar_ics_url}<span class="text-green-500 ml-1">set</span>{/if}
+					</span>
+					<div class="flex gap-2">
+						<input type="password" bind:value={secrets.calendar_ics_url} disabled={locked('calendar_ics_url')} placeholder={settings.secrets_set.calendar_ics_url ? '•••••••• (leave blank to keep)' : 'https://calendar.google.com/calendar/ical/.../basic.ics'} class={inputClass} />
+						{#if settings.secrets_set.calendar_ics_url && !locked('calendar_ics_url')}
+							<button onclick={() => clearSecret('calendar_ics_url')} class="text-xs text-gray-500 hover:text-red-400">Clear</button>
+						{/if}
+					</div>
+				</label>
+				<label class="flex items-center gap-2">
+					<input type="checkbox" bind:checked={form.calendar_auto_name} disabled={locked('calendar_auto_name')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Name new recordings after the current meeting</span>
+				</label>
+				<div class="flex items-center gap-2">
+					<button onclick={testCalendar} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Test</button>
+					{#if calTest}<span class="text-xs text-gray-400">{calTest}</span>{/if}
+				</div>
 			</div>
 		</section>
 

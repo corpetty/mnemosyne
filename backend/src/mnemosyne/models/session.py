@@ -68,6 +68,8 @@ class Session(BaseModel):
     summary_data: SummaryData | None = None
     notes: str = ""
     participants: list[str] = Field(default_factory=list)
+    # Invitees from the calendar event this session was recorded during (names).
+    attendees: list[str] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):

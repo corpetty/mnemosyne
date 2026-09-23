@@ -1,5 +1,6 @@
 import type {
   Ask,
+  CalendarResponse,
   CleanupResult,
   AudioDevice,
   Job,
@@ -306,4 +307,16 @@ export async function deleteSessionAudio(sessionId: string): Promise<SessionDeta
 
 export async function runCleanup(days: number, dryRun: boolean): Promise<CleanupResult> {
   return request(`/api/storage/cleanup?days=${days}&dry_run=${dryRun}`, { method: 'POST' });
+}
+
+// Calendar
+export async function getCalendar(hours = 12, refresh = false): Promise<CalendarResponse> {
+  return request(`/api/calendar?hours=${hours}&refresh=${refresh}`);
+}
+
+export async function setAttendees(sessionId: string, attendees: string[]): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/attendees`, {
+    method: 'PUT',
+    body: JSON.stringify({ attendees })
+  });
 }

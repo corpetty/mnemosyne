@@ -285,6 +285,39 @@ carry `has_audio`.
 
 ---
 
+## Calendar
+
+Configured with the `calendar_ics_url` setting (secret): any provider's private ICS address,
+`webcal://` links, or a local `.ics` path. The feed is cached for 10 minutes; on a fetch error the last
+good copy keeps being used. Recurring events are expanded; all-day, cancelled, and longer-than-8-hour
+events are ignored. Attendee names come from `CN`, falling back to the email's local part; rooms and
+resources are skipped.
+
+### `GET /api/calendar?hours=12&refresh=false`
+
+```json
+{
+  "configured": true, "error": null,
+  "current": { "uid": "...", "title": "Daily standup", "start": "...", "end": "...",
+               "location": "", "attendees": ["Corey Petty", "Alice Smith"] },
+  "upcoming": [ ... ]
+}
+```
+
+`current` is the meeting in progress (the most recently started one wins when meetings overlap),
+otherwise one starting within 10 minutes. `refresh=true` refetches the feed.
+
+With `calendar_auto_name` (default on), a session that is still untitled when it is created or when
+recording starts is renamed to `current.title` and gets its `attendees`. Attendees are passed to the
+summary prompt as context (without mapping them to speaker labels) and exported as `attendees:`
+links in Obsidian frontmatter.
+
+### `PUT /api/sessions/{session_id}/attendees`
+
+`{ "attendees": ["Alice", "Bob"] }` → `SessionDetail` (trimmed, de-duplicated).
+
+---
+
 ## Speaker profiles
 
 Known voices, built from renames. Vectors are never returned.

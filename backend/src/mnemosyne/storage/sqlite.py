@@ -23,7 +23,7 @@ from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     summary TEXT NOT NULL DEFAULT '',
     summary_data TEXT,
     notes TEXT NOT NULL DEFAULT '',
-    participants TEXT NOT NULL DEFAULT '[]'
+    participants TEXT NOT NULL DEFAULT '[]',
+    attendees TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC);
 CREATE TABLE IF NOT EXISTS segments (
@@ -182,7 +183,11 @@ class SessionRepository:
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(sessions)")}
         if "summary_data" not in cols:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN summary_data TEXT")
-            self._conn.commit()
+        if "attendees" not in cols:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN attendees TEXT NOT NULL DEFAULT '[]'"
+            )
+        self._conn.commit()
 
     def _backfill_fts(self) -> None:
         """Index rows that predate the FTS tables (databases from schema < 3)."""
@@ -263,6 +268,7 @@ class SessionRepository:
             ),
             notes=row["notes"],
             participants=json.loads(row["participants"]),
+            attendees=json.loads(row["attendees"]),
             transcript=[
                 TranscriptSegment(
                     text=r["text"],
@@ -294,13 +300,15 @@ class SessionRepository:
         with self._lock, self._conn:
             self._conn.execute(
                 """INSERT INTO sessions(id, name, status, created_at, updated_at, audio_file,
-                                        summary, summary_data, notes, participants)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)
+                                        summary, summary_data, notes, participants,
+                                        attendees)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      name=excluded.name, status=excluded.status, updated_at=excluded.updated_at,
                      audio_file=excluded.audio_file, summary=excluded.summary,
                      summary_data=excluded.summary_data,
-                     notes=excluded.notes, participants=excluded.participants""",
+                     notes=excluded.notes, participants=excluded.participants,
+                     attendees=excluded.attendees""",
                 (
                     session.id,
                     session.name,
@@ -312,6 +320,7 @@ class SessionRepository:
                     session.summary_data.model_dump_json() if session.summary_data else None,
                     session.notes,
                     json.dumps(session.participants),
+                    json.dumps(session.attendees),
                 ),
             )
             self._write_segments(session.id, session.transcript)
@@ -329,6 +338,7 @@ class SessionRepository:
             "summary_data",
             "notes",
             "participants",
+            "attendees",
         }
         bad = set(fields) - allowed
         if bad:
@@ -340,7 +350,7 @@ class SessionRepository:
         for key, value in fields.items():
             if key == "status" and isinstance(value, SessionStatus):
                 value = value.value
-            if key == "participants":
+            if key in ("participants", "attendees"):
                 value = json.dumps(value)
             if key == "summary_data":
                 value = value.model_dump_json() if isinstance(value, SummaryData) else value

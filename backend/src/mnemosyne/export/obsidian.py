@@ -42,6 +42,7 @@ class ObsidianExporter:
             link_people=self.link_people,
             include_transcript=self.include_transcript,
             duration_seconds=duration,
+            attendees=session.attendees,
         )
 
     def _sanitize_filename(self, name: str) -> str:

@@ -15,6 +15,8 @@ dependencies = [
     "httpx>=0.28",
     "numpy>=2.0",
     "tomli-w>=1.0",
+    "icalendar>=6.0",
+    "recurring-ical-events>=3.3",
 ]
 
 [project.optional-dependencies]

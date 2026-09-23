@@ -37,7 +37,10 @@ async def list_sessions(ctx: AppContext = Depends(get_ctx)):
 
 @router.post("", response_model=Session)
 async def create_session(request: CreateSessionRequest, ctx: AppContext = Depends(get_ctx)):
-    return ctx.sessions.create_session(request.name)
+    """Create a session; an untitled one made during a meeting is named after it."""
+    from .audio import _apply_calendar
+
+    return await _apply_calendar(ctx, ctx.sessions.create_session(request.name))
 
 
 @router.get("/{session_id}", response_model=Session)

@@ -57,7 +57,14 @@ def config_file_path() -> Path:
 
 
 SECRET_FIELDS = frozenset(
-    {"hf_token", "openai_api_key", "anthropic_api_key", "remote_stt_api_key", "api_token"}
+    {
+        "hf_token",
+        "openai_api_key",
+        "anthropic_api_key",
+        "remote_stt_api_key",
+        "api_token",
+        "calendar_ics_url",
+    }
 )
 
 
@@ -131,6 +138,11 @@ class Settings(BaseSettings):
     # Server mode: when set, every /api request and the WebSocket must carry it
     # (Authorization: Bearer <token>, or ?token=). /health stays open.
     api_token: str = ""
+
+    # Calendar: private ICS address (or a local .ics path). Recordings started during
+    # a meeting are named after it and remember its attendees.
+    calendar_ics_url: str = ""
+    calendar_auto_name: bool = True
 
     # Storage: delete audio (never transcripts) of transcribed sessions older than
     # this many days. 0 keeps audio forever.

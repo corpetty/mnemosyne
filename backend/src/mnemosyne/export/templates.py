@@ -27,6 +27,7 @@ def render_meeting_note(
     link_people: bool = True,
     include_transcript: bool = True,
     duration_seconds: float | None = None,
+    attendees: list[str] | None = None,
 ) -> str:
     """Render a complete Obsidian-compatible note with YAML frontmatter.
 
@@ -53,6 +54,8 @@ def render_meeting_note(
         people = [p for p in participants if not _is_label(p)]
         if people:
             fm.append("people: [" + ", ".join(_yaml_str(f"[[{p}]]") for p in people) + "]")
+    if attendees:
+        fm.append("attendees: [" + ", ".join(_yaml_str(person(a)) for a in attendees) + "]")
     if summary_data and summary_data.topics:
         fm.append("topics: [" + ", ".join(_yaml_str(t) for t in summary_data.topics) + "]")
     fm.append("tags: [" + ", ".join(tags) + "]")

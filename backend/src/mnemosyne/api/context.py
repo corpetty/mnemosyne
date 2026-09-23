@@ -13,6 +13,7 @@ from ..audio.echo_cancel import EchoCancelManager
 from ..config import Settings
 from ..events import EventBus
 from ..jobs import JobManager
+from ..services.calendar_service import CalendarService
 from ..services.model_service import ModelService
 from ..services.session_service import SessionService
 from ..services.speaker_service import SpeakerService
@@ -32,6 +33,7 @@ class AppContext:
     summarizer: SummarizationService
     speakers: SpeakerService
     storage: StorageService
+    calendar: CalendarService
     bus: EventBus
     jobs: JobManager
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
@@ -52,6 +54,7 @@ class AppContext:
             summarizer=SummarizationService(settings),
             speakers=SpeakerService(repo, settings.speaker_match_threshold),
             storage=StorageService(repo, settings.data_dir, settings.recordings_dir),
+            calendar=CalendarService(settings.calendar_ics_url),
             bus=bus,
             jobs=JobManager(bus, concurrency={"transcribe": 1, "summarize": 2, "ask": 2}),
         )
@@ -61,6 +64,8 @@ class AppContext:
         self.settings = settings
         self.summarizer = SummarizationService(settings)
         self.speakers.threshold = settings.speaker_match_threshold
+        if settings.calendar_ics_url != self.calendar.source:
+            self.calendar = CalendarService(settings.calendar_ics_url)
         await self.models.apply_settings(settings)
 
     def busy_sessions(self) -> set[str]:
