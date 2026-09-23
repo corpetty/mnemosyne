@@ -374,7 +374,7 @@ venv into RAM instead of hardlinking from its cache). Optionally cap it:
 
 ```bash
 mkdir -p /tmp/mn && cd /tmp/mn
-ar x ../path/to/mnemosyne_0.2.0_amd64.deb && tar -xf data.tar.gz
+ar x ../path/to/Mnemosyne_0.2.1_amd64.deb && tar -xf data.tar.gz
 ./usr/bin/mnemosyne      # resources resolve relative to the binary
 ```
 
