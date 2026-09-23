@@ -80,4 +80,5 @@ class SessionSummary(BaseModel):
     updated_at: datetime
     has_transcript: bool
     has_summary: bool
+    has_audio: bool = False
     participant_count: int

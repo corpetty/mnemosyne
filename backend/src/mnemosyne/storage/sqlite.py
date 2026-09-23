@@ -216,6 +216,7 @@ class SessionRepository:
         sql = """
         SELECT s.id, s.name, s.status, s.created_at, s.updated_at, s.participants,
                length(s.summary) > 0 AS has_summary,
+               s.audio_file IS NOT NULL AS has_audio,
                EXISTS(SELECT 1 FROM segments g WHERE g.session_id = s.id) AS has_transcript
         FROM sessions s ORDER BY s.created_at DESC
         """
@@ -230,6 +231,7 @@ class SessionRepository:
                 updated_at=_dt(r["updated_at"]),
                 has_transcript=bool(r["has_transcript"]),
                 has_summary=bool(r["has_summary"]),
+                has_audio=bool(r["has_audio"]),
                 participant_count=len(json.loads(r["participants"])),
             )
             for r in rows
@@ -382,6 +384,19 @@ class SessionRepository:
                     for r in recordings
                 ],
             )
+
+    def clear_audio(self, session_id: str) -> bool:
+        """Forget a session's audio (recordings rows + mixed file path). Files are the
+        caller's job. Returns False for an unknown session."""
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE sessions SET audio_file=NULL, updated_at=? WHERE id=?",
+                (datetime.now().isoformat(), session_id),
+            )
+            if cur.rowcount == 0:
+                return False
+            self._conn.execute("DELETE FROM recordings WHERE session_id=?", (session_id,))
+        return True
 
     def delete(self, session_id: str) -> bool:
         with self._lock, self._conn:

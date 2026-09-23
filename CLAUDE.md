@@ -98,7 +98,9 @@ released as v0.2.1.
 
 Ask across meetings (routes/ask.py, services/ask_service.py, components/AskPanel.svelte).
 
-Candidates next: storage management and audio retention; global hotkey + tray; live diarization (Sortformer/WhisperLiveKit); calendar-based
+Storage report, per-session audio deletion and audio retention (services/storage_service.py).
+
+Candidates next: global hotkey + tray; live diarization (Sortformer/WhisperLiveKit); calendar-based
 session naming; Tauri updater; offline installer (pre-seeded uv cache).
 
 Frontend package manager: pnpm is pinned via `packageManager` (corepack). If `pnpm` complains

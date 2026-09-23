@@ -2,6 +2,7 @@
 	import { deleteSpeakerProfile, getSettings, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
+	import StorageSettings from './StorageSettings.svelte';
 	import type { ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	let settings = $state<SettingsResponse | null>(null);
@@ -474,6 +475,8 @@
 			<button onclick={load} disabled={loading} class="text-sm text-gray-400 hover:text-gray-200">Reload</button>
 			{#if error}<span class="text-sm text-red-400">{error}</span>{/if}
 		</div>
+
+		<StorageSettings locked={locked('audio_retention_days')} />
 
 		<!-- Server mode -->
 		<section>

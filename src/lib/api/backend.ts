@@ -1,5 +1,6 @@
 import type {
   Ask,
+  CleanupResult,
   AudioDevice,
   Job,
   ProviderModels,
@@ -13,6 +14,7 @@ import type {
   SpeakerProfile,
   StartRecordingResponse,
   StopRecordingResponse,
+  StorageReport,
   SummaryStyle
 } from '$lib/types/index.js';
 
@@ -291,4 +293,17 @@ export async function listAsks(limit = 50): Promise<Ask[]> {
 
 export async function deleteAsk(id: string): Promise<void> {
   return request(`/api/asks/${id}`, { method: 'DELETE' });
+}
+
+// Storage
+export async function getStorage(): Promise<StorageReport> {
+  return request('/api/storage');
+}
+
+export async function deleteSessionAudio(sessionId: string): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/audio`, { method: 'DELETE' });
+}
+
+export async function runCleanup(days: number, dryRun: boolean): Promise<CleanupResult> {
+  return request(`/api/storage/cleanup?days=${days}&dry_run=${dryRun}`, { method: 'POST' });
 }

@@ -64,7 +64,11 @@
 			});
 			// Keep the sidebar in step with backend session state changes.
 			unsubscribeSessions = wsState.onMessage((msg) => {
-				if (msg.type === 'session') sessionState.loadSessions();
+				if (msg.type !== 'session') return;
+				sessionState.loadSessions();
+				if (msg.status === 'audio_deleted' && sessionState.activeSession?.id === msg.session_id) {
+					sessionState.refreshActive();
+				}
 			});
 		}
 

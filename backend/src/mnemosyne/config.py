@@ -132,6 +132,10 @@ class Settings(BaseSettings):
     # (Authorization: Bearer <token>, or ?token=). /health stays open.
     api_token: str = ""
 
+    # Storage: delete audio (never transcripts) of transcribed sessions older than
+    # this many days. 0 keeps audio forever.
+    audio_retention_days: int = 0
+
     # Summaries
     summary_style: str = "meeting"  # see summarization/prompts.py STYLES
     summary_instructions: str = ""  # appended to every summary prompt

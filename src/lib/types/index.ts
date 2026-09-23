@@ -45,6 +45,7 @@ export interface SessionSummary {
   updated_at: string;
   has_transcript: boolean;
   has_summary: boolean;
+  has_audio: boolean;
   participant_count: number;
 }
 
@@ -168,6 +169,7 @@ export interface SettingsValues {
   anthropic_api_key: string;
   default_provider: string;
   default_model: string;
+  audio_retention_days: number;
   summary_style: string;
   summary_instructions: string;
   obsidian_vault_path: string;
@@ -195,7 +197,7 @@ export type BackendEvent =
   | { type: 'hello'; jobs: Job[] }
   | { type: 'pong' }
   | { type: 'job'; job: Job }
-  | { type: 'session'; session_id: string; status: SessionStatus | 'deleted' }
+  | { type: 'session'; session_id: string; status: SessionStatus | 'deleted' | 'audio_deleted' }
   | { type: 'status'; session_id: string | null; message: string }
   | { type: 'transcription'; session_id: string | null; segment: TranscriptSegment }
   | { type: 'error'; session_id: string | null; message: string }
@@ -250,4 +252,27 @@ export interface Ask {
   provider: string;
   model: string;
   created_at: string;
+}
+
+export interface SessionUsage {
+  session_id: string;
+  name: string;
+  created_at: string;
+  audio_bytes: number;
+  has_transcript: boolean;
+}
+
+export interface StorageReport {
+  data_dir: string;
+  recordings_bytes: number;
+  database_bytes: number;
+  sessions_with_audio: number;
+  retention_days: number;
+  largest: SessionUsage[];
+}
+
+export interface CleanupResult {
+  dry_run: boolean;
+  sessions: SessionUsage[];
+  freed_bytes: number;
 }

@@ -266,6 +266,25 @@ A citation's `idx`/`start` point at the best-matching line in its excerpt (`null
 
 ---
 
+## Storage
+
+Only audio is ever removed; transcripts, summaries and notes are kept.
+
+- `GET /api/storage` → `{ data_dir, recordings_bytes, database_bytes, sessions_with_audio,
+  retention_days, largest: [{ session_id, name, created_at, audio_bytes, has_transcript }] }`
+- `DELETE /api/sessions/{id}/audio` — delete that session's recordings folder and clear
+  `audio_file`/`recordings`. Returns the updated `SessionDetail`; `409` while it is recording or has
+  an active job. Emits a `session` event with status `audio_deleted`.
+- `POST /api/storage/cleanup?dry_run=true&days=` — apply the retention rule (transcribed sessions
+  older than `days`, default the `audio_retention_days` setting) and report `{ dry_run, sessions,
+  freed_bytes }`. Dry run by default; `400` when retention is off.
+
+With `audio_retention_days` > 0 the backend runs the same clean-up at startup and every 6 hours,
+skipping sessions that are recording or have active jobs. Session summaries in `GET /api/sessions`
+carry `has_audio`.
+
+---
+
 ## Speaker profiles
 
 Known voices, built from renames. Vectors are never returned.
