@@ -1,12 +1,21 @@
+<script module lang="ts">
+	import type { ProviderModels as PM, SummaryStyle as SS } from '$lib/types/index.js';
+	// Survives tab switches so the pickers do not flash empty while models are re-listed.
+	let cachedProviders: PM[] | null = null;
+	let cachedStyles: SS[] | null = null;
+</script>
+
 <script lang="ts">
 	import { listModels, listSummaryStyles, summarizeSession, getSettings } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
+	import Markdown from './Markdown.svelte';
 	import type { ProviderModels, SummaryStyle } from '$lib/types/index.js';
 
-	let providers = $state<ProviderModels[]>([]);
-	let styles = $state<SummaryStyle[]>([]);
+	let providers = $state<ProviderModels[]>(cachedProviders ?? []);
+	let styles = $state<SummaryStyle[]>(cachedStyles ?? []);
+	let optionsLoading = $state(cachedProviders === null);
 	let selectedProvider = $state('');
 	let selectedModel = $state('');
 	let selectedStyle = $state('');
@@ -16,8 +25,9 @@
 	async function load() {
 		try {
 			const [p, s, settings] = await Promise.all([listModels(), listSummaryStyles(), getSettings()]);
-			providers = p;
-			styles = s;
+			providers = cachedProviders = p;
+			styles = cachedStyles = s;
+			optionsLoading = false;
 			selectedProvider = settings.values.default_provider || p[0]?.provider || '';
 			selectedModel = settings.values.default_model || '';
 			selectedStyle = settings.values.summary_style || 'meeting';
@@ -92,7 +102,7 @@
 				</div>
 			{/if}
 			<div class="bg-gray-900 border border-gray-700 rounded-lg p-4">
-				<pre class="whitespace-pre-wrap text-sm text-gray-200 font-sans">{sessionState.activeSession.summary}</pre>
+				<Markdown text={sessionState.activeSession.summary} />
 			</div>
 			{#if data}
 				<div class="grid gap-3 md:grid-cols-2">
@@ -151,7 +161,7 @@
 				<option value={model}>{model}</option>
 			{/each}
 			{#if availableModels().length === 0}
-				<option value="">No models available</option>
+				<option value="">{optionsLoading ? 'Loading models…' : 'No models available'}</option>
 			{/if}
 		</select>
 		<button
