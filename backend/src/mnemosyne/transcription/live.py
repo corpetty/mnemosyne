@@ -24,6 +24,7 @@ import numpy as np
 
 from ..models.transcript import TranscriptSegment
 from .engine import Transcriber
+from .live_speakers import OnlineClusterer, SpeakerEmbedder
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,8 @@ class LiveSource:
     path: Path
     speaker: str
     kind: str = "mixed"
+    diarize: bool = False  # label segments by voice (needs a clusterer + embedder)
+    last_speaker: str | None = None
     tail: WavTail = field(init=False)
     buffer: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int16))
     buffer_start: float = 0.0  # seconds into the recording where `buffer` begins
@@ -106,6 +109,8 @@ class LiveTranscriber:
         min_buffer: float = 1.0,
         max_buffer: float = 30.0,
         language: str | None = None,
+        embedder: SpeakerEmbedder | None = None,
+        clusterer: OnlineClusterer | None = None,
     ):
         self.transcriber = transcriber
         self.sources = sources
@@ -116,6 +121,8 @@ class LiveTranscriber:
         self.min_buffer = min_buffer
         self.max_buffer = max_buffer
         self.language = language
+        self.embedder = embedder
+        self.clusterer = clusterer
         self.committed: list[TranscriptSegment] = []
 
     async def run(self) -> None:
@@ -123,7 +130,18 @@ class LiveTranscriber:
         if not self.transcriber.is_loaded():
             self.emit(self._status("Loading live transcriber..."))
             await self.transcriber.load()
-        self.emit(self._status("Live"))
+        status = "Live"
+        if self.embedder is not None and any(src.diarize for src in self.sources):
+            try:
+                if not self.embedder.is_loaded():
+                    self.emit(self._status("Loading speaker detection..."))
+                    await self.embedder.load()
+                status = "Live · speaker detection on"
+            except Exception as e:
+                logger.warning("Live speaker detection unavailable: %s", e)
+                self.embedder = None
+                status = "Live (speaker detection unavailable)"
+        self.emit(self._status(status))
         try:
             while True:
                 await asyncio.sleep(self.interval)
@@ -161,9 +179,10 @@ class LiveTranscriber:
         rest = [s for s in segments if s not in commit]
 
         for seg in commit:
+            speaker = await self._label(source, seg, rate)
             absolute = seg.model_copy(
                 update={
-                    "speaker": source.speaker,
+                    "speaker": speaker,
                     "start": round(source.buffer_start + seg.start, 3),
                     "end": round(source.buffer_start + seg.end, 3),
                     "words": None,
@@ -197,10 +216,37 @@ class LiveTranscriber:
                     "type": "live_partial",
                     "session_id": self.session_id,
                     "source": source.kind,
-                    "speaker": source.speaker,
+                    "speaker": source.last_speaker or source.speaker,
                     "text": partial,
                 }
             )
+
+    async def _label(self, source: LiveSource, seg: TranscriptSegment, rate: int) -> str:
+        """Speaker label for a committed segment (segment times are buffer-relative)."""
+        if not (source.diarize and self.embedder is not None and self.clusterer is not None):
+            return source.speaker
+        lo = max(int(seg.start * rate), 0)
+        hi = min(int(seg.end * rate), source.buffer.size)
+        vec = None
+        try:
+            vec = await self.embedder.embed(source.buffer[lo:hi], rate)
+        except Exception:
+            logger.debug("Live embedding failed", exc_info=True)
+        if vec is None:  # too short or failed: same speaker as the previous line
+            return source.last_speaker or source.speaker
+        label, renames = self.clusterer.assign(vec)
+        for old, new in renames:
+            for s in self.committed:
+                if s.speaker == old:
+                    s.speaker = new
+            for src in self.sources:
+                if src.last_speaker == old:
+                    src.last_speaker = new
+            self.emit(
+                {"type": "live_relabel", "session_id": self.session_id, "old": old, "new": new}
+            )
+        source.last_speaker = label
+        return label
 
     async def _transcribe_buffer(self, source: LiveSource, rate: int) -> list[TranscriptSegment]:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:

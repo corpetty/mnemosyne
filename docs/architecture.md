@@ -231,6 +231,20 @@ and relabels the transcript before it is saved. Renaming a speaker in the UI rel
 if that label has an embedding, enrolls it into the named profile as a running mean. Profiles are
 managed in Settings.
 
+### Live speaker labels
+
+`transcription/live_speakers.py`. For live sources that may hold several voices (the system channel,
+or the only source when there is one), each committed segment's audio is embedded with the embedding
+model inside the configured pyannote pipeline (community-1's bundled model, 256-d, ~10 ms per
+segment on GPU), so vectors live in the same space as saved voice profiles. `OnlineClusterer` assigns
+segments to running centroids by cosine similarity (`live_speaker_threshold`, default 0.45, measured
+on real and synthetic voices), merges clusters whose centroids later converge, and names a cluster
+after a saved profile once it matches above `speaker_match_threshold` (one cluster per name; the local
+user's profile is excluded when the mic is a separate channel). Renames are sent as `live_relabel`
+events and applied to lines already on screen. Segments under 1 s inherit the previous label. Without
+torch/pyannote (CPU-only installs) the live view keeps channel labels. The final diarized transcript
+after stop remains authoritative.
+
 ### Model lifecycle
 
 `services/model_service.py` builds the engine lazily on first job (so the API starts without torch),

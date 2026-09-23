@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     live_transcription: bool = True
     live_transcriber: str = "parakeet"  # parakeet | whisperx | remote
     live_interval_seconds: float = 5.0
+    # Label live lines by voice (needs the pyannote diarizer's torch stack).
+    live_diarization: bool = True
+    live_speaker_threshold: float = 0.45
 
     # whisperx transcriber
     hf_token: str = ""

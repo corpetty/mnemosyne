@@ -252,11 +252,32 @@ def live_transcribe(app: AppContext, session_id: str, recording):
             speaker = settings.remote_speaker_name if is_system else settings.local_speaker_name
         else:
             speaker = "Speaker"
+        # With separate channels the mic is the local user; everything else may hold
+        # several voices.
+        diarize = settings.live_diarization and (is_system or not multi)
         sources.append(
             LiveSource(
-                path=proc.output_path, speaker=speaker, kind="system" if is_system else "mic"
+                path=proc.output_path,
+                speaker=speaker,
+                kind="system" if is_system else "mic",
+                diarize=diarize,
             )
         )
+
+    embedder = clusterer = None
+    if any(src.diarize for src in sources):
+        from ..transcription.live_speakers import OnlineClusterer
+
+        embedder = app.models.live_embedder
+        if embedder is not None:
+            clusterer = OnlineClusterer(
+                threshold=settings.live_speaker_threshold,
+                known_threshold=settings.speaker_match_threshold,
+                known={p.name: p.embedding for p in app.repo.list_speakers()},
+            )
+            # Never hand the local user's name to a remote voice.
+            if multi:
+                clusterer.known.pop(settings.local_speaker_name, None)
 
     async def run(ctx: JobContext) -> dict:
         ctx.update("Live transcription")
@@ -267,11 +288,18 @@ def live_transcribe(app: AppContext, session_id: str, recording):
             session_id=session_id,
             interval=settings.live_interval_seconds,
             language=settings.language or None,
+            embedder=embedder,
+            clusterer=clusterer,
         )
         try:
             await live.run()
         except asyncio.CancelledError:
-            return {"segments": len(live.committed)}
-        return {"segments": len(live.committed)}
+            return _live_result(live)
+        return _live_result(live)
 
     return run
+
+
+def _live_result(live) -> dict:
+    speakers = [c.label for c in live.clusterer.clusters] if live.clusterer else []
+    return {"segments": len(live.committed), "speakers": speakers}

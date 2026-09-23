@@ -503,7 +503,8 @@ Then every backend event, in order:
 | `status` | `session_id`, `message` | Human-readable stage text (`Loading models...`, `Transcribing...`, `Transcription complete`) |
 | `error` | `session_id`, `message` | A stage failed |
 | `live_status` | `session_id`, `message` | Live transcriber state (`Loading live transcriber...`, `Live`) |
-| `live_segment` | `session_id`, `source` (`mic`/`system`/`mixed`), `segment` | A provisional segment committed by the live transcriber (absolute times, no words) |
+| `live_segment` | `session_id`, `source` (`mic`/`system`/`mixed`), `segment` | A provisional segment committed by the live transcriber (absolute times, no words); `speaker` is a saved voice's name, `Speaker N`, or the channel label |
+| `live_relabel` | `session_id`, `old`, `new` | A live speaker was recognised as a saved voice, or two live speakers were merged; relabel earlier live lines |
 | `live_partial` | `session_id`, `source`, `speaker`, `text` | The still-changing tail for that source; replaces the previous partial (may be empty) |
 | `pong` | | Reply to `ping` |
 

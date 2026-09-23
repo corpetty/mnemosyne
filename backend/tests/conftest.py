@@ -55,6 +55,8 @@ def fake_live_transcriber(monkeypatch) -> FakeTranscriber:
 
     fake = FakeTranscriber()
     monkeypatch.setattr(ModelService, "live_transcriber", property(lambda self: fake))
+    # ...nor a real speaker embedder (it would download and load pyannote).
+    monkeypatch.setattr(ModelService, "live_embedder", property(lambda self: None))
     return fake
 
 

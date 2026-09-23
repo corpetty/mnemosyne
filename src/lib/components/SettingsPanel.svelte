@@ -63,6 +63,8 @@
 				live_transcription: v.live_transcription,
 				live_transcriber: v.live_transcriber,
 				live_interval_seconds: v.live_interval_seconds,
+				live_diarization: v.live_diarization,
+				live_speaker_threshold: v.live_speaker_threshold,
 				whisper_model_size: v.whisper_model_size,
 				whisper_compute_type: v.whisper_compute_type,
 				whisper_batch_size: v.whisper_batch_size,
@@ -448,6 +450,14 @@
 				<label>
 					<span class={labelClass}>Update interval (seconds)</span>
 					<input type="number" min="2" max="30" step="1" bind:value={form.live_interval_seconds} disabled={locked('live_interval_seconds')} class={inputClass} />
+				</label>
+				<label class="flex items-center gap-2">
+					<input type="checkbox" bind:checked={form.live_diarization} disabled={locked('live_diarization') || form.diarizer !== 'pyannote'} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Tell speakers apart live (known voices are named)</span>
+				</label>
+				<label>
+					<span class={labelClass}>Live speaker separation (0.35 merges more … 0.6 splits more)</span>
+					<input type="number" min="0.2" max="0.9" step="0.05" bind:value={form.live_speaker_threshold} disabled={locked('live_speaker_threshold') || !form.live_diarization} class={inputClass} />
 				</label>
 				<label>
 					<span class={labelClass}>Label for the system-audio channel</span>

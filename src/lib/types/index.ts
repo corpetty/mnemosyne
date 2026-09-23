@@ -155,6 +155,8 @@ export interface SettingsValues {
   live_transcription: boolean;
   live_transcriber: 'parakeet' | 'whisperx' | 'remote';
   live_interval_seconds: number;
+  live_diarization: boolean;
+  live_speaker_threshold: number;
   hf_token: string;
   whisper_model_size: string;
   whisper_compute_type: string;
@@ -209,7 +211,8 @@ export type BackendEvent =
   | { type: 'error'; session_id: string | null; message: string }
   | { type: 'live_segment'; session_id: string; source: string; segment: TranscriptSegment }
   | { type: 'live_partial'; session_id: string; source: string; speaker: string; text: string }
-  | { type: 'live_status'; session_id: string; message: string };
+  | { type: 'live_status'; session_id: string; message: string }
+  | { type: 'live_relabel'; session_id: string; old: string; new: string };
 
 export interface SpeakerProfile {
   id: string;

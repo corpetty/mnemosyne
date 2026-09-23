@@ -102,6 +102,20 @@ class TranscriptState {
       case 'live_status':
         if (msg.session_id === this.sessionId) this.liveStatus = msg.message;
         break;
+      case 'live_relabel':
+        // A live speaker was recognised or two speakers turned out to be one.
+        if (msg.session_id === this.sessionId) {
+          this.liveSegments = this.liveSegments.map((s) =>
+            s.speaker === msg.old ? { ...s, speaker: msg.new } : s
+          );
+          const partials: Record<string, { speaker: string; text: string }> = {};
+          for (const [k, v] of Object.entries(this.livePartials)) {
+            partials[k] = v.speaker === msg.old ? { ...v, speaker: msg.new } : v;
+          }
+          this.livePartials = partials;
+          this.getSpeakerColor(msg.new);
+        }
+        break;
     }
   }
 

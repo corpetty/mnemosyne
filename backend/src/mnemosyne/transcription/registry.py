@@ -52,6 +52,20 @@ def build_live_transcriber(settings: Settings) -> Transcriber:
     return build_transcriber(settings, settings.live_transcriber)
 
 
+def build_live_embedder(settings: Settings):
+    """Speaker embedder for live labels, or None when pyannote/torch are unavailable."""
+    if settings.diarizer != "pyannote":
+        return None
+    try:
+        import pyannote.audio  # noqa: F401
+        import torch  # noqa: F401
+    except ImportError:
+        return None
+    from .live_speakers import PyannoteEmbedder
+
+    return PyannoteEmbedder(settings.diarization_model, settings.hf_token)
+
+
 def build_diarizer(settings: Settings) -> Diarizer | None:
     kind = settings.diarizer
     if kind == "none":
@@ -99,6 +113,9 @@ ENGINE_SETTINGS = (
 
 LIVE_SETTINGS = (
     "live_transcriber",
+    "diarizer",
+    "diarization_model",
+    "hf_token",
     "parakeet_model",
     "parakeet_quantization",
     "onnx_provider",

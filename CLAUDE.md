@@ -105,7 +105,10 @@ selection remembered by node name.
 
 Calendar via ICS feed (services/calendar_service.py): session naming, attendees, start banner.
 
-Candidates next: live diarization (Sortformer/WhisperLiveKit); Tauri updater; offline installer (pre-seeded uv cache).
+Live speaker labels (transcription/live_speakers.py): pyannote embedding + online clustering +
+voice-profile naming, `live_relabel` events.
+
+Candidates next: Tauri updater; offline installer (pre-seeded uv cache).
 
 Frontend package manager: pnpm is pinned via `packageManager` (corepack). If `pnpm` complains
 about an unexpected store location, run `pnpm install --config.confirmModulesPurge=false`.
