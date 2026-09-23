@@ -340,7 +340,7 @@ the deb and AppImage on `ubuntu-22.04` when a `vX.Y.Z` tag is pushed and attache
 `SHA256SUMS` file, to the GitHub release:
 
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.2.1 && git push origin v0.2.1
 ```
 
 Bump the version in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` first.
@@ -370,7 +370,7 @@ app does on first launch. To force a reinstall on a machine, delete
 
 Use a throwaway `HOME` on real disk (not `/tmp`, which is tmpfs: uv then copies the multi-GB
 venv into RAM instead of hardlinking from its cache). Optionally cap it:
-`systemd-run --user --scope -p MemoryMax=8G -p CPUQuota=400% ./Mnemosyne_0.2.0_amd64.AppImage`.
+`systemd-run --user --scope -p MemoryMax=8G -p CPUQuota=400% ./Mnemosyne_0.2.1_amd64.AppImage`.
 
 ```bash
 mkdir -p /tmp/mn && cd /tmp/mn

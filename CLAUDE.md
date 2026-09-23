@@ -89,6 +89,16 @@ FTS5 search (routes/search.py); structured summaries with styles and instruction
 audio playback with range requests and file import (routes/audio.py); CI + tag releases
 (.github/workflows).
 
-Candidates next: server mode (frontend `backend_url` to a remote backend); PipeWire
-echo-cancel module integration; live diarization (Sortformer/WhisperLiveKit); calendar-based
+2026-09-23: PipeWire echo cancellation on demand (audio/echo_cancel.py) and server mode with
+bearer tokens (api/auth.py, frontend stores/connection.svelte.ts). Quick-wins sprint
+(docs/plans/2026-09-23-quick-wins.md): summarization is a `summarize` job with
+`auto_summarize`; untitled sessions are named from `summary_data.title`
+(`auto_name_sessions`); summaries and notes render as markdown (components/Markdown.svelte);
+released as v0.2.1.
+
+Candidates next: ask-across-meetings (LLM over search hits); storage management and audio
+retention; global hotkey + tray; live diarization (Sortformer/WhisperLiveKit); calendar-based
 session naming; Tauri updater; offline installer (pre-seeded uv cache).
+
+Frontend package manager: pnpm is pinned via `packageManager` (corepack). If `pnpm` complains
+about an unexpected store location, run `pnpm install --config.confirmModulesPurge=false`.
