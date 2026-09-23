@@ -19,7 +19,7 @@ serve a LAN; there is no TLS, so keep it on trusted networks or behind a reverse
 ### `GET /health`
 
 ```json
-{ "status": "ok", "version": "0.3.0", "host": "gpu-box", "auth_required": false }
+{ "status": "ok", "version": "0.4.0", "host": "gpu-box", "auth_required": false }
 ```
 
 ---
