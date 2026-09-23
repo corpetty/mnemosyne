@@ -48,7 +48,7 @@ class AppContext:
             summarizer=SummarizationService(settings),
             speakers=SpeakerService(repo, settings.speaker_match_threshold),
             bus=bus,
-            jobs=JobManager(bus, concurrency={"transcribe": 1}),
+            jobs=JobManager(bus, concurrency={"transcribe": 1, "summarize": 2}),
         )
 
     async def apply_settings(self, settings: Settings) -> None:

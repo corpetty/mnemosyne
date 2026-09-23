@@ -11,6 +11,8 @@ from src.mnemosyne.summarization.prompts import (
     parse_summary_response,
 )
 
+from tests.conftest import run_summarize
+
 
 def test_parse_clean_json():
     raw = (
@@ -68,20 +70,17 @@ def test_summarize_endpoint_stores_structured(client, ctx, fake_provider, transc
         ' "action_items": [{"text": "a", "owner": "SPEAKER_00"}], "open_questions": []}'
     )
     sid = transcribed_session["id"]
-    resp = client.post(
-        f"/api/sessions/{sid}/summarize", json={"provider": "fake", "style": "standup"}
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["summary"] == "Body"
-    assert body["data"]["style"] == "standup"
-    assert body["data"]["action_items"] == [{"text": "a", "owner": "SPEAKER_00"}]
-    assert body["data"]["provider"] == "fake"
+    job = run_summarize(client, sid, {"provider": "fake", "style": "standup"})
+    assert job["status"] == "completed"
+    assert job["result"]["provider"] == "fake"
     assert "standup" in fake_provider.calls[0]["system_prompt"]
 
     session = client.get(f"/api/sessions/{sid}").json()
     assert session["summary"] == "Body"
-    assert session["data" if "data" in session else "summary_data"]["decisions"] == ["d"]
+    data = session["summary_data"]
+    assert data["style"] == "standup" and data["provider"] == "fake"
+    assert data["decisions"] == ["d"]
+    assert data["action_items"] == [{"text": "a", "owner": "SPEAKER_00"}]
     assert client.post(f"/api/sessions/{sid}/summarize", json={"style": "bogus"}).status_code == 400
     assert client.get("/api/summary-styles").json()[0]["id"] == "meeting"
 
@@ -89,7 +88,7 @@ def test_summarize_endpoint_stores_structured(client, ctx, fake_provider, transc
 def test_summary_instructions_setting_used(client, ctx, fake_provider, transcribed_session):
     # Set directly: PUT /api/settings rebuilds the summarizer and would drop the fake.
     ctx.settings.summary_instructions = "Mention the moon."
-    client.post(f"/api/sessions/{transcribed_session['id']}/summarize", json={"provider": "fake"})
+    run_summarize(client, transcribed_session["id"], {"provider": "fake"})
     assert "Mention the moon." in fake_provider.calls[-1]["system_prompt"]
 
 

@@ -83,6 +83,18 @@ def drain_until_job(ws, job_id: str) -> list[dict]:
                 return events
 
 
+def run_summarize(client, session_id: str, body: dict | None = None) -> dict:
+    """POST /summarize and wait for the job; return the final job record."""
+    with client.websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        resp = client.post(f"/api/sessions/{session_id}/summarize", json=body or {})
+        assert resp.status_code == 200, resp.text
+        job = resp.json()
+        assert job["kind"] == "summarize"
+        drain_until_job(ws, job["id"])
+    return client.get(f"/api/jobs/{job['id']}").json()
+
+
 @pytest.fixture
 def transcribed_session(client, ctx, fake_engine) -> dict:
     """A session whose transcript was produced by the FakeEngine via the job runner."""

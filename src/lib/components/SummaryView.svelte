@@ -2,6 +2,7 @@
 	import { listModels, listSummaryStyles, summarizeSession, getSettings } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
+	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import type { ProviderModels, SummaryStyle } from '$lib/types/index.js';
 
 	let providers = $state<ProviderModels[]>([]);
@@ -9,7 +10,6 @@
 	let selectedProvider = $state('');
 	let selectedModel = $state('');
 	let selectedStyle = $state('');
-	let loading = $state(false);
 	let error = $state('');
 	let loaded = $state(false);
 
@@ -43,15 +43,12 @@
 	async function handleSummarize() {
 		const session = sessionState.activeSession;
 		if (!session) return;
-		loading = true;
 		error = '';
 		try {
-			await summarizeSession(session.id, selectedProvider, selectedModel, selectedStyle);
-			await sessionState.refreshActive();
+			const job = await summarizeSession(session.id, selectedProvider, selectedModel, selectedStyle);
+			jobsState.track(job);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Summarization failed';
-		} finally {
-			loading = false;
 		}
 	}
 
@@ -75,6 +72,13 @@
 	});
 
 	const data = $derived(sessionState.activeSession?.summary_data ?? null);
+	const activeJob = $derived(
+		sessionState.activeSession ? jobsState.active(sessionState.activeSession.id, 'summarize') : null
+	);
+	const lastJob = $derived(
+		sessionState.activeSession ? jobsState.last(sessionState.activeSession.id, 'summarize') : null
+	);
+	const jobError = $derived(lastJob?.status === 'failed' ? lastJob.error : null);
 </script>
 
 <div class="space-y-3">
@@ -152,15 +156,23 @@
 		</select>
 		<button
 			onclick={handleSummarize}
-			disabled={loading || !sessionState.activeSession?.transcript?.length}
+			disabled={!!activeJob || !sessionState.activeSession?.transcript?.length}
 			class="px-4 py-1.5 text-sm rounded bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium transition-colors"
 		>
-			{loading ? 'Summarizing...' : sessionState.activeSession?.summary ? 'Re-summarize' : 'Summarize'}
+			{activeJob ? 'Summarizing...' : sessionState.activeSession?.summary ? 'Re-summarize' : 'Summarize'}
 		</button>
 	</div>
 
-	{#if error}
-		<p class="text-red-400 text-sm">{error}</p>
+	{#if activeJob}
+		<p class="flex items-center gap-2 text-sm text-gray-400">
+			<span class="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></span>
+			{activeJob.status === 'queued' ? 'Queued...' : activeJob.message || 'Summarizing...'}
+			<span class="text-gray-600">· you can keep working; the summary appears here when ready</span>
+		</p>
+	{/if}
+
+	{#if error || jobError}
+		<p class="text-red-400 text-sm">{error || jobError}</p>
 	{/if}
 
 	{#if !sessionState.activeSession?.transcript?.length}

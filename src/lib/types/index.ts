@@ -123,13 +123,6 @@ export interface ProviderModels {
   models: string[];
 }
 
-export interface SummarizeResponse {
-  summary: string;
-  data: SummaryData;
-  provider: string;
-  model: string;
-}
-
 export interface SummaryStyle {
   id: string;
   description: string;
@@ -143,6 +136,7 @@ export interface SettingsValues {
   min_speakers: number | null;
   max_speakers: number | null;
   auto_transcribe: boolean;
+  auto_summarize: boolean;
   local_speaker_name: string;
   remote_speaker_name: string;
   echo_cancel: boolean;

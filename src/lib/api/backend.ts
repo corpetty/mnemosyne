@@ -12,7 +12,6 @@ import type {
   SpeakerProfile,
   StartRecordingResponse,
   StopRecordingResponse,
-  SummarizeResponse,
   SummaryStyle
 } from '$lib/types/index.js';
 
@@ -136,7 +135,7 @@ export async function summarizeSession(
   provider = '',
   model = '',
   style = ''
-): Promise<SummarizeResponse> {
+): Promise<Job> {
   return request(`/api/sessions/${sessionId}/summarize`, {
     method: 'POST',
     body: JSON.stringify({ provider, model, style })

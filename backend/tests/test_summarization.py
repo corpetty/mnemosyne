@@ -8,6 +8,7 @@ from src.mnemosyne.summarization.prompts import (
     get_system_prompt,
 )
 
+from tests.conftest import drain_until_job, run_summarize
 from tests.fakes import FakeProvider
 
 
@@ -66,9 +67,9 @@ def test_models_endpoint_lists_providers(client, fake_provider):
 
 def test_summarize_endpoint_saves_summary(client, fake_provider, transcribed_session):
     sid = transcribed_session["id"]
-    resp = client.post(f"/api/sessions/{sid}/summarize", json={"provider": "fake"})
-    assert resp.status_code == 200
-    assert resp.json()["model"] == "fake-model-a"
+    job = run_summarize(client, sid, {"provider": "fake"})
+    assert job["status"] == "completed"
+    assert job["result"]["model"] == "fake-model-a"
     assert client.get(f"/api/sessions/{sid}").json()["summary"] == fake_provider.summary
 
 
@@ -83,14 +84,63 @@ def test_summarize_uses_default_provider_from_settings(
 ):
     ctx.settings.default_provider = "fake"
     ctx.settings.default_model = "fake-model-b"
-    resp = client.post(f"/api/sessions/{transcribed_session['id']}/summarize", json={})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["summary"] == fake_provider.summary
-    assert body["provider"] == "fake" and body["model"] == "fake-model-b"
+    job = run_summarize(client, transcribed_session["id"])
+    assert job["result"] == {"provider": "fake", "model": "fake-model-b"}
+    assert fake_provider.calls[-1]["model"] == "fake-model-b"
 
 
-def test_summarize_unknown_provider_is_400(client, fake_provider, transcribed_session):
+def test_summarize_unknown_provider_fails_job(client, fake_provider, transcribed_session):
     sid = transcribed_session["id"]
-    resp = client.post(f"/api/sessions/{sid}/summarize", json={"provider": "nope"})
-    assert resp.status_code == 400
+    job = run_summarize(client, sid, {"provider": "nope"})
+    assert job["status"] == "failed"
+    assert "not available" in job["error"]
+    assert client.get(f"/api/sessions/{sid}").json()["summary"] == ""
+
+
+def test_summarize_409_when_already_running(client, ctx, transcribed_session):
+    import asyncio
+
+    class SlowProvider:
+        name = "slow"
+
+        async def list_models(self):
+            return ["m"]
+
+        async def summarize(self, transcript, model, system_prompt):
+            await asyncio.sleep(0.3)
+            return "done"
+
+    ctx.summarizer.providers = {"slow": SlowProvider()}
+    sid = transcribed_session["id"]
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        first = client.post(f"/api/sessions/{sid}/summarize", json={"provider": "slow"})
+        second = client.post(f"/api/sessions/{sid}/summarize", json={"provider": "slow"})
+        assert first.status_code == 200
+        assert second.status_code == 409
+        drain_until_job(ws, first.json()["id"])
+
+
+def test_auto_summarize_chains_after_transcribe(client, ctx, fake_engine, fake_provider):
+    ctx.settings.auto_summarize = True
+    ctx.settings.default_provider = "fake"
+    sid = client.post("/api/sessions", json={}).json()["id"]
+    ctx.sessions.set_audio(sid, "/fake.ogg", [])
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        job = client.post(f"/api/sessions/{sid}/transcribe").json()
+        drain_until_job(ws, job["id"])
+        while True:
+            msg = ws.receive_json()
+            if (
+                msg["type"] == "job"
+                and msg["job"]["kind"] == "summarize"
+                and msg["job"]["status"] in ("completed", "failed")
+            ):
+                assert msg["job"]["status"] == "completed", msg["job"]["error"]
+                break
+    assert client.get(f"/api/sessions/{sid}").json()["summary"] == fake_provider.summary
+
+
+def test_no_auto_summarize_by_default(client, ctx, fake_engine, fake_provider, transcribed_session):
+    assert all(j["kind"] != "summarize" for j in client.get("/api/jobs").json())

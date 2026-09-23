@@ -65,7 +65,7 @@ Event types: `hello` (snapshot of active jobs on connect), `job`, `session`, `tr
 Anything that takes more than a moment runs as a **Job** (`jobs.py`). A route submits a runner
 coroutine to the `JobManager`, gets a `Job` record back immediately, and the manager runs it as an
 asyncio task. The runner reports progress through a `JobContext`, which publishes `job` events.
-Per-kind concurrency limits serialize GPU work: only one `transcribe` job runs at a time.
+Per-kind concurrency limits serialize GPU work: only one `transcribe` job runs at a time, and at most two `summarize` jobs (LLM calls to a remote server). With `auto_summarize`, the transcribe runner queues a summarize job when it finishes. The frontend tracks all jobs in `stores/jobs.svelte.ts` from `hello` and `job` events.
 
 Pipeline stages live in `services/pipeline.py` and are the only place ML work is invoked.
 

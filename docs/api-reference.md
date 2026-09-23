@@ -261,9 +261,9 @@ diarized speaker's embedding is compared (cosine) against all profiles and assig
 }
 ```
 
-`kind`: `transcribe` (final pipeline) or `live` (provisional text while recording).
-`status`: `queued`, `running`, `completed`, `failed`, `cancelled`. Only one `transcribe` job runs at a time;
-others wait in `queued`.
+`kind`: `transcribe` (final pipeline), `summarize` (LLM summary), or `live` (provisional text while recording).
+`status`: `queued`, `running`, `completed`, `failed`, `cancelled`. Only one `transcribe` job and at most two
+`summarize` jobs run at a time; others wait in `queued`.
 
 - `GET /api/jobs?session_id=&active_only=` list jobs. A completed `transcribe` job's `result` is `{ "segments", "sources", "echo_dropped" }`.
 - `GET /api/jobs/{job_id}`
@@ -295,22 +295,29 @@ Cloud providers appear only when their API key is set. Embedding-only Ollama mod
 ```
 
 All fields optional: blanks fall back to `default_provider`, `default_model`, `summary_style` and
-`summary_instructions` from settings. The model is asked for JSON; the reply is parsed tolerantly (a
-non-JSON reply becomes the summary text with empty structured fields). Saved to the session as
-`summary` (markdown) and `summary_data`.
+`summary_instructions` from settings. Queues a `summarize` **Job** and returns it immediately; the
+LLM call runs in the background (up to two summaries at once). When it finishes the session's
+`summary` (markdown) and `summary_data` are saved, a `session` event fires, and the job completes
+with `result: { "provider", "model", "title" }`. Provider errors (unknown provider, no models,
+network) fail the job with `error` set rather than failing the request.
+
+The model is asked for JSON; the reply is parsed tolerantly (a non-JSON reply becomes the summary text
+with empty structured fields). `summary_data` shape:
 
 ```json
 {
-  "summary": "## Key points\n...",
-  "data": {
-    "style": "meeting", "provider": "ollama", "model": "llama3.1:latest",
-    "topics": ["release"], "decisions": ["Ship Friday"],
-    "action_items": [ { "text": "Update docs", "owner": "Alice" } ],
-    "open_questions": ["Who reviews?"]
-  },
-  "provider": "ollama", "model": "llama3.1:latest"
+  "title": "Release planning", "style": "meeting", "provider": "ollama", "model": "llama3.1:latest",
+  "topics": ["release"], "decisions": ["Ship Friday"],
+  "action_items": [ { "text": "Update docs", "owner": "Alice" } ],
+  "open_questions": ["Who reviews?"]
 }
 ```
+
+**Errors:** `400` no transcript or unknown style, `404` session, `409` a summary is already running for
+the session.
+
+With the `auto_summarize` setting on, a summarize job is queued automatically after every successful
+transcription, using the defaults.
 
 ---
 

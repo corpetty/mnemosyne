@@ -16,6 +16,7 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
+	import { jobsState } from '$lib/stores/jobs.svelte.js';
 
 	let backendStatus = $state<'checking' | 'connected' | 'unreachable'>('checking');
 	// Progress from the Tauri shell while it installs/starts the backend (release builds).
@@ -39,6 +40,13 @@
 			backendStatus = 'connected';
 			wsState.connect();
 			transcriptState.init();
+			jobsState.init();
+			jobsState.onComplete((job) => {
+				if (job.kind !== 'summarize' || !job.session_id) return;
+				if (sessionState.activeSession?.id === job.session_id) sessionState.refreshActive();
+				sessionState.loadSessions();
+				toastState.success('Summary ready');
+			});
 			transcriptState.onComplete((sessionId) => {
 				if (sessionState.activeSession?.id === sessionId) sessionState.refreshActive();
 				sessionState.loadSessions();
@@ -95,6 +103,7 @@
 			unlistenShell?.();
 			unsubscribeSessions?.();
 			transcriptState.destroy();
+			jobsState.destroy();
 			wsState.disconnect();
 		};
 	});

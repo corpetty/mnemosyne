@@ -111,6 +111,10 @@ def transcribe_session(app: AppContext, session_id: str):
             dropped = getattr(engine, "last_dropped_echo", 0)
 
             app.sessions.set_transcript(session_id, segments)
+            if settings.auto_summarize and segments:
+                app.jobs.submit(
+                    "summarize", summarize_session(app, session_id), session_id=session_id
+                )
             ctx.update("Transcription complete")
             ctx.emit(
                 {"type": "status", "session_id": session_id, "message": "Transcription complete"}
@@ -120,6 +124,48 @@ def transcribe_session(app: AppContext, session_id: str):
             app.sessions.set_status(session_id, SessionStatus.ERROR)
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})
             raise
+
+    return run
+
+
+def summarize_session(
+    app: AppContext,
+    session_id: str,
+    provider: str = "",
+    model: str = "",
+    style: str = "",
+    instructions: str | None = None,
+):
+    """Build the summarize job runner. Blank arguments fall back to settings."""
+
+    async def run(ctx: JobContext) -> dict:
+        session = app.sessions.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} not found")
+        if not session.transcript:
+            raise ValueError("Session has no transcript")
+        st = app.settings
+        prov = provider or st.default_provider
+        mdl = model or st.default_model
+        sty = style or st.summary_style
+        instr = st.summary_instructions if instructions is None else instructions
+
+        ctx.update(f"Summarizing with {prov}/{mdl or 'default model'}")
+        ctx.emit({"type": "status", "session_id": session_id, "message": "Summarizing..."})
+        try:
+            result = await app.summarizer.summarize(
+                segments=[s.model_dump() for s in session.transcript],
+                provider_name=prov,
+                model=mdl,
+                style=sty,
+                instructions=instr,
+            )
+        except Exception as e:
+            ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})
+            raise
+        app.sessions.set_summary(session_id, result["summary"], result["data"])
+        ctx.update("Summary ready")
+        return {"provider": result["provider"], "model": result["model"]}
 
     return run
 
