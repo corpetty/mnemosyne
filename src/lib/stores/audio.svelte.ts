@@ -1,6 +1,19 @@
 import type { AudioDevice } from "$lib/types/index.js";
 import * as api from "$lib/api/backend.js";
 
+// Remembered by PipeWire node name: numeric ids change between restarts.
+const SELECTION_KEY = 'mnemosyne.selectedDevices';
+
+function loadSavedNames(): string[] {
+  try {
+    const raw = localStorage.getItem(SELECTION_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 class AudioState {
   devices = $state<AudioDevice[]>([]);
   selectedDeviceIds = $state<Set<number>>(new Set());
@@ -25,6 +38,7 @@ class AudioState {
     this.error = null;
     try {
       this.devices = await api.getDevices();
+      this.restoreSelection();
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Failed to load devices";
     } finally {
@@ -40,6 +54,34 @@ class AudioState {
       next.add(deviceId);
     }
     this.selectedDeviceIds = next;
+    this.saveSelection();
+  }
+
+  /** Keep the current selection where it still exists; otherwise restore the saved one. */
+  private restoreSelection() {
+    const present = new Set(this.devices.map((d) => d.id));
+    const kept = [...this.selectedDeviceIds].filter((id) => present.has(id));
+    if (kept.length) {
+      this.selectedDeviceIds = new Set(kept);
+      return;
+    }
+    const names = new Set(loadSavedNames());
+    this.selectedDeviceIds = new Set(this.devices.filter((d) => names.has(d.name)).map((d) => d.id));
+  }
+
+  private saveSelection() {
+    const names = this.devices.filter((d) => this.selectedDeviceIds.has(d.id)).map((d) => d.name);
+    try {
+      localStorage.setItem(SELECTION_KEY, JSON.stringify(names));
+    } catch {
+      /* no storage */
+    }
+  }
+
+  /** Make sure devices are loaded and a remembered selection is applied. */
+  async ensureDevices() {
+    if (this.devices.length === 0) await this.loadDevices();
+    return this.selectedDeviceIds.size > 0;
   }
 
   async startRecording(sessionId?: string) {

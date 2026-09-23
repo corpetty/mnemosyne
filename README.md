@@ -114,6 +114,21 @@ Summarization is LAN-first by default:
 6. **Take notes** — use the Notes tab for freeform markdown notes per session
 7. **Export to Obsidian** — configure your vault path in the Export tab and click Export
 
+### Tray and a global record shortcut
+
+Mnemosyne adds a tray icon with Start/Stop recording, Show and Quit (GNOME needs the AppIndicator
+extension to show tray icons). Wayland does not let apps grab global keys, so bind a desktop shortcut
+(GNOME Settings → Keyboard → Custom Shortcuts, or KDE's Shortcuts) to:
+
+```bash
+mnemosyne --toggle
+```
+
+`--start` and `--stop` also work. The running app receives the command; if it isn't running, it starts
+and performs the action once ready. Recording from the tray or shortcut always starts a new session
+with the devices you last selected (remembered across restarts); if none are selected yet, the
+window opens on the Recording tab instead.
+
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -121,6 +136,7 @@ Summarization is LAN-first by default:
 | `Ctrl+R` | Start recording |
 | `Ctrl+S` | Stop recording & transcribe |
 | `Ctrl+E` | Export to Obsidian |
+| `Ctrl+K` | Ask your meetings |
 | `Ctrl+B` | Toggle sidebar |
 
 ## Project Structure

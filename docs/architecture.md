@@ -261,6 +261,16 @@ App Exit
   └─ RunEvent::Exit -> kill(-pgid, SIGTERM) ... SIGKILL ... wait()
 ```
 
+### Tray and remote control
+
+`lib.rs` builds a tray (Start/Stop recording, Show, Quit) and registers the single-instance plugin
+first: a second `mnemosyne --toggle|--start|--stop` launch hands its arguments to the running
+instance, which emits a `tray-action` event; an action given to the first launch is stored and
+fetched by the UI with `take_launch_action` once the backend is up. The UI owns recording (device
+selection lives there, remembered by PipeWire node name in localStorage) and reports state back
+with `set_recording_state`, which updates the tray label and tooltip. A missing tray host only logs a
+warning.
+
 ### Packaging
 
 Nothing heavy is shipped. The bundle contains the frontend, the Rust shell, the backend *source*

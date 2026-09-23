@@ -13,7 +13,9 @@ use std::process::{Child, Command as StdCommand, Stdio};
 use std::sync::Mutex;
 
 use log::{error, info, warn};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{AppHandle, Emitter, Manager, Wry};
 
 const BACKEND_PORT: u16 = 8008;
 
@@ -322,6 +324,96 @@ fn start_backend(app: AppHandle) {
     });
 }
 
+// ---- tray, single instance, remote control -----------------------------------
+
+/// Recording actions the UI performs when asked by the tray or a second launch
+/// (`mnemosyne --toggle|--start|--stop`, meant to be bound to a desktop shortcut
+/// because Wayland does not let apps grab global keys).
+const ACTION_EVENT: &str = "tray-action";
+
+struct TrayState {
+    toggle: MenuItem<Wry>,
+}
+
+/// An action requested on the command line of the *first* launch; the UI asks for
+/// it once it is ready, since no listener exists yet at that point.
+struct LaunchAction(Mutex<Option<String>>);
+
+fn action_from_args<I: IntoIterator<Item = S>, S: AsRef<str>>(args: I) -> Option<&'static str> {
+    for a in args {
+        match a.as_ref() {
+            "--toggle" => return Some("toggle-record"),
+            "--start" => return Some("start-record"),
+            "--stop" => return Some("stop-record"),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+#[tauri::command]
+fn set_recording_state(app: AppHandle, recording: bool) -> Result<(), String> {
+    if let Some(state) = app.try_state::<TrayState>() {
+        state
+            .toggle
+            .set_text(if recording { "Stop recording" } else { "Start recording" })
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(if recording {
+            "Mnemosyne: recording"
+        } else {
+            "Mnemosyne"
+        }));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn take_launch_action(state: tauri::State<'_, LaunchAction>) -> Option<String> {
+    state.0.lock().unwrap().take()
+}
+
+#[tauri::command]
+fn show_window(app: AppHandle) {
+    show_main_window(&app);
+}
+
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let toggle = MenuItem::with_id(app, "toggle", "Start recording", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Show Mnemosyne", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[&toggle, &show, &PredefinedMenuItem::separator(app)?, &quit],
+    )?;
+    let mut builder = TrayIconBuilder::with_id("main")
+        .tooltip("Mnemosyne")
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "toggle" => {
+                let _ = app.emit(ACTION_EVENT, "toggle-record");
+            }
+            "show" => show_main_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app)?;
+    app.manage(TrayState { toggle });
+    Ok(())
+}
+
 fn log_dir_hint(path: &Path) -> String {
     format!("{}", path.display())
 }
@@ -329,9 +421,27 @@ fn log_dir_hint(path: &Path) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // Must be the first plugin: a second launch hands its args to us and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            match action_from_args(argv.iter()) {
+                Some(action) => {
+                    info!("Remote action from second launch: {action}");
+                    let _ = app.emit(ACTION_EVENT, action);
+                }
+                None => show_main_window(app),
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(BackendState { child: Mutex::new(None) })
+        .manage(LaunchAction(Mutex::new(
+            action_from_args(std::env::args().skip(1)).map(str::to_string),
+        )))
+        .invoke_handler(tauri::generate_handler![
+            set_recording_state,
+            take_launch_action,
+            show_window
+        ])
         .setup(|app| {
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
@@ -344,6 +454,12 @@ pub fn run() {
             )?;
             if let Ok(dir) = app.path().app_log_dir() {
                 info!("Logs: {}", log_dir_hint(&dir));
+            }
+
+            // A missing tray host (e.g. GNOME without the AppIndicator extension) must
+            // not stop the app.
+            if let Err(e) = build_tray(app.handle()) {
+                warn!("System tray unavailable: {e}");
             }
 
             let handle = app.handle().clone();
@@ -371,4 +487,18 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::action_from_args;
+
+    #[test]
+    fn parses_remote_actions() {
+        assert_eq!(action_from_args(["mnemosyne", "--toggle"]), Some("toggle-record"));
+        assert_eq!(action_from_args(["--start"]), Some("start-record"));
+        assert_eq!(action_from_args(["x", "--stop", "--toggle"]), Some("stop-record"));
+        assert_eq!(action_from_args(["mnemosyne"]), None);
+        assert_eq!(action_from_args(Vec::<String>::new()), None);
+    }
 }

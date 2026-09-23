@@ -148,8 +148,8 @@
 		}
 	});
 
-	async function handleStartRecording() {
-		if (!sessionState.activeSession) {
+	async function handleStartRecording(fresh = false) {
+		if (fresh || !sessionState.activeSession) {
 			await sessionState.createSession();
 		}
 		if (sessionState.activeSession) {
@@ -186,6 +186,69 @@
 			toastState.error(e instanceof Error ? e.message : 'Export failed');
 		}
 	}
+
+	// ---- tray / command-line control (Tauri only) -------------------------------
+
+	async function invokeShell<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
+		try {
+			const { invoke } = await import('@tauri-apps/api/core');
+			return await invoke<T>(cmd, args);
+		} catch {
+			return null; // plain browser, or older shell
+		}
+	}
+
+	async function handleRemoteAction(action: string) {
+		const wantStart = action === 'start-record' || (action === 'toggle-record' && !audioState.isRecording);
+		const wantStop = action === 'stop-record' || (action === 'toggle-record' && audioState.isRecording);
+		if (wantStop && audioState.isRecording) {
+			await handleStopAndTranscribe();
+		} else if (wantStart && !audioState.isRecording) {
+			if (backendStatus !== 'connected') return;
+			if (!(await audioState.ensureDevices())) {
+				await invokeShell('show_window');
+				showAsk = false;
+				showSettings = false;
+				await sessionState.createSession();
+				activeTab = 'recording';
+				toastState.error('Choose a microphone and/or system audio first, then start again');
+				return;
+			}
+			await handleStartRecording(true);
+		}
+	}
+
+	// Mirror recording state into the tray label and tooltip.
+	$effect(() => {
+		const recording = audioState.isRecording;
+		invokeShell('set_recording_state', { recording });
+	});
+
+	$effect(() => {
+		let unlisten: (() => void) | null = null;
+		let cancelled = false;
+		import('@tauri-apps/api/event')
+			.then(({ listen }) => listen<string>('tray-action', (e) => handleRemoteAction(e.payload)))
+			.then((un) => {
+				if (cancelled) un();
+				else unlisten = un;
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+			unlisten?.();
+		};
+	});
+
+	// An action passed on the command line of the first launch runs once connected.
+	let launchActionChecked = false;
+	$effect(() => {
+		if (backendStatus !== 'connected' || launchActionChecked) return;
+		launchActionChecked = true;
+		invokeShell<string | null>('take_launch_action').then((a) => {
+			if (a) handleRemoteAction(a);
+		});
+	});
 
 	function handleKeydown(e: KeyboardEvent) {
 		// Ignore when typing in inputs/textareas
