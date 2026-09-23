@@ -56,7 +56,9 @@ def config_file_path() -> Path:
     return Path(xdg) / "mnemosyne" / "config.toml"
 
 
-SECRET_FIELDS = frozenset({"hf_token", "openai_api_key", "anthropic_api_key", "remote_stt_api_key"})
+SECRET_FIELDS = frozenset(
+    {"hf_token", "openai_api_key", "anthropic_api_key", "remote_stt_api_key", "api_token"}
+)
 
 
 class Settings(BaseSettings):
@@ -78,6 +80,8 @@ class Settings(BaseSettings):
     # When mic and system audio are captured separately, the mic file is
     # labelled with this name instead of being diarized.
     local_speaker_name: str = "Me"
+    # PipeWire WebRTC echo cancellation (virtual "echo cancelled" mic source).
+    echo_cancel: bool = False
     # Drop mic segments that repeat what came out of the speakers (no headphones).
     echo_dedup: bool = True
     echo_similarity: float = 0.8
@@ -121,6 +125,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     default_provider: str = "ollama"
     default_model: str = ""
+
+    # Server mode: when set, every /api request and the WebSocket must carry it
+    # (Authorization: Bearer <token>, or ?token=). /health stays open.
+    api_token: str = ""
 
     # Summaries
     summary_style: str = "meeting"  # see summarization/prompts.py STYLES

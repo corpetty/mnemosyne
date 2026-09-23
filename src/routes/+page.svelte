@@ -15,6 +15,7 @@
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
+	import { connectionState } from '$lib/stores/connection.svelte.js';
 
 	let backendStatus = $state<'checking' | 'connected' | 'unreachable'>('checking');
 	// Progress from the Tauri shell while it installs/starts the backend (release builds).
@@ -54,7 +55,9 @@
 		async function connect() {
 			while (!cancelled) {
 				try {
-					await getHealth();
+					const h = await getHealth();
+					connectionState.host = h.host ?? null;
+					connectionState.authRequired = !!h.auth_required;
 					if (!cancelled) onConnected();
 					return;
 				} catch {
@@ -208,7 +211,7 @@
 		<div class="flex items-center gap-3 text-sm">
 			<div class="flex items-center gap-1.5">
 				<span class="w-2 h-2 rounded-full {backendStatus === 'connected' ? 'bg-green-500' : backendStatus === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}"></span>
-				<span class="text-gray-500">{backendStatus === 'connected' ? 'API' : backendStatus}</span>
+				<span class="text-gray-500">{backendStatus === 'connected' ? (connectionState.isLocal ? 'API' : `API @ ${connectionState.host ?? connectionState.url}`) : backendStatus}</span>
 			</div>
 			{#if wsState.connected}
 				<div class="flex items-center gap-1.5">
@@ -319,7 +322,7 @@
 							<div class="space-y-2">
 								<div class="flex items-center justify-center gap-2 text-red-400">
 									<span class="w-2 h-2 rounded-full bg-red-500"></span>
-									<span class="text-sm">{shellStage === 'error' ? 'Backend failed to start' : 'Backend unreachable on port 8008'}</span>
+									<span class="text-sm">{shellStage === 'error' ? 'Backend failed to start' : `Backend unreachable at ${connectionState.url}`}</span>
 								</div>
 								{#if shellStage === 'error'}
 									<pre class="mx-auto max-w-lg text-left text-[11px] leading-4 text-red-300/80 bg-gray-900 border border-gray-800 rounded p-2 whitespace-pre-wrap">{shellMessage}</pre>

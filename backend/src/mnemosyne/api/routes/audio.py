@@ -243,3 +243,53 @@ async def import_audio(
         job_id=job_id,
         message=f"Imported {original.name}",
     )
+
+
+# ---- echo cancellation ---------------------------------------------------------
+
+
+class EchoCancelResponse(BaseModel):
+    supported: bool
+    reason: str | None
+    active: bool
+    enabled: bool  # the persisted setting
+    source_node_id: int | None
+
+
+class EchoCancelRequest(BaseModel):
+    enabled: bool
+
+
+async def _echo_response(ctx: AppContext) -> EchoCancelResponse:
+    st = await ctx.echo.status()
+    return EchoCancelResponse(
+        supported=st.supported,
+        reason=st.reason,
+        active=st.active,
+        enabled=ctx.settings.echo_cancel,
+        source_node_id=st.source_node_id,
+    )
+
+
+@router.get("/echo-cancel", response_model=EchoCancelResponse)
+async def echo_cancel_status(ctx: AppContext = Depends(get_ctx)):
+    return await _echo_response(ctx)
+
+
+@router.post("/echo-cancel", response_model=EchoCancelResponse)
+async def echo_cancel_set(request: EchoCancelRequest, ctx: AppContext = Depends(get_ctx)):
+    """Load or unload the PipeWire echo-cancel module and remember the choice."""
+    from ...config import save_settings
+
+    if request.enabled:
+        st = await ctx.echo.start()
+        if not st.active:
+            raise HTTPException(
+                status_code=400, detail=st.reason or "Could not start echo cancellation"
+            )
+    else:
+        await ctx.echo.stop()
+    if ctx.settings.echo_cancel != request.enabled:
+        ctx.settings.echo_cancel = request.enabled
+        save_settings(ctx.settings)
+    return await _echo_response(ctx)

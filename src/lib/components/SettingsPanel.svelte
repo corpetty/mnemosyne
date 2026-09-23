@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { deleteSpeakerProfile, getSettings, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
+	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
 	import type { ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	let settings = $state<SettingsResponse | null>(null);
@@ -13,14 +14,22 @@
 	// Editable copy of the values
 	let form = $state<SettingsUpdate>({});
 	// Secret inputs are separate: '' = keep current, text = replace
-	type SecretKey = 'hf_token' | 'openai_api_key' | 'anthropic_api_key' | 'remote_stt_api_key';
-	const SECRET_KEYS: SecretKey[] = ['hf_token', 'openai_api_key', 'anthropic_api_key', 'remote_stt_api_key'];
+	type SecretKey = 'hf_token' | 'openai_api_key' | 'anthropic_api_key' | 'remote_stt_api_key' | 'api_token';
+	const SECRET_KEYS: SecretKey[] = ['hf_token', 'openai_api_key', 'anthropic_api_key', 'remote_stt_api_key', 'api_token'];
 	const emptySecrets = (): Record<SecretKey, string> => ({
 		hf_token: '',
 		openai_api_key: '',
 		anthropic_api_key: '',
-		remote_stt_api_key: ''
+		remote_stt_api_key: '',
+		api_token: ''
 	});
+	let connUrl = $state(connectionState.url);
+	let connToken = $state(connectionState.token);
+
+	function applyConnection(url: string, token: string) {
+		connectionState.save(url, token);
+		location.reload();
+	}
 	let secrets = $state<Record<SecretKey, string>>(emptySecrets());
 
 	const WHISPER_MODELS = ['tiny', 'base', 'small', 'medium', 'medium.en', 'large-v2', 'large-v3', 'large-v3-turbo'];
@@ -135,6 +144,32 @@
 </script>
 
 <div class="space-y-6">
+	<!-- Connection (stored in this app instance, not on the backend) -->
+	<section>
+		<h3 class="text-lg font-semibold text-gray-200 mb-1">Connection</h3>
+		<p class="text-xs text-gray-500 mb-3">
+			Which backend this window talks to. Recording happens where the backend runs; a remote backend is for
+			working with sessions on another machine (e.g. a GPU box). Currently:
+			<code class="text-gray-400">{connectionState.url}</code>{#if connectionState.host} on <span class="text-gray-300">{connectionState.host}</span>{/if}.
+		</p>
+		<div class="grid grid-cols-2 gap-3">
+			<label>
+				<span class={labelClass}>Backend URL</span>
+				<input type="text" bind:value={connUrl} placeholder={LOCAL_BACKEND} class={inputClass} />
+			</label>
+			<label>
+				<span class={labelClass}>API token (if the backend requires one)</span>
+				<input type="password" bind:value={connToken} placeholder="optional" class={inputClass} />
+			</label>
+		</div>
+		<div class="flex items-center gap-3 mt-2">
+			<button onclick={() => applyConnection(connUrl, connToken)} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Connect</button>
+			{#if !connectionState.isLocal}
+				<button onclick={() => applyConnection(LOCAL_BACKEND, '')} class="text-sm text-gray-400 hover:text-gray-200">Use local backend</button>
+			{/if}
+		</div>
+	</section>
+
 	{#if loading && !settings}
 		<p class="text-gray-500 text-sm">Loading settings...</p>
 	{:else if settings}
@@ -429,6 +464,26 @@
 			<button onclick={load} disabled={loading} class="text-sm text-gray-400 hover:text-gray-200">Reload</button>
 			{#if error}<span class="text-sm text-red-400">{error}</span>{/if}
 		</div>
+
+		<!-- Server mode -->
+		<section>
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">Server mode</h3>
+			<p class="text-xs text-gray-500 mb-3">
+				To let other machines use this backend, run it with <code class="text-gray-400">--host 0.0.0.0</code> and set a token here; every request must then carry it.
+			</p>
+			<label class="block max-w-md">
+				<span class={labelClass}>
+					API token
+					{#if settings.secrets_set.api_token}<span class="text-green-500 ml-1">set</span>{/if}
+				</span>
+				<div class="flex gap-2">
+					<input type="password" bind:value={secrets.api_token} disabled={locked('api_token')} placeholder={settings.secrets_set.api_token ? '•••••••• (leave blank to keep)' : 'leave empty for local-only use'} class={inputClass} />
+					{#if settings.secrets_set.api_token && !locked('api_token')}
+						<button onclick={() => clearSecret('api_token')} class="text-xs text-gray-500 hover:text-red-400">Clear</button>
+					{/if}
+				</div>
+			</label>
+		</section>
 
 		<!-- Provider status -->
 		<section class="border-t border-gray-800 pt-4">

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from fastapi import Request, WebSocket
 
 from ..audio.capture import RecordingSession
+from ..audio.echo_cancel import EchoCancelManager
 from ..config import Settings
 from ..events import EventBus
 from ..jobs import JobManager
@@ -31,6 +32,7 @@ class AppContext:
     bus: EventBus
     jobs: JobManager
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
+    echo: EchoCancelManager = field(default_factory=EchoCancelManager)
 
     @classmethod
     def build(cls, settings: Settings) -> AppContext:
@@ -56,7 +58,14 @@ class AppContext:
         self.speakers.threshold = settings.speaker_match_threshold
         await self.models.apply_settings(settings)
 
+    async def startup(self) -> None:
+        if self.settings.echo_cancel:
+            status = await self.echo.start()
+            if not status.active:
+                logger.warning("Echo cancellation not started: %s", status.reason)
+
     async def shutdown(self) -> None:
+        await self.echo.stop()
         await self.jobs.shutdown()
         await self.models.unload()
         self.repo.close()

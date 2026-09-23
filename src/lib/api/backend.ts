@@ -16,12 +16,16 @@ import type {
   SummaryStyle
 } from '$lib/types/index.js';
 
-const BASE_URL = 'http://127.0.0.1:8008';
+import { connectionState } from '$lib/stores/connection.svelte.js';
+
+function base(): string {
+  return connectionState.url;
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options
+  const res = await fetch(`${base()}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...connectionState.headers(), ...(options?.headers ?? {}) }
   });
   if (!res.ok) {
     let detail = await res.text();
@@ -36,7 +40,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 // Health
-export async function getHealth(): Promise<{ status: string; version: string }> {
+export async function getHealth(): Promise<{
+  status: string;
+  version: string;
+  host?: string;
+  auth_required?: boolean;
+}> {
   return request('/health');
 }
 
@@ -226,7 +235,7 @@ export async function search(q: string, limit = 20): Promise<SearchHit[]> {
 // Playback & import
 export function audioUrl(sessionId: string, recordingId?: string): string {
   const q = recordingId ? `?recording=${encodeURIComponent(recordingId)}` : '';
-  return `${BASE_URL}/api/audio/file/${sessionId}${q}`;
+  return connectionState.withToken(`${base()}/api/audio/file/${sessionId}${q}`);
 }
 
 export async function importAudio(
@@ -237,7 +246,11 @@ export async function importAudio(
   form.append('file', file, file.name);
   if (opts.name) form.append('name', opts.name);
   if (opts.transcribe === false) form.append('transcribe', 'false');
-  const res = await fetch(`${BASE_URL}/api/audio/import`, { method: 'POST', body: form });
+  const res = await fetch(`${base()}/api/audio/import`, {
+    method: 'POST',
+    body: form,
+    headers: connectionState.headers()
+  });
   if (!res.ok) {
     let detail = await res.text();
     try {
@@ -248,4 +261,21 @@ export async function importAudio(
     throw new Error(`${res.status}: ${detail}`);
   }
   return res.json();
+}
+
+// Echo cancellation
+export interface EchoCancelStatus {
+  supported: boolean;
+  reason: string | null;
+  active: boolean;
+  enabled: boolean;
+  source_node_id: number | null;
+}
+
+export async function getEchoCancel(): Promise<EchoCancelStatus> {
+  return request('/api/audio/echo-cancel');
+}
+
+export async function setEchoCancel(enabled: boolean): Promise<EchoCancelStatus> {
+  return request('/api/audio/echo-cancel', { method: 'POST', body: JSON.stringify({ enabled }) });
 }

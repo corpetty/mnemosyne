@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import Settings, load_settings
+from .auth import TokenAuthMiddleware
 from .context import AppContext
 from .routes.audio import router as audio_router
 from .routes.devices import router as devices_router
@@ -23,6 +24,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        await ctx.startup()
         yield
         await ctx.shutdown()
 
@@ -34,6 +36,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.add_middleware(TokenAuthMiddleware, ctx=ctx)
 
     app.include_router(devices_router)
     app.include_router(audio_router)
@@ -49,6 +53,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status": "ok", "version": app.version}
+        import socket
+
+        return {
+            "status": "ok",
+            "version": app.version,
+            "host": socket.gethostname(),
+            "auth_required": bool(ctx.settings.api_token),
+        }
 
     return app

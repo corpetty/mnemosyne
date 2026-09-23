@@ -6,12 +6,20 @@ Interactive docs are served at `/docs` (Swagger) and `/openapi.json` while the b
 Long-running work (transcription) never runs inside a request. Endpoints that start such work return a
 **Job** immediately; progress and results arrive over the WebSocket, or by polling `/api/jobs/{id}`.
 
+## Authentication (server mode)
+
+Off by default. When the `api_token` setting is set, every `/api/*` request and the WebSocket must
+carry it as `Authorization: Bearer <token>`, or `?token=<token>` for `<audio>` elements and `/ws`.
+Missing or wrong tokens get `401` (`WWW-Authenticate: Bearer`); the WebSocket is closed with code
+4401. `/health`, `/docs` and `/openapi.json` stay open. Run the backend with `--host 0.0.0.0` to
+serve a LAN; there is no TLS, so keep it on trusted networks or behind a reverse proxy.
+
 ## Health
 
 ### `GET /health`
 
 ```json
-{ "status": "ok", "version": "0.2.0" }
+{ "status": "ok", "version": "0.2.0", "host": "gpu-box", "auth_required": false }
 ```
 
 ---
@@ -83,6 +91,20 @@ optional `name` (defaults to the file stem) and `transcribe` (default true). Cre
 stores the upload as a `Recording` with `source: import`, transcodes it to the mixed Opus file, and
 queues transcription. Response is the same shape as stop-recording (`session`, `job_id`, `message`).
 `400` for unsupported, empty, or undecodable files.
+
+### `GET /api/audio/echo-cancel` · `POST /api/audio/echo-cancel`
+
+PipeWire WebRTC echo cancellation. The backend loads `libpipewire-module-echo-cancel` in monitor mode
+into a long-lived `pw-cli` child (no config files, no daemon restart), which exposes a virtual
+`Audio/Source` named "Mnemosyne: mic (echo cancelled)" (`is_echo_cancelled: true` in `/api/devices`).
+It lives as long as the backend or until turned off.
+
+```json
+{ "supported": true, "reason": null, "active": true, "enabled": true, "source_node_id": 146 }
+```
+
+`POST` body `{ "enabled": true|false }` loads/unloads it and persists `echo_cancel` in settings (so
+it comes back on the next start). `400` with a reason when the module or `pw-cli` is missing.
 
 ### `GET /api/audio/status/{session_id}`
 

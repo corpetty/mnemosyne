@@ -6,6 +6,7 @@ export interface AudioDevice {
   is_input: boolean;
   is_output: boolean;
   is_monitor: boolean;
+  is_echo_cancelled: boolean;
 }
 
 export interface StartRecordingResponse {
@@ -144,7 +145,9 @@ export interface SettingsValues {
   auto_transcribe: boolean;
   local_speaker_name: string;
   remote_speaker_name: string;
+  echo_cancel: boolean;
   echo_dedup: boolean;
+  api_token: string;
   echo_similarity: number;
   auto_label_speakers: boolean;
   speaker_match_threshold: number;

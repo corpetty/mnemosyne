@@ -1,4 +1,4 @@
-const WS_URL = 'ws://127.0.0.1:8008/ws';
+import { connectionState } from './connection.svelte.js';
 
 type MessageHandler = (msg: Record<string, unknown>) => void;
 
@@ -11,7 +11,7 @@ class WebSocketState {
 	connect() {
 		if (this.ws?.readyState === WebSocket.OPEN) return;
 
-		this.ws = new WebSocket(WS_URL);
+		this.ws = new WebSocket(connectionState.wsUrl);
 
 		this.ws.onopen = () => {
 			this.connected = true;

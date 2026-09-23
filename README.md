@@ -20,6 +20,8 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Editable transcripts**: fix text, reassign a line to another speaker, merge or split segments in place
 - **Search** across every transcript, summary and note, with jump-to-segment
 - **Speakers that stick**: rename a speaker once and the app remembers the voice, labelling that person automatically in future meetings
+- **Echo cancellation** with one click: PipeWire's WebRTC canceller is loaded on demand and exposed as a virtual mic, so no headphones are needed
+- **Server mode**: point the app at a backend on another machine (with a bearer token) and work with its sessions
 - **Echo-safe**: mic segments that merely repeat what came out of the speakers are dropped, so no-headphones calls still attribute correctly
 - **Per-source attribution**: mic and system audio are captured separately, so your own speech is labelled with your name and only the remote side is diarized
 - **Pluggable summarization** via Ollama (LAN default), vLLM, OpenAI, or Anthropic

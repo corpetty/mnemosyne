@@ -189,6 +189,23 @@ retried on the next tick, so words cut by a chunk boundary are not lost. With mi
 separately the labels are `local_speaker_name` and `remote_speaker_name`; no diarization runs live.
 Stop cancels the job (a final flush tick runs) before the final `transcribe` job replaces everything.
 
+### Echo cancellation at capture
+
+`audio/echo_cancel.py` keeps a `pw-cli` child alive with `libpipewire-module-echo-cancel` loaded in
+`monitor.mode`: the default sink's monitor is the AEC reference, so no app has to be rerouted through
+a virtual sink. The module's virtual source shows up in the device list flagged `is_echo_cancelled`;
+the UI selects it in place of raw mics when the user turns it on. Because the module belongs to our
+child process, stopping the backend removes it; the `echo_cancel` setting re-enables it on start.
+
+### Server mode
+
+The frontend keeps its backend URL and token in `localStorage` (`stores/connection.svelte.ts`) and
+sends `Authorization: Bearer` on every request, `?token=` on the WebSocket and audio URLs. The backend
+enforces the token in `api/auth.py` only when `api_token` is set. Recording, devices and echo
+cancellation act on the machine running the backend; a remote backend is for working with its
+sessions, imports and summaries from elsewhere. The Tauri shell still starts a local backend, which is
+simply unused while a remote URL is configured.
+
 ### Speaker bleed removal
 
 Without headphones the mic hears the remote participants through the speakers, so the mic transcript

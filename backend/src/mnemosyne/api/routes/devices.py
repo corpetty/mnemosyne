@@ -16,6 +16,7 @@ class DeviceResponse(BaseModel):
     is_input: bool
     is_output: bool
     is_monitor: bool
+    is_echo_cancelled: bool = False
 
 
 @router.get("", response_model=list[DeviceResponse])
@@ -33,6 +34,7 @@ async def get_devices():
             is_input=d.is_input,
             is_output=d.is_output,
             is_monitor=d.is_monitor,
+            is_echo_cancelled=d.is_echo_cancelled,
         )
         for d in devices
     ]

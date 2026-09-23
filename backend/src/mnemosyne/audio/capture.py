@@ -15,6 +15,7 @@ class AudioDevice:
     description: str
     media_class: str  # "Audio/Source", "Audio/Sink"
     is_monitor: bool = False
+    is_echo_cancelled: bool = False  # our virtual AEC source (audio/echo_cancel.py)
 
     @property
     def is_input(self) -> bool:
@@ -70,6 +71,7 @@ def list_devices() -> list[AudioDevice]:
                 description=props.get("node.description", props.get("node.name", "unknown")),
                 media_class=media_class,
                 is_monitor=is_monitor,
+                is_echo_cancelled=node_name == "mnemosyne_aec_source",
             )
         )
 
