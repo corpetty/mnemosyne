@@ -4,9 +4,10 @@ import json
 from datetime import datetime
 
 import pytest
-from src.mnemosyne.models.session import Recording, Session, SessionStatus
-from src.mnemosyne.models.transcript import TranscriptSegment, WordSegment
-from src.mnemosyne.storage.sqlite import SessionRepository, import_json_sessions
+
+from mnemosyne.models.session import Recording, Session, SessionStatus
+from mnemosyne.models.transcript import TranscriptSegment, WordSegment
+from mnemosyne.storage.sqlite import SessionRepository, import_json_sessions
 
 
 @pytest.fixture
@@ -120,7 +121,8 @@ def test_import_legacy_json(repo, tmp_path):
 
 def test_app_imports_legacy_sessions_on_start(settings):
     from fastapi.testclient import TestClient
-    from src.mnemosyne.api.app import create_app
+
+    from mnemosyne.api.app import create_app
 
     settings.sessions_dir.mkdir(parents=True)
     (settings.sessions_dir / "z.json").write_text(

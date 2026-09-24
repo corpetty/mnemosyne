@@ -1,25 +1,13 @@
-import argparse
+"""Shim so `uvicorn main:app` (dev) and `python main.py` (release shell) keep working."""
+
 import warnings
 
-import uvicorn
-
-# Suppress noisy torchcodec/pyannote FFmpeg warnings
 warnings.filterwarnings("ignore", message=".*torchcodec.*")
 
-from src.mnemosyne.api.app import create_app  # noqa: E402
+from mnemosyne.api.app import create_app  # noqa: E402
+from mnemosyne.cli import main  # noqa: E402
 
 app = create_app()
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Mnemosyne Backend")
-    parser.add_argument(
-        "--host", default="127.0.0.1", help="Bind host (0.0.0.0 for server mode; set API_TOKEN)"
-    )
-    parser.add_argument("--port", type=int, default=8008, help="Bind port")
-    args = parser.parse_args()
-    uvicorn.run(app, host=args.host, port=args.port)
-
 
 if __name__ == "__main__":
     main()

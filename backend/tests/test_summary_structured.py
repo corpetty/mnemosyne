@@ -2,15 +2,14 @@
 
 from datetime import datetime
 
-from src.mnemosyne.export.obsidian import ObsidianExporter
-from src.mnemosyne.models.session import ActionItem, Session, SummaryData
-from src.mnemosyne.models.transcript import TranscriptSegment
-from src.mnemosyne.summarization.prompts import (
+from mnemosyne.export.obsidian import ObsidianExporter
+from mnemosyne.models.session import ActionItem, Session, SummaryData
+from mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.summarization.prompts import (
     STYLES,
     get_system_prompt,
     parse_summary_response,
 )
-
 from tests.conftest import run_summarize
 
 

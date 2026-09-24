@@ -11,7 +11,7 @@ DEST="$PROJECT_ROOT/src-tauri/resources/backend"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 cp "$SRC/pyproject.toml" "$SRC/uv.lock" "$SRC/main.py" "$SRC/.python-version" "$DEST/"
-rsync -a --exclude '__pycache__' --exclude '*.pyc' "$SRC/src/" "$DEST/src/"
+rsync -a --exclude '__pycache__' --exclude '*.pyc' "$SRC/mnemosyne/" "$DEST/mnemosyne/"
 
 echo "Staged backend to $DEST:"
 du -sh "$DEST"

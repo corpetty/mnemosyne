@@ -28,8 +28,9 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
 
 ## Conventions
 
-- Backend imports use `src.mnemosyne...` (the package is not installed; `main.py` and pytest
-  add `backend/` to the path). Keep that consistent until the package layout is fixed.
+- The backend is an installable package, `backend/mnemosyne/` (hatchling, installed editable by
+  `uv sync`). Import it as `mnemosyne...`; inside the package use relative imports.
+  `backend/main.py` is only a shim for `uvicorn main:app`; the CLI is `mnemosyne-backend`.
 - ML code is imported lazily inside functions so the API starts without torch. Keep it that way;
   tests rely on it (`tests/fakes.py` provides `FakeEngine` / `FakeProvider`).
 - Transcription is two pluggable stages: `Transcriber` and `Diarizer` Protocols in
@@ -39,6 +40,12 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
 - Long work runs as a Job (`jobs.py`) submitted from a route; progress flows over the
   `EventBus` to the WebSocket. Routes never call ML code directly.
 - `MNEMOSYNE_DATA_DIR` overrides the data directory; tests set it to a temp dir in `conftest.py`.
+- REST types in the frontend are generated: after changing a response/request model, run
+  `pnpm gen:api` (writes `src/lib/api/schema.d.ts`; CI fails when it is stale).
+  `src/lib/types/index.ts` only aliases generated types plus the hand-written WebSocket events.
+  Response models subclass `mnemosyne.models.base.ApiModel` so defaulted fields are required.
+- App behaviour spanning stores (connect, recording actions, shortcuts, tray) lives in
+  `src/lib/app/controller.svelte.ts`; view state in `stores/ui.svelte.ts`; `+page.svelte` only composes.
 - Frontend state is class-based rune stores in `src/lib/stores/*.svelte.ts`. Cross-store
   communication is via callbacks, not imports, to avoid cycles.
 - Secrets and machine-specific config live in `backend/.env` (gitignored). Never commit it.

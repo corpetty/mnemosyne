@@ -5,7 +5,8 @@ import wave
 
 import numpy as np
 import pytest
-from src.mnemosyne.audio.mixer import decode_audio, mix_audio_files, normalize_audio
+
+from mnemosyne.audio.mixer import decode_audio, mix_audio_files, normalize_audio
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 

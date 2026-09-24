@@ -40,6 +40,9 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Generated API types are up to date
+        run: bash scripts/gen-api-types.sh --check
       - run: pnpm check
       - run: pnpm build
 

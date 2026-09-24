@@ -2,10 +2,10 @@
 
 from datetime import datetime
 
-from src.mnemosyne.export.obsidian import ObsidianExporter
-from src.mnemosyne.export.templates import render_meeting_note
-from src.mnemosyne.models.session import Session
-from src.mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.export.obsidian import ObsidianExporter
+from mnemosyne.export.templates import render_meeting_note
+from mnemosyne.models.session import Session
+from mnemosyne.models.transcript import TranscriptSegment
 
 
 def test_render_meeting_note_structure():

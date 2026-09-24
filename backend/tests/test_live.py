@@ -5,8 +5,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from src.mnemosyne.models.transcript import TranscriptSegment
-from src.mnemosyne.transcription.live import LiveSource, LiveTranscriber, WavTail
+
+from mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.transcription.live import LiveSource, LiveTranscriber, WavTail
 
 RATE = 48000
 

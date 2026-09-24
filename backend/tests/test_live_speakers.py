@@ -4,9 +4,10 @@ import wave
 
 import numpy as np
 import pytest
-from src.mnemosyne.models.transcript import TranscriptSegment
-from src.mnemosyne.transcription.live import LiveSource, LiveTranscriber
-from src.mnemosyne.transcription.live_speakers import OnlineClusterer, cosine
+
+from mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.transcription.live import LiveSource, LiveTranscriber
+from mnemosyne.transcription.live_speakers import OnlineClusterer, cosine
 
 A = [1.0, 0.0, 0.0, 0.0]
 A2 = [0.95, 0.2, 0.0, 0.0]

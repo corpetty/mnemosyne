@@ -122,7 +122,7 @@ mnemosyne/
 │   ├── .python-version       # Python 3.13 pin
 │   ├── main.py               # Uvicorn entry point
 │   ├── .env.example          # Configuration template
-│   └── src/mnemosyne/
+│   └── mnemosyne/
 │       ├── config.py         # Environment variable loading
 │       ├── api/
 │       │   ├── app.py        # FastAPI app factory
@@ -288,7 +288,7 @@ Any transcriber works with any diarizer. `parakeet` + `none` or `remote` + `none
 
 ## Adding a New Summarization Provider
 
-1. Create `backend/src/mnemosyne/summarization/my_provider.py`:
+1. Create `backend/mnemosyne/summarization/my_provider.py`:
 
 ```python
 class MyProvider:
@@ -302,7 +302,7 @@ class MyProvider:
         ...
 ```
 
-2. Register in `backend/src/mnemosyne/services/summarization_service.py`:
+2. Register in `backend/mnemosyne/services/summarization_service.py`:
 
 ```python
 from ..summarization.my_provider import MyProvider
@@ -343,7 +343,7 @@ the deb, rpm and AppImage on `ubuntu-22.04` when a `vX.Y.Z` tag is pushed and at
 git tag v0.4.1 && git push origin v0.4.1
 ```
 
-Bump the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `package.json`, `backend/pyproject.toml` and `backend/src/mnemosyne/api/app.py` first (then `cargo check` and `uv lock`). Put release notes in `docs/releases/vX.Y.Z.md`; the workflow uses them as the release body, falling back to GitHub's generated notes.
+Bump the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `package.json`, `backend/pyproject.toml` and `backend/mnemosyne/api/app.py` first (then `cargo check` and `uv lock`). Put release notes in `docs/releases/vX.Y.Z.md`; the workflow uses them as the release body, falling back to GitHub's generated notes.
 
 ## Building for Production
 
@@ -355,7 +355,7 @@ bash scripts/package.sh --bundles deb  # one target
 `pnpm tauri build` runs `scripts/build-all.sh` first:
 
 1. `pnpm build` – static frontend into `build/`
-2. `scripts/stage-backend.sh` – copies `backend/{pyproject.toml,uv.lock,main.py,.python-version,src/}`
+2. `scripts/stage-backend.sh` – copies `backend/{pyproject.toml,uv.lock,main.py,.python-version,mnemosyne/}`
    into `src-tauri/resources/backend/` (no `__pycache__`, no tests, no venv)
 3. `scripts/fetch-uv.sh` – downloads the pinned uv release (checksum verified) to
    `src-tauri/binaries/mnemosyne-uv-<triple>`; Tauri bundles it as the `mnemosyne-uv` sidecar

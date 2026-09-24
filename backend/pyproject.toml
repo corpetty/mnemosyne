@@ -2,7 +2,6 @@
 name = "mnemosyne-backend"
 version = "0.4.1"
 description = "Mnemosyne backend: audio transcription, diarization, and summarization"
-readme = "README.md"
 requires-python = ">=3.11, <3.14"
 dependencies = [
     "fastapi>=0.115",
@@ -38,10 +37,19 @@ dev = [
     "ruff>=0.9",
 ]
 
+[project.scripts]
+mnemosyne-backend = "mnemosyne.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mnemosyne"]
+
 [tool.uv]
 managed = true
-# The backend is an application, not an installable package.
-package = false
+package = true
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
@@ -60,7 +68,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-src = ["src", "tests"]
+src = [".", "tests"]
 extend-exclude = ["build", "dist"]
 
 [tool.ruff.lint]

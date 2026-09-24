@@ -7,8 +7,8 @@ so the API and services can be exercised without torch, CUDA, or network access.
 
 from collections.abc import AsyncIterator
 
-from src.mnemosyne.models.transcript import TranscriptSegment
-from src.mnemosyne.transcription.engine import AudioSource, DiarizationResult, SpeakerTurn
+from mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.transcription.engine import AudioSource, DiarizationResult, SpeakerTurn
 
 FAKE_SEGMENTS = [
     TranscriptSegment(text="Hello everyone.", speaker="SPEAKER_00", start=0.0, end=1.2),

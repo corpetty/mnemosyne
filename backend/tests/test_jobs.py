@@ -3,8 +3,9 @@
 import asyncio
 
 import pytest
-from src.mnemosyne.events import EventBus
-from src.mnemosyne.jobs import JobManager, JobStatus
+
+from mnemosyne.events import EventBus
+from mnemosyne.jobs import JobManager, JobStatus
 
 
 @pytest.mark.anyio

@@ -2,17 +2,16 @@
 
 from datetime import datetime
 
-from src.mnemosyne.models.ask import Passage, PassageLine
-from src.mnemosyne.models.session import Session
-from src.mnemosyne.models.transcript import TranscriptSegment
-from src.mnemosyne.services.ask_service import (
+from mnemosyne.models.ask import Passage, PassageLine
+from mnemosyne.models.session import Session
+from mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.services.ask_service import (
     NO_RESULTS,
     build_citations,
     cited_numbers,
     format_passages,
 )
-from src.mnemosyne.storage.sqlite import fts_any_query
-
+from mnemosyne.storage.sqlite import fts_any_query
 from tests.conftest import drain_until_job
 
 

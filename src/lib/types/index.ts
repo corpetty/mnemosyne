@@ -1,204 +1,43 @@
-export interface AudioDevice {
-  id: number;
-  name: string;
-  description: string;
-  media_class: string;
-  is_input: boolean;
-  is_output: boolean;
-  is_monitor: boolean;
-  is_echo_cancelled: boolean;
-}
+/**
+ * Frontend types. REST shapes are generated from the backend's OpenAPI schema
+ * (`src/lib/api/schema.d.ts`, regenerate with `scripts/gen-api-types.sh`); only the
+ * WebSocket events below are written by hand.
+ */
+import type { components } from '$lib/api/schema.js';
 
-export interface StartRecordingResponse {
-  session_id: string;
-  recording_id: string;
-  live_job_id: string | null;
-  message: string;
-}
+type S = components['schemas'];
 
-export interface StopRecordingResponse {
-  session: SessionDetail;
-  job_id: string | null;
-  message: string;
-}
-
-export interface RecordingStatus {
-  session_id: string;
-  is_recording: boolean;
-  exists: boolean;
-  device_count?: number;
-}
-
-export type SessionStatus =
-  | 'created'
-  | 'recording'
-  | 'encoding'
-  | 'transcribing'
-  | 'completed'
-  | 'error';
-
-export interface SessionSummary {
-  id: string;
-  name: string;
-  status: SessionStatus;
-  created_at: string;
-  updated_at: string;
-  has_transcript: boolean;
-  has_summary: boolean;
-  has_audio: boolean;
-  participant_count: number;
-}
-
-export interface Recording {
-  id: string;
-  source: 'mic' | 'system' | 'import';
-  device_id: number;
-  device_name: string;
-  path: string;
-  created_at: string;
-}
-
-export interface ActionItem {
-  text: string;
-  owner: string | null;
-}
-
-export interface SummaryData {
-  title: string;
-  source_hash: string;
-  style: string;
-  provider: string;
-  model: string;
-  topics: string[];
-  decisions: string[];
-  action_items: ActionItem[];
-  open_questions: string[];
-}
-
-export interface SessionDetail {
-  id: string;
-  name: string;
-  status: SessionStatus;
-  created_at: string;
-  updated_at: string;
-  audio_file: string | null;
-  recordings: Recording[];
-  transcript: TranscriptSegment[];
-  summary: string;
-  summary_data: SummaryData | null;
-  notes: string;
-  participants: string[];
-  attendees: string[];
-  summary_stale: boolean;
-}
-
-export interface WordSegment {
-  word: string;
-  start: number;
-  end: number;
-  score: number;
-}
-
-export interface TranscriptSegment {
-  text: string;
-  speaker: string;
-  start: number;
-  end: number;
-  words?: WordSegment[] | null;
-}
-
-export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-
-export interface Job {
-  id: string;
-  kind: string;
-  session_id: string | null;
-  status: JobStatus;
-  message: string;
-  progress: number | null;
-  error: string | null;
-  result: Record<string, unknown> | null;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-}
-
-export interface ProviderModels {
-  provider: string;
-  models: string[];
-}
-
-export interface SummaryStyle {
-  id: string;
-  description: string;
-}
-
-export interface SettingsValues {
-  data_dir: string;
-  transcriber: 'whisperx' | 'parakeet' | 'remote';
-  diarizer: 'pyannote' | 'none';
-  language: string;
-  min_speakers: number | null;
-  max_speakers: number | null;
-  auto_transcribe: boolean;
-  auto_summarize: boolean;
-  auto_name_sessions: boolean;
-  local_speaker_name: string;
-  remote_speaker_name: string;
-  echo_cancel: boolean;
-  echo_dedup: boolean;
-  api_token: string;
-  echo_similarity: number;
-  auto_label_speakers: boolean;
-  speaker_match_threshold: number;
-  per_source_transcription: boolean;
-  live_transcription: boolean;
-  live_transcriber: 'parakeet' | 'whisperx' | 'remote';
-  live_interval_seconds: number;
-  live_diarization: boolean;
-  live_speaker_threshold: number;
-  hf_token: string;
-  whisper_model_size: string;
-  whisper_compute_type: string;
-  whisper_batch_size: number;
-  parakeet_model: string;
-  parakeet_quantization: string;
-  onnx_provider: 'cpu' | 'cuda';
-  remote_stt_url: string;
-  remote_stt_model: string;
-  remote_stt_api_key: string;
-  diarization_model: string;
-  ollama_url: string;
-  vllm_url: string;
-  openai_api_key: string;
-  anthropic_api_key: string;
-  default_provider: string;
-  default_model: string;
-  audio_retention_days: number;
-  calendar_ics_url: string;
-  calendar_auto_name: boolean;
-  summary_style: string;
-  summary_instructions: string;
-  obsidian_vault_path: string;
-  obsidian_subfolder: string;
-  obsidian_tags: string;
-  obsidian_link_people: boolean;
-  obsidian_include_transcript: boolean;
-  obsidian_auto_export: boolean;
-}
-
-export interface SettingsResponse {
-  values: SettingsValues;
-  secrets_set: Record<string, boolean>;
-  env_overrides: string[];
-  config_file: string;
-  obsidian_vault_exists: boolean;
-}
-
+export type AudioDevice = S['DeviceResponse'];
+export type StartRecordingResponse = S['StartRecordingResponse'];
+export type StopRecordingResponse = Omit<S['StopRecordingResponse'], 'session'> & { session: SessionDetail };
+export type RecordingStatus = S['RecordingStatus'];
+export type SessionDetail = S['Session'];
+export type SessionStatus = SessionDetail['status'];
+export type SessionSummary = S['SessionSummary'];
+export type Recording = S['Recording'];
+export type ActionItem = S['ActionItem'];
+export type SummaryData = S['SummaryData'];
+export type WordSegment = S['WordSegment'];
+export type TranscriptSegment = S['TranscriptSegment'];
+export type Job = S['Job'];
+export type JobStatus = Job['status'];
+export type ProviderModels = S['ProviderModels'];
+export type SummaryStyle = S['SummaryStyle'];
+export type SettingsValues = S['SettingsValues'];
+export type SettingsResponse = S['SettingsResponse'];
 /** Partial update. For secrets: '' keeps the current value, null clears it. */
-export type SettingsUpdate = Partial<{
-  [K in keyof Omit<SettingsValues, 'data_dir'>]: SettingsValues[K] | null;
-}>;
+export type SettingsUpdate = S['SettingsUpdate'];
+export type SpeakerProfile = S['SpeakerProfileSummary'];
+export type SessionSpeaker = S['SessionSpeaker'];
+export type SegmentHit = S['SegmentHit'];
+export type SearchHit = S['SearchHit'];
+export type Citation = S['Citation'];
+export type Ask = S['Ask'];
+export type SessionUsage = S['SessionUsage'];
+export type StorageReport = S['StorageReport'];
+export type CleanupResult = S['CleanupResult'];
+export type CalendarEvent = S['CalendarEvent'];
+export type CalendarResponse = S['CalendarResponse'];
 
 /** Events pushed by the backend over /ws. */
 export type BackendEvent =
@@ -213,91 +52,3 @@ export type BackendEvent =
   | { type: 'live_partial'; session_id: string; source: string; speaker: string; text: string }
   | { type: 'live_status'; session_id: string; message: string }
   | { type: 'live_relabel'; session_id: string; old: string; new: string };
-
-export interface SpeakerProfile {
-  id: string;
-  name: string;
-  sample_count: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SessionSpeaker {
-  label: string;
-  has_voice: boolean;
-}
-
-export interface SegmentHit {
-  idx: number;
-  speaker: string;
-  start: number;
-  snippet: string; // matches wrapped in [[ ]]
-}
-
-export interface SearchHit {
-  session_id: string;
-  session_name: string;
-  created_at: string;
-  score: number;
-  session_snippet: string | null;
-  segments: SegmentHit[];
-}
-
-export interface Citation {
-  n: number;
-  session_id: string;
-  session_name: string;
-  created_at: string;
-  idx: number | null;
-  start: number | null;
-  excerpt: string;
-}
-
-export interface Ask {
-  id: string;
-  question: string;
-  answer: string;
-  citations: Citation[];
-  provider: string;
-  model: string;
-  created_at: string;
-}
-
-export interface SessionUsage {
-  session_id: string;
-  name: string;
-  created_at: string;
-  audio_bytes: number;
-  has_transcript: boolean;
-}
-
-export interface StorageReport {
-  data_dir: string;
-  recordings_bytes: number;
-  database_bytes: number;
-  sessions_with_audio: number;
-  retention_days: number;
-  largest: SessionUsage[];
-}
-
-export interface CleanupResult {
-  dry_run: boolean;
-  sessions: SessionUsage[];
-  freed_bytes: number;
-}
-
-export interface CalendarEvent {
-  uid: string;
-  title: string;
-  start: string;
-  end: string;
-  location: string;
-  attendees: string[];
-}
-
-export interface CalendarResponse {
-  configured: boolean;
-  error: string | null;
-  current: CalendarEvent | null;
-  upcoming: CalendarEvent[];
-}

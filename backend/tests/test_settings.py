@@ -2,7 +2,7 @@
 
 import tomllib
 
-from src.mnemosyne.config import Settings
+from mnemosyne.config import Settings
 
 
 def test_get_settings_masks_secrets(client, ctx):

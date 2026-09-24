@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from src.mnemosyne.audio.capture import AudioDevice, build_record_command
+from mnemosyne.audio.capture import AudioDevice, build_record_command
 
 SINK = AudioDevice(
     id=69, name="alsa_output.usb.spdif", description="S/PDIF", media_class="Audio/Sink"

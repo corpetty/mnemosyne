@@ -4,7 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from src.mnemosyne.services.calendar_service import CalendarService, parse_events
+
+from mnemosyne.services.calendar_service import CalendarService, parse_events
 
 UTC = UTC
 
@@ -188,9 +189,8 @@ def test_calendar_url_is_secret_and_rebuilds(client, ctx, ics_file):
 
 
 def test_attendees_reach_summary_prompt_and_export(client, ctx, fake_provider, tmp_path):
-    from src.mnemosyne.export.obsidian import ObsidianExporter
-    from src.mnemosyne.models.transcript import TranscriptSegment
-
+    from mnemosyne.export.obsidian import ObsidianExporter
+    from mnemosyne.models.transcript import TranscriptSegment
     from tests.conftest import run_summarize
 
     sid = client.post("/api/sessions", json={"name": "Release sync"}).json()["id"]

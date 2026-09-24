@@ -1,7 +1,7 @@
 """Speaker-bleed removal between the mic and system transcripts."""
 
-from src.mnemosyne.models.transcript import TranscriptSegment
-from src.mnemosyne.transcription.dedup import normalize, remove_echo, similarity
+from mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.transcription.dedup import normalize, remove_echo, similarity
 
 
 def _seg(text, start, end, speaker="Me"):

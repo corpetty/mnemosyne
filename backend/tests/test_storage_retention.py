@@ -4,8 +4,9 @@ import asyncio
 from datetime import datetime, timedelta
 
 import pytest
-from src.mnemosyne.models.session import Recording, Session
-from src.mnemosyne.models.transcript import TranscriptSegment
+
+from mnemosyne.models.session import Recording, Session
+from mnemosyne.models.transcript import TranscriptSegment
 
 
 def _with_audio(ctx, name, days_old, transcript=True, size=1000):

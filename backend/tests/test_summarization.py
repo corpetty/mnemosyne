@@ -1,13 +1,13 @@
 """Summarization service and endpoint with a FakeProvider."""
 
 import pytest
-from src.mnemosyne.services.summarization_service import SummarizationService
-from src.mnemosyne.summarization.prompts import (
+
+from mnemosyne.services.summarization_service import SummarizationService
+from mnemosyne.summarization.prompts import (
     STYLES,
     format_transcript_for_llm,
     get_system_prompt,
 )
-
 from tests.conftest import drain_until_job, run_summarize
 from tests.fakes import FakeProvider
 

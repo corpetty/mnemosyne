@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from src.mnemosyne.api.app import create_app
-from src.mnemosyne.api.routes import audio as audio_routes
-from src.mnemosyne.audio.capture import AudioDevice, RecordingProcess, RecordingSession
-from src.mnemosyne.config import Settings
 
+from mnemosyne.api.app import create_app
+from mnemosyne.api.routes import audio as audio_routes
+from mnemosyne.audio.capture import AudioDevice, RecordingProcess, RecordingSession
+from mnemosyne.config import Settings
 from tests.fakes import FakeEngine, FakeProvider, FakeTranscriber
 
 # config.py loads backend/.env on import. Scrub every settings field from the
@@ -51,7 +51,7 @@ def client(app):
 @pytest.fixture(autouse=True)
 def fake_live_transcriber(monkeypatch) -> FakeTranscriber:
     """Never build a real (model-downloading) live transcriber in tests."""
-    from src.mnemosyne.services.model_service import ModelService
+    from mnemosyne.services.model_service import ModelService
 
     fake = FakeTranscriber()
     monkeypatch.setattr(ModelService, "live_transcriber", property(lambda self: fake))

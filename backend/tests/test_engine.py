@@ -2,16 +2,16 @@
 
 import httpx
 import pytest
-from src.mnemosyne.config import Settings
-from src.mnemosyne.models.session import Recording, Session
-from src.mnemosyne.models.transcript import TranscriptSegment, WordSegment
-from src.mnemosyne.services.pipeline import sources_for_session
-from src.mnemosyne.transcription.assign import assign_speakers
-from src.mnemosyne.transcription.composed import ComposedEngine
-from src.mnemosyne.transcription.engine import AudioSource, SpeakerTurn
-from src.mnemosyne.transcription.registry import build_diarizer, build_transcriber
-from src.mnemosyne.transcription.transcribers.remote import RemoteTranscriber, parse_verbose_json
 
+from mnemosyne.config import Settings
+from mnemosyne.models.session import Recording, Session
+from mnemosyne.models.transcript import TranscriptSegment, WordSegment
+from mnemosyne.services.pipeline import sources_for_session
+from mnemosyne.transcription.assign import assign_speakers
+from mnemosyne.transcription.composed import ComposedEngine
+from mnemosyne.transcription.engine import AudioSource, SpeakerTurn
+from mnemosyne.transcription.registry import build_diarizer, build_transcriber
+from mnemosyne.transcription.transcribers.remote import RemoteTranscriber, parse_verbose_json
 from tests.fakes import FakeDiarizer, FakeTranscriber
 
 # ---- assign -----------------------------------------------------------------

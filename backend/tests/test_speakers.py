@@ -1,11 +1,11 @@
 """Voice profiles: matching, enrolling on rename, API, pipeline auto-labelling."""
 
 import pytest
-from src.mnemosyne.services.speaker_service import SpeakerService, cosine
-from src.mnemosyne.storage.sqlite import SessionRepository
-from src.mnemosyne.transcription.composed import ComposedEngine
-from src.mnemosyne.transcription.engine import AudioSource
 
+from mnemosyne.services.speaker_service import SpeakerService, cosine
+from mnemosyne.storage.sqlite import SessionRepository
+from mnemosyne.transcription.composed import ComposedEngine
+from mnemosyne.transcription.engine import AudioSource
 from tests.conftest import drain_until_job
 from tests.fakes import FAKE_SEGMENTS, FakeDiarizer, FakeEngine, FakeTranscriber
 

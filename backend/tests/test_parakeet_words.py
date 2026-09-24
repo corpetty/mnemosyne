@@ -1,6 +1,6 @@
 """Parakeet token -> word merging (pure function, no model)."""
 
-from src.mnemosyne.transcription.transcribers.parakeet import _words_from_tokens
+from mnemosyne.transcription.transcribers.parakeet import _words_from_tokens
 
 
 def test_tokens_merge_into_words_with_absolute_times():

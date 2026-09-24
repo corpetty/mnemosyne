@@ -157,7 +157,7 @@ mnemosyne/
 ├── backend/                      # Python FastAPI backend
 │   ├── pyproject.toml
 │   ├── main.py
-│   └── src/mnemosyne/
+│   └── mnemosyne/
 │       ├── api/                  # FastAPI routes + WebSocket
 │       ├── audio/                # PipeWire capture + Opus encoding
 │       ├── transcription/        # Transcriber/Diarizer protocols, whisperx, parakeet, remote, pyannote

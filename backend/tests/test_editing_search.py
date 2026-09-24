@@ -1,8 +1,7 @@
 """Transcript editing endpoints and full-text search."""
 
-from src.mnemosyne.models.transcript import TranscriptSegment, WordSegment
-from src.mnemosyne.storage.sqlite import fts_query
-
+from mnemosyne.models.transcript import TranscriptSegment, WordSegment
+from mnemosyne.storage.sqlite import fts_query
 from tests.conftest import drain_until_job
 from tests.fakes import FakeEngine, FakeTranscriber  # noqa: F401
 
@@ -112,7 +111,7 @@ def test_search_segments_and_sessions(client, ctx):
 def test_fts_backfill_for_old_databases(tmp_path):
     import sqlite3
 
-    from src.mnemosyne.storage.sqlite import SessionRepository
+    from mnemosyne.storage.sqlite import SessionRepository
 
     repo = SessionRepository(tmp_path / "db.sqlite")
     repo.close()

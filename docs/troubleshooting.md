@@ -159,7 +159,7 @@ Likely caused by selecting an embedding-only model. The app filters these out, b
 
 1. Check which model was selected in the Summary tab
 2. Models with "embed" in the name or from the BERT family are chat-incompatible
-3. The filtering is in `backend/src/mnemosyne/summarization/ollama.py`
+3. The filtering is in `backend/mnemosyne/summarization/ollama.py`
 
 ### No models shown in provider list
 

@@ -3,8 +3,9 @@
 import stat
 
 import pytest
-from src.mnemosyne.audio import echo_cancel as ec
-from src.mnemosyne.audio.echo_cancel import EchoCancelManager, load_command
+
+from mnemosyne.audio import echo_cancel as ec
+from mnemosyne.audio.echo_cancel import EchoCancelManager, load_command
 
 
 def test_load_command_names_nodes():
@@ -79,7 +80,7 @@ def test_echo_cancel_api_unsupported(client, ctx, monkeypatch):
 
 
 def test_devices_flag_echo_cancelled_source(monkeypatch):
-    from src.mnemosyne.audio import capture
+    from mnemosyne.audio import capture
 
     dump = [
         {
