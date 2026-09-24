@@ -11,12 +11,18 @@ from a Transcriber and a Diarizer and handles per-source speaker labelling.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
 from ..models.base import ApiModel
 from ..models.transcript import TranscriptSegment
+
+# Called with a 0..1 fraction of the current call's work. May be called from a worker
+# thread; ComposedEngine marshals it back to the event loop.
+ProgressFn = Callable[[float], None]
+# Engine-level progress: (stage description, overall 0..1 fraction).
+StageProgressFn = Callable[[str, float], None]
 
 
 class SpeakerTurn(ApiModel):
@@ -61,7 +67,7 @@ class _Loadable(Protocol):
 @runtime_checkable
 class Transcriber(_Loadable, Protocol):
     async def transcribe(
-        self, audio_path: str, language: str | None = None
+        self, audio_path: str, language: str | None = None, progress: ProgressFn | None = None
     ) -> list[TranscriptSegment]:
         """Return time-ordered segments. `speaker` is left as "UNKNOWN"."""
         ...
@@ -74,6 +80,7 @@ class Diarizer(_Loadable, Protocol):
         audio_path: str,
         min_speakers: int | None = None,
         max_speakers: int | None = None,
+        progress: ProgressFn | None = None,
     ) -> DiarizationResult: ...
 
 
@@ -87,7 +94,9 @@ class TranscriptionEngine(Protocol):
 
     async def unload(self) -> None: ...
 
-    def transcribe_sources(self, sources: list[AudioSource]) -> AsyncIterator[TranscriptSegment]:
+    def transcribe_sources(
+        self, sources: list[AudioSource], on_progress: StageProgressFn | None = None
+    ) -> AsyncIterator[TranscriptSegment]:
         """Transcribe one or more sources, yielding segments in time order.
 
         After the iterator is exhausted, `last_speaker_embeddings` (if the engine

@@ -28,6 +28,14 @@ def test_transcribe_job_streams_and_persists(client, ctx, fake_engine):
         assert job["session_id"] == sid
         events = drain_until_job(ws, job["id"])
 
+    progress = [
+        e["job"]["progress"]
+        for e in events
+        if e["type"] == "job" and e["job"]["status"] == "running"
+    ]
+    assert 0.5 in progress and 0.9 in progress  # engine progress reached the job
+    messages = [e["job"]["message"] for e in events if e["type"] == "job"]
+    assert "Identifying speakers in audio..." in messages
     job_statuses = [e["job"]["status"] for e in events if e["type"] == "job"]
     assert job_statuses[0] == "queued"
     assert "running" in job_statuses

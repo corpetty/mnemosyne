@@ -22,5 +22,6 @@ class NoDiarizer:
         audio_path: str,
         min_speakers: int | None = None,
         max_speakers: int | None = None,
+        progress=None,
     ) -> DiarizationResult:
         return DiarizationResult(turns=[])

@@ -39,8 +39,11 @@ class FakeEngine:
         self.loaded = False
 
     async def transcribe_sources(
-        self, sources: list[AudioSource]
+        self, sources: list[AudioSource], on_progress=None
     ) -> AsyncIterator[TranscriptSegment]:
+        if on_progress is not None:
+            on_progress("Transcribing audio", 0.5)
+            on_progress("Identifying speakers in audio", 0.9)
         self.sources.append(list(sources))
         for src in sources:
             self.transcribed_paths.append(src.path)
@@ -73,8 +76,10 @@ class FakeTranscriber:
     async def unload(self) -> None:
         self.loaded = False
 
-    async def transcribe(self, audio_path: str, language: str | None = None):
+    async def transcribe(self, audio_path: str, language: str | None = None, progress=None):
         self.calls.append((audio_path, language))
+        if progress is not None:
+            progress(1.0)
         return [s.model_copy() for s in self.segments]
 
 
@@ -108,8 +113,10 @@ class FakeDiarizer:
     async def unload(self) -> None:
         self.loaded = False
 
-    async def diarize(self, audio_path: str, min_speakers=None, max_speakers=None):
+    async def diarize(self, audio_path: str, min_speakers=None, max_speakers=None, progress=None):
         self.calls.append(audio_path)
+        if progress is not None:
+            progress(1.0)
         return DiarizationResult(turns=list(self.turns), embeddings=dict(self.embeddings))
 
 

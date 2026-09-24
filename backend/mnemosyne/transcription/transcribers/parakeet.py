@@ -60,15 +60,23 @@ class ParakeetTranscriber:
         self._asr = None
 
     async def transcribe(
-        self, audio_path: str, language: str | None = None
+        self, audio_path: str, language: str | None = None, progress=None
     ) -> list[TranscriptSegment]:
         if not self.is_loaded():
             await self.load()
 
         def _run():
             pcm = decode_audio(audio_path, sample_rate=SAMPLE_RATE)
-            results = self._asr.recognize(pcm, sample_rate=SAMPLE_RATE)
-            return [_to_segment(r) for r in results]
+            duration = max(pcm.size / SAMPLE_RATE, 1e-6)
+            out = []
+            # The VAD adapter yields utterances in order: report how far through the audio we are.
+            for r in self._asr.recognize(pcm, sample_rate=SAMPLE_RATE):
+                out.append(_to_segment(r))
+                if progress is not None:
+                    progress(min(float(r.end) / duration, 1.0))
+            if progress is not None:
+                progress(1.0)
+            return out
 
         segments = await asyncio.to_thread(_run)
         return [s for s in segments if s.text]

@@ -2,6 +2,8 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import type { SessionSummary } from '$lib/types/index.js';
 	import SearchBox from './SearchBox.svelte';
+	import JobProgress from './JobProgress.svelte';
+	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { importAudio } from '$lib/api/backend.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
@@ -133,6 +135,10 @@
 					</span>
 					<span class="text-xs text-gray-500">{formatDate(session.created_at)}</span>
 				</div>
+				{#if jobsState.active(session.id, 'transcribe')}
+					{@const busy = jobsState.active(session.id, 'transcribe')!}
+					<div class="mt-1.5"><JobProgress job={busy} compact /></div>
+				{/if}
 			</div>
 		{/each}
 

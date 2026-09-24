@@ -67,7 +67,7 @@ class WhisperXTranscriber:
             torch.cuda.empty_cache()
 
     async def transcribe(
-        self, audio_path: str, language: str | None = None
+        self, audio_path: str, language: str | None = None, progress=None
     ) -> list[TranscriptSegment]:
         if not self.is_loaded():
             await self.load()
@@ -76,8 +76,10 @@ class WhisperXTranscriber:
             import whisperx
 
             audio = whisperx.load_audio(audio_path)
+            # Transcription is ~85% of the work here, alignment the rest.
+            cb = (lambda pct: progress(0.85 * pct / 100.0)) if progress else None
             result = self._model.transcribe(
-                audio, batch_size=self.batch_size, language=language or None
+                audio, batch_size=self.batch_size, language=language or None, progress_callback=cb
             )
             lang = result.get("language", language or "en")
             if lang not in self._align:
@@ -93,6 +95,8 @@ class WhisperXTranscriber:
                 self.device,
                 return_char_alignments=False,
             )
+            if progress is not None:
+                progress(1.0)
             return aligned["segments"]
 
         raw = await asyncio.to_thread(_run)

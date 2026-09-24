@@ -45,7 +45,7 @@ class RemoteTranscriber:
         self._loaded = False
 
     async def transcribe(
-        self, audio_path: str, language: str | None = None
+        self, audio_path: str, language: str | None = None, progress=None
     ) -> list[TranscriptSegment]:
         path = Path(audio_path)
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}

@@ -376,6 +376,7 @@ diarized speaker's embedding is compared (cosine) against all profiles and assig
 }
 ```
 
+`progress` (0..1) and `message` (current stage, e.g. "Identifying speakers in system audio...") update while a `transcribe` job runs.
 `kind`: `transcribe` (final pipeline), `summarize` (LLM summary), `ask` (question across meetings; `session_id` is null), or `live` (provisional text while recording).
 `status`: `queued`, `running`, `completed`, `failed`, `cancelled`. Only one `transcribe` job and at most two
 `summarize` jobs run at a time; others wait in `queued`.

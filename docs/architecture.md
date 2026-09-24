@@ -172,6 +172,16 @@ Transcription is two pluggable stages behind Protocols in `transcription/engine.
 from settings (`transcriber`, `diarizer`, and per-implementation options). Heavy imports happen inside
 the builders, so `remote` + `none` never imports torch.
 
+### Progress
+
+`Transcriber.transcribe` and `Diarizer.diarize` take an optional `progress(fraction)` callback:
+Parakeet reports how far through the audio its VAD has reached, WhisperX forwards its batch
+`progress_callback` (transcription 85 %, alignment 15 %), pyannote's `hook` is mapped over its steps
+(segmentation, speaker counting, embeddings). `ComposedEngine` weights sources by duration (ffprobe),
+splits a diarized source 70/30 between transcription and speaker identification, and marshals the
+callbacks from worker threads to the event loop. The pipeline throttles updates (stage change, 1 %,
+or 1 s) into `Job.progress` and `Job.message`; the UI derives time remaining from `started_at`.
+
 ### Per-source speaker attribution
 
 The recorder keeps each captured source as its own file. `services/pipeline.py::sources_for_session`

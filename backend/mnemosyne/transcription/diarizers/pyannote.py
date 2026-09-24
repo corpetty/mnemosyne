@@ -60,6 +60,7 @@ class PyannoteDiarizer:
         audio_path: str,
         min_speakers: int | None = None,
         max_speakers: int | None = None,
+        progress=None,
     ) -> DiarizationResult:
         if not self.is_loaded():
             await self.load()
@@ -75,10 +76,27 @@ class PyannoteDiarizer:
                 kwargs["min_speakers"] = min_speakers
             if max_speakers is not None:
                 kwargs["max_speakers"] = max_speakers
+            if progress is not None:
+                kwargs["hook"] = _progress_hook(progress)
             output = self._pipeline({"waveform": waveform, "sample_rate": 16000}, **kwargs)
+            if progress is not None:
+                progress(1.0)
             return _result_from_output(output)
 
         return await asyncio.to_thread(_run)
+
+
+# Share of pyannote's work per step (segmentation and embeddings dominate).
+_STEPS = {"segmentation": (0.0, 0.35), "speaker_counting": (0.35, 0.4), "embeddings": (0.4, 0.95)}
+
+
+def _progress_hook(progress):
+    def hook(step_name, step_artifact, file=None, total=None, completed=None):
+        lo, hi = _STEPS.get(step_name, (0.95, 1.0))
+        frac = (completed / total) if (total and completed is not None) else 1.0
+        progress(float(lo + (hi - lo) * min(max(frac, 0.0), 1.0)))
+
+    return hook
 
 
 def _result_from_output(output: Any) -> DiarizationResult:

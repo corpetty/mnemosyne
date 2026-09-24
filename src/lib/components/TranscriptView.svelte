@@ -6,6 +6,7 @@
 	import type { SessionDetail } from '$lib/types/index.js';
 	import LiveTranscript from './LiveTranscript.svelte';
 	import SpeakerBar from './SpeakerBar.svelte';
+	import JobProgress from './JobProgress.svelte';
 	import AudioPlayer from './AudioPlayer.svelte';
 	import { playerState } from '$lib/stores/player.svelte.js';
 
@@ -155,6 +156,10 @@
 			</button>
 		{/if}
 	</div>
+
+	{#if transcriptState.isProcessing && transcriptState.activeJob}
+		<JobProgress job={transcriptState.activeJob} />
+	{/if}
 
 	{#if transcriptState.error}
 		<p class="text-sm text-red-400">{transcriptState.error}</p>

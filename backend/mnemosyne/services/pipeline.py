@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -78,8 +79,18 @@ def transcribe_session(app: AppContext, session_id: str):
                 [(s.kind, s.speaker_label) for s in sources],
             )
 
+            last = {"stage": "", "frac": -1.0, "t": 0.0}
+
+            def on_progress(stage: str, frac: float) -> None:
+                # Throttle: stage changes, every 1 %, or at least once a second.
+                now = time.monotonic()
+                if stage == last["stage"] and frac - last["frac"] < 0.01 and now - last["t"] < 1:
+                    return
+                last.update(stage=stage, frac=frac, t=now)
+                ctx.update(stage + "...", progress=round(min(max(frac, 0.0), 0.99), 3))
+
             segments = []
-            async for segment in engine.transcribe_sources(sources):
+            async for segment in engine.transcribe_sources(sources, on_progress=on_progress):
                 segments.append(segment)
                 ctx.emit(
                     {
