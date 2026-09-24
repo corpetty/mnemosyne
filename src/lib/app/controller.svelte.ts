@@ -50,6 +50,16 @@ export function toggleTasks() {
   sessionState.activeSession = null;
 }
 
+export function togglePeople() {
+  if (uiState.showPeople) {
+    uiState.showPeople = false;
+    return;
+  }
+  uiState.closePanels();
+  uiState.showPeople = true;
+  sessionState.activeSession = null;
+}
+
 export function toggleSettings() {
   if (uiState.showSettings) {
     uiState.showSettings = false;

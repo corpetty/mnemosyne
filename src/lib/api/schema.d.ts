@@ -433,6 +433,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get People
+         * @description Everyone seen as a named speaker, an invitee, an action item owner or a saved voice.
+         */
+        get: operations["get_people_api_people_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/people/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Person */
+        get: operations["get_person_api_people__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/search": {
         parameters: {
             query?: never;
@@ -1420,6 +1457,71 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** PersonDecision */
+        PersonDecision: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Session Id */
+            session_id: string;
+            /** Session Name */
+            session_name: string;
+            /** Text */
+            text: string;
+        };
+        /** PersonDetail */
+        PersonDetail: {
+            /** Decisions */
+            decisions: components["schemas"]["PersonDecision"][];
+            /** Done Tasks */
+            done_tasks: components["schemas"]["TaskItem"][];
+            /** Has Voice */
+            has_voice: boolean;
+            /** Meetings */
+            meetings: components["schemas"]["PersonMeeting"][];
+            /** Name */
+            name: string;
+            /** Open Tasks */
+            open_tasks: components["schemas"]["TaskItem"][];
+            /** Total Talk Seconds */
+            total_talk_seconds: number;
+        };
+        /** PersonMeeting */
+        PersonMeeting: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "speaker" | "invited" | "both";
+            /** Share */
+            share: number | null;
+            /** Talk Seconds */
+            talk_seconds: number | null;
+        };
+        /** PersonSummary */
+        PersonSummary: {
+            /** Has Voice */
+            has_voice: boolean;
+            /** Last Seen */
+            last_seen: string | null;
+            /** Meetings */
+            meetings: number;
+            /** Name */
+            name: string;
+            /** Open Tasks */
+            open_tasks: number;
+        };
         /** ProviderModels */
         ProviderModels: {
             /** Models */
@@ -1781,6 +1883,8 @@ export interface components {
             obsidian_include_transcript?: boolean | null;
             /** Obsidian Link People */
             obsidian_link_people?: boolean | null;
+            /** Obsidian People Notes */
+            obsidian_people_notes?: boolean | null;
             /** Obsidian Subfolder */
             obsidian_subfolder?: string | null;
             /** Obsidian Tags */
@@ -1910,6 +2014,8 @@ export interface components {
             obsidian_include_transcript: boolean;
             /** Obsidian Link People */
             obsidian_link_people: boolean;
+            /** Obsidian People Notes */
+            obsidian_people_notes: boolean;
             /** Obsidian Subfolder */
             obsidian_subfolder: string;
             /** Obsidian Tags */
@@ -2989,6 +3095,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderModels"][];
+                };
+            };
+        };
+    };
+    get_people_api_people_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonSummary"][];
+                };
+            };
+        };
+    };
+    get_person_api_people__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -30,6 +30,31 @@ def build_exporter(ctx: AppContext, vault_path: str) -> ObsidianExporter:
     )
 
 
+def export_session(ctx: AppContext, session, vault_path: str):
+    """Write the meeting note and, when enabled, the notes of the people in it."""
+    path = build_exporter(ctx, vault_path).export(session)
+    st = ctx.settings
+    if st.obsidian_people_notes:
+        from pathlib import Path
+
+        from ...export.people_notes import write_person_notes
+
+        names = set(session.participants) | set(session.attendees)
+        if session.summary_data:
+            names |= {a.owner for a in session.summary_data.action_items if a.owner}
+        try:
+            write_person_notes(
+                ctx.repo,
+                Path(vault_path).expanduser(),
+                st.obsidian_subfolder,
+                names,
+                (st.local_speaker_name, st.remote_speaker_name),
+            )
+        except Exception:
+            logger.warning("Person notes failed for session %s", session.id, exc_info=True)
+    return path
+
+
 @router.get("/sessions/{session_id}/export/markdown")
 async def export_markdown(session_id: str, ctx: AppContext = Depends(get_ctx)):
     """The note as it would be written to the vault (for preview / clipboard)."""
@@ -52,7 +77,7 @@ async def export_to_obsidian(session_id: str, ctx: AppContext = Depends(get_ctx)
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        path = build_exporter(ctx, vault_path).export(session)
+        path = export_session(ctx, session, vault_path)
         return ExportResponse(path=str(path), message="Exported successfully")
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

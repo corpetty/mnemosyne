@@ -5,6 +5,8 @@ import type {
   TaskItem,
   Brief,
   IndexStatus,
+  PersonSummary,
+  PersonDetail,
   IssueResult,
   RepoCheck,
   Level,
@@ -326,6 +328,14 @@ export async function getIndexStatus(): Promise<IndexStatus> {
 
 export async function rebuildIndex(): Promise<IndexStatus> {
   return request('/api/search/index/rebuild', { method: 'POST' });
+}
+
+export async function listPeople(): Promise<PersonSummary[]> {
+  return request('/api/people');
+}
+
+export async function getPerson(name: string): Promise<PersonDetail> {
+  return request(`/api/people/${encodeURIComponent(name)}`);
 }
 
 // Action items across meetings

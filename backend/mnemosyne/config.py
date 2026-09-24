@@ -182,6 +182,9 @@ class Settings(BaseSettings):
     obsidian_link_people: bool = True  # participants as [[Name]] links
     obsidian_include_transcript: bool = True
     obsidian_auto_export: bool = False  # export after every summary
+    # Also keep a note per person (meetings, tasks) in <subfolder>/people/, unless the vault
+    # already has a note with that person's name.
+    obsidian_people_notes: bool = False
 
     @classmethod
     def settings_customise_sources(

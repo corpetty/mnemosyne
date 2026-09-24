@@ -99,6 +99,7 @@
 				obsidian_link_people: v.obsidian_link_people,
 				obsidian_include_transcript: v.obsidian_include_transcript,
 				obsidian_auto_export: v.obsidian_auto_export,
+				obsidian_people_notes: v.obsidian_people_notes,
 				digest_weekday: v.digest_weekday,
 				digest_hour: v.digest_hour
 			};
@@ -463,6 +464,10 @@
 				<label class="flex items-center gap-2">
 					<input type="checkbox" bind:checked={form.obsidian_include_transcript} disabled={locked('obsidian_include_transcript')} class="rounded border-gray-600 bg-gray-800" />
 					<span class="text-sm text-gray-300">Include the full transcript in exported notes</span>
+				</label>
+				<label class="flex items-center gap-2 col-span-2">
+					<input type="checkbox" bind:checked={form.obsidian_people_notes} disabled={locked('obsidian_people_notes')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Keep a note per person (meetings and tasks) in the people/ folder, unless you already have a note for them</span>
 				</label>
 				<label class="flex items-center gap-2 col-span-2">
 					<input type="checkbox" bind:checked={form.obsidian_auto_export} disabled={locked('obsidian_auto_export')} class="rounded border-gray-600 bg-gray-800" />

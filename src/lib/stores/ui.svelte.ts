@@ -9,6 +9,7 @@ class UiState {
   showAsk = $state(false);
   showDigest = $state(false);
   showTasks = $state(false);
+  showPeople = $state(false);
   activeTab = $state<Tab>('recording');
   sidebarCollapsed = $state(false);
 
@@ -22,6 +23,7 @@ class UiState {
     this.showAsk = false;
     this.showDigest = false;
     this.showTasks = false;
+    this.showPeople = false;
     this.showSettings = false;
   }
 }

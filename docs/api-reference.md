@@ -407,6 +407,24 @@ open_questions: [{session_id, session_name, text}], last_summary}`; questions an
 the most recent matching meeting that has a summary. Used by the calendar banner and the Recording
 tab.
 
+## People
+
+### `GET /api/people`
+Everyone seen as a named speaker (renamed from `SPEAKER_n`), a calendar invitee, an action item
+owner or a saved voice, matched case-insensitively; generic labels (`SPEAKER_n`, `Speaker 2`,
+`UNKNOWN`, `local_speaker_name`, `remote_speaker_name`) are left out. `[{name, meetings, last_seen,
+open_tasks, has_voice}]`, most recently seen first.
+
+### `GET /api/people/{name}`
+`{name, has_voice, meetings: [{id, name, created_at, role: "speaker"|"invited"|"both", talk_seconds,
+share}], total_talk_seconds, open_tasks: [TaskItem], done_tasks: [TaskItem], decisions: [{session_id,
+session_name, created_at, text}]}`; decisions come from the last 10 meetings they spoke in. 404 for
+an unknown or generic name.
+
+With `obsidian_people_notes` on, exporting a meeting also writes `<subfolder>/people/<Name>.md` for
+its people (meetings, open and done tasks). A person who already has a note of that name anywhere
+in the vault is skipped, and notes without the `mnemosyne: person` frontmatter are never overwritten.
+
 ## GitHub issues from action items
 
 Settings: `github_repo` (owner/name), `github_token` (secret; a fine-grained token with

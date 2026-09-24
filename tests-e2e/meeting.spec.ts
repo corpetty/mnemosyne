@@ -146,3 +146,12 @@ test('brief: a later meeting with the same title shows what is open', async ({},
   await expect(brief.getByText(/0 open items, 1 open question/)).toBeVisible();
   await expect(brief.getByText('? Who owns the mobile regression?')).toBeVisible();
 });
+
+test('people: a renamed speaker has a page with their meetings', async () => {
+  await page.getByRole('button', { name: 'People', exact: true }).click();
+  await page.getByRole('button', { name: /^Alice/ }).click();
+  const person = page.getByLabel('Person Alice');
+  await expect(person.getByRole('heading', { name: 'Alice' })).toBeVisible();
+  await expect(person.getByRole('button', { name: 'release-sync', exact: true })).toBeVisible();
+  await expect(person.getByText(/spoke 0:\d\d \(\d+%\)/).first()).toBeVisible();
+});

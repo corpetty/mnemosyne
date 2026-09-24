@@ -166,11 +166,11 @@ def transcribe_session(app: AppContext, session_id: str):
 
 def _auto_export(app: AppContext, session_id: str) -> str | None:
     """Export to Obsidian after a summary; failures are logged, never raised."""
-    from ..api.routes.export import build_exporter
+    from ..api.routes.export import export_session
 
     try:
         session = app.sessions.get_session(session_id)
-        path = build_exporter(app, app.settings.obsidian_vault_path).export(session)
+        path = export_session(app, session, app.settings.obsidian_vault_path)
         logger.info("Auto-exported session %s to %s", session_id, path)
         return str(path)
     except Exception:

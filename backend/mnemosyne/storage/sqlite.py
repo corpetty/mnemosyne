@@ -814,6 +814,14 @@ class SessionRepository:
             score=score,
         )
 
+    def people_rows(self) -> list:
+        """id, name, created_at, participants, attendees, summary_data of every session."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT id, name, created_at, participants, attendees, summary_data FROM sessions"
+                " ORDER BY created_at DESC"
+            ).fetchall()
+
     # ---- digests ---------------------------------------------------------
 
     def sessions_between(self, start: date, end: date) -> list[Session]:
