@@ -276,18 +276,22 @@ flatpak run com.corpetty.mnemosyne
 ```
 
 It records through the PipeWire socket and can read your home directory (for Obsidian vaults).
-Data lives in `~/.var/app/com.corpetty.mnemosyne/`. GPU transcription is not set up inside the
-sandbox; use Parakeet (CPU) or a remote transcriber. Build one yourself from a deb with
+Data lives in `~/.var/app/com.corpetty.mnemosyne/`. With an NVIDIA driver, Flatpak's matching
+`org.freedesktop.Platform.GL.nvidia-*` extension provides CUDA inside the sandbox and GPU support
+installs in the background after the first start, like the other builds. Build one yourself from a deb with
 `bash scripts/build-flatpak.sh <deb>`. The Flatpak does not update itself; install the new bundle.
 
 ### First launch on a target machine
 
 The app installs its own backend into `~/.local/share/com.corpetty.mnemosyne/`:
 
-1. `uv sync` creates a venv with a managed Python 3.13 and the locked dependencies (`onnx` extra always;
-   `gpu` extra when `nvidia-smi` is on the PATH). Progress is shown in the window. Needs internet once;
-   later launches reuse it until an update changes `uv.lock`.
-2. The backend starts from that venv. Session data lives in `.../data/`, settings in
+1. `uv sync` creates a venv with a managed Python 3.13, the API and the CPU engines (`onnx` extra).
+   Progress is shown in the window. Needs internet once; later launches reuse it until an update
+   changes `uv.lock`.
+2. The backend starts from that venv (Parakeet works from here on). With an NVIDIA driver
+   (`nvidia-smi` on the PATH, or a loadable `libcuda.so.1`), the `gpu` extra (torch, WhisperX,
+   pyannote) then installs in the background, shown in the status bar, and the backend restarts
+   by itself once nothing is recording or running. Session data lives in `.../data/`, settings in
    `~/.config/mnemosyne/config.toml`.
 3. ML models download from HuggingFace on first use (Parakeet int8 ~0.6 GB; WhisperX + pyannote 3 to 5 GB).
 
