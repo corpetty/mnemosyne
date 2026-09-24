@@ -43,10 +43,13 @@ modules:
       - install -Dm755 deb/usr/bin/mnemosyne-uv /app/bin/mnemosyne-uv
       - mkdir -p /app/lib && cp -a deb/usr/lib/Mnemosyne /app/lib/Mnemosyne
       - install -Dm644 deb/usr/share/applications/Mnemosyne.desktop /app/share/applications/com.corpetty.mnemosyne.desktop
-      - desktop-file-edit --set-icon=com.corpetty.mnemosyne --set-key=Exec --set-value='mnemosyne %U' /app/share/applications/com.corpetty.mnemosyne.desktop
-      - |
-        for d in deb/usr/share/icons/hicolor/*/apps; do
-          size=$(basename "$(dirname "$d")")
-          install -Dm644 "$d/mnemosyne.png" "/app/share/icons/hicolor/$size/apps/com.corpetty.mnemosyne.png"
-        done
+      - >
+        desktop-file-edit --set-icon=com.corpetty.mnemosyne
+        --set-key=Exec --set-value=mnemosyne
+        --set-key=Categories --set-value='AudioVideo;Audio;Office;'
+        /app/share/applications/com.corpetty.mnemosyne.desktop
+      # Tauri names the 256 px icon's directory 256x256@2.
+      - install -Dm644 deb/usr/share/icons/hicolor/32x32/apps/mnemosyne.png /app/share/icons/hicolor/32x32/apps/com.corpetty.mnemosyne.png
+      - install -Dm644 deb/usr/share/icons/hicolor/128x128/apps/mnemosyne.png /app/share/icons/hicolor/128x128/apps/com.corpetty.mnemosyne.png
+      - install -Dm644 deb/usr/share/icons/hicolor/256x256@2/apps/mnemosyne.png /app/share/icons/hicolor/256x256/apps/com.corpetty.mnemosyne.png
       - install -Dm644 com.corpetty.mnemosyne.metainfo.xml /app/share/metainfo/com.corpetty.mnemosyne.metainfo.xml

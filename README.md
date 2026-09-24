@@ -251,6 +251,20 @@ and lockfile into `src-tauri/resources/backend/`, and downloads the pinned `uv` 
 Artifacts land in `src-tauri/target/release/bundle/`. Bundles are small (tens of MB): **no Python, no
 torch, no models are shipped**.
 
+### Flatpak
+
+Each release also has a `.flatpak` bundle (GNOME 50 runtime, which Flatpak fetches from Flathub):
+
+```bash
+flatpak install --user Mnemosyne_0.5.0_x86_64.flatpak
+flatpak run com.corpetty.mnemosyne
+```
+
+It records through the PipeWire socket and can read your home directory (for Obsidian vaults).
+Data lives in `~/.var/app/com.corpetty.mnemosyne/`. GPU transcription is not set up inside the
+sandbox; use Parakeet (CPU) or a remote transcriber. Build one yourself from a deb with
+`bash scripts/build-flatpak.sh <deb>`. The Flatpak does not update itself; install the new bundle.
+
 ### First launch on a target machine
 
 The app installs its own backend into `~/.local/share/com.corpetty.mnemosyne/`:
