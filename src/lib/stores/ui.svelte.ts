@@ -19,6 +19,8 @@ class UiState {
   shellStage = $state<ShellStage>(null);
   shellMessage = $state('');
   shellLog = $state<string[]>([]);
+  /** Background install of the GPU extra (release builds with an NVIDIA driver). */
+  gpuInstall = $state<{ state: 'installing' | 'done' | 'error'; message: string } | null>(null);
 
   closePanels() {
     this.showAsk = false;

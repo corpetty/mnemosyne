@@ -388,6 +388,22 @@ function onConnected(): () => void {
   };
 }
 
+function restartBackendWhenIdle() {
+  const busy = () =>
+    audioState.isRecording ||
+    Object.values(jobsState.jobs).some((j) => (j.status === 'queued' || j.status === 'running') && j.kind !== 'live');
+  const attempt = () => {
+    if (busy()) {
+      setTimeout(attempt, 10_000);
+      return;
+    }
+    uiState.gpuInstall = { state: 'done', message: 'GPU support installed; restarting the backend…' };
+    invokeShell('restart_backend');
+    setTimeout(() => (uiState.gpuInstall = null), 30_000);
+  };
+  attempt();
+}
+
 /**
  * Poll until the backend answers, then start the stores. In release builds the first
  * launch installs dependencies and can take minutes; the shell reports progress.
@@ -417,6 +433,17 @@ export function connectApp(): () => void {
       }
     }
   }
+
+  // GPU support installs in the background after the first start; restart the backend
+  // to pick it up once nothing is recording or running.
+  import('@tauri-apps/api/event')
+    .then(({ listen }) =>
+      listen<{ state: 'installing' | 'done' | 'error'; message: string; restart: boolean }>('gpu-install', (e) => {
+        uiState.gpuInstall = { state: e.payload.state, message: e.payload.message };
+        if (e.payload.state === 'done' && e.payload.restart) restartBackendWhenIdle();
+      })
+    )
+    .catch(() => {});
 
   // Shell events only exist inside Tauri; ignore when running in a plain browser.
   import('@tauri-apps/api/event')

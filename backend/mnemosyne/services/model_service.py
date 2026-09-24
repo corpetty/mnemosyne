@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+GPU_MODULES = {"torch", "torchaudio", "whisperx", "pyannote", "faster_whisper", "ctranslate2"}
+
 
 class ModelService:
     def __init__(self, settings: Settings):
@@ -53,7 +55,19 @@ class ModelService:
     async def ensure_loaded(self) -> TranscriptionEngine:
         engine = self.engine
         if not engine.is_loaded():
-            await engine.load()
+            try:
+                await engine.load()
+            except ModuleNotFoundError as e:
+                if e.name and e.name.split(".")[0] in GPU_MODULES:
+                    # Release builds install the GPU extra in the background after the
+                    # first start, and only when an NVIDIA driver is present.
+                    self._engine = None
+                    raise RuntimeError(
+                        f"{self.settings.transcriber} needs GPU support ({e.name}), which is "
+                        "not installed yet: it installs in the background on machines with an "
+                        "NVIDIA driver. Use Parakeet (Settings -> Transcription) meanwhile."
+                    ) from e
+                raise
         return engine
 
     async def unload(self) -> None:

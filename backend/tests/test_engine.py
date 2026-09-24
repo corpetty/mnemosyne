@@ -234,3 +234,22 @@ def test_changing_engine_settings_unloads(client, ctx, fake_engine):
     fake_engine.loaded = True
     client.put("/api/settings", json={"diarizer": "none"})
     assert ctx.models._engine is None
+
+
+@pytest.mark.anyio
+async def test_missing_gpu_stack_gives_a_clear_error(monkeypatch):
+    from mnemosyne.config import Settings
+    from mnemosyne.services.model_service import ModelService
+
+    class NoTorch:
+        def is_loaded(self):
+            return False
+
+        async def load(self):
+            raise ModuleNotFoundError("No module named 'torch'", name="torch")
+
+    svc = ModelService(Settings(transcriber="whisperx"))
+    svc._engine = NoTorch()
+    with pytest.raises(RuntimeError, match="needs GPU support"):
+        await svc.ensure_loaded()
+    assert svc._engine is None  # rebuilt next time, once the extra is installed

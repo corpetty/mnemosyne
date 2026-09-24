@@ -157,6 +157,7 @@ fn dev_command() -> StdCommand {
 }
 
 /// Release: locations of the bundled backend, the uv sidecar, and per-user dirs.
+#[derive(Clone)]
 struct ReleaseLayout {
     backend_dir: PathBuf,
     uv: PathBuf,
@@ -196,34 +197,48 @@ impl ReleaseLayout {
         self.venv.join("bin").join("python")
     }
 
+    /// Written after the base + onnx sync for this uv.lock.
     fn stamp(&self) -> PathBuf {
         self.venv.join(".installed-uv.lock")
     }
 
+    /// Written after the GPU extra is synced for this uv.lock.
+    fn gpu_stamp(&self) -> PathBuf {
+        self.venv.join(".installed-gpu-uv.lock")
+    }
+
+    fn lock(&self) -> Vec<u8> {
+        fs::read(self.backend_dir.join("uv.lock")).unwrap_or_default()
+    }
+
     fn is_installed(&self) -> bool {
-        let lock = fs::read(self.backend_dir.join("uv.lock")).unwrap_or_default();
-        self.python().is_file() && fs::read(self.stamp()).map(|b| b == lock).unwrap_or(false)
+        self.python().is_file() && fs::read(self.stamp()).map(|b| b == self.lock()).unwrap_or(false)
+    }
+
+    fn gpu_installed(&self) -> bool {
+        self.python().is_file()
+            && fs::read(self.gpu_stamp()).map(|b| b == self.lock()).unwrap_or(false)
     }
 }
 
-/// `uv sync` the backend into the per-user venv, streaming progress lines.
-fn install_backend(app: &AppHandle, layout: &ReleaseLayout) -> Result<(), String> {
-    let gpu = on_path("nvidia-smi");
-    emit_status(
-        app,
-        "installing",
-        if gpu {
-            "Installing Python runtime and ML dependencies (NVIDIA GPU detected). First run only."
-        } else {
-            "Installing Python runtime and dependencies (CPU engines only). First run only."
-        },
-    );
-
+/// `uv sync` the backend into the per-user venv, passing each progress line to `on_line`.
+/// `gpu` adds the GPU extra (torch, WhisperX). `inexact` keeps packages the selected extras
+/// do not need (so a base sync after an upgrade does not uninstall torch just to reinstall
+/// it in the GPU phase). Returns whether any package was installed or removed.
+fn uv_sync(
+    layout: &ReleaseLayout,
+    gpu: bool,
+    inexact: bool,
+    mut on_line: impl FnMut(&str),
+) -> Result<bool, String> {
     let mut cmd = StdCommand::new(&layout.uv);
     scrub_runtime_env(&mut cmd);
     cmd.args(["sync", "--frozen", "--no-dev", "--extra", "onnx"]);
     if gpu {
         cmd.args(["--extra", "gpu"]);
+    }
+    if inexact {
+        cmd.arg("--inexact");
     }
     cmd.arg("--project")
         .arg(&layout.backend_dir)
@@ -241,16 +256,18 @@ fn install_backend(app: &AppHandle, layout: &ReleaseLayout) -> Result<(), String
     let mut child = cmd.spawn().map_err(|e| format!("failed to run uv: {e}"))?;
     let stderr = child.stderr.take().ok_or("no stderr from uv")?;
     let mut last_lines: Vec<String> = Vec::new();
+    let mut changed = false;
     for line in BufReader::new(stderr).lines().map_while(Result::ok) {
         let line = line.trim().to_string();
         if line.is_empty() {
             continue;
         }
+        changed |= line.starts_with("+ ") || line.starts_with("- ");
         last_lines.push(line.clone());
         if last_lines.len() > 20 {
             last_lines.remove(0);
         }
-        emit_status(app, "installing", line);
+        on_line(&line);
     }
     let status = child.wait().map_err(|e| format!("uv wait: {e}"))?;
     if !status.success() {
@@ -259,9 +276,50 @@ fn install_backend(app: &AppHandle, layout: &ReleaseLayout) -> Result<(), String
             last_lines.join("\n")
         ));
     }
-    let lock = fs::read(layout.backend_dir.join("uv.lock")).map_err(|e| e.to_string())?;
-    fs::write(layout.stamp(), lock).map_err(|e| e.to_string())?;
+    Ok(changed)
+}
+
+/// Phase 1 (blocking, before the backend starts): Python, the API and the CPU engines.
+fn install_base(app: &AppHandle, layout: &ReleaseLayout) -> Result<(), String> {
+    emit_status(
+        app,
+        "installing",
+        "Installing Python runtime and dependencies. First run only.",
+    );
+    uv_sync(layout, false, true, |line| emit_status(app, "installing", line))?;
+    fs::write(layout.stamp(), layout.lock()).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[derive(Clone, serde::Serialize)]
+struct GpuInstall {
+    state: String, // installing | done | error
+    message: String,
+    restart: bool, // the backend must restart to use it
+}
+
+fn emit_gpu(app: &AppHandle, state: &str, message: impl Into<String>, restart: bool) {
+    let message = message.into();
+    info!("[gpu {}] {}", state, message);
+    let _ = app.emit(
+        "gpu-install",
+        GpuInstall { state: state.to_string(), message, restart },
+    );
+}
+
+/// Phase 2 (in the background, while the backend already runs on CPU engines): the GPU
+/// extra. The UI restarts the backend once nothing is recording or running.
+fn install_gpu(app: &AppHandle, layout: &ReleaseLayout) {
+    emit_gpu(app, "installing", "Installing GPU support (NVIDIA)…", false);
+    match uv_sync(layout, true, false, |line| emit_gpu(app, "installing", line, false)) {
+        Ok(changed) => {
+            if let Err(e) = fs::write(layout.gpu_stamp(), layout.lock()) {
+                warn!("could not write the GPU stamp: {e}");
+            }
+            emit_gpu(app, "done", "GPU support installed", changed);
+        }
+        Err(e) => emit_gpu(app, "error", e, false),
+    }
 }
 
 fn release_command(layout: &ReleaseLayout) -> StdCommand {
@@ -282,6 +340,7 @@ fn release_command(layout: &ReleaseLayout) -> StdCommand {
 
 /// Prepare (install if needed) and spawn the backend. Runs on a worker thread.
 fn start_backend(app: AppHandle) {
+    let mut gpu_layout: Option<ReleaseLayout> = None;
     let mut cmd = if cfg!(debug_assertions) {
         dev_command()
     } else {
@@ -293,10 +352,13 @@ fn start_backend(app: AppHandle) {
             }
         };
         if !layout.is_installed() {
-            if let Err(e) = install_backend(&app, &layout) {
+            if let Err(e) = install_base(&app, &layout) {
                 emit_status(&app, "error", e);
                 return;
             }
+        }
+        if gpu_available() && !layout.gpu_installed() {
+            gpu_layout = Some(layout.clone());
         }
         release_command(&layout)
     };
@@ -326,7 +388,28 @@ fn start_backend(app: AppHandle) {
             emit_status(&app2, "error", "Backend did not become healthy within 120s");
         }
         let _ = app2.emit("backend-ready", healthy);
+        if healthy {
+            if let Some(layout) = gpu_layout {
+                let app3 = app2.clone();
+                let _ = std::thread::Builder::new()
+                    .name("gpu-install".into())
+                    .spawn(move || install_gpu(&app3, &layout));
+            }
+        }
     });
+}
+
+/// Stop the backend and start it again (after the GPU extra was installed).
+#[tauri::command]
+fn restart_backend(app: AppHandle) {
+    info!("Restarting the backend");
+    if let Some(mut child) = app.state::<BackendState>().child.lock().unwrap().take() {
+        kill_process_tree(&mut child);
+    }
+    let handle = app.clone();
+    let _ = std::thread::Builder::new()
+        .name("backend-supervisor".into())
+        .spawn(move || start_backend(handle));
 }
 
 // ---- tray, single instance, remote control -----------------------------------
@@ -407,23 +490,32 @@ fn restart_app(app: AppHandle) {
     app.request_restart();
 }
 
+/// Whether a shared library can be loaded (dlopen, closed right away).
+fn lib_loadable(name: &str) -> bool {
+    let c = std::ffi::CString::new(name).unwrap();
+    // SAFETY: dlopen with a valid C string; the handle is closed right away.
+    unsafe {
+        let h = libc::dlopen(c.as_ptr(), libc::RTLD_LAZY);
+        if h.is_null() {
+            false
+        } else {
+            libc::dlclose(h);
+            true
+        }
+    }
+}
+
 /// Whether the library the Linux tray loads at runtime can be found.
 fn appindicator_available() -> bool {
     ["libayatana-appindicator3.so.1", "libappindicator3.so.1"]
         .iter()
-        .any(|name| {
-            let c = std::ffi::CString::new(*name).unwrap();
-            // SAFETY: dlopen with a valid C string; the handle is closed right away.
-            unsafe {
-                let h = libc::dlopen(c.as_ptr(), libc::RTLD_LAZY);
-                if h.is_null() {
-                    false
-                } else {
-                    libc::dlclose(h);
-                    true
-                }
-            }
-        })
+        .any(|name| lib_loadable(name))
+}
+
+/// An NVIDIA driver is usable: nvidia-smi on PATH, or the CUDA driver library loadable
+/// (the Flatpak's NVIDIA GL extension ships libcuda but not nvidia-smi).
+fn gpu_available() -> bool {
+    on_path("nvidia-smi") || lib_loadable("libcuda.so.1")
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -483,7 +575,8 @@ pub fn run() {
             take_launch_action,
             show_window,
             restart_app,
-            can_self_update
+            can_self_update,
+            restart_backend
         ])
         .setup(|app| {
             app.handle().plugin(
