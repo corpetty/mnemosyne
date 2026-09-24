@@ -40,6 +40,7 @@ class AppContext:
     echo: EchoCancelManager = field(default_factory=EchoCancelManager)
     _retention_task: asyncio.Task | None = None
     level_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
+    github_transport: object | None = None  # tests inject an httpx transport
 
     @classmethod
     def build(cls, settings: Settings) -> AppContext:

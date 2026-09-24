@@ -80,7 +80,8 @@ def render_meeting_note(
             sections.append("## Action Items\n")
             for item in summary_data.action_items:
                 owner = f" ({person(item.owner)})" if item.owner else ""
-                sections.append(f"- [ ] {item.text}{owner}")
+                issue = f" [issue]({item.issue_url})" if item.issue_url else ""
+                sections.append(f"- [ ] {item.text}{owner}{issue}")
             sections.append("")
         if summary_data.open_questions:
             sections.append("## Open Questions\n")

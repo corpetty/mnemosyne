@@ -346,6 +346,23 @@ links in Obsidian frontmatter.
 
 ---
 
+## GitHub issues from action items
+
+Settings: `github_repo` (owner/name), `github_token` (secret; a fine-grained token with
+"Issues: read and write"), `github_labels` (comma-separated, default `meeting-action`).
+
+- `GET /api/integrations/github/check` → `{ ok, repo, can_create_issues, message }`.
+- `POST /api/sessions/{id}/action-items/github` `{ "indices": [0, 2] }` → `{ created: [{index, url}],
+  skipped: [...], errors: [...] }`. One issue per selected action item (title = the item; body names
+  the meeting, date, owner and the meeting's decisions). Each created issue's URL is stored on the
+  item (`summary_data.action_items[i].issue_url`), so it is skipped next time. If the repository
+  rejects the labels, the issue is created without them. `400` when not configured or no action items.
+
+Obsidian export links created issues next to their task. `MNEMOSYNE_GITHUB_API` overrides the API base
+URL (for testing against a stand-in).
+
+---
+
 ## Speaker profiles
 
 Known voices, built from renames. Vectors are never returned.

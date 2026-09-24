@@ -1,5 +1,7 @@
 import type {
   Ask,
+  IssueResult,
+  RepoCheck,
   Level,
   SelfTestResult,
   CalendarResponse,
@@ -330,4 +332,16 @@ export async function getDeviceLevel(deviceId: number, seconds = 1): Promise<Lev
 
 export async function runSelfTest(deviceId: number): Promise<SelfTestResult> {
   return request('/api/audio/self-test', { method: 'POST', body: JSON.stringify({ device_id: deviceId }) });
+}
+
+// GitHub issues from action items
+export async function checkGitHub(): Promise<RepoCheck> {
+  return request('/api/integrations/github/check');
+}
+
+export async function createGitHubIssues(sessionId: string, indices: number[]): Promise<IssueResult> {
+  return request(`/api/sessions/${sessionId}/action-items/github`, {
+    method: 'POST',
+    body: JSON.stringify({ indices })
+  });
 }

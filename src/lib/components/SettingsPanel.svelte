@@ -4,6 +4,7 @@
 	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
 	import StorageSettings from './StorageSettings.svelte';
 	import { calendarState } from '$lib/stores/calendar.svelte.js';
+	import { checkGitHub } from '$lib/api/backend.js';
 	import type { ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	let settings = $state<SettingsResponse | null>(null);
@@ -16,15 +17,16 @@
 	// Editable copy of the values
 	let form = $state<SettingsUpdate>({});
 	// Secret inputs are separate: '' = keep current, text = replace
-	type SecretKey = 'hf_token' | 'openai_api_key' | 'anthropic_api_key' | 'remote_stt_api_key' | 'api_token' | 'calendar_ics_url';
-	const SECRET_KEYS: SecretKey[] = ['hf_token', 'openai_api_key', 'anthropic_api_key', 'remote_stt_api_key', 'api_token', 'calendar_ics_url'];
+	type SecretKey = 'hf_token' | 'openai_api_key' | 'anthropic_api_key' | 'remote_stt_api_key' | 'api_token' | 'calendar_ics_url' | 'github_token';
+	const SECRET_KEYS: SecretKey[] = ['hf_token', 'openai_api_key', 'anthropic_api_key', 'remote_stt_api_key', 'api_token', 'calendar_ics_url', 'github_token'];
 	const emptySecrets = (): Record<SecretKey, string> => ({
 		hf_token: '',
 		openai_api_key: '',
 		anthropic_api_key: '',
 		remote_stt_api_key: '',
 		api_token: '',
-		calendar_ics_url: ''
+		calendar_ics_url: '',
+		github_token: ''
 	});
 	let connUrl = $state(connectionState.url);
 	let connToken = $state(connectionState.token);
@@ -80,6 +82,8 @@
 				auto_summarize: v.auto_summarize,
 				auto_name_sessions: v.auto_name_sessions,
 				calendar_auto_name: v.calendar_auto_name,
+				github_repo: v.github_repo,
+				github_labels: v.github_labels,
 				ollama_url: v.ollama_url,
 				vllm_url: v.vllm_url,
 				default_provider: v.default_provider,
@@ -128,6 +132,17 @@
 			: calendarState.error
 				? `Error: ${calendarState.error}`
 				: `OK: ${calendarState.upcoming.length} meeting(s) in the next 12 hours${calendarState.current ? `, now: ${calendarState.current.title}` : ''}.`;
+	}
+
+	let ghTest = $state<string | null>(null);
+	async function testGitHub() {
+		ghTest = 'Checking…';
+		try {
+			const r = await checkGitHub();
+			ghTest = `${r.ok ? '✓' : '✗'} ${r.message}`;
+		} catch (e) {
+			ghTest = e instanceof Error ? e.message : 'Check failed';
+		}
 	}
 
 	async function clearSecret(key: SecretKey) {
@@ -342,6 +357,40 @@
 				<div class="flex items-center gap-2">
 					<button onclick={testCalendar} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Test</button>
 					{#if calTest}<span class="text-xs text-gray-400">{calTest}</span>{/if}
+				</div>
+			</div>
+		</section>
+
+		<!-- GitHub -->
+		<section>
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">GitHub issues</h3>
+			<p class="text-xs text-gray-500 mb-3">
+				Turn selected action items into issues. Use a fine-grained token limited to this repository with "Issues: read and write". Save, then Test.
+			</p>
+			<div class="grid grid-cols-2 gap-3">
+				<label>
+					<span class={labelClass}>Repository (owner/name)</span>
+					<input type="text" bind:value={form.github_repo} disabled={locked('github_repo')} placeholder="corpetty/notes" class={inputClass} />
+				</label>
+				<label>
+					<span class={labelClass}>Labels (comma-separated)</span>
+					<input type="text" bind:value={form.github_labels} disabled={locked('github_labels')} class={inputClass} />
+				</label>
+				<label class="col-span-2">
+					<span class={labelClass}>
+						Token
+						{#if settings.secrets_set.github_token}<span class="text-green-500 ml-1">set</span>{/if}
+					</span>
+					<div class="flex gap-2">
+						<input type="password" bind:value={secrets.github_token} disabled={locked('github_token')} placeholder={settings.secrets_set.github_token ? '•••••••• (leave blank to keep)' : 'github_pat_…'} class={inputClass} />
+						{#if settings.secrets_set.github_token && !locked('github_token')}
+							<button onclick={() => clearSecret('github_token')} class="text-xs text-gray-500 hover:text-red-400">Clear</button>
+						{/if}
+					</div>
+				</label>
+				<div class="flex items-center gap-2 col-span-2">
+					<button onclick={testGitHub} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Test</button>
+					{#if ghTest}<span class="text-xs text-gray-400">{ghTest}</span>{/if}
 				</div>
 			</div>
 		</section>

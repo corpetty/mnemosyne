@@ -269,6 +269,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/integrations/github/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check Github */
+        get: operations["check_github_api_integrations_github_check_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs": {
         parameters: {
             query?: never;
@@ -392,6 +409,26 @@ export interface paths {
         head?: never;
         /** Rename Session */
         patch: operations["rename_session_api_sessions__session_id__patch"];
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/action-items/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Github Issues
+         * @description Create one issue per selected action item; remembers each issue's URL.
+         */
+        post: operations["create_github_issues_api_sessions__session_id__action_items_github_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/sessions/{session_id}/attendees": {
@@ -753,6 +790,8 @@ export interface components {
     schemas: {
         /** ActionItem */
         ActionItem: {
+            /** Issue Url */
+            issue_url: string | null;
             /** Owner */
             owner: string | null;
             /** Text */
@@ -885,6 +924,11 @@ export interface components {
             /** Sessions */
             sessions: components["schemas"]["SessionUsage"][];
         };
+        /** CreateIssuesRequest */
+        CreateIssuesRequest: {
+            /** Indices */
+            indices: number[];
+        };
         /** CreateSessionRequest */
         CreateSessionRequest: {
             /**
@@ -892,6 +936,13 @@ export interface components {
              * @default Untitled Session
              */
             name: string;
+        };
+        /** CreatedIssue */
+        CreatedIssue: {
+            /** Index */
+            index: number;
+            /** Url */
+            url: string;
         };
         /** DeviceResponse */
         DeviceResponse: {
@@ -944,6 +995,15 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** IssueResult */
+        IssueResult: {
+            /** Created */
+            created: components["schemas"]["CreatedIssue"][];
+            /** Errors */
+            errors: string[];
+            /** Skipped */
+            skipped: number[];
         };
         /** Job */
         Job: {
@@ -1104,6 +1164,17 @@ export interface components {
             label: string;
             /** Name */
             name: string;
+        };
+        /** RepoCheck */
+        RepoCheck: {
+            /** Can Create Issues */
+            can_create_issues: boolean | null;
+            /** Message */
+            message: string;
+            /** Ok */
+            ok: boolean;
+            /** Repo */
+            repo: string;
         };
         /** SearchHit */
         SearchHit: {
@@ -1318,6 +1389,12 @@ export interface components {
             echo_dedup?: boolean | null;
             /** Echo Similarity */
             echo_similarity?: number | null;
+            /** Github Labels */
+            github_labels?: string | null;
+            /** Github Repo */
+            github_repo?: string | null;
+            /** Github Token */
+            github_token?: string | null;
             /** Glossary */
             glossary?: string | null;
             /** Glossary Llm Correct */
@@ -1429,6 +1506,12 @@ export interface components {
             echo_dedup: boolean;
             /** Echo Similarity */
             echo_similarity: number;
+            /** Github Labels */
+            github_labels: string;
+            /** Github Repo */
+            github_repo: string;
+            /** Github Token */
+            github_token: string;
             /** Glossary */
             glossary: string;
             /** Glossary Llm Correct */
@@ -2156,6 +2239,26 @@ export interface operations {
             };
         };
     };
+    check_github_api_integrations_github_check_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoCheck"];
+                };
+            };
+        };
+    };
     list_jobs_api_jobs_get: {
         parameters: {
             query?: {
@@ -2439,6 +2542,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_github_issues_api_sessions__session_id__action_items_github_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateIssuesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueResult"];
                 };
             };
             /** @description Validation Error */

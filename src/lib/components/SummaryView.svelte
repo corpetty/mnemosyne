@@ -11,6 +11,59 @@
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import Markdown from './Markdown.svelte';
+	import { createGitHubIssues } from '$lib/api/backend.js';
+
+	let selected = $state<Set<number>>(new Set());
+	let creating = $state(false);
+	let lastSession: string | null = null;
+	$effect(() => {
+		const id = sessionState.activeSession?.id ?? null;
+		if (id !== lastSession) {
+			lastSession = id;
+			selected = new Set();
+		}
+	});
+
+	function toggle(i: number) {
+		const next = new Set(selected);
+		if (next.has(i)) next.delete(i);
+		else next.add(i);
+		selected = next;
+	}
+
+	async function openLink(href: string) {
+		try {
+			const { invoke } = await import('@tauri-apps/api/core');
+			await invoke('plugin:shell|open', { path: href });
+		} catch {
+			window.open(href, '_blank', 'noopener,noreferrer');
+		}
+	}
+
+	async function createIssues() {
+		const session = sessionState.activeSession;
+		if (!session || selected.size === 0) return;
+		const settings = await getSettings();
+		const repo = settings.values.github_repo;
+		if (!repo) {
+			toastState.error('Set a GitHub repository and token in Settings first');
+			return;
+		}
+		const n = selected.size;
+		if (!confirm(`Create ${n} issue${n > 1 ? 's' : ''} in ${repo}?`)) return;
+		creating = true;
+		try {
+			const r = await createGitHubIssues(session.id, [...selected].sort((a, b) => a - b));
+			selected = new Set();
+			await sessionState.refreshActive();
+			if (r.created.length) toastState.success(`Created ${r.created.length} issue${r.created.length > 1 ? 's' : ''} in ${repo}`);
+			for (const err of r.errors) toastState.error(err);
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not create issues');
+		} finally {
+			creating = false;
+		}
+	}
 	import type { ProviderModels, SummaryStyle } from '$lib/types/index.js';
 
 	let providers = $state<ProviderModels[]>(cachedProviders ?? []);
@@ -118,10 +171,22 @@
 						<section class="bg-gray-900 border border-gray-700 rounded-lg p-3">
 							<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Action items</h4>
 							<ul class="space-y-1 text-sm text-gray-200">
-								{#each data.action_items as a}
-									<li class="flex gap-2"><span class="text-gray-600">☐</span><span>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}</span></li>
+								{#each data.action_items as a, i}
+									<li class="flex gap-2 items-start">
+										{#if a.issue_url}
+											<a href={a.issue_url} target="_blank" rel="noopener noreferrer" onclick={(e) => { e.preventDefault(); openLink(a.issue_url!); }} class="text-green-500 hover:text-green-300 text-xs mt-0.5" title="Open the GitHub issue">✓ issue</a>
+										{:else}
+											<input type="checkbox" checked={selected.has(i)} onchange={() => toggle(i)} class="mt-1 rounded border-gray-600 bg-gray-800" title="Select to create a GitHub issue" />
+										{/if}
+										<span>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}</span>
+									</li>
 								{/each}
 							</ul>
+							{#if selected.size > 0}
+								<button onclick={createIssues} disabled={creating} class="mt-2 px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50">
+									{creating ? 'Creating…' : `Create ${selected.size} GitHub issue${selected.size > 1 ? 's' : ''}`}
+								</button>
+							{/if}
 						</section>
 					{/if}
 					{#if data.open_questions.length}

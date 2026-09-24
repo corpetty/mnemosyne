@@ -22,6 +22,7 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Search** across every transcript, summary and note, with jump-to-segment
 - **Calendar-aware**: paste your calendar's private ICS link and recordings are named after the meeting in progress, invitees are offered as speaker names, and a banner offers to record when a meeting starts
 - **Storage control**: see what audio takes space, delete audio but keep the transcript, or keep audio for N days only
+- **Action items to GitHub issues**: tick items in a summary and create issues in your repository, linked back from the meeting
 - **MCP server**: search, read and ask your meetings from Claude Code, Claude Desktop or any MCP client
 - **Ask your meetings** (Ctrl+K): questions answered from your transcripts with numbered citations that jump to the exact moment; history is kept
 - **Speakers that stick**: rename a speaker once and the app remembers the voice, labelling that person automatically in future meetings

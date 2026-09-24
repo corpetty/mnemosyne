@@ -40,6 +40,8 @@ export type CalendarEvent = S['CalendarEvent'];
 export type CalendarResponse = S['CalendarResponse'];
 export type Level = S['Level'];
 export type SelfTestResult = S['SelfTestResult'];
+export type RepoCheck = S['RepoCheck'];
+export type IssueResult = S['IssueResult'];
 
 /** Events pushed by the backend over /ws. */
 export type BackendEvent =

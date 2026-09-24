@@ -59,6 +59,7 @@ SECRET_FIELDS = frozenset(
         "remote_stt_api_key",
         "api_token",
         "calendar_ics_url",
+        "github_token",
     }
 )
 
@@ -149,6 +150,11 @@ class Settings(BaseSettings):
     # Storage: delete audio (never transcripts) of transcribed sessions older than
     # this many days. 0 keeps audio forever.
     audio_retention_days: int = 0
+
+    # GitHub issues from action items
+    github_repo: str = ""  # owner/name
+    github_token: str = ""  # fine-grained token with Issues: read and write on that repo
+    github_labels: str = "meeting-action"  # comma-separated
 
     # Summaries
     summary_style: str = "meeting"  # see summarization/prompts.py STYLES

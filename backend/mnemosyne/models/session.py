@@ -48,6 +48,7 @@ def transcript_hash(segments: list[TranscriptSegment]) -> str:
 class ActionItem(ApiModel):
     text: str
     owner: str | None = None
+    issue_url: str | None = None  # set once an issue was created for this item
 
 
 class SummaryData(ApiModel):
