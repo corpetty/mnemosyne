@@ -141,6 +141,12 @@ progress with ETA; glossary (transcription/glossary.py); MCP server (mcp_server.
 to GitHub issues (services/github_service.py); weekly digest (services/digest_service.py);
 Playwright e2e on a demo-mode backend; Tauri updater; Flatpak (flatpak/).
 
+Neat-ideas batch (docs/plans/2026-09-24-neat-ideas.md, unreleased): talk time
+(services/stats.py), chapters (`summary_data.chapters`), tasks across meetings
+(services/tasks.py, `ActionItem.done`, carried over on re-summarize), follow-up drafts
+(services/followup.py), pre-meeting brief (services/brief.py), mention alerts
+(transcription/mentions.py, `mention` events, tauri-plugin-notification).
+
 Candidates next: offline installer (pre-seeded uv cache); GPU inside the Flatpak; live
 diarization upgrades (Sortformer); publishing the Flatpak to Flathub (needs a license).
 

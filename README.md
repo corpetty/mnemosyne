@@ -22,6 +22,11 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Search** across every transcript, summary and note, with jump-to-segment
 - **Calendar-aware**: paste your calendar's private ICS link and recordings are named after the meeting in progress, invitees are offered as speaker names, and a banner offers to record when a meeting starts
 - **Storage control**: see what audio takes space, delete audio but keep the transcript, or keep audio for N days only
+- **Talk time and chapters**: a who-spoke-when strip and talk-time table per meeting, and LLM chapters you can jump to from the summary
+- **Tasks across meetings**: every action item in one list, tick them off (kept when you re-summarize, `- [x]` in Obsidian)
+- **Follow-up drafts**: an email or chat recap of decisions and next steps, ready to paste
+- **Pre-meeting brief**: when a recurring meeting (or the same people) comes around, what is still open from last time
+- **Mention alerts**: a notification when your name comes up while recording
 - **Weekly digest**: one note per week with an overview and themes from the LLM plus every decision and action item, on demand or on a schedule, saved to your vault
 - **Action items to GitHub issues**: tick items in a summary and create issues in your repository, linked back from the meeting
 - **MCP server**: search, read and ask your meetings from Claude Code, Claude Desktop or any MCP client
