@@ -3,6 +3,7 @@ import type {
   Digest,
   MeetingStats,
   TaskItem,
+  Brief,
   IssueResult,
   RepoCheck,
   Level,
@@ -309,6 +310,13 @@ export async function getSessionStats(id: string): Promise<MeetingStats> {
 
 export async function draftFollowup(sessionId: string, style: 'email' | 'chat'): Promise<Job> {
   return request(`/api/sessions/${sessionId}/followup`, { method: 'POST', body: JSON.stringify({ style }) });
+}
+
+export async function getBrief(title: string, attendees: string[], exclude?: string): Promise<Brief> {
+  const q = new URLSearchParams({ title });
+  for (const a of attendees) q.append('attendees', a);
+  if (exclude) q.set('exclude', exclude);
+  return request(`/api/brief?${q}`);
 }
 
 // Action items across meetings

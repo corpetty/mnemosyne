@@ -684,6 +684,30 @@ class SessionRepository:
                 )
         return out
 
+    def meeting_meta(self):
+        """Name, date, attendees and summary of every session, without transcripts."""
+        from ..services.brief import MeetingMeta
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, name, created_at, attendees, summary, summary_data FROM sessions"
+            ).fetchall()
+        return [
+            MeetingMeta(
+                id=r["id"],
+                name=r["name"],
+                created_at=_dt(r["created_at"]),
+                attendees=json.loads(r["attendees"] or "[]"),
+                summary=r["summary"] or "",
+                summary_data=(
+                    SummaryData.model_validate_json(r["summary_data"])
+                    if r["summary_data"]
+                    else None
+                ),
+            )
+            for r in rows
+        ]
+
     # ---- digests ---------------------------------------------------------
 
     def sessions_between(self, start: date, end: date) -> list[Session]:

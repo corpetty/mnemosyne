@@ -123,3 +123,14 @@ test('tasks: tick off an action item across meetings', async () => {
   await page.getByRole('button', { name: 'Summary', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Reopen: Update the docs before the release' })).toBeVisible();
 });
+
+test('brief: a later meeting with the same title shows what is open', async ({}, info) => {
+  await importMeeting(page, info.outputDir, 'release-sync-2');
+  await page.getByRole('button', { name: 'Recording', exact: true }).click();
+  const brief = page.getByLabel('Meeting brief');
+  await expect(brief.getByText('From earlier meetings:')).toBeVisible();
+  await expect(brief.getByRole('button', { name: 'release-sync', exact: true })).toBeVisible();
+  // The only action item was ticked off in the tasks test; the question is still open.
+  await expect(brief.getByText(/0 open items, 1 open question/)).toBeVisible();
+  await expect(brief.getByText('? Who owns the mobile regression?')).toBeVisible();
+});

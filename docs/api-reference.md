@@ -387,6 +387,15 @@ Body `{"done": true}`. Returns the updated item and publishes a `session` event;
 session or index. Re-summarizing a meeting keeps `done` and `issue_url` on items whose text matches
 the previous summary's (same words, or at least 85% similar).
 
+### `GET /api/brief?title=&attendees=&attendees=&exclude=`
+What is still open from earlier meetings like this one: up to five, newest first, whose name
+matches `title` (ignoring case, punctuation, numbers and dates; generic names such as "Untitled
+Session" never match) or that share at least two `attendees` (or the same one or two people).
+Returns `{meetings: [{id, name, created_at, match: "title"|"people"|"both"}], open_items: [TaskItem],
+open_questions: [{session_id, session_name, text}], last_summary}`; questions and summary come from
+the most recent matching meeting that has a summary. Used by the calendar banner and the Recording
+tab.
+
 ## GitHub issues from action items
 
 Settings: `github_repo` (owner/name), `github_token` (secret; a fine-grained token with

@@ -255,6 +255,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Brief
+         * @description What is still open from earlier meetings with this title or these people.
+         */
+        get: operations["get_brief_api_brief_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/calendar": {
         parameters: {
             query?: never;
@@ -988,6 +1008,17 @@ export interface components {
              */
             transcribe: boolean;
         };
+        /** Brief */
+        Brief: {
+            /** Last Summary */
+            last_summary: string;
+            /** Meetings */
+            meetings: components["schemas"]["RelatedMeeting"][];
+            /** Open Items */
+            open_items: components["schemas"]["TaskItem"][];
+            /** Open Questions */
+            open_questions: components["schemas"]["OpenQuestion"][];
+        };
         /** CalendarEvent */
         CalendarEvent: {
             /** Attendees */
@@ -1281,6 +1312,15 @@ export interface components {
             /** Notes */
             notes: string;
         };
+        /** OpenQuestion */
+        OpenQuestion: {
+            /** Session Id */
+            session_id: string;
+            /** Session Name */
+            session_name: string;
+            /** Text */
+            text: string;
+        };
         /**
          * Passage
          * @description A contiguous run of transcript lines (or a session summary) retrieved for a question.
@@ -1368,6 +1408,23 @@ export interface components {
             is_recording: boolean;
             /** Session Id */
             session_id: string;
+        };
+        /** RelatedMeeting */
+        RelatedMeeting: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /**
+             * Match
+             * @enum {string}
+             */
+            match: "title" | "people" | "both";
+            /** Name */
+            name: string;
         };
         /** RenameProfileRequest */
         RenameProfileRequest: {
@@ -2497,6 +2554,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StopRecordingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_brief_api_brief_get: {
+        parameters: {
+            query?: {
+                title?: string;
+                attendees?: string[];
+                exclude?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Brief"];
                 };
             };
             /** @description Validation Error */
