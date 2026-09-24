@@ -23,6 +23,7 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Storage control**: see what audio takes space, delete audio but keep the transcript, or keep audio for N days only
 - **Ask your meetings** (Ctrl+K): questions answered from your transcripts with numbered citations that jump to the exact moment; history is kept
 - **Speakers that stick**: rename a speaker once and the app remembers the voice, labelling that person automatically in future meetings
+- **Level meters and a capture self-test**: see every source's level while recording, check a mic before a call, and verify that system audio is really captured from your output (it plays a short tone and checks it arrives)
 - **Echo cancellation** with one click: PipeWire's WebRTC canceller is loaded on demand and exposed as a virtual mic, so no headphones are needed
 - **Server mode**: point the app at a backend on another machine (with a bearer token) and work with its sessions
 - **Echo-safe**: mic segments that merely repeat what came out of the speakers are dropped, so no-headphones calls still attribute correctly

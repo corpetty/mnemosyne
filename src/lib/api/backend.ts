@@ -1,5 +1,7 @@
 import type {
   Ask,
+  Level,
+  SelfTestResult,
   CalendarResponse,
   CleanupResult,
   AudioDevice,
@@ -319,4 +321,13 @@ export async function setAttendees(sessionId: string, attendees: string[]): Prom
     method: 'PUT',
     body: JSON.stringify({ attendees })
   });
+}
+
+// Levels and the system-audio self-test
+export async function getDeviceLevel(deviceId: number, seconds = 1): Promise<Level> {
+  return request(`/api/audio/level/${deviceId}?seconds=${seconds}`);
+}
+
+export async function runSelfTest(deviceId: number): Promise<SelfTestResult> {
+  return request('/api/audio/self-test', { method: 'POST', body: JSON.stringify({ device_id: deviceId }) });
 }

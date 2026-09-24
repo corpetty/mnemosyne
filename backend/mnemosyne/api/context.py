@@ -39,6 +39,7 @@ class AppContext:
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
     echo: EchoCancelManager = field(default_factory=EchoCancelManager)
     _retention_task: asyncio.Task | None = None
+    level_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
 
     @classmethod
     def build(cls, settings: Settings) -> AppContext:

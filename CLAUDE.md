@@ -76,6 +76,9 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
   Never `--target <sink>.monitor`: that is a PulseAudio name PipeWire does not resolve, and
   pw-record silently records the default microphone instead (this was a real bug until
   2026-09-24). Verify with `pw-link -l` that pw-record's inputs come from `<sink>:monitor_*`.
+- This machine runs EasyEffects: recording streams from the mic get rerouted to
+  `easyeffects_source`, whose RNNoise outputs exact digital silence when nobody speaks. A −90 dB
+  mic level with the mic unmuted is that, not a capture bug.
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.

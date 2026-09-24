@@ -13,6 +13,7 @@ import { toastState } from '$lib/stores/toast.svelte.js';
 import { transcriptState } from '$lib/stores/transcript.svelte.js';
 import { uiState, type ShellStage } from '$lib/stores/ui.svelte.js';
 import { wsState } from '$lib/stores/websocket.svelte.js';
+import type { BackendEvent } from '$lib/types/index.js';
 
 // ---- navigation ----------------------------------------------------------------
 
@@ -166,6 +167,7 @@ function onConnected(): () => void {
   jobsState.init();
   askState.init();
   calendarState.start();
+  audioState.listenForLevels();
   jobsState.onComplete((job) => {
     if (job.kind !== 'summarize' || !job.session_id) return;
     if (sessionState.activeSession?.id === job.session_id) sessionState.refreshActive();
@@ -178,9 +180,15 @@ function onConnected(): () => void {
     toastState.success('Transcription complete');
   });
   // Keep the sidebar in step with backend session state changes.
-  return wsState.onMessage((msg) => {
+  return wsState.onMessage((raw) => {
+    const msg = raw as BackendEvent;
     if (msg.type !== 'session') return;
     sessionState.loadSessions();
+    // Keep the open session's status (footer, badges) in step without a refetch.
+    const active = sessionState.activeSession;
+    if (active && active.id === msg.session_id && msg.status !== 'deleted' && msg.status !== 'audio_deleted') {
+      active.status = msg.status;
+    }
     if (msg.status === 'audio_deleted' && sessionState.activeSession?.id === msg.session_id) {
       sessionState.refreshActive();
     }

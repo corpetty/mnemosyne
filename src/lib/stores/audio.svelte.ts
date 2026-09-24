@@ -1,5 +1,6 @@
-import type { AudioDevice } from "$lib/types/index.js";
+import type { AudioDevice, BackendEvent, Level } from "$lib/types/index.js";
 import * as api from "$lib/api/backend.js";
+import { wsState } from "./websocket.svelte.js";
 
 // Remembered by PipeWire node name: numeric ids change between restarts.
 const SELECTION_KEY = 'mnemosyne.selectedDevices';
@@ -22,6 +23,17 @@ class AudioState {
   recordingDuration = $state(0);
   error = $state<string | null>(null);
   loading = $state(false);
+  /** Live input levels per device id while recording (from `levels` events). */
+  levels = $state<Record<string, Level>>({});
+  private unsubscribeLevels: (() => void) | null = null;
+
+  listenForLevels() {
+    this.unsubscribeLevels?.();
+    this.unsubscribeLevels = wsState.onMessage((raw) => {
+      const msg = raw as BackendEvent;
+      if (msg.type === 'levels' && msg.session_id === this.activeSessionId) this.levels = msg.levels;
+    });
+  }
 
   private durationInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -118,6 +130,7 @@ class AudioState {
         this.durationInterval = null;
       }
       this.activeSessionId = null;
+      this.levels = {};
       return res;
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Failed to stop recording";

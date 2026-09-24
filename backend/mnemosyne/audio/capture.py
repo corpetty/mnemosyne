@@ -79,7 +79,12 @@ def list_devices() -> list[AudioDevice]:
 
 
 def build_record_command(
-    device: AudioDevice, output_path: Path, sample_rate: int, channels: int, format: str
+    device: AudioDevice,
+    output_path: Path,
+    sample_rate: int,
+    channels: int,
+    format: str,
+    node_name: str | None = None,
 ) -> list[str]:
     """pw-record command for one device.
 
@@ -89,8 +94,13 @@ def build_record_command(
     microphone.) Sources are targeted by node name, which survives restarts.
     """
     cmd = ["pw-record", f"--rate={sample_rate}", f"--channels={channels}", f"--format={format}"]
+    props = []
     if device.is_output:
-        cmd += ["-P", "{ stream.capture.sink=true }"]
+        props.append("stream.capture.sink=true")
+    if node_name:  # lets pw-link output be matched to this exact recorder
+        props.append(f"node.name={node_name}")
+    if props:
+        cmd += ["-P", "{ " + " ".join(props) + " }"]
     cmd += ["--target", device.name or str(device.id), str(output_path)]
     return cmd
 

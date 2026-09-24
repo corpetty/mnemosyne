@@ -140,6 +140,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audio/level/{device_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Device Level
+         * @description Record briefly from a device and report its level (for checking a mic).
+         */
+        get: operations["device_level_api_audio_level__device_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audio/self-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Capture Self Test
+         * @description Check system-audio capture from an output: record it as a real recording would,
+         *     play a short quiet tone through it, and report what was captured and from where.
+         */
+        post: operations["capture_self_test_api_audio_self_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audio/start": {
         parameters: {
             query?: never;
@@ -942,6 +983,13 @@ export interface components {
          * @enum {string}
          */
         JobStatus: "queued" | "running" | "completed" | "failed" | "cancelled";
+        /** Level */
+        Level: {
+            /** Peak Db */
+            peak_db: number;
+            /** Rms Db */
+            rms_db: number;
+        };
         /** NotesRequest */
         NotesRequest: {
             /** Notes */
@@ -1092,6 +1140,27 @@ export interface components {
             speaker?: string | null;
             /** Text */
             text?: string | null;
+        };
+        /** SelfTestRequest */
+        SelfTestRequest: {
+            /** Device Id */
+            device_id: number;
+        };
+        /** SelfTestResult */
+        SelfTestResult: {
+            /** Captures Monitor */
+            captures_monitor: boolean;
+            level: components["schemas"]["Level"];
+            /** Linked From */
+            linked_from: string[];
+            /** Message */
+            message: string;
+            /** Passed */
+            passed: boolean;
+            /** Tone Detected */
+            tone_detected: boolean;
+            /** Tone Snr Db */
+            tone_snr_db: number;
         };
         /** Session */
         Session: {
@@ -1849,6 +1918,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StopRecordingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    device_level_api_audio_level__device_id__get: {
+        parameters: {
+            query?: {
+                seconds?: number;
+            };
+            header?: never;
+            path: {
+                device_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Level"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capture_self_test_api_audio_self_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelfTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SelfTestResult"];
                 };
             };
             /** @description Validation Error */

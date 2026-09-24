@@ -2,6 +2,40 @@
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { getEchoCancel, setEchoCancel, type EchoCancelStatus } from '$lib/api/backend.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
+	import { getDeviceLevel, runSelfTest } from '$lib/api/backend.js';
+	import type { Level, SelfTestResult } from '$lib/types/index.js';
+	import LevelMeter from './LevelMeter.svelte';
+
+	let checked = $state<Record<number, Level>>({});
+	let checking = $state<number | null>(null);
+	let testResult = $state<Record<number, SelfTestResult>>({});
+	let testing = $state<number | null>(null);
+
+	async function checkLevel(id: number) {
+		checking = id;
+		try {
+			checked = { ...checked, [id]: await getDeviceLevel(id, 1.5) };
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not read level');
+		} finally {
+			checking = null;
+		}
+	}
+
+	async function selfTest(id: number) {
+		testing = id;
+		try {
+			testResult = { ...testResult, [id]: await runSelfTest(id) };
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Self-test failed');
+		} finally {
+			testing = null;
+		}
+	}
+
+	function meterFor(id: number): Level | null {
+		return audioState.isRecording ? (audioState.levels[String(id)] ?? null) : (checked[id] ?? null);
+	}
 
 	let echo = $state<EchoCancelStatus | null>(null);
 	let toggling = $state(false);
@@ -85,7 +119,7 @@
 								disabled={audioState.isRecording}
 								class="rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500"
 							/>
-							<span class="text-sm text-gray-200">{device.description}</span>
+							<span class="text-sm text-gray-200 flex-1">{device.description}</span>
 							{#if device.is_echo_cancelled}
 								<span class="text-xs px-1.5 py-0.5 rounded bg-green-900 text-green-300">Echo-cancelled</span>
 							{/if}
@@ -93,6 +127,16 @@
 								<span class="text-xs px-1.5 py-0.5 rounded bg-purple-900 text-purple-300"
 									>Monitor</span
 								>
+							{/if}
+							{#if meterFor(device.id) || audioState.isRecording}<LevelMeter level={meterFor(device.id)} />{/if}
+							{#if !audioState.isRecording}
+								<button
+									type="button"
+									onclick={(e) => { e.preventDefault(); checkLevel(device.id); }}
+									disabled={checking !== null}
+									class="text-[11px] text-gray-500 hover:text-gray-200 disabled:opacity-50"
+									title="Record 1.5 s and show the level"
+								>{checking === device.id ? 'listening…' : 'check'}</button>
 							{/if}
 						</label>
 					{/each}
@@ -117,8 +161,24 @@
 								disabled={audioState.isRecording}
 								class="rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500"
 							/>
-							<span class="text-sm text-gray-200">{device.description}</span>
+							<span class="text-sm text-gray-200 flex-1">{device.description}</span>
+							{#if audioState.isRecording && audioState.selectedDeviceIds.has(device.id)}<LevelMeter level={meterFor(device.id)} />{/if}
+							{#if !audioState.isRecording}
+								<button
+									type="button"
+									onclick={(e) => { e.preventDefault(); selfTest(device.id); }}
+									disabled={testing !== null}
+									class="text-[11px] text-gray-500 hover:text-gray-200 disabled:opacity-50"
+									title="Plays a short quiet tone through this output and checks that recording captures it"
+								>{testing === device.id ? 'testing…' : 'test capture'}</button>
+							{/if}
 						</label>
+						{#if testResult[device.id]}
+							{@const r = testResult[device.id]}
+							<p class="ml-8 -mt-0.5 mb-1 text-xs {r.passed ? 'text-green-400' : 'text-red-400'}">
+								{r.passed ? '✓' : '✗'} {r.message}
+							</p>
+						{/if}
 					{/each}
 				</div>
 			</div>

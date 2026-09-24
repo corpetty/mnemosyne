@@ -38,6 +38,8 @@ export type StorageReport = S['StorageReport'];
 export type CleanupResult = S['CleanupResult'];
 export type CalendarEvent = S['CalendarEvent'];
 export type CalendarResponse = S['CalendarResponse'];
+export type Level = S['Level'];
+export type SelfTestResult = S['SelfTestResult'];
 
 /** Events pushed by the backend over /ws. */
 export type BackendEvent =
@@ -51,4 +53,5 @@ export type BackendEvent =
   | { type: 'live_segment'; session_id: string; source: string; segment: TranscriptSegment }
   | { type: 'live_partial'; session_id: string; source: string; speaker: string; text: string }
   | { type: 'live_status'; session_id: string; message: string }
-  | { type: 'live_relabel'; session_id: string; old: string; new: string };
+  | { type: 'live_relabel'; session_id: string; old: string; new: string }
+  | { type: 'levels'; session_id: string; levels: Record<string, Level> };

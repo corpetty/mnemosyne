@@ -93,6 +93,33 @@ stores the upload as a `Recording` with `source: import`, transcodes it to the m
 queues transcription. Response is the same shape as stop-recording (`session`, `job_id`, `message`).
 `400` for unsupported, empty, or undecodable files.
 
+### `GET /api/audio/level/{device_id}?seconds=1`
+
+Records briefly from a device (0.2 to 5 s) and returns `{ "rms_db": -38.2, "peak_db": -21.0 }` (dBFS,
+floor -90). Used by the "check" button next to input devices.
+
+### `POST /api/audio/self-test`
+
+`{ "device_id": 69 }` for an output device. Records it exactly as a recording would, plays a short,
+quiet 1 kHz tone through it, and reports:
+
+```json
+{
+  "passed": true, "tone_detected": true, "tone_snr_db": 60.0,
+  "level": { "rms_db": -41.0, "peak_db": -20.5 },
+  "linked_from": ["alsa_output...:monitor_FL", "alsa_output...:monitor_FR"],
+  "captures_monitor": true,
+  "message": "System audio capture works: the test tone was recorded from this output."
+}
+```
+
+`captures_monitor` is false when PipeWire connected the recorder to anything other than this
+output's monitor ports (for example a microphone); the message names what it connected to instead.
+`400` for input devices, `409` while recording.
+
+While recording, the WebSocket also carries `levels` events every 250 ms:
+`{ "type": "levels", "session_id": "...", "levels": { "<device_id>": { "rms_db": ..., "peak_db": ... } } }`.
+
 ### `GET /api/audio/echo-cancel` · `POST /api/audio/echo-cancel`
 
 PipeWire WebRTC echo cancellation. The backend loads `libpipewire-module-echo-cancel` in monitor mode

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from ...audio.capture import list_devices, start_recording, stop_recording
+from ...audio.levels import Level, SelfTestResult, sample_level, self_test
 from ...audio.mixer import mix_audio_files
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, Recording, Session, SessionStatus
@@ -41,6 +42,27 @@ class StopRecordingResponse(ApiModel):
     session: Session
     job_id: str | None
     message: str
+
+
+async def _stream_levels(ctx: AppContext, session_id: str, recording, interval: float = 0.25):
+    """Publish per-device input levels while a recording runs (for the UI meters)."""
+    from ...audio.levels import level_of
+    from ...transcription.live import WavTail
+
+    tails = {p.device_id: WavTail(p.output_path) for p in recording.processes}
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            levels = {}
+            for device_id, tail in tails.items():
+                try:
+                    levels[str(device_id)] = level_of(tail.read_new()).model_dump()
+                except Exception:
+                    continue
+            if levels:
+                ctx.bus.publish({"type": "levels", "session_id": session_id, "levels": levels})
+    except asyncio.CancelledError:
+        pass
 
 
 async def _apply_calendar(ctx: AppContext, session: Session) -> Session:
@@ -84,6 +106,7 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
         raise HTTPException(status_code=400, detail="None of the selected devices could be opened")
     ctx.active_recordings[session.id] = recording
     ctx.sessions.set_status(session.id, SessionStatus.RECORDING)
+    ctx.level_tasks[session.id] = asyncio.create_task(_stream_levels(ctx, session.id, recording))
 
     live_job_id = None
     if ctx.settings.live_transcription:
@@ -118,6 +141,9 @@ async def stop(
     devices = {d.id: d for d in list_devices()}
     individual_files = await stop_recording(recording)
     ctx.active_recordings.pop(session_id, None)
+    task = ctx.level_tasks.pop(session_id, None)
+    if task is not None:
+        task.cancel()
 
     recordings: list[Recording] = []
     for proc, path in zip(recording.processes, individual_files, strict=False):
@@ -324,3 +350,36 @@ async def echo_cancel_set(request: EchoCancelRequest, ctx: AppContext = Depends(
         ctx.settings.echo_cancel = request.enabled
         save_settings(ctx.settings)
     return await _echo_response(ctx)
+
+
+# ---- levels and the capture self-test ------------------------------------------
+
+
+def _device_or_404(device_id: int):
+    device = next((d for d in list_devices() if d.id == device_id), None)
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return device
+
+
+@router.get("/level/{device_id}", response_model=Level)
+async def device_level(device_id: int, seconds: float = 1.0, ctx: AppContext = Depends(get_ctx)):
+    """Record briefly from a device and report its level (for checking a mic)."""
+    seconds = min(max(seconds, 0.2), 5.0)
+    return await sample_level(_device_or_404(device_id), seconds)
+
+
+class SelfTestRequest(ApiModel):
+    device_id: int
+
+
+@router.post("/self-test", response_model=SelfTestResult)
+async def capture_self_test(request: SelfTestRequest, ctx: AppContext = Depends(get_ctx)):
+    """Check system-audio capture from an output: record it as a real recording would,
+    play a short quiet tone through it, and report what was captured and from where."""
+    device = _device_or_404(request.device_id)
+    if not device.is_output:
+        raise HTTPException(status_code=400, detail="Choose an output device to test")
+    if ctx.active_recordings:
+        raise HTTPException(status_code=409, detail="Stop the current recording first")
+    return await self_test(device)
