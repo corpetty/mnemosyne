@@ -269,6 +269,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/digests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Digests */
+        get: operations["list_digests_api_digests_get"];
+        put?: never;
+        /**
+         * Create Digest
+         * @description Queue a `digest` job. Its result is the saved Digest.
+         */
+        post: operations["create_digest_api_digests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/digests/{digest_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Digest */
+        get: operations["get_digest_api_digests__digest_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Digest */
+        delete: operations["delete_digest_api_digests__digest_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/integrations/github/check": {
         parameters: {
             query?: never;
@@ -966,6 +1005,64 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** Digest */
+        Digest: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /**
+             * Markdown
+             * @default
+             */
+            markdown: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /** Path */
+            path: string | null;
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /** Session Ids */
+            session_ids: string[];
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+        };
+        /** DigestRequest */
+        DigestRequest: {
+            /** End */
+            end?: string | null;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /** Start */
+            start?: string | null;
+        };
         /** EchoCancelRequest */
         EchoCancelRequest: {
             /** Enabled */
@@ -1383,6 +1480,10 @@ export interface components {
             diarization_model?: string | null;
             /** Diarizer */
             diarizer?: string | null;
+            /** Digest Hour */
+            digest_hour?: number | null;
+            /** Digest Weekday */
+            digest_weekday?: number | null;
             /** Echo Cancel */
             echo_cancel?: boolean | null;
             /** Echo Dedup */
@@ -1500,6 +1601,10 @@ export interface components {
             diarization_model: string;
             /** Diarizer */
             diarizer: string;
+            /** Digest Hour */
+            digest_hour: number;
+            /** Digest Weekday */
+            digest_weekday: number;
             /** Echo Cancel */
             echo_cancel: boolean;
             /** Echo Dedup */
@@ -2235,6 +2340,132 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceResponse"][];
+                };
+            };
+        };
+    };
+    list_digests_api_digests_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Digest"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_digest_api_digests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DigestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_digest_api_digests__digest_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Digest"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_digest_api_digests__digest_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

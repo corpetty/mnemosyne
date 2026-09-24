@@ -33,6 +33,7 @@ export type SegmentHit = S['SegmentHit'];
 export type SearchHit = S['SearchHit'];
 export type Citation = S['Citation'];
 export type Ask = S['Ask'];
+export type Digest = S['Digest'];
 export type SessionUsage = S['SessionUsage'];
 export type StorageReport = S['StorageReport'];
 export type CleanupResult = S['CleanupResult'];

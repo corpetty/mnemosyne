@@ -12,10 +12,11 @@ import re
 import sqlite3
 import threading
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from ..models.ask import Ask, Citation, Passage, PassageLine
+from ..models.digest import Digest
 from ..models.search import SearchHit, SegmentHit
 from ..models.session import Recording, Session, SessionStatus, SessionSummary, SummaryData
 from ..models.speaker import SpeakerProfile
@@ -23,7 +24,7 @@ from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -105,6 +106,18 @@ CREATE TABLE IF NOT EXISTS asks (
     citations TEXT NOT NULL DEFAULT '[]',
     provider TEXT NOT NULL DEFAULT '',
     model TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS digests (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    start TEXT NOT NULL,
+    end TEXT NOT NULL,
+    markdown TEXT NOT NULL,
+    session_ids TEXT NOT NULL DEFAULT '[]',
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    path TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS session_speakers (
@@ -640,6 +653,82 @@ class SessionRepository:
     def delete_ask(self, ask_id: str) -> bool:
         with self._lock, self._conn:
             cur = self._conn.execute("DELETE FROM asks WHERE id=?", (ask_id,))
+        return cur.rowcount > 0
+
+    # ---- digests ---------------------------------------------------------
+
+    def sessions_between(self, start: date, end: date) -> list[Session]:
+        """Full sessions created on start..end (inclusive), oldest first."""
+        lo = datetime.combine(start, time.min).isoformat()
+        hi = datetime.combine(end + timedelta(days=1), time.min).isoformat()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM sessions WHERE created_at >= ? AND created_at < ?"
+                " ORDER BY created_at",
+                (lo, hi),
+            ).fetchall()
+        return [s for s in (self.get(r["id"]) for r in rows) if s is not None]
+
+    def save_digest(self, digest: Digest) -> Digest:
+        """Save, replacing any earlier digest of the same range (label)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM digests WHERE label=? AND id<>?", (digest.label, digest.id)
+            )
+            self._conn.execute(
+                """INSERT OR REPLACE INTO digests(id, label, start, end, markdown, session_ids,
+                                                  provider, model, path, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    digest.id,
+                    digest.label,
+                    digest.start.isoformat(),
+                    digest.end.isoformat(),
+                    digest.markdown,
+                    json.dumps(digest.session_ids),
+                    digest.provider,
+                    digest.model,
+                    digest.path,
+                    digest.created_at.isoformat(),
+                ),
+            )
+        return digest
+
+    @staticmethod
+    def _digest(r) -> Digest:
+        return Digest(
+            id=r["id"],
+            label=r["label"],
+            start=date.fromisoformat(r["start"]),
+            end=date.fromisoformat(r["end"]),
+            markdown=r["markdown"],
+            session_ids=json.loads(r["session_ids"]),
+            provider=r["provider"],
+            model=r["model"],
+            path=r["path"],
+            created_at=_dt(r["created_at"]),
+        )
+
+    def list_digests(self, limit: int = 50) -> list[Digest]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM digests ORDER BY start DESC, created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [self._digest(r) for r in rows]
+
+    def get_digest(self, digest_id: str) -> Digest | None:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM digests WHERE id=?", (digest_id,)).fetchone()
+        return self._digest(r) if r else None
+
+    def has_digest(self, label: str) -> bool:
+        with self._lock:
+            r = self._conn.execute("SELECT 1 FROM digests WHERE label=?", (label,)).fetchone()
+        return r is not None
+
+    def delete_digest(self, digest_id: str) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute("DELETE FROM digests WHERE id=?", (digest_id,))
         return cur.rowcount > 0
 
     # ---- speakers ------------------------------------------------------

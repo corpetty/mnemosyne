@@ -294,6 +294,29 @@ A citation's `idx`/`start` point at the best-matching line in its excerpt (`null
 
 ---
 
+## Digests
+
+A digest covers the meetings in a date range (normally Monday to Sunday). The LLM writes
+the overview, themes and watch list from each meeting's summary; the meeting list,
+decisions and action items are copied verbatim from the stored summaries. Only summarized
+meetings are included; transcribed but unsummarized ones are listed at the end. With a
+vault configured it is also written to `<vault>/<subfolder>/digests/<label>.md`.
+
+### `POST /api/digests`
+Body `{"start": "2026-09-21", "end": "2026-09-27", "provider": "", "model": ""}`, all
+optional (default: the current week, default provider and model). Returns a `digest` Job
+whose result is the saved Digest. 400 if `end` is before `start` or the range exceeds 93
+days. The job fails with "No summarized meetings between ..." when there is nothing to
+digest. Regenerating a range replaces the earlier digest with the same `label`.
+
+### `GET /api/digests?limit=50` · `GET /api/digests/{id}` · `DELETE /api/digests/{id}`
+Digest: `{id, label, start, end, markdown, session_ids, provider, model, path, created_at}`.
+`label` is `2026-W39` for an ISO week, otherwise `2026-09-01 to 2026-09-10`.
+
+Scheduled digests: settings `digest_weekday` (0 = Monday .. 6 = Sunday, -1 = off) and
+`digest_hour`. The backend checks every 15 minutes and queues the current week's digest
+once it is due, unless that week already has one or has no summarized meetings.
+
 ## Storage
 
 Only audio is ever removed; transcripts, summaries and notes are kept.

@@ -271,6 +271,43 @@ def ask_question(app: AppContext, question: str, provider: str = "", model: str 
     return run
 
 
+def make_digest(app: AppContext, start, end, provider: str = "", model: str = ""):
+    """Build the digest job runner; the saved Digest is the job result."""
+
+    async def run(ctx: JobContext) -> dict:
+        from .digest_service import build_digest, write_to_vault
+
+        st = app.settings
+        prov = provider or st.default_provider
+        mdl = model or st.default_model
+        extra = glossary_instructions(parse_glossary(st.glossary))
+        ctx.update("Gathering meetings...")
+        sessions = await asyncio.to_thread(app.repo.sessions_between, start, end)
+        if any(s.summary.strip() for s in sessions):
+            mdl = await app.summarizer.resolve_model(prov, mdl)
+
+        async def complete(system: str, user: str) -> str:
+            system = f"{system}\n{extra}".strip() if extra else system
+            return await app.summarizer.complete(system, user, prov, mdl)
+
+        ctx.update(f"Writing the digest with {prov}/{mdl or 'default model'}")
+        digest = await build_digest(sessions, start, end, complete, prov, mdl)
+        if st.obsidian_vault_path:
+            try:
+                digest.path = str(
+                    write_to_vault(digest, st.obsidian_vault_path, st.obsidian_subfolder)
+                )
+            except Exception:
+                logger.warning(
+                    "Could not write digest %s to the vault", digest.label, exc_info=True
+                )
+        app.repo.save_digest(digest)
+        ctx.update("Digest ready")
+        return digest.model_dump(mode="json")
+
+    return run
+
+
 def live_transcribe(app: AppContext, session_id: str, recording):
     """Build the live-transcription job runner for an active RecordingSession.
 

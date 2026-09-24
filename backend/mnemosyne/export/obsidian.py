@@ -10,6 +10,18 @@ from .templates import render_meeting_note
 logger = logging.getLogger(__name__)
 
 
+def sanitize_filename(name: str) -> str:
+    """Remove characters that are problematic in filenames."""
+    name = re.sub(r'[<>:"/\\|?*]', "", name)
+    name = name.strip(". ")
+    return name or "untitled"
+
+
+def note_stem(session: Session) -> str:
+    """The note's file name without .md, which is also its [[wiki link]] target."""
+    return f"{session.created_at.strftime('%Y-%m-%d')}-{sanitize_filename(session.name)}"
+
+
 class ObsidianExporter:
     """Exports sessions as markdown files to an Obsidian vault."""
 
@@ -45,12 +57,6 @@ class ObsidianExporter:
             attendees=session.attendees,
         )
 
-    def _sanitize_filename(self, name: str) -> str:
-        """Remove characters that are problematic in filenames."""
-        name = re.sub(r'[<>:"/\\|?*]', "", name)
-        name = name.strip(". ")
-        return name or "untitled"
-
     def export(self, session: Session) -> Path:
         """Export a session to the Obsidian vault.
 
@@ -63,11 +69,7 @@ class ObsidianExporter:
         output_dir = self.vault_path / self.subfolder
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build filename: YYYY-MM-DD-session-name.md
-        date_str = session.created_at.strftime("%Y-%m-%d")
-        safe_name = self._sanitize_filename(session.name)
-        filename = f"{date_str}-{safe_name}.md"
-        output_path = output_dir / filename
+        output_path = output_dir / f"{note_stem(session)}.md"
 
         output_path.write_text(self.render(session), encoding="utf-8")
         logger.info("Exported session %s to %s", session.id, output_path)

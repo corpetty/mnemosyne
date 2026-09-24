@@ -144,6 +144,15 @@ turned into a safe query by quoting every term (`storage/sqlite.py::fts_query`).
 `complete()`, and maps `[n]` markers back to citations. Answers are stored in the `asks` table.
 LLM providers expose `complete(system, user, model)`; `summarize` is a wrapper over it.
 
+### Digests
+
+`services/digest_service.py` builds a digest of a date range from the stored summaries
+(`repo.sessions_between`). The LLM writes only Overview / Themes / Watch; the meeting list,
+decisions and action items are appended verbatim with `[[note|name]]` links whose targets match
+`export/obsidian.py::note_stem`. The `digest` job (`pipeline.make_digest`) saves to the `digests`
+table (one per label) and writes `<subfolder>/digests/<label>.md` when a vault is set.
+`AppContext._digest_loop` checks the `digest_weekday`/`digest_hour` schedule every 15 minutes.
+
 ### MCP server
 
 `mnemosyne/mcp_server.py` (`mnemosyne-mcp`, stdio, MCP Python SDK 2.x `MCPServer`) is a thin HTTP

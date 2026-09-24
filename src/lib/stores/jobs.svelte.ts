@@ -28,9 +28,16 @@ class JobsState {
     };
   }
 
-  /** Record a job we just created over HTTP, before its first event arrives. */
+  /**
+   * Record a job we just created over HTTP. Fast jobs can finish before the HTTP
+   * response arrives; a state already received over the WebSocket is newer, so keep it.
+   */
   track(job: Job) {
-    this.jobs[job.id] = job;
+    if (!this.jobs[job.id]) this.jobs[job.id] = job;
+  }
+
+  isDone(id: string): boolean {
+    return this.jobs[id]?.status === 'completed';
   }
 
   private handle(msg: BackendEvent) {

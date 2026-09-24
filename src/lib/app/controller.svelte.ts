@@ -4,6 +4,7 @@
  */
 import { exportToObsidian, getHealth } from '$lib/api/backend.js';
 import { askState } from '$lib/stores/ask.svelte.js';
+import { digestState } from '$lib/stores/digest.svelte.js';
 import { audioState } from '$lib/stores/audio.svelte.js';
 import { calendarState } from '$lib/stores/calendar.svelte.js';
 import { connectionState } from '$lib/stores/connection.svelte.js';
@@ -18,8 +19,8 @@ import type { BackendEvent } from '$lib/types/index.js';
 // ---- navigation ----------------------------------------------------------------
 
 export function openAsk() {
+  uiState.closePanels();
   uiState.showAsk = true;
-  uiState.showSettings = false;
   sessionState.activeSession = null;
 }
 
@@ -28,12 +29,24 @@ export function toggleAsk() {
   else openAsk();
 }
 
-export function toggleSettings() {
-  uiState.showSettings = !uiState.showSettings;
-  if (uiState.showSettings) {
-    uiState.showAsk = false;
-    sessionState.activeSession = null;
+export function toggleDigest() {
+  if (uiState.showDigest) {
+    uiState.showDigest = false;
+    return;
   }
+  uiState.closePanels();
+  uiState.showDigest = true;
+  sessionState.activeSession = null;
+}
+
+export function toggleSettings() {
+  if (uiState.showSettings) {
+    uiState.showSettings = false;
+    return;
+  }
+  uiState.closePanels();
+  uiState.showSettings = true;
+  sessionState.activeSession = null;
 }
 
 // ---- recording -----------------------------------------------------------------
@@ -166,6 +179,7 @@ function onConnected(): () => void {
   transcriptState.init();
   jobsState.init();
   askState.init();
+  digestState.init();
   calendarState.start();
   audioState.listenForLevels();
   jobsState.onComplete((job) => {
@@ -252,6 +266,7 @@ export function connectApp(): () => void {
     transcriptState.destroy();
     jobsState.destroy();
     askState.destroy();
+    digestState.destroy();
     calendarState.stop();
     wsState.disconnect();
   };

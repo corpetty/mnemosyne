@@ -1,5 +1,6 @@
 import type {
   Ask,
+  Digest,
   IssueResult,
   RepoCheck,
   Level,
@@ -298,6 +299,19 @@ export async function listAsks(limit = 50): Promise<Ask[]> {
 
 export async function deleteAsk(id: string): Promise<void> {
   return request(`/api/asks/${id}`, { method: 'DELETE' });
+}
+
+// Digests
+export async function createDigest(start: string, end: string, provider = '', model = ''): Promise<Job> {
+  return request('/api/digests', { method: 'POST', body: JSON.stringify({ start, end, provider, model }) });
+}
+
+export async function listDigests(limit = 50): Promise<Digest[]> {
+  return request(`/api/digests?limit=${limit}`);
+}
+
+export async function deleteDigest(id: string): Promise<void> {
+  return request(`/api/digests/${id}`, { method: 'DELETE' });
 }
 
 // Storage

@@ -9,6 +9,7 @@
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import AskPanel from '$lib/components/AskPanel.svelte';
 	import CalendarBanner from '$lib/components/CalendarBanner.svelte';
+	import DigestPanel from '$lib/components/DigestPanel.svelte';
 	import HomeView from '$lib/components/HomeView.svelte';
 	import SessionList from '$lib/components/SessionList.svelte';
 	import SessionView from '$lib/components/SessionView.svelte';
@@ -76,6 +77,12 @@
 				<div class="flex-1 overflow-y-auto p-6">
 					<div class="max-w-3xl">
 						<AskPanel onOpenSession={() => (uiState.showAsk = false)} />
+					</div>
+				</div>
+			{:else if uiState.showDigest}
+				<div class="flex-1 overflow-y-auto p-6">
+					<div class="max-w-3xl">
+						<DigestPanel onOpenSession={() => (uiState.showDigest = false)} />
 					</div>
 				</div>
 			{:else if uiState.showSettings}

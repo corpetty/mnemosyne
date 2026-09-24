@@ -160,6 +160,11 @@ class Settings(BaseSettings):
     summary_style: str = "meeting"  # see summarization/prompts.py STYLES
     summary_instructions: str = ""  # appended to every summary prompt
 
+    # Digest: a scheduled digest of the week's meetings. digest_weekday is 0 (Monday)
+    # to 6 (Sunday), -1 turns the schedule off; it runs at or after digest_hour.
+    digest_weekday: int = -1
+    digest_hour: int = 17
+
     # Export
     obsidian_vault_path: str = ""
     obsidian_subfolder: str = "meetings/mnemosyne"

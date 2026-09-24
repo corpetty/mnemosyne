@@ -7,6 +7,7 @@ class UiState {
   /** Shown when no session is open (a session always takes the main area). */
   showSettings = $state(false);
   showAsk = $state(false);
+  showDigest = $state(false);
   activeTab = $state<Tab>('recording');
   sidebarCollapsed = $state(false);
 
@@ -18,6 +19,7 @@ class UiState {
 
   closePanels() {
     this.showAsk = false;
+    this.showDigest = false;
     this.showSettings = false;
   }
 }

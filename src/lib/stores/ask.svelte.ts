@@ -37,6 +37,8 @@ class AskState {
     if (!q) return;
     const job = await api.askQuestion(q);
     jobsState.track(job);
+    // Already answered (onJobComplete saw it) before the HTTP response came back.
+    if (jobsState.isDone(job.id)) return;
     this.pending = { ...this.pending, [job.id]: q };
   }
 

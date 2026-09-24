@@ -93,7 +93,9 @@
 				obsidian_tags: v.obsidian_tags,
 				obsidian_link_people: v.obsidian_link_people,
 				obsidian_include_transcript: v.obsidian_include_transcript,
-				obsidian_auto_export: v.obsidian_auto_export
+				obsidian_auto_export: v.obsidian_auto_export,
+				digest_weekday: v.digest_weekday,
+				digest_hour: v.digest_hour
 			};
 			providers = await listModels();
 			voices = await listSpeakers();
@@ -437,6 +439,22 @@
 					<input type="checkbox" bind:checked={form.obsidian_auto_export} disabled={locked('obsidian_auto_export')} class="rounded border-gray-600 bg-gray-800" />
 					<span class="text-sm text-gray-300">Export to Obsidian automatically after each summary (overwrites that session's note)</span>
 				</label>
+				<label>
+					<span class={labelClass}>Weekly digest</span>
+					<select bind:value={form.digest_weekday} disabled={locked('digest_weekday')} class={inputClass}>
+						<option value={-1}>Off (generate from the Digest view)</option>
+						{#each ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as day, i}
+							<option value={i}>Every {day}</option>
+						{/each}
+					</select>
+				</label>
+				<label>
+					<span class={labelClass}>At or after (hour, 0 to 23)</span>
+					<input type="number" min="0" max="23" bind:value={form.digest_hour} disabled={locked('digest_hour') || (form.digest_weekday ?? -1) < 0} class={inputClass} />
+				</label>
+				<p class="col-span-2 text-[11px] text-gray-600 -mt-1">
+					Covers Monday to Sunday of that week, once per week, while the app is running. Written to the vault's digests/ folder.
+				</p>
 			</div>
 		</section>
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from fastapi import Request, WebSocket
 
@@ -39,6 +40,7 @@ class AppContext:
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
     echo: EchoCancelManager = field(default_factory=EchoCancelManager)
     _retention_task: asyncio.Task | None = None
+    _digest_task: asyncio.Task | None = None
     level_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     github_transport: object | None = None  # tests inject an httpx transport
 
@@ -58,7 +60,9 @@ class AppContext:
             storage=StorageService(repo, settings.data_dir, settings.recordings_dir),
             calendar=CalendarService(settings.calendar_ics_url),
             bus=bus,
-            jobs=JobManager(bus, concurrency={"transcribe": 1, "summarize": 2, "ask": 2}),
+            jobs=JobManager(
+                bus, concurrency={"transcribe": 1, "summarize": 2, "ask": 2, "digest": 1}
+            ),
         )
 
     async def apply_settings(self, settings: Settings) -> None:
@@ -101,16 +105,44 @@ class AppContext:
                 logger.exception("Audio retention pass failed")
             await asyncio.sleep(interval_seconds)
 
-    async def startup(self, retention_interval: float = 6 * 3600) -> None:
+    def maybe_schedule_digest(self, now: datetime | None = None):
+        """Queue this week's digest if the schedule says it is due and none exists yet."""
+        from ..services.digest_service import due_week, range_label
+        from ..services.pipeline import make_digest
+
+        st = self.settings
+        week = due_week(now or datetime.now(), st.digest_weekday, st.digest_hour)
+        if week is None or self.repo.has_digest(range_label(*week)):
+            return None
+        if any(j.kind == "digest" for j in self.jobs.list(active_only=True)):
+            return None
+        if not any(s.summary.strip() for s in self.repo.sessions_between(*week)):
+            return None
+        logger.info("Scheduled digest for %s", range_label(*week))
+        return self.jobs.submit("digest", make_digest(self, *week))
+
+    async def _digest_loop(self, interval_seconds: float) -> None:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                self.maybe_schedule_digest()
+            except Exception:
+                logger.exception("Digest schedule check failed")
+
+    async def startup(
+        self, retention_interval: float = 6 * 3600, digest_interval: float = 900
+    ) -> None:
         if self.settings.echo_cancel:
             status = await self.echo.start()
             if not status.active:
                 logger.warning("Echo cancellation not started: %s", status.reason)
         self._retention_task = asyncio.create_task(self._retention_loop(retention_interval))
+        self._digest_task = asyncio.create_task(self._digest_loop(digest_interval))
 
     async def shutdown(self) -> None:
-        if self._retention_task is not None:
-            self._retention_task.cancel()
+        for task in (self._retention_task, self._digest_task):
+            if task is not None:
+                task.cancel()
         await self.echo.stop()
         await self.jobs.shutdown()
         await self.models.unload()

@@ -40,17 +40,22 @@ class SummarizationService:
             results.append({"provider": name, "models": models})
         return results
 
-    async def complete(self, system: str, user: str, provider_name: str, model: str = "") -> str:
-        """One chat turn with a configured provider (first model if none given)."""
+    async def resolve_model(self, provider_name: str, model: str = "") -> str:
+        """The model to use: `model` itself, or the provider's first one."""
         provider = self.providers.get(provider_name)
         if provider is None:
             raise ValueError(f"Provider '{provider_name}' not available")
-        if not model:
-            models = await provider.list_models()
-            if not models:
-                raise ValueError(f"No models available from provider '{provider_name}'")
-            model = models[0]
-        return await provider.complete(system, user, model)
+        if model:
+            return model
+        models = await provider.list_models()
+        if not models:
+            raise ValueError(f"No models available from provider '{provider_name}'")
+        return models[0]
+
+    async def complete(self, system: str, user: str, provider_name: str, model: str = "") -> str:
+        """One chat turn with a configured provider (first model if none given)."""
+        model = await self.resolve_model(provider_name, model)
+        return await self.providers[provider_name].complete(system, user, model)
 
     async def summarize(
         self,
