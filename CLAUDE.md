@@ -85,8 +85,9 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
   mic level with the mic unmuted is that, not a capture bug.
 - Updates: the Tauri updater (AppImage, deb and rpm) reads `latest.json` from the latest
   GitHub release; `scripts/updater-manifest.py` writes it in the Release workflow. Bundles are
-  signed with `~/.tauri/mnemosyne.key` (no password; repo secret `TAURI_SIGNING_PRIVATE_KEY`,
-  public key in tauri.conf.json). Losing the key means shipped apps can never update again.
+  signed with `~/.tauri/mnemosyne.key`, password in `~/.tauri/mnemosyne.key.password` (repo
+  secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; public key in
+  tauri.conf.json). A key without a password cannot sign non-interactively (tauri-cli 2.10). Losing the key means shipped apps can never update again.
   `createUpdaterArtifacts` is only turned on in CI (`--config`), so local builds need no key.
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives

@@ -45,3 +45,6 @@ src-tauri/resources/
 tests-e2e/.data/
 test-results/
 playwright-report/
+flatpak/mnemosyne.deb
+mnemosyne.flatpak
+.flatpak-builder/

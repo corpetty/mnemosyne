@@ -395,6 +395,25 @@ fn restart_app(app: AppHandle) {
     app.request_restart();
 }
 
+/// Whether the library the Linux tray loads at runtime can be found.
+fn appindicator_available() -> bool {
+    ["libayatana-appindicator3.so.1", "libappindicator3.so.1"]
+        .iter()
+        .any(|name| {
+            let c = std::ffi::CString::new(*name).unwrap();
+            // SAFETY: dlopen with a valid C string; the handle is closed right away.
+            unsafe {
+                let h = libc::dlopen(c.as_ptr(), libc::RTLD_LAZY);
+                if h.is_null() {
+                    false
+                } else {
+                    libc::dlclose(h);
+                    true
+                }
+            }
+        })
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Start recording", true, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Mnemosyne", true, None::<&str>)?;
@@ -467,8 +486,11 @@ pub fn run() {
             }
 
             // A missing tray host (e.g. GNOME without the AppIndicator extension) must
-            // not stop the app.
-            if let Err(e) = build_tray(app.handle()) {
+            // not stop the app. Without the appindicator library the tray crate panics,
+            // so check for it first.
+            if !appindicator_available() {
+                warn!("System tray unavailable: no libayatana-appindicator3 or libappindicator3");
+            } else if let Err(e) = build_tray(app.handle()) {
                 warn!("System tray unavailable: {e}");
             }
 

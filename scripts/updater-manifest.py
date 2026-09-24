@@ -11,7 +11,7 @@ AppImage, used by builds that do not know their bundle type.
 
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = "corpetty/mnemosyne"
@@ -42,7 +42,7 @@ def main() -> int:
     manifest = {
         "version": tag.removeprefix("v"),
         "notes": notes,
-        "pub_date": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "platforms": platforms,
     }
     (dist / "latest.json").write_text(json.dumps(manifest, indent=2) + "\n")

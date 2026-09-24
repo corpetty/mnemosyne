@@ -1,0 +1,52 @@
+# Flatpak of the Tauri app, repackaged from the release .deb.
+# Build: bash scripts/build-flatpak.sh path/to/Mnemosyne_X.Y.Z_amd64.deb
+# The GNOME runtime already has webkit2gtk-4.1, the PipeWire tools (pw-record, pw-dump,
+# pw-cli, pw-play, pw-link) and ffmpeg, so the backend runs everything inside the sandbox.
+id: com.corpetty.mnemosyne
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: mnemosyne
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  # GPU for the webview and, with the NVIDIA GL extension, CUDA.
+  - --device=all
+  # uv installs the backend on first launch; LLM providers and remote backends.
+  - --share=network
+  # Recording and the capture self-test.
+  - --filesystem=xdg-run/pipewire-0
+  - --socket=pulseaudio
+  # Obsidian vaults can live anywhere in your home directory.
+  - --filesystem=home
+  # Tray icon.
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --filesystem=xdg-run/tray-icon:create
+  - --env=WEBKIT_DISABLE_DMABUF_RENDERER=1
+modules:
+  - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
+
+  - name: mnemosyne
+    buildsystem: simple
+    sources:
+      - type: file
+        path: mnemosyne.deb
+      - type: file
+        path: com.corpetty.mnemosyne.metainfo.xml
+    build-commands:
+      - ar -x mnemosyne.deb
+      - mkdir deb && tar -C deb -xf data.tar.*
+      # Binary and uv sidecar side by side; resources where Tauri looks for them
+      # (<exe dir>/../lib/<productName>).
+      - install -Dm755 deb/usr/bin/mnemosyne /app/bin/mnemosyne
+      - install -Dm755 deb/usr/bin/mnemosyne-uv /app/bin/mnemosyne-uv
+      - mkdir -p /app/lib && cp -a deb/usr/lib/Mnemosyne /app/lib/Mnemosyne
+      - install -Dm644 deb/usr/share/applications/Mnemosyne.desktop /app/share/applications/com.corpetty.mnemosyne.desktop
+      - desktop-file-edit --set-icon=com.corpetty.mnemosyne --set-key=Exec --set-value='mnemosyne %U' /app/share/applications/com.corpetty.mnemosyne.desktop
+      - |
+        for d in deb/usr/share/icons/hicolor/*/apps; do
+          size=$(basename "$(dirname "$d")")
+          install -Dm644 "$d/mnemosyne.png" "/app/share/icons/hicolor/$size/apps/com.corpetty.mnemosyne.png"
+        done
+      - install -Dm644 com.corpetty.mnemosyne.metainfo.xml /app/share/metainfo/com.corpetty.mnemosyne.metainfo.xml

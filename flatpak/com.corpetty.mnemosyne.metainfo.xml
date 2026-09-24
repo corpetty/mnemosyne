@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.corpetty.mnemosyne</id>
+  <name>Mnemosyne</name>
+  <summary>Record, transcribe and summarize meetings locally</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <developer id="com.corpetty">
+    <name>Corey Petty</name>
+  </developer>
+  <description>
+    <p>
+      Mnemosyne records your microphone and system audio through PipeWire, transcribes and
+      labels speakers on your own machine, summarizes with the LLM of your choice and exports
+      notes to Obsidian.
+    </p>
+    <p>
+      On first launch it installs its Python backend into your user data directory, which needs
+      a network connection and a few minutes.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.corpetty.mnemosyne.desktop</launchable>
+  <url type="homepage">https://github.com/corpetty/mnemosyne</url>
+  <url type="bugtracker">https://github.com/corpetty/mnemosyne/issues</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.5.0" date="2026-09-24"/>
+  </releases>
+</component>
