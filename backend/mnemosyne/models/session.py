@@ -72,6 +72,7 @@ class SummaryData(ApiModel):
     action_items: list[ActionItem] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     chapters: list[Chapter] = Field(default_factory=list)
+    followup: str = ""  # last drafted follow-up message (email or chat)
 
 
 class Session(ApiModel):

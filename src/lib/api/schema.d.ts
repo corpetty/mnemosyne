@@ -581,6 +581,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/followup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Draft Followup
+         * @description Queue a `followup` job: a follow-up email or chat message drafted from the summary.
+         *     The text is the job result's `followup` and is saved on `summary_data.followup`.
+         */
+        post: operations["draft_followup_api_sessions__session_id__followup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/notes": {
         parameters: {
             query?: never;
@@ -1161,6 +1182,25 @@ export interface components {
             message: string;
             /** Path */
             path: string;
+        };
+        /** FollowupRequest */
+        FollowupRequest: {
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /**
+             * Style
+             * @default email
+             * @enum {string}
+             */
+            style: "email" | "chat";
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1903,6 +1943,11 @@ export interface components {
             chapters: components["schemas"]["Chapter"][];
             /** Decisions */
             decisions: string[];
+            /**
+             * Followup
+             * @default
+             */
+            followup: string;
             /**
              * Model
              * @default
@@ -3145,6 +3190,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    draft_followup_api_sessions__session_id__followup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FollowupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
             /** @description Validation Error */

@@ -1,11 +1,13 @@
 """Model listing and summarization endpoints."""
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...jobs import Job
 from ...models.base import ApiModel
+from ...services.pipeline import draft_followup as followup_runner
 from ...services.pipeline import summarize_session as summarize_runner
 from ...summarization.prompts import STYLES
 from ..context import AppContext, get_ctx
@@ -40,6 +42,30 @@ async def summary_styles():
 @router.get("/models", response_model=list[ProviderModels])
 async def list_models(ctx: AppContext = Depends(get_ctx)):
     return await ctx.summarizer.list_all_models()
+
+
+class FollowupRequest(ApiModel):
+    style: Literal["email", "chat"] = "email"
+    provider: str = ""
+    model: str = ""
+
+
+@router.post("/sessions/{session_id}/followup", response_model=Job)
+async def draft_followup(
+    session_id: str, request: FollowupRequest, ctx: AppContext = Depends(get_ctx)
+):
+    """Queue a `followup` job: a follow-up email or chat message drafted from the summary.
+    The text is the job result's `followup` and is saved on `summary_data.followup`."""
+    session = ctx.sessions.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not session.summary or session.summary_data is None:
+        raise HTTPException(status_code=400, detail="Summarize the meeting first")
+    return ctx.jobs.submit(
+        "followup",
+        followup_runner(ctx, session_id, request.style, request.provider, request.model),
+        session_id=session_id,
+    )
 
 
 @router.post("/sessions/{session_id}/summarize", response_model=Job)

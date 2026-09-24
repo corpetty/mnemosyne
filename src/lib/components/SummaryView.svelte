@@ -12,7 +12,7 @@
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import Markdown from './Markdown.svelte';
-	import { createGitHubIssues, setActionItemDone } from '$lib/api/backend.js';
+	import { createGitHubIssues, draftFollowup, setActionItemDone } from '$lib/api/backend.js';
 
 	let selected = $state<Set<number>>(new Set());
 	let creating = $state(false);
@@ -24,6 +24,47 @@
 			selected = new Set();
 		}
 	});
+
+	let followupStyle = $state<'email' | 'chat'>('email');
+	let followupText = $state('');
+	let followupFor = '';
+	// Show the saved draft for this session (and pick up a new one when it lands).
+	$effect(() => {
+		const s = sessionState.activeSession;
+		const saved = s?.summary_data?.followup ?? '';
+		const key = `${s?.id}:${saved}`;
+		if (key !== followupFor) {
+			followupFor = key;
+			followupText = saved;
+		}
+	});
+	$effect(() =>
+		jobsState.onComplete((job) => {
+			if (job.kind === 'followup' && job.session_id === sessionState.activeSession?.id) sessionState.refreshActive();
+		})
+	);
+	const followupError = $derived.by(() => {
+		const last = sessionState.activeSession ? jobsState.last(sessionState.activeSession.id, 'followup') : null;
+		return last?.status === 'failed' ? last.error : null;
+	});
+	const followupJob = $derived(
+		sessionState.activeSession ? jobsState.active(sessionState.activeSession.id, 'followup') : null
+	);
+
+	async function handleFollowup() {
+		const session = sessionState.activeSession;
+		if (!session) return;
+		try {
+			jobsState.track(await draftFollowup(session.id, followupStyle));
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not draft a follow-up');
+		}
+	}
+
+	async function copyFollowup() {
+		await navigator.clipboard.writeText(followupText);
+		toastState.info('Follow-up copied');
+	}
 
 	async function toggleDone(i: number, done: boolean) {
 		const session = sessionState.activeSession;
@@ -249,6 +290,37 @@
 					{/if}
 				</div>
 				<p class="text-[11px] text-gray-600">{data.style} summary · {data.provider}/{data.model}</p>
+				<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 space-y-2">
+					<div class="flex flex-wrap items-center gap-2">
+						<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mr-auto">Follow-up</h4>
+						<select bind:value={followupStyle} class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Follow-up style">
+							<option value="email">Email</option>
+							<option value="chat">Chat message</option>
+						</select>
+						<button
+							onclick={handleFollowup}
+							disabled={!!followupJob}
+							class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50"
+						>
+							{followupJob ? 'Drafting…' : data.followup ? 'Redraft' : 'Draft follow-up'}
+						</button>
+						{#if followupText}
+							<button onclick={copyFollowup} class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200">Copy</button>
+						{/if}
+					</div>
+					{#if followupError}<p class="text-xs text-red-400">{followupError}</p>{/if}
+					{#if followupText}
+						<textarea
+							bind:value={followupText}
+							rows={Math.min(16, Math.max(4, followupText.split('\n').length + 1))}
+							aria-label="Follow-up draft"
+							class="w-full bg-gray-950 border border-gray-800 rounded px-2 py-1.5 text-sm text-gray-200 font-sans resize-y"
+						></textarea>
+						<p class="text-[11px] text-gray-600">Edits here are only for copying; redrafting replaces the saved draft.</p>
+					{:else if !followupJob}
+						<p class="text-[11px] text-gray-600">An email or chat message recapping decisions and next steps, ready to paste.</p>
+					{/if}
+				</section>
 			{/if}
 			<button
 				onclick={copyToClipboard}

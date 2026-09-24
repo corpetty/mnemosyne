@@ -507,6 +507,12 @@ With `auto_name_sessions` on (default), a session still called "Untitled Session
 
 ---
 
+### `POST /api/sessions/{session_id}/followup`
+Body `{"style": "email" | "chat", "provider": "", "model": ""}` (defaults: email, default
+provider and model). Queues a `followup` job that drafts a follow-up message from the summary,
+decisions, action items and open questions. The job result is `{followup, style, provider, model}`;
+the text is also saved as `summary_data.followup`. 400 when the session has no summary.
+
 ## Export
 
 ### `GET /api/sessions/{session_id}/export/markdown`

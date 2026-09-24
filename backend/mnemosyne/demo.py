@@ -102,6 +102,11 @@ class DemoProvider:
             return json.dumps(DEMO_SUMMARY)
         if "numbered excerpts" in system_prompt:
             return "The migration ships in October [1]."
+        if "follow-up" in system_prompt:
+            return (
+                "Subject: Release planning follow-up\n\nThanks all. We ship the Waku "
+                "migration in October.\n\nNext steps:\n- Update the docs before the release"
+            )
         if "## Overview" in system_prompt:
             return "## Overview\nA demo week.\n\n## Themes\n- The Waku release"
         return user_prompt

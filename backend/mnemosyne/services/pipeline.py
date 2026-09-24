@@ -275,6 +275,32 @@ def ask_question(app: AppContext, question: str, provider: str = "", model: str 
     return run
 
 
+def draft_followup(app: AppContext, session_id: str, style: str = "email", provider="", model=""):
+    """Build the follow-up job runner; the draft is saved on summary_data.followup."""
+
+    async def run(ctx: JobContext) -> dict:
+        from .followup import SYSTEM, clean, prompt_for
+
+        session = app.sessions.get_session(session_id)
+        if session is None or session.summary_data is None:
+            raise ValueError("Summarize the meeting first")
+        st = app.settings
+        prov = provider or st.default_provider
+        mdl = await app.summarizer.resolve_model(prov, model or st.default_model)
+        extra = glossary_instructions(parse_glossary(st.glossary))
+        system = f"{SYSTEM[style]}\n{extra}".strip() if extra else SYSTEM[style]
+        ctx.update(f"Drafting with {prov}/{mdl}")
+        text = clean(await app.summarizer.complete(system, prompt_for(session), prov, mdl))
+        # Re-read so a concurrent edit (e.g. ticking an item) is not overwritten.
+        current = app.sessions.get_session(session_id)
+        if current is not None and current.summary_data is not None:
+            current.summary_data.followup = text
+            app.sessions.set_summary(session_id, current.summary, current.summary_data)
+        return {"followup": text, "style": style, "provider": prov, "model": mdl}
+
+    return run
+
+
 def make_digest(app: AppContext, start, end, provider: str = "", model: str = ""):
     """Build the digest job runner; the saved Digest is the job result."""
 

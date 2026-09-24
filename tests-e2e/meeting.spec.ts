@@ -75,6 +75,13 @@ test('summarize produces decisions and action items', async () => {
   await expect(page.getByText('Mobile regression owner', { exact: true })).toBeVisible();
 });
 
+test('draft a follow-up email', async () => {
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  await page.getByRole('button', { name: 'Draft follow-up' }).click();
+  await expect(page.getByLabel('Follow-up draft')).toHaveValue(/^Subject: Release planning follow-up/);
+  await expect(page.getByRole('button', { name: 'Redraft' })).toBeVisible();
+});
+
 test('ask answers with a citation that opens the meeting', async () => {
   await page.getByRole('button', { name: 'Ask', exact: true }).click();
   const box = page.getByPlaceholder(/What did we decide/);

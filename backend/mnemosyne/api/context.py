@@ -61,7 +61,8 @@ class AppContext:
             calendar=CalendarService(settings.calendar_ics_url),
             bus=bus,
             jobs=JobManager(
-                bus, concurrency={"transcribe": 1, "summarize": 2, "ask": 2, "digest": 1}
+                bus,
+                concurrency={"transcribe": 1, "summarize": 2, "ask": 2, "digest": 1, "followup": 2},
             ),
         )
 

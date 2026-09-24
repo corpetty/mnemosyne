@@ -307,6 +307,10 @@ export async function getSessionStats(id: string): Promise<MeetingStats> {
   return request(`/api/sessions/${id}/stats`);
 }
 
+export async function draftFollowup(sessionId: string, style: 'email' | 'chat'): Promise<Job> {
+  return request(`/api/sessions/${sessionId}/followup`, { method: 'POST', body: JSON.stringify({ style }) });
+}
+
 // Action items across meetings
 export async function listActionItems(status: 'open' | 'done' | 'all' = 'open'): Promise<TaskItem[]> {
   return request(`/api/action-items?status=${status}`);
