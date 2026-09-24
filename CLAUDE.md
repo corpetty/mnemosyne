@@ -132,7 +132,14 @@ Calendar via ICS feed (services/calendar_service.py): session naming, attendees,
 Live speaker labels (transcription/live_speakers.py): pyannote embedding + online clustering +
 voice-profile naming, `live_relabel` events.
 
-Candidates next: Tauri updater; offline installer (pre-seeded uv cache).
+Added 2026-09-24 (docs/plans/2026-09-24-next-ten.md, released as 0.5.0): installable backend
+package + generated API types; level meters and capture self-test (audio/levels.py); stage
+progress with ETA; glossary (transcription/glossary.py); MCP server (mcp_server.py); action items
+to GitHub issues (services/github_service.py); weekly digest (services/digest_service.py);
+Playwright e2e on a demo-mode backend; Tauri updater; Flatpak (flatpak/).
+
+Candidates next: offline installer (pre-seeded uv cache); GPU inside the Flatpak; live
+diarization upgrades (Sortformer); publishing the Flatpak to Flathub (needs a license).
 
 Frontend package manager: pnpm is pinned via `packageManager` (corepack). If `pnpm` complains
 about an unexpected store location, run `pnpm install --config.confirmModulesPurge=false`.
