@@ -60,6 +60,10 @@ SECRET_FIELDS = frozenset(
         "api_token",
         "calendar_ics_url",
         "github_token",
+        "linear_api_key",
+        "jira_api_token",
+        "slack_webhook_url",
+        "matrix_access_token",
     }
 )
 
@@ -162,6 +166,23 @@ class Settings(BaseSettings):
     github_repo: str = ""  # owner/name
     github_token: str = ""  # fine-grained token with Issues: read and write on that repo
     github_labels: str = "meeting-action"  # comma-separated
+
+    # Linear issues from action items: a personal API key and the team key (e.g. "ENG").
+    linear_api_key: str = ""
+    linear_team: str = ""
+
+    # Jira Cloud issues from action items.
+    jira_url: str = ""  # https://yourteam.atlassian.net
+    jira_email: str = ""
+    jira_api_token: str = ""
+    jira_project: str = ""  # project key, e.g. "OPS"
+    jira_issue_type: str = "Task"
+
+    # Posting follow-ups: a Slack incoming webhook, and/or a Matrix room.
+    slack_webhook_url: str = ""
+    matrix_homeserver: str = ""  # https://matrix.org
+    matrix_access_token: str = ""
+    matrix_room_id: str = ""  # !abc123:matrix.org
 
     # Search and Ask: add meaning-based matches to keyword search (model2vec, CPU).
     semantic_search: bool = True

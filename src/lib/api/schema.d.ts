@@ -369,6 +369,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/integrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Configured
+         * @description Which integrations have their settings filled in (not whether they work).
+         */
+        get: operations["configured_api_integrations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/integrations/github/check": {
         parameters: {
             query?: never;
@@ -378,6 +398,23 @@ export interface paths {
         };
         /** Check Github */
         get: operations["check_github_api_integrations_github_check_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/{name}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check Integration */
+        get: operations["check_integration_api_integrations__name__check_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -585,26 +622,6 @@ export interface paths {
         patch: operations["rename_session_api_sessions__session_id__patch"];
         trace?: never;
     };
-    "/api/sessions/{session_id}/action-items/github": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Github Issues
-         * @description Create one issue per selected action item; remembers each issue's URL.
-         */
-        post: operations["create_github_issues_api_sessions__session_id__action_items_github_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/sessions/{session_id}/action-items/{idx}": {
         parameters: {
             query?: never;
@@ -620,6 +637,27 @@ export interface paths {
         head?: never;
         /** Update Action Item */
         patch: operations["update_action_item_api_sessions__session_id__action_items__idx__patch"];
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/action-items/{tracker}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Issues
+         * @description Create one issue per selected action item in GitHub, Linear or Jira; remembers each
+         *     issue's URL on the item.
+         */
+        post: operations["create_issues_api_sessions__session_id__action_items__tracker__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/sessions/{session_id}/attendees": {
@@ -711,6 +749,23 @@ export interface paths {
          *     The text is the job result's `followup` and is saved on `summary_data.followup`.
          */
         post: operations["draft_followup_api_sessions__session_id__followup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/followup/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send Followup */
+        post: operations["send_followup_api_sessions__session_id__followup_send_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1274,6 +1329,13 @@ export interface components {
             /** Sessions */
             sessions: components["schemas"]["SessionUsage"][];
         };
+        /** Configured */
+        Configured: {
+            /** Destinations */
+            destinations: ("slack" | "matrix")[];
+            /** Trackers */
+            trackers: ("github" | "linear" | "jira")[];
+        };
         /** CreateIssuesRequest */
         CreateIssuesRequest: {
             /** Indices */
@@ -1799,6 +1861,26 @@ export interface components {
             /** Tone Snr Db */
             tone_snr_db: number;
         };
+        /** SendRequest */
+        SendRequest: {
+            /**
+             * Destination
+             * @enum {string}
+             */
+            destination: "slack" | "matrix";
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+        };
+        /** SendResult */
+        SendResult: {
+            /** Message */
+            message: string;
+            /** Ok */
+            ok: boolean;
+        };
         /** Session */
         Session: {
             /** Attendees */
@@ -1991,8 +2073,22 @@ export interface components {
             glossary_llm_correct?: boolean | null;
             /** Hf Token */
             hf_token?: string | null;
+            /** Jira Api Token */
+            jira_api_token?: string | null;
+            /** Jira Email */
+            jira_email?: string | null;
+            /** Jira Issue Type */
+            jira_issue_type?: string | null;
+            /** Jira Project */
+            jira_project?: string | null;
+            /** Jira Url */
+            jira_url?: string | null;
             /** Language */
             language?: string | null;
+            /** Linear Api Key */
+            linear_api_key?: string | null;
+            /** Linear Team */
+            linear_team?: string | null;
             /** Live Diarization */
             live_diarization?: boolean | null;
             /** Live Interval Seconds */
@@ -2005,6 +2101,12 @@ export interface components {
             live_transcription?: boolean | null;
             /** Local Speaker Name */
             local_speaker_name?: string | null;
+            /** Matrix Access Token */
+            matrix_access_token?: string | null;
+            /** Matrix Homeserver */
+            matrix_homeserver?: string | null;
+            /** Matrix Room Id */
+            matrix_room_id?: string | null;
             /** Max Speakers */
             max_speakers?: number | null;
             /** Mention Keywords */
@@ -2047,6 +2149,8 @@ export interface components {
             remote_stt_url?: string | null;
             /** Semantic Search */
             semantic_search?: boolean | null;
+            /** Slack Webhook Url */
+            slack_webhook_url?: string | null;
             /** Speaker Match Threshold */
             speaker_match_threshold?: number | null;
             /** Summary Chunk Chars */
@@ -2130,8 +2234,22 @@ export interface components {
             glossary_llm_correct: boolean;
             /** Hf Token */
             hf_token: string;
+            /** Jira Api Token */
+            jira_api_token: string;
+            /** Jira Email */
+            jira_email: string;
+            /** Jira Issue Type */
+            jira_issue_type: string;
+            /** Jira Project */
+            jira_project: string;
+            /** Jira Url */
+            jira_url: string;
             /** Language */
             language: string;
+            /** Linear Api Key */
+            linear_api_key: string;
+            /** Linear Team */
+            linear_team: string;
             /** Live Diarization */
             live_diarization: boolean;
             /** Live Interval Seconds */
@@ -2144,6 +2262,12 @@ export interface components {
             live_transcription: boolean;
             /** Local Speaker Name */
             local_speaker_name: string;
+            /** Matrix Access Token */
+            matrix_access_token: string;
+            /** Matrix Homeserver */
+            matrix_homeserver: string;
+            /** Matrix Room Id */
+            matrix_room_id: string;
             /** Max Speakers */
             max_speakers: number | null;
             /** Mention Keywords */
@@ -2186,6 +2310,8 @@ export interface components {
             remote_stt_url: string;
             /** Semantic Search */
             semantic_search: boolean;
+            /** Slack Webhook Url */
+            slack_webhook_url: string;
             /** Speaker Match Threshold */
             speaker_match_threshold: number;
             /** Summary Chunk Chars */
@@ -2448,6 +2574,13 @@ export interface components {
             meetings: number;
             /** Topic */
             topic: string;
+        };
+        /** TrackerCheck */
+        TrackerCheck: {
+            /** Message */
+            message: string;
+            /** Ok */
+            ok: boolean;
         };
         /** TranscriptSegment */
         TranscriptSegment: {
@@ -3183,6 +3316,26 @@ export interface operations {
             };
         };
     };
+    configured_api_integrations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Configured"];
+                };
+            };
+        };
+    };
     check_github_api_integrations_github_check_get: {
         parameters: {
             query?: never;
@@ -3199,6 +3352,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RepoCheck"];
+                };
+            };
+        };
+    };
+    check_integration_api_integrations__name__check_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: "linear" | "jira" | "slack" | "matrix";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackerCheck"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -3591,41 +3775,6 @@ export interface operations {
             };
         };
     };
-    create_github_issues_api_sessions__session_id__action_items_github_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateIssuesRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IssueResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     update_action_item_api_sessions__session_id__action_items__idx__patch: {
         parameters: {
             query?: never;
@@ -3649,6 +3798,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_issues_api_sessions__session_id__action_items__tracker__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                tracker: "github" | "linear" | "jira";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateIssuesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueResult"];
                 };
             };
             /** @description Validation Error */
@@ -3812,6 +3997,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_followup_api_sessions__session_id__followup_send_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SendResult"];
                 };
             };
             /** @description Validation Error */

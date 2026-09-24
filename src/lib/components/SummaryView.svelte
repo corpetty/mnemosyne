@@ -12,7 +12,15 @@
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import Markdown from './Markdown.svelte';
-	import { createGitHubIssues, draftFollowup, setActionItemDone } from '$lib/api/backend.js';
+	import {
+		createIssues,
+		draftFollowup,
+		getIntegrations,
+		sendFollowup,
+		setActionItemDone,
+		type DestinationName,
+		type TrackerName
+	} from '$lib/api/backend.js';
 
 	let selected = $state<Set<number>>(new Set());
 	let creating = $state(false);
@@ -110,28 +118,54 @@
 		}
 	}
 
-	async function createIssues() {
+	const TRACKER_LABEL: Record<TrackerName, string> = { github: 'GitHub', linear: 'Linear', jira: 'Jira' };
+	let trackers = $state<TrackerName[]>([]);
+	let destinations = $state<DestinationName[]>([]);
+	let tracker = $state<TrackerName>('github');
+	$effect(() => {
+		getIntegrations()
+			.then((r) => {
+				trackers = r.trackers;
+				destinations = r.destinations;
+				if (r.trackers.length && !r.trackers.includes(tracker)) tracker = r.trackers[0];
+			})
+			.catch(() => {});
+	});
+
+	async function handleCreateIssues() {
 		const session = sessionState.activeSession;
 		if (!session || selected.size === 0) return;
-		const settings = await getSettings();
-		const repo = settings.values.github_repo;
-		if (!repo) {
-			toastState.error('Set a GitHub repository and token in Settings first');
+		if (!trackers.includes(tracker)) {
+			toastState.error('Set up GitHub, Linear or Jira in Settings first');
 			return;
 		}
 		const n = selected.size;
-		if (!confirm(`Create ${n} issue${n > 1 ? 's' : ''} in ${repo}?`)) return;
+		const where = TRACKER_LABEL[tracker];
+		if (!confirm(`Create ${n} issue${n > 1 ? 's' : ''} in ${where}?`)) return;
 		creating = true;
 		try {
-			const r = await createGitHubIssues(session.id, [...selected].sort((a, b) => a - b));
+			const r = await createIssues(session.id, tracker, [...selected].sort((a, b) => a - b));
 			selected = new Set();
 			await sessionState.refreshActive();
-			if (r.created.length) toastState.success(`Created ${r.created.length} issue${r.created.length > 1 ? 's' : ''} in ${repo}`);
+			if (r.created.length) toastState.success(`Created ${r.created.length} issue${r.created.length > 1 ? 's' : ''} in ${where}`);
 			for (const err of r.errors) toastState.error(err);
 		} catch (e) {
 			toastState.error(e instanceof Error ? e.message : 'Could not create issues');
 		} finally {
 			creating = false;
+		}
+	}
+
+	async function postFollowup(destination: DestinationName) {
+		const session = sessionState.activeSession;
+		if (!session || !followupText.trim()) return;
+		const where = destination === 'slack' ? 'Slack' : 'the Matrix room';
+		if (!confirm(`Post this follow-up to ${where}?`)) return;
+		try {
+			const r = await sendFollowup(session.id, destination, followupText);
+			toastState.success(r.message);
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not post');
 		}
 	}
 	import type { ProviderModels, SummaryStyle } from '$lib/types/index.js';
@@ -259,9 +293,16 @@
 								{/each}
 							</ul>
 							{#if selected.size > 0}
-								<button onclick={createIssues} disabled={creating} class="mt-2 px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50">
-									{creating ? 'Creating…' : `Create ${selected.size} GitHub issue${selected.size > 1 ? 's' : ''}`}
-								</button>
+								<div class="mt-2 flex items-center gap-2">
+									{#if trackers.length > 1}
+										<select bind:value={tracker} aria-label="Issue tracker" class="bg-gray-800 border border-gray-700 rounded px-1.5 py-1 text-xs text-gray-200">
+											{#each trackers as t}<option value={t}>{TRACKER_LABEL[t]}</option>{/each}
+										</select>
+									{/if}
+									<button onclick={handleCreateIssues} disabled={creating} class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50">
+										{creating ? 'Creating…' : `Create ${selected.size} issue${selected.size > 1 ? 's' : ''} in ${TRACKER_LABEL[tracker]}`}
+									</button>
+								</div>
 							{/if}
 						</section>
 					{/if}
@@ -306,6 +347,11 @@
 						</button>
 						{#if followupText}
 							<button onclick={copyFollowup} class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200">Copy</button>
+							{#each destinations as d}
+								<button onclick={() => postFollowup(d)} class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200">
+									Post to {d === 'slack' ? 'Slack' : 'Matrix'}
+								</button>
+							{/each}
 						{/if}
 					</div>
 					{#if followupError}<p class="text-xs text-red-400">{followupError}</p>{/if}

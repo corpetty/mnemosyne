@@ -6,7 +6,7 @@
 	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
 	import StorageSettings from './StorageSettings.svelte';
 	import { calendarState } from '$lib/stores/calendar.svelte.js';
-	import { checkGitHub, getIndexStatus, rebuildIndex } from '$lib/api/backend.js';
+	import { checkGitHub, checkIntegration, getIndexStatus, rebuildIndex } from '$lib/api/backend.js';
 	import type { IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	let settings = $state<SettingsResponse | null>(null);
@@ -19,8 +19,31 @@
 	// Editable copy of the values
 	let form = $state<SettingsUpdate>({});
 	// Secret inputs are separate: '' = keep current, text = replace
-	type SecretKey = 'hf_token' | 'openai_api_key' | 'anthropic_api_key' | 'remote_stt_api_key' | 'api_token' | 'calendar_ics_url' | 'github_token';
-	const SECRET_KEYS: SecretKey[] = ['hf_token', 'openai_api_key', 'anthropic_api_key', 'remote_stt_api_key', 'api_token', 'calendar_ics_url', 'github_token'];
+	type SecretKey =
+		| 'hf_token'
+		| 'openai_api_key'
+		| 'anthropic_api_key'
+		| 'remote_stt_api_key'
+		| 'api_token'
+		| 'calendar_ics_url'
+		| 'github_token'
+		| 'linear_api_key'
+		| 'jira_api_token'
+		| 'slack_webhook_url'
+		| 'matrix_access_token';
+	const SECRET_KEYS: SecretKey[] = [
+		'hf_token',
+		'openai_api_key',
+		'anthropic_api_key',
+		'remote_stt_api_key',
+		'api_token',
+		'calendar_ics_url',
+		'github_token',
+		'linear_api_key',
+		'jira_api_token',
+		'slack_webhook_url',
+		'matrix_access_token'
+	];
 	const emptySecrets = (): Record<SecretKey, string> => ({
 		hf_token: '',
 		openai_api_key: '',
@@ -28,7 +51,11 @@
 		remote_stt_api_key: '',
 		api_token: '',
 		calendar_ics_url: '',
-		github_token: ''
+		github_token: '',
+		linear_api_key: '',
+		jira_api_token: '',
+		slack_webhook_url: '',
+		matrix_access_token: ''
 	});
 	let connUrl = $state(connectionState.url);
 	let connToken = $state(connectionState.token);
@@ -87,6 +114,13 @@
 				calendar_auto_name: v.calendar_auto_name,
 				github_repo: v.github_repo,
 				github_labels: v.github_labels,
+				linear_team: v.linear_team,
+				jira_url: v.jira_url,
+				jira_email: v.jira_email,
+				jira_project: v.jira_project,
+				jira_issue_type: v.jira_issue_type,
+				matrix_homeserver: v.matrix_homeserver,
+				matrix_room_id: v.matrix_room_id,
 				ollama_url: v.ollama_url,
 				vllm_url: v.vllm_url,
 				default_provider: v.default_provider,
@@ -165,6 +199,17 @@
 			: calendarState.error
 				? `Error: ${calendarState.error}`
 				: `OK: ${calendarState.upcoming.length} meeting(s) in the next 12 hours${calendarState.current ? `, now: ${calendarState.current.title}` : ''}.`;
+	}
+
+	let integrationTest = $state<Record<string, string>>({});
+	async function testIntegration(name: 'linear' | 'jira' | 'slack' | 'matrix') {
+		integrationTest = { ...integrationTest, [name]: 'Checking…' };
+		try {
+			const r = await checkIntegration(name);
+			integrationTest = { ...integrationTest, [name]: `${r.ok ? '✓' : '✗'} ${r.message}` };
+		} catch (e) {
+			integrationTest = { ...integrationTest, [name]: e instanceof Error ? e.message : 'Check failed' };
+		}
 	}
 
 	let ghTest = $state<string | null>(null);
@@ -424,6 +469,81 @@
 				<div class="flex items-center gap-2 col-span-2">
 					<button onclick={testGitHub} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Test</button>
 					{#if ghTest}<span class="text-xs text-gray-400">{ghTest}</span>{/if}
+				</div>
+			</div>
+		</section>
+
+		<!-- Other issue trackers and chat -->
+		<section>
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">Linear, Jira, Slack and Matrix</h3>
+			<p class="text-xs text-gray-500 mb-3">
+				Action items can also become Linear or Jira issues, and follow-ups can be posted to Slack or a Matrix room. Fill in
+				what you use, save, then Test.
+			</p>
+			{#snippet secret(key: SecretKey, placeholder: string, label: string)}
+				<label class="block">
+					<span class={labelClass}>{label}{#if settings?.secrets_set[key]}<span class="text-green-500 ml-1">set</span>{/if}</span>
+					<div class="flex gap-2">
+						<input type="password" bind:value={secrets[key]} disabled={locked(key)} placeholder={settings?.secrets_set[key] ? '•••••••• (leave blank to keep)' : placeholder} class={inputClass} />
+						{#if settings?.secrets_set[key] && !locked(key)}
+							<button onclick={() => clearSecret(key)} class="text-xs text-gray-500 hover:text-red-400">Clear</button>
+						{/if}
+					</div>
+				</label>
+			{/snippet}
+			{#snippet test(name: 'linear' | 'jira' | 'slack' | 'matrix')}
+				<div class="flex items-center gap-2 col-span-2">
+					<button onclick={() => testIntegration(name)} class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Test</button>
+					{#if integrationTest[name]}<span class="text-xs text-gray-400">{integrationTest[name]}</span>{/if}
+				</div>
+			{/snippet}
+			<div class="space-y-4">
+				<div class="grid grid-cols-2 gap-3">
+					<h4 class="col-span-2 text-sm font-medium text-gray-300">Linear</h4>
+					{@render secret('linear_api_key', 'lin_api_…', 'Personal API key')}
+					<label>
+						<span class={labelClass}>Team key</span>
+						<input type="text" bind:value={form.linear_team} disabled={locked('linear_team')} placeholder="ENG" class={inputClass} />
+					</label>
+					{@render test('linear')}
+				</div>
+				<div class="grid grid-cols-2 gap-3">
+					<h4 class="col-span-2 text-sm font-medium text-gray-300">Jira Cloud</h4>
+					<label>
+						<span class={labelClass}>Site</span>
+						<input type="text" bind:value={form.jira_url} disabled={locked('jira_url')} placeholder="https://yourteam.atlassian.net" class={inputClass} />
+					</label>
+					<label>
+						<span class={labelClass}>Email</span>
+						<input type="text" bind:value={form.jira_email} disabled={locked('jira_email')} class={inputClass} />
+					</label>
+					{@render secret('jira_api_token', 'API token', 'API token')}
+					<label>
+						<span class={labelClass}>Project key · issue type</span>
+						<div class="flex gap-2">
+							<input type="text" bind:value={form.jira_project} disabled={locked('jira_project')} placeholder="OPS" class={inputClass} />
+							<input type="text" bind:value={form.jira_issue_type} disabled={locked('jira_issue_type')} class={inputClass} />
+						</div>
+					</label>
+					{@render test('jira')}
+				</div>
+				<div class="grid grid-cols-2 gap-3">
+					<h4 class="col-span-2 text-sm font-medium text-gray-300">Slack</h4>
+					<div class="col-span-2">{@render secret('slack_webhook_url', 'https://hooks.slack.com/services/…', 'Incoming webhook URL')}</div>
+					{@render test('slack')}
+				</div>
+				<div class="grid grid-cols-2 gap-3">
+					<h4 class="col-span-2 text-sm font-medium text-gray-300">Matrix</h4>
+					<label>
+						<span class={labelClass}>Homeserver</span>
+						<input type="text" bind:value={form.matrix_homeserver} disabled={locked('matrix_homeserver')} placeholder="https://matrix.org" class={inputClass} />
+					</label>
+					<label>
+						<span class={labelClass}>Room id</span>
+						<input type="text" bind:value={form.matrix_room_id} disabled={locked('matrix_room_id')} placeholder="!abc123:matrix.org" class={inputClass} />
+					</label>
+					<div class="col-span-2">{@render secret('matrix_access_token', 'syt_…', 'Access token (of a bot or your account)')}</div>
+					{@render test('matrix')}
 				</div>
 			</div>
 		</section>

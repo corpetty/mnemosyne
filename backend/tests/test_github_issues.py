@@ -43,7 +43,7 @@ class FakeGitHub:
 @pytest.fixture
 def github(ctx):
     gh = FakeGitHub()
-    ctx.github_transport = httpx.MockTransport(gh.handler)
+    ctx.http_transport = httpx.MockTransport(gh.handler)
     ctx.settings.github_repo = "corpetty/notes"
     ctx.settings.github_token = "ghp_test"
     ctx.settings.github_labels = "meeting-action, mnemosyne"
@@ -107,7 +107,7 @@ def test_create_issues_and_no_duplicates(client, github, session_with_items):
 
 def test_missing_labels_retry_and_partial_errors(client, ctx, session_with_items):
     gh = FakeGitHub(labels_exist=False, fail_titles={"Tag release"})
-    ctx.github_transport = httpx.MockTransport(gh.handler)
+    ctx.http_transport = httpx.MockTransport(gh.handler)
     ctx.settings.github_repo, ctx.settings.github_token = "corpetty/notes", "ghp_test"
     r = client.post(
         f"/api/sessions/{session_with_items.id}/action-items/github", json={"indices": [0, 1]}

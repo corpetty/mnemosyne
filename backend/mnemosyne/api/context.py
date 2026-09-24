@@ -46,7 +46,7 @@ class AppContext:
     _apps_task: asyncio.Task | None = None
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     level_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
-    github_transport: object | None = None  # tests inject an httpx transport
+    http_transport: object | None = None  # tests inject an httpx transport for integrations
 
     def __post_init__(self) -> None:
         self.summarizer.name_source = self.known_names

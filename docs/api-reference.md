@@ -475,6 +475,24 @@ URL (for testing against a stand-in).
 
 ---
 
+
+## Linear, Jira, Slack and Matrix
+
+`POST /api/sessions/{session_id}/action-items/{tracker}` with `tracker` = `github` | `linear` | `jira`
+and body `{"indices": [0, 2]}` creates one issue per item and stores its URL on the item (items that
+already have an issue are skipped). Same `IssueResult` for all three. Linear uses a personal API key
+and a team key (`linear_api_key`, `linear_team`); Jira Cloud uses `jira_url`, `jira_email`,
+`jira_api_token`, `jira_project`, `jira_issue_type` (description in Atlassian Document Format).
+
+`GET /api/integrations` → `{trackers, destinations}`: which have their settings filled in.
+`GET /api/integrations/{linear|jira|slack|matrix}/check` → `{ok, message}` (Slack can only check the
+webhook address without posting; Matrix checks the token and that the room is joined).
+
+`POST /api/sessions/{session_id}/followup/send` with `{"destination": "slack"|"matrix", "text": ""}`
+posts the text (default: the saved follow-up draft) to the Slack incoming webhook
+(`slack_webhook_url`) or the Matrix room (`matrix_homeserver`, `matrix_access_token`,
+`matrix_room_id`). 400 when not configured or there is nothing to send; 502 on a remote error.
+
 ## Speaker profiles
 
 Known voices, built from renames. Vectors are never returned.

@@ -423,9 +423,27 @@ export async function checkGitHub(): Promise<RepoCheck> {
   return request('/api/integrations/github/check');
 }
 
-export async function createGitHubIssues(sessionId: string, indices: number[]): Promise<IssueResult> {
-  return request(`/api/sessions/${sessionId}/action-items/github`, {
+export type TrackerName = 'github' | 'linear' | 'jira';
+export type DestinationName = 'slack' | 'matrix';
+
+export async function createIssues(sessionId: string, tracker: TrackerName, indices: number[]): Promise<IssueResult> {
+  return request(`/api/sessions/${sessionId}/action-items/${tracker}`, {
     method: 'POST',
     body: JSON.stringify({ indices })
+  });
+}
+
+export async function getIntegrations(): Promise<{ trackers: TrackerName[]; destinations: DestinationName[] }> {
+  return request('/api/integrations');
+}
+
+export async function checkIntegration(name: 'linear' | 'jira' | 'slack' | 'matrix'): Promise<{ ok: boolean; message: string }> {
+  return request(`/api/integrations/${name}/check`);
+}
+
+export async function sendFollowup(sessionId: string, destination: DestinationName, text: string): Promise<{ ok: boolean; message: string }> {
+  return request(`/api/sessions/${sessionId}/followup/send`, {
+    method: 'POST',
+    body: JSON.stringify({ destination, text })
   });
 }
