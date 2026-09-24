@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Callable
 
 from ..config import Settings
+from ..models.session import ActionItem, SummaryData
 from ..summarization.anthropic_provider import AnthropicProvider
 from ..summarization.ollama import OllamaProvider
 from ..summarization.openai_provider import OpenAIProvider
 from ..summarization.prompts import (
-    format_transcript_for_llm,
+    extract_json,
     get_system_prompt,
+    mmss,
     parse_summary_response,
+    part_payload,
+    partial_instructions,
+    reduce_system_prompt,
     snap_chapters,
+    split_lines,
+    transcript_lines,
 )
 from ..summarization.provider import SummarizationProvider
 from ..summarization.vllm import VLLMProvider
@@ -21,8 +30,11 @@ logger = logging.getLogger(__name__)
 
 
 class SummarizationService:
+    chunk_chars = 0  # 0: never split (see Settings.summary_chunk_chars)
+
     def __init__(self, settings: Settings | None = None):
         self.providers: dict[str, SummarizationProvider] = {}
+        self.chunk_chars = settings.summary_chunk_chars if settings is not None else 0
         if settings is not None:
             self._init_providers(settings)
 
@@ -69,6 +81,7 @@ class SummarizationService:
         model: str = "",
         style: str = "meeting",
         instructions: str = "",
+        on_progress: Callable[[str], None] | None = None,
     ) -> dict:
         provider = self.providers.get(provider_name)
         if provider is None:
@@ -81,18 +94,92 @@ class SummarizationService:
                 raise ValueError(f"No models available from provider '{provider_name}'")
             model = models[0]
 
-        transcript_text = format_transcript_for_llm(segments)
-        system_prompt = get_system_prompt(len(segments), style=style, extra=instructions)
-
+        lines = transcript_lines(segments)
+        starts = [float(seg["start"]) for seg in segments]
+        ranges = (
+            split_lines(lines, self.chunk_chars)
+            if self.chunk_chars and sum(len(x) + 1 for x in lines) > self.chunk_chars
+            else [(0, len(lines))]
+        )
         logger.info(
-            "Summarizing with %s/%s style=%s (%d segments)",
+            "Summarizing with %s/%s style=%s (%d segments, %d part(s))",
             provider_name,
             model,
             style,
             len(segments),
+            len(ranges),
         )
-        raw = await provider.summarize(transcript_text, model, system_prompt)
-        summary, data = parse_summary_response(raw, style=style)
-        data.chapters = snap_chapters(data.chapters, [float(s["start"]) for s in segments])
+        if len(ranges) == 1:
+            system_prompt = get_system_prompt(len(segments), style=style, extra=instructions)
+            raw = await provider.summarize("\n".join(lines), model, system_prompt)
+            summary, data = parse_summary_response(raw, style=style)
+        else:
+            summary, data = await self._summarize_in_parts(
+                provider, model, segments, lines, ranges, style, instructions, on_progress
+            )
+        data.chapters = snap_chapters(data.chapters, starts)
         data.provider, data.model = provider_name, model
         return {"summary": summary, "data": data, "provider": provider_name, "model": model}
+
+    async def _summarize_in_parts(
+        self, provider, model, segments, lines, ranges, style, instructions, on_progress
+    ) -> tuple[str, SummaryData]:
+        """Map: summarize each part on its own. Reduce: merge the partial JSONs."""
+        parts = []
+        total = len(ranges)
+        for n, (a, b) in enumerate(ranges, start=1):
+            if on_progress:
+                on_progress(f"Summarizing part {n} of {total}")
+            start, end = mmss(segments[a]["start"]), mmss(segments[b - 1]["end"])
+            system = get_system_prompt(
+                b - a,
+                style=style,
+                extra=f"{instructions}\n{partial_instructions(n, total, start, end)}",
+            )
+            raw = await provider.summarize("\n".join(lines[a:b]), model, system)
+            summary, data = parse_summary_response(raw, style=style)
+            parts.append(part_payload(n, start, end, summary, data))
+        if on_progress:
+            on_progress(f"Merging {total} parts")
+        raw = await provider.complete(
+            reduce_system_prompt(style, instructions),
+            json.dumps(parts, ensure_ascii=False, indent=1),
+            model,
+        )
+        summary, data = parse_summary_response(raw, style=style)
+        if extract_json(raw) is None or not summary:
+            logger.warning("Merge step returned no usable JSON; merging parts directly")
+            return merge_parts(parts, style)
+        if not data.chapters:
+            data.chapters = merge_parts(parts, style)[1].chapters
+        return summary, data
+
+
+def merge_parts(parts: list[dict], style: str) -> tuple[str, SummaryData]:
+    """Deterministic fallback: concatenate the partial notes, dropping duplicates."""
+    from .tasks import same_item
+
+    def unique(items: list[str]) -> list[str]:
+        out: list[str] = []
+        for x in items:
+            if not any(same_item(x, y) for y in out):
+                out.append(x)
+        return out
+
+    summary = "\n\n".join(f"**{p['from']}–{p['to']}.** {p['summary']}" for p in parts)
+    actions: list[ActionItem] = []
+    for p in parts:
+        for a in p["action_items"]:
+            if not any(same_item(a["text"], b.text) for b in actions):
+                actions.append(ActionItem(text=a["text"], owner=a.get("owner")))
+    raw_chapters = json.dumps(
+        {"summary": "x", "chapters": [c for p in parts for c in p["chapters"]]}
+    )
+    return summary, SummaryData(
+        style=style,
+        topics=unique([t for p in parts for t in p["topics"]])[:8],
+        decisions=unique([d for p in parts for d in p["decisions"]]),
+        action_items=actions,
+        open_questions=unique([q for p in parts for q in p["open_questions"]]),
+        chapters=parse_summary_response(raw_chapters)[1].chapters,
+    )

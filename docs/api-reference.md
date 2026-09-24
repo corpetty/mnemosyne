@@ -497,6 +497,11 @@ with empty structured fields). `summary_data` shape:
 }
 ```
 
+Transcripts longer than `summary_chunk_chars` (default 40000 formatted characters, about 10k
+tokens; 0 never splits) are summarized in parts at line boundaries and the partial JSONs are then
+merged by one more LLM call (job messages "Summarizing part 2 of 5", "Merging 5 parts"). If the merge
+reply is not JSON, the parts are merged directly (deduplicated lists, chapters kept).
+
 `chapters[].start` is snapped to the start of the nearest transcript line (the model is asked for
 `MM:SS` timestamps as they appear in the prompt); chapters past the end are dropped.
 

@@ -218,6 +218,7 @@ def summarize_session(
                 model=mdl,
                 style=sty,
                 instructions=instr,
+                on_progress=ctx.update,
             )
         except Exception as e:
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})

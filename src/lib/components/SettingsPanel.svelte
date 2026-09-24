@@ -92,6 +92,7 @@
 				default_model: v.default_model,
 				summary_style: v.summary_style,
 				summary_instructions: v.summary_instructions,
+				summary_chunk_chars: v.summary_chunk_chars,
 				obsidian_tags: v.obsidian_tags,
 				obsidian_link_people: v.obsidian_link_people,
 				obsidian_include_transcript: v.obsidian_include_transcript,
@@ -417,6 +418,11 @@
 				<label>
 					<span class={labelClass}>Obsidian tags (comma-separated)</span>
 					<input type="text" bind:value={form.obsidian_tags} disabled={locked('obsidian_tags')} class={inputClass} />
+				</label>
+				<label>
+					<span class={labelClass}>Summarize in parts above (characters; 0 = never)</span>
+					<input type="number" min="0" step="5000" bind:value={form.summary_chunk_chars} disabled={locked('summary_chunk_chars')} class={inputClass} />
+					<span class="block text-[11px] text-gray-600 mt-1">Long meetings are summarized part by part and merged. About 4 characters per token: 40000 fits an 16k-token model.</span>
 				</label>
 				<label class="col-span-2">
 					<span class={labelClass}>Extra instructions for every summary (project names, jargon, what to emphasize)</span>

@@ -162,6 +162,9 @@ class Settings(BaseSettings):
     # Summaries
     summary_style: str = "meeting"  # see summarization/prompts.py STYLES
     summary_instructions: str = ""  # appended to every summary prompt
+    # Transcripts longer than this (formatted characters, about 4 per token) are summarized
+    # in parts and then merged, so small context windows still work. 0 never splits.
+    summary_chunk_chars: int = 40000
 
     # Digest: a scheduled digest of the week's meetings. digest_weekday is 0 (Monday)
     # to 6 (Sunday), -1 turns the schedule off; it runs at or after digest_hour.

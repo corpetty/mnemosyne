@@ -1742,6 +1742,8 @@ export interface components {
             remote_stt_url?: string | null;
             /** Speaker Match Threshold */
             speaker_match_threshold?: number | null;
+            /** Summary Chunk Chars */
+            summary_chunk_chars?: number | null;
             /** Summary Instructions */
             summary_instructions?: string | null;
             /** Summary Style */
@@ -1865,6 +1867,8 @@ export interface components {
             remote_stt_url: string;
             /** Speaker Match Threshold */
             speaker_match_threshold: number;
+            /** Summary Chunk Chars */
+            summary_chunk_chars: number;
             /** Summary Instructions */
             summary_instructions: string;
             /** Summary Style */

@@ -65,22 +65,83 @@ def get_system_prompt(segment_count: int, style: str = "meeting", extra: str = "
     return f"{base}{brevity}\n{extra_block}\n{FORMAT_INSTRUCTIONS}"
 
 
-def format_transcript_for_llm(segments: list[dict]) -> str:
+def transcript_lines(segments: list[dict]) -> list[str]:
     lines = []
     for seg in segments:
         speaker = seg.get("speaker", "UNKNOWN")
-        start = seg.get("start", 0)
         text = seg.get("text", "").strip()
-        minutes = int(start // 60)
-        seconds = int(start % 60)
-        lines.append(f"[{minutes:02d}:{seconds:02d}] {speaker}: {text}")
-    return "\n".join(lines)
+        lines.append(f"[{mmss(seg.get('start', 0))}] {speaker}: {text}")
+    return lines
+
+
+def mmss(seconds: float) -> str:
+    return f"{int(seconds // 60):02d}:{int(seconds % 60):02d}"
+
+
+def format_transcript_for_llm(segments: list[dict]) -> str:
+    return "\n".join(transcript_lines(segments))
+
+
+def split_lines(lines: list[str], max_chars: int) -> list[tuple[int, int]]:
+    """[start, end) line ranges whose joined text stays under max_chars (a single longer
+    line gets a range of its own)."""
+    ranges: list[tuple[int, int]] = []
+    start, size = 0, 0
+    for i, line in enumerate(lines):
+        cost = len(line) + 1
+        if i > start and size + cost > max_chars:
+            ranges.append((start, i))
+            start, size = i, 0
+        size += cost
+    if start < len(lines):
+        ranges.append((start, len(lines)))
+    return ranges
+
+
+def partial_instructions(part: int, total: int, start: str, end: str) -> str:
+    return (
+        f"\nThis transcript is part {part} of {total} of a longer conversation "
+        f"({start} to {end}). Summarize only this part; the parts are merged afterwards. "
+        "Chapters must use timestamps from this part.\n"
+    )
+
+
+REDUCE_PROMPT = """\
+You merge partial notes of one long conversation into a single summary. The input is a JSON
+list of parts in time order, each with its own summary, topics, decisions, action items, open
+questions and chapters (timestamps in MM:SS or H:MM:SS are from the full conversation).
+Write one coherent summary of the whole conversation, remove duplicates across parts, keep
+every distinct decision and action item, drop open questions that a later part resolved,
+and merge chapters into 3 to 12 for the whole conversation, keeping their original timestamps.
+"""
+
+
+def reduce_system_prompt(style: str = "meeting", extra: str = "") -> str:
+    base = STYLES.get(style, STYLES["meeting"])
+    extra_block = (
+        f"\nAdditional instructions from the user:\n{extra.strip()}\n" if extra.strip() else ""
+    )
+    return f"{base}\n{REDUCE_PROMPT}{extra_block}\n{FORMAT_INSTRUCTIONS}"
+
+
+def part_payload(part: int, start: str, end: str, summary: str, data: SummaryData) -> dict:
+    return {
+        "part": part,
+        "from": start,
+        "to": end,
+        "summary": summary,
+        "topics": data.topics,
+        "decisions": data.decisions,
+        "action_items": [{"text": a.text, "owner": a.owner} for a in data.action_items],
+        "open_questions": data.open_questions,
+        "chapters": [{"start": mmss(c.start), "title": c.title} for c in data.chapters],
+    }
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 
-def _extract_json(text: str) -> dict | None:
+def extract_json(text: str) -> dict | None:
     candidates = [m.group(1) for m in _FENCE.finditer(text)]
     start, end = text.find("{"), text.rfind("}")
     if start != -1 and end > start:
@@ -173,7 +234,7 @@ def snap_chapters(chapters: list[Chapter], starts: list[float]) -> list[Chapter]
 
 def parse_summary_response(text: str, style: str = "meeting") -> tuple[str, SummaryData]:
     """Return (summary_markdown, structured). Never raises."""
-    obj = _extract_json(text)
+    obj = extract_json(text)
     if obj is None:
         return text.strip(), SummaryData(style=style)
     summary = obj.get("summary")
