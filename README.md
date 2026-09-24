@@ -231,6 +231,16 @@ pnpm lint:backend   # ruff
 pnpm test:e2e       # Browser tests (Playwright) against a demo-mode backend
 ```
 
+Measure transcription quality with `mnemosyne-bench` (from `backend/`): word error rate,
+speaker accuracy and speed of the configured (or `--transcriber`/`--diarizer`) engine against a
+reference. `--synthetic` makes a two-voice test clip with espeak-ng; `--session <id>` uses a
+meeting you corrected in the app as the reference; `--audio x.wav --reference x.json|txt` any
+other pair.
+
+```bash
+cd backend && uv run mnemosyne-bench --synthetic --transcriber parakeet --diarizer pyannote
+```
+
 The browser tests need Chromium once: `pnpm exec playwright install chromium`. Demo mode
 (`MNEMOSYNE_DEMO=1`, see `backend/mnemosyne/demo.py`) is also handy for trying the UI with
 no models or LLM server: run `bash tests-e2e/start-backend.sh` and point the app at

@@ -42,6 +42,7 @@ dev = [
 [project.scripts]
 mnemosyne-backend = "mnemosyne.cli:main"
 mnemosyne-mcp = "mnemosyne.mcp_server:main"
+mnemosyne-bench = "mnemosyne.bench:main"
 
 [build-system]
 requires = ["hatchling>=1.25"]

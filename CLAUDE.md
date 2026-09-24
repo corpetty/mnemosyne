@@ -19,11 +19,13 @@ pnpm check                     # svelte-check, must stay at 0 errors
 pnpm test:backend              # backend pytest (no GPU or network needed)
 pnpm test:e2e                  # Playwright browser tests against a demo-mode backend (port 8018)
 pnpm lint:backend              # ruff check + format --check
+cd backend && uv run mnemosyne-bench --synthetic   # WER / speaker accuracy / speed of the engine
 cd backend && uv run pytest    # same as test:backend
 cd backend && uv run ruff format .   # auto-format before committing
 ```
 
-Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra pulls torch
+Backend setup: `cd backend && uv sync --extra gpu --extra onnx --group dev` (uv sync is exact: leaving an
+extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 (CUDA 12.8 index, pinned in pyproject) and WhisperX. `uv.lock` is committed; do not
 `uv pip install` things by hand, add them to `pyproject.toml` and re-lock.
 
