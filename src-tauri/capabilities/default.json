@@ -9,6 +9,7 @@
     "core:default",
     "shell:allow-open",
     "dialog:default",
-    "updater:default"
+    "updater:default",
+    "notification:default"
   ]
 }

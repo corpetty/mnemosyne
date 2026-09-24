@@ -68,6 +68,7 @@
 				live_interval_seconds: v.live_interval_seconds,
 				live_diarization: v.live_diarization,
 				live_speaker_threshold: v.live_speaker_threshold,
+				mention_keywords: v.mention_keywords,
 				whisper_model_size: v.whisper_model_size,
 				whisper_compute_type: v.whisper_compute_type,
 				whisper_batch_size: v.whisper_batch_size,
@@ -553,6 +554,11 @@
 				<label>
 					<span class={labelClass}>Label for the system-audio channel</span>
 					<input type="text" bind:value={form.remote_speaker_name} disabled={locked('remote_speaker_name')} class={inputClass} />
+				</label>
+				<label class="col-span-2">
+					<span class={labelClass}>Alert me when these are said while recording (comma-separated, e.g. your name)</span>
+					<input type="text" bind:value={form.mention_keywords} disabled={locked('mention_keywords')} placeholder="Corey, infra team" class={inputClass} />
+					<span class="block text-[11px] text-gray-600 mt-1">A toast and a desktop notification, from anyone but your own mic. Needs the live transcript.</span>
 				</label>
 			</div>
 		</section>

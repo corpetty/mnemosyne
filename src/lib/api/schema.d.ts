@@ -1704,6 +1704,8 @@ export interface components {
             local_speaker_name?: string | null;
             /** Max Speakers */
             max_speakers?: number | null;
+            /** Mention Keywords */
+            mention_keywords?: string | null;
             /** Min Speakers */
             min_speakers?: number | null;
             /** Obsidian Auto Export */
@@ -1825,6 +1827,8 @@ export interface components {
             local_speaker_name: string;
             /** Max Speakers */
             max_speakers: number | null;
+            /** Mention Keywords */
+            mention_keywords: string;
             /** Min Speakers */
             min_speakers: number | null;
             /** Obsidian Auto Export */

@@ -34,7 +34,8 @@
 		</div>
 		<div bind:this={container} class="max-h-64 overflow-y-auto p-3 space-y-1.5 text-sm">
 			{#each transcriptState.liveSegments as seg}
-				<div class="flex gap-3">
+				{@const mentioned = transcriptState.mentionStarts.includes(seg.start)}
+				<div class="flex gap-3 {mentioned ? 'rounded bg-amber-900/30 ring-1 ring-amber-700/60' : ''}" title={mentioned ? 'You were mentioned' : undefined}>
 					<span class="w-12 text-right text-xs font-mono text-gray-600 flex-shrink-0">{formatTime(seg.start)}</span>
 					<span class="w-20 flex-shrink-0 font-medium {transcriptState.getSpeakerColor(seg.speaker)}">{seg.speaker}</span>
 					<span class="text-gray-300">{seg.text}</span>

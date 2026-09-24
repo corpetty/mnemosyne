@@ -346,6 +346,7 @@ def live_transcribe(app: AppContext, session_id: str, recording):
     """
     from ..audio.capture import list_devices
     from ..transcription.live import LiveSource, LiveTranscriber
+    from ..transcription.mentions import MentionSpotter, parse_keywords
 
     settings = app.settings
     try:
@@ -400,6 +401,7 @@ def live_transcribe(app: AppContext, session_id: str, recording):
             language=settings.language or None,
             embedder=embedder,
             clusterer=clusterer,
+            mentions=MentionSpotter(parse_keywords(settings.mention_keywords)),
         )
         try:
             await live.run()

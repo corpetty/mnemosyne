@@ -20,6 +20,8 @@ finish-args:
   - --socket=pulseaudio
   # Obsidian vaults can live anywhere in your home directory.
   - --filesystem=home
+  # Mention alerts.
+  - --talk-name=org.freedesktop.Notifications
   # Tray icon.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --filesystem=xdg-run/tray-icon:create

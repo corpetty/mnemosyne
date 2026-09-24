@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     live_interval_seconds: float = 5.0
     # Label live lines by voice (needs the pyannote diarizer's torch stack).
     live_diarization: bool = True
+    # Alert (toast + desktop notification) when one of these comma-separated words is
+    # heard in the live transcript from anyone but your own mic. Usually your name.
+    mention_keywords: str = ""
     live_speaker_threshold: float = 0.45
 
     # whisperx transcriber

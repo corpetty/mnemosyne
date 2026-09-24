@@ -60,4 +60,5 @@ export type BackendEvent =
   | { type: 'live_partial'; session_id: string; source: string; speaker: string; text: string }
   | { type: 'live_status'; session_id: string; message: string }
   | { type: 'live_relabel'; session_id: string; old: string; new: string }
+  | { type: 'mention'; session_id: string; keyword: string; speaker: string; text: string; start: number }
   | { type: 'levels'; session_id: string; levels: Record<string, Level> };

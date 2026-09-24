@@ -25,6 +25,7 @@ import numpy as np
 from ..models.transcript import TranscriptSegment
 from .engine import Transcriber
 from .live_speakers import OnlineClusterer, SpeakerEmbedder
+from .mentions import MentionSpotter
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,7 @@ class LiveTranscriber:
         language: str | None = None,
         embedder: SpeakerEmbedder | None = None,
         clusterer: OnlineClusterer | None = None,
+        mentions: MentionSpotter | None = None,
     ):
         self.transcriber = transcriber
         self.sources = sources
@@ -123,6 +125,7 @@ class LiveTranscriber:
         self.language = language
         self.embedder = embedder
         self.clusterer = clusterer
+        self.mentions = mentions
         self.committed: list[TranscriptSegment] = []
 
     async def run(self) -> None:
@@ -197,6 +200,7 @@ class LiveTranscriber:
                     "segment": absolute.model_dump(),
                 }
             )
+            self._check_mention(source, absolute)
 
         if commit:
             cut_seconds = max(s.end for s in commit)
@@ -218,6 +222,23 @@ class LiveTranscriber:
                     "source": source.kind,
                     "speaker": source.last_speaker or source.speaker,
                     "text": partial,
+                }
+            )
+
+    def _check_mention(self, source: LiveSource, seg: TranscriptSegment) -> None:
+        # Your own mic, when it is recorded separately, is you saying your own name.
+        if not self.mentions or (source.kind == "mic" and len(self.sources) > 1):
+            return
+        keyword = self.mentions.find(seg.text, seg.start)
+        if keyword:
+            self.emit(
+                {
+                    "type": "mention",
+                    "session_id": self.session_id,
+                    "keyword": keyword,
+                    "speaker": seg.speaker,
+                    "text": seg.text,
+                    "start": seg.start,
                 }
             )
 

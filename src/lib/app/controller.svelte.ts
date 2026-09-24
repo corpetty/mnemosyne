@@ -192,6 +192,33 @@ export function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+// ---- mention alerts --------------------------------------------------------------
+
+function announceMention(keyword: string, speaker: string, text: string) {
+  toastState.show(`“${keyword}” came up · ${speaker}: ${text}`, 'info', 10_000);
+  notifyDesktop(`${keyword} was mentioned`, `${speaker}: ${text}`);
+}
+
+/** Desktop notification: the Tauri plugin in the app, the Notification API in a browser. */
+export async function notifyDesktop(title: string, body: string) {
+  try {
+    const n = await import('@tauri-apps/plugin-notification');
+    let granted = await n.isPermissionGranted();
+    if (!granted) granted = (await n.requestPermission()) === 'granted';
+    if (granted) n.sendNotification({ title, body });
+    return;
+  } catch {
+    /* not in the desktop shell */
+  }
+  try {
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission === 'default') await Notification.requestPermission();
+    if (Notification.permission === 'granted') new Notification(title, { body });
+  } catch {
+    /* notifications unavailable */
+  }
+}
+
 // ---- backend connection ------------------------------------------------------------
 
 function onConnected(): () => void {
@@ -217,6 +244,10 @@ function onConnected(): () => void {
   // Keep the sidebar in step with backend session state changes.
   return wsState.onMessage((raw) => {
     const msg = raw as BackendEvent;
+    if (msg.type === 'mention') {
+      announceMention(msg.keyword, msg.speaker, msg.text);
+      return;
+    }
     if (msg.type !== 'session') return;
     sessionState.loadSessions();
     // Keep the open session's status (footer, badges) in step without a refetch.

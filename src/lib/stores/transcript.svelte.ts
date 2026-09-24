@@ -40,6 +40,8 @@ class TranscriptState {
 
   /** Provisional segments streamed while recording; replaced by the final job. */
   liveSegments = $state<TranscriptSegment[]>([]);
+  /** Start times of live lines where a mention keyword was heard. */
+  mentionStarts = $state<number[]>([]);
   livePartials = $state<Record<string, { speaker: string; text: string }>>({});
   liveStatus = $state<string>('');
   /** Segment index to scroll to and flash (set by search). */
@@ -115,6 +117,9 @@ class TranscriptState {
           this.getSpeakerColor(msg.speaker);
         }
         break;
+      case 'mention':
+        if (msg.session_id === this.sessionId) this.mentionStarts = [...this.mentionStarts, msg.start];
+        break;
       case 'live_status':
         if (msg.session_id === this.sessionId) this.liveStatus = msg.message;
         break;
@@ -140,10 +145,12 @@ class TranscriptState {
     this.sessionId = sessionId;
     this.liveSegments = [];
     this.livePartials = {};
+    this.mentionStarts = [];
     this.liveStatus = 'Starting...';
   }
 
   clearLive() {
+    this.mentionStarts = [];
     this.liveSegments = [];
     this.livePartials = {};
     this.liveStatus = '';
