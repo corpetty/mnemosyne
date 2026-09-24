@@ -87,6 +87,13 @@ def render_meeting_note(
             sections.append("## Open Questions\n")
             sections.extend(f"- {q}" for q in summary_data.open_questions)
             sections.append("")
+        if summary_data.chapters:
+            sections.append("## Chapters\n")
+            sections.extend(
+                f"- {int(c.start // 60):02d}:{int(c.start % 60):02d} {c.title}"
+                for c in summary_data.chapters
+            )
+            sections.append("")
 
     if notes:
         sections.append("## Notes\n")

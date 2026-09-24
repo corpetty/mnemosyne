@@ -69,6 +69,10 @@ test('summarize produces decisions and action items', async () => {
   await expect(page.getByText('Update the docs before the release')).toBeVisible();
   await expect(page.getByText('Who owns the mobile regression?')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Re-summarize' })).toBeVisible();
+  // Chapters jump into the transcript, which shows them as headings.
+  await page.getByRole('button', { name: /Mobile regression owner/ }).click();
+  await expect(page.getByText('Release status', { exact: true })).toBeVisible();
+  await expect(page.getByText('Mobile regression owner', { exact: true })).toBeVisible();
 });
 
 test('ask answers with a citation that opens the meeting', async () => {

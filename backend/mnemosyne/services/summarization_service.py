@@ -12,6 +12,7 @@ from ..summarization.prompts import (
     format_transcript_for_llm,
     get_system_prompt,
     parse_summary_response,
+    snap_chapters,
 )
 from ..summarization.provider import SummarizationProvider
 from ..summarization.vllm import VLLMProvider
@@ -92,5 +93,6 @@ class SummarizationService:
         )
         raw = await provider.summarize(transcript_text, model, system_prompt)
         summary, data = parse_summary_response(raw, style=style)
+        data.chapters = snap_chapters(data.chapters, [float(s["start"]) for s in segments])
         data.provider, data.model = provider_name, model
         return {"summary": summary, "data": data, "provider": provider_name, "model": model}

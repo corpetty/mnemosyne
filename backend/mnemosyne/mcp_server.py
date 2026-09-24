@@ -152,6 +152,10 @@ async def get_meeting(
         ]
     if d.get("open_questions"):
         out += ["", "## Open questions"] + [f"- {x}" for x in d["open_questions"]]
+    if d.get("chapters"):
+        out += ["", "## Chapters"] + [
+            f"- [{_mmss(c['start'])}] {c['title']}" for c in d["chapters"]
+        ]
     if s.get("notes"):
         out += ["", "## Notes", s["notes"]]
     if include_transcript and s.get("transcript"):

@@ -954,6 +954,13 @@ export interface components {
             /** Upcoming */
             upcoming: components["schemas"]["CalendarEvent"][];
         };
+        /** Chapter */
+        Chapter: {
+            /** Start */
+            start: number;
+            /** Title */
+            title: string;
+        };
         /** Citation */
         Citation: {
             /**
@@ -1845,6 +1852,8 @@ export interface components {
         SummaryData: {
             /** Action Items */
             action_items: components["schemas"]["ActionItem"][];
+            /** Chapters */
+            chapters: components["schemas"]["Chapter"][];
             /** Decisions */
             decisions: string[];
             /**

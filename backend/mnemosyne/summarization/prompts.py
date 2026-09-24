@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 
-from ..models.session import ActionItem, SummaryData
+from ..models.session import ActionItem, Chapter, SummaryData
 
 STYLES: dict[str, str] = {
     "meeting": (
@@ -43,12 +43,15 @@ Respond with ONLY a JSON object, no prose before or after, with exactly these ke
   "topics": ["<3-8 short topic labels>"],
   "decisions": ["<decisions or agreements reached, one per item; empty if none>"],
   "action_items": [{"text": "<task>", "owner": "<speaker label or name, or null>"}],
-  "open_questions": ["<unresolved questions or things to follow up; empty if none>"]
+  "open_questions": ["<unresolved questions or things to follow up; empty if none>"],
+  "chapters": [{"start": "<MM:SS of the line where it begins>", "title": "<2 to 6 words>"}]
 }
 Rules:
 - Use the speaker labels exactly as they appear in the transcript; do not invent names.
 - Do not put action items or decisions inside the summary text; use the fields.
 - If the transcript is short or trivial, keep everything proportionally brief.
+- Chapters split the conversation by topic in time order, 3 to 8 of them (1 or 2 for a short
+  one); the first starts at the first line. Use timestamps exactly as they appear in brackets.
 - Output must be valid JSON (escape quotes and newlines inside strings).
 """
 
@@ -124,6 +127,50 @@ def _action_items(value) -> list[ActionItem]:
     return out
 
 
+_TS = re.compile(r"^\s*(?:(\d+):)?(\d{1,3}):(\d{2})(?:\.\d+)?\s*$")
+
+
+def _seconds(value) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+        return float(value)
+    if isinstance(value, str):
+        m = _TS.match(value.strip("[] "))
+        if m:
+            h, mnt, sec = int(m.group(1) or 0), int(m.group(2)), int(m.group(3))
+            return float(h * 3600 + mnt * 60 + sec)
+    return None
+
+
+def _chapters(value) -> list[Chapter]:
+    out: dict[float, Chapter] = {}
+    if not isinstance(value, list):
+        return []
+    for v in value:
+        if not isinstance(v, dict):
+            continue
+        start = _seconds(v.get("start", v.get("time")))
+        title = v.get("title") or v.get("name")
+        if start is None or not isinstance(title, str) or not title.strip():
+            continue
+        out.setdefault(start, Chapter(start=start, title=" ".join(title.split())[:80]))
+    return sorted(out.values(), key=lambda c: c.start)
+
+
+def snap_chapters(chapters: list[Chapter], starts: list[float]) -> list[Chapter]:
+    """Move each chapter to the nearest line start; drop chapters past the end and
+    duplicates that land on the same line."""
+    if not starts:
+        return []
+    out: dict[float, Chapter] = {}
+    last = max(starts)
+    for c in chapters:
+        if c.start > last + 30:
+            continue
+        nearest = min(starts, key=lambda s: abs(s - c.start))
+        out.setdefault(nearest, Chapter(start=nearest, title=c.title))
+    return sorted(out.values(), key=lambda c: c.start)
+
+
 def parse_summary_response(text: str, style: str = "meeting") -> tuple[str, SummaryData]:
     """Return (summary_markdown, structured). Never raises."""
     obj = _extract_json(text)
@@ -146,5 +193,6 @@ def parse_summary_response(text: str, style: str = "meeting") -> tuple[str, Summ
         decisions=_str_list(obj.get("decisions")),
         action_items=_action_items(obj.get("action_items")),
         open_questions=_str_list(obj.get("open_questions")),
+        chapters=_chapters(obj.get("chapters")),
     )
     return summary.strip(), data

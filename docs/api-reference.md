@@ -471,9 +471,13 @@ with empty structured fields). `summary_data` shape:
   "title": "Release planning", "style": "meeting", "provider": "ollama", "model": "llama3.1:latest",
   "topics": ["release"], "decisions": ["Ship Friday"],
   "action_items": [ { "text": "Update docs", "owner": "Alice" } ],
-  "open_questions": ["Who reviews?"]
+  "open_questions": ["Who reviews?"],
+  "chapters": [ { "start": 0.0, "title": "Release status" }, { "start": 312.4, "title": "Docs" } ]
 }
 ```
+
+`chapters[].start` is snapped to the start of the nearest transcript line (the model is asked for
+`MM:SS` timestamps as they appear in the prompt); chapters past the end are dropped.
 
 **Errors:** `400` no transcript or unknown style, `404` session, `409` a summary is already running for
 the session.

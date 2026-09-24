@@ -51,6 +51,11 @@ class ActionItem(ApiModel):
     issue_url: str | None = None  # set once an issue was created for this item
 
 
+class Chapter(ApiModel):
+    start: float  # seconds, snapped to the start of a transcript line
+    title: str
+
+
 class SummaryData(ApiModel):
     """Structured summary produced by the LLM. `summary` on the session keeps
     the markdown body for compatibility."""
@@ -65,6 +70,7 @@ class SummaryData(ApiModel):
     decisions: list[str] = Field(default_factory=list)
     action_items: list[ActionItem] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
+    chapters: list[Chapter] = Field(default_factory=list)
 
 
 class Session(ApiModel):

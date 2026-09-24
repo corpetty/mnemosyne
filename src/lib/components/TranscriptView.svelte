@@ -46,6 +46,16 @@
 	const canTranscribe = $derived(
 		!!sessionState.activeSession?.audio_file && !transcriptState.isProcessing
 	);
+	/** Transcript line index -> chapter title, for headings inside the transcript. */
+	const chapterAt = $derived.by(() => {
+		const map = new Map<number, string>();
+		const chapters = sessionState.activeSession?.summary_data?.chapters ?? [];
+		for (const c of chapters) {
+			const idx = transcriptState.segments.findIndex((seg) => seg.start >= c.start - 0.01);
+			if (idx >= 0 && !map.has(idx)) map.set(idx, c.title);
+		}
+		return map;
+	});
 	const canEdit = $derived(!!sessionState.activeSession && !transcriptState.isProcessing);
 
 	async function handleTranscribe() {
@@ -179,6 +189,12 @@
 
 	<div bind:this={container} class="max-h-[500px] overflow-y-auto space-y-1 pr-2">
 		{#each transcriptState.segments as segment, idx (idx)}
+			{#if chapterAt.has(idx)}
+				<div class="flex items-center gap-2 pt-3 pb-1 first:pt-0">
+					<span class="text-xs font-semibold uppercase tracking-wide text-gray-400">{chapterAt.get(idx)}</span>
+					<span class="flex-1 border-t border-gray-800"></span>
+				</div>
+			{/if}
 			{@const playingHere = playerState.playing && playerState.currentTime >= segment.start && playerState.currentTime < segment.end}
 			<div data-idx={idx} class="group flex gap-3 text-sm rounded px-1 py-1 transition-colors {editingIdx === idx ? 'bg-gray-900' : playingHere ? 'bg-blue-950/40' : 'hover:bg-gray-900/50'}">
 				<div class="flex-shrink-0 w-14 text-right pt-0.5">

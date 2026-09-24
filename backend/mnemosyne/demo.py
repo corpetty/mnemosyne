@@ -82,6 +82,10 @@ DEMO_SUMMARY = {
     "decisions": ["Ship the Waku migration in October"],
     "action_items": [{"text": "Update the docs before the release", "owner": "SPEAKER_01"}],
     "open_questions": ["Who owns the mobile regression?"],
+    "chapters": [
+        {"start": "00:00", "title": "Release status"},
+        {"start": "00:13", "title": "Mobile regression owner"},
+    ],
 }
 
 

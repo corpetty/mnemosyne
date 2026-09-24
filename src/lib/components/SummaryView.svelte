@@ -10,6 +10,7 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
+	import { playerState } from '$lib/stores/player.svelte.js';
 	import Markdown from './Markdown.svelte';
 	import { createGitHubIssues } from '$lib/api/backend.js';
 
@@ -29,6 +30,23 @@
 		if (next.has(i)) next.delete(i);
 		else next.add(i);
 		selected = next;
+	}
+
+	function fmtTime(sec: number): string {
+		const m = Math.floor(sec / 60);
+		const s = Math.floor(sec % 60);
+		return m >= 60
+			? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+			: `${m}:${String(s).padStart(2, '0')}`;
+	}
+
+	/** Jump to the transcript line where a chapter starts (and play from there if audio exists). */
+	function openChapter(start: number) {
+		const session = sessionState.activeSession;
+		if (!session) return;
+		const idx = session.transcript.findIndex((seg) => seg.start >= start - 0.01);
+		sessionState.pendingOpen = { sessionId: session.id, idx: idx < 0 ? null : idx };
+		if (playerState.available) playerState.seek(start, false);
 	}
 
 	async function openLink(href: string) {
@@ -187,6 +205,21 @@
 									{creating ? 'Creating…' : `Create ${selected.size} GitHub issue${selected.size > 1 ? 's' : ''}`}
 								</button>
 							{/if}
+						</section>
+					{/if}
+					{#if data.chapters.length}
+						<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 md:col-span-2">
+							<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Chapters</h4>
+							<ol class="space-y-0.5 text-sm">
+								{#each data.chapters as c (c.start)}
+									<li>
+										<button onclick={() => openChapter(c.start)} class="flex gap-3 text-left text-gray-200 hover:text-white">
+											<span class="font-mono text-xs text-blue-400 pt-0.5 w-12 text-right">{fmtTime(c.start)}</span>
+											<span>{c.title}</span>
+										</button>
+									</li>
+								{/each}
+							</ol>
 						</section>
 					{/if}
 					{#if data.open_questions.length}
