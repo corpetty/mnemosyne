@@ -336,7 +336,7 @@ runs summaries. No TLS is provided: use a trusted LAN, Tailscale, or a reverse p
 
 `.github/workflows/ci.yml` runs on every push and PR: backend ruff + pytest (no GPU; ML is faked),
 `pnpm check` + `pnpm build`, and `cargo check` for the shell. `.github/workflows/release.yml` builds
-the deb and AppImage on `ubuntu-22.04` when a `vX.Y.Z` tag is pushed and attaches them, with a
+the deb, rpm and AppImage on `ubuntu-22.04` when a `vX.Y.Z` tag is pushed and attaches them, with a
 `SHA256SUMS` file, to the GitHub release:
 
 ```bash

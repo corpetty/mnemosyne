@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   bundle:
-    name: Build deb + AppImage
+    name: Build deb + rpm + AppImage
     runs-on: ubuntu-22.04 # oldest glibc we ship; AppImage runs on anything newer
     steps:
       - uses: actions/checkout@v7
@@ -34,11 +34,12 @@ jobs:
       - name: Build bundles
         env:
           NO_STRIP: "true" # linuxdeploy's bundled strip fails on .relr.dyn sections
-        run: pnpm tauri build --bundles deb,appimage
+        run: pnpm tauri build --bundles deb,rpm,appimage
       - name: Collect artifacts
         run: |
           mkdir -p dist
           cp src-tauri/target/release/bundle/deb/*.deb dist/
+          cp src-tauri/target/release/bundle/rpm/*.rpm dist/
           cp src-tauri/target/release/bundle/appimage/*.AppImage dist/
           (cd dist && sha256sum * > SHA256SUMS)
           ls -la dist

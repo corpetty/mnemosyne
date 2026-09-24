@@ -43,7 +43,7 @@
     "linux": {
       "deb": {
         "depends": [
-          "pipewire",
+          "pipewire-bin",
           "ffmpeg"
         ]
       },
@@ -52,8 +52,10 @@
       },
       "rpm": {
         "depends": [
-          "pipewire",
-          "ffmpeg"
+          "/usr/bin/pw-record",
+          "/usr/bin/pw-dump",
+          "/usr/bin/pw-cli",
+          "/usr/bin/ffmpeg"
         ]
       }
     },

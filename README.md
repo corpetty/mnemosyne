@@ -208,7 +208,7 @@ pnpm lint:backend   # ruff
 
 ### Releases
 
-Pushing a `vX.Y.Z` tag builds the deb and AppImage in GitHub Actions and attaches them to a release
+Pushing a `vX.Y.Z` tag builds the deb, rpm and AppImage in GitHub Actions and attaches them to a release
 (see `docs/development.md`). Download from the Releases page instead of building locally.
 
 ### Build Distributable
@@ -236,7 +236,7 @@ The app installs its own backend into `~/.local/share/com.corpetty.mnemosyne/`:
 
 ### System Requirements (Target Machine)
 
-- **PipeWire** (`pw-record`, `pw-dump`) and **ffmpeg** (declared as package dependencies)
+- **PipeWire tools** (`pw-record`, `pw-dump`, `pw-cli`) and **ffmpeg**, declared as package dependencies (Fedora: `pipewire-utils`, `ffmpeg-free` or `ffmpeg`; Debian/Ubuntu: `pipewire-bin`, `ffmpeg`)
 - **NVIDIA drivers** if you want the GPU engines; CPU-only machines run Parakeet
 - Internet on first launch and first transcription
 
