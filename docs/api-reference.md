@@ -52,7 +52,8 @@ Input devices are microphones. Output devices are selected to capture system aud
 ```
 
 `session_id` is optional; a new session is created if omitted. Spawns one `pw-record` per device
-(48 kHz mono 16-bit WAV). Session status becomes `recording`.
+(48 kHz mono 16-bit WAV), targeting nodes by name. Output devices are captured from their monitor
+ports (`stream.capture.sink=true` on the sink node). Session status becomes `recording`.
 
 **Response:** `{ "session_id": "...", "recording_id": "...", "live_job_id": "..." | null, "message": "..." }`
 

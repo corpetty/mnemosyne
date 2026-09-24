@@ -78,9 +78,21 @@ def list_devices() -> list[AudioDevice]:
     return devices
 
 
-def get_monitor_name_for_sink(sink_name: str) -> str:
-    """Get the monitor source name for a given sink."""
-    return f"{sink_name}.monitor"
+def build_record_command(
+    device: AudioDevice, output_path: Path, sample_rate: int, channels: int, format: str
+) -> list[str]:
+    """pw-record command for one device.
+
+    Sinks are captured from their monitor ports with `stream.capture.sink=true`
+    targeting the sink node itself. (`<sink>.monitor` is a PulseAudio name that
+    PipeWire does not resolve: pw-record then silently falls back to the default
+    microphone.) Sources are targeted by node name, which survives restarts.
+    """
+    cmd = ["pw-record", f"--rate={sample_rate}", f"--channels={channels}", f"--format={format}"]
+    if device.is_output:
+        cmd += ["-P", "{ stream.capture.sink=true }"]
+    cmd += ["--target", device.name or str(device.id), str(output_path)]
+    return cmd
 
 
 async def start_recording(
@@ -109,22 +121,7 @@ async def start_recording(
         output_path = output_dir / f"{session_id}_device_{device_id}.wav"
 
         # Build pw-record command
-        cmd = [
-            "pw-record",
-            f"--rate={sample_rate}",
-            f"--channels={channels}",
-            f"--format={format}",
-            "--target",
-        ]
-
-        if device.is_output:
-            # For sinks, record from their monitor source
-            cmd.append(get_monitor_name_for_sink(device.name))
-        else:
-            # For sources, record directly
-            cmd.append(str(device_id))
-
-        cmd.append(str(output_path))
+        cmd = build_record_command(device, output_path, sample_rate, channels, format)
 
         process = await asyncio.create_subprocess_exec(
             *cmd,

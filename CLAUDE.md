@@ -65,6 +65,10 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
 - AppImage: build with `NO_STRIP=true` (linuxdeploy's strip chokes on `.relr.dyn`). The
   AppRun exports `PYTHONHOME`, `LD_LIBRARY_PATH` etc. for the GUI; `lib.rs` scrubs them
   before spawning uv/Python or the backend dies with "No module named encodings".
+- Capturing a sink: `pw-record -P '{ stream.capture.sink=true }' --target <sink node.name>`.
+  Never `--target <sink>.monitor`: that is a PulseAudio name PipeWire does not resolve, and
+  pw-record silently records the default microphone instead (this was a real bug until
+  2026-09-24). Verify with `pw-link -l` that pw-record's inputs come from `<sink>:monitor_*`.
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.
