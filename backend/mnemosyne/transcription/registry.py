@@ -35,6 +35,10 @@ def build_transcriber(settings: Settings, kind: str | None = None) -> Transcribe
             provider=settings.onnx_provider,
             quantization=settings.parakeet_quantization or None,
         )
+    if kind == "demo":
+        from ..demo import DemoTranscriber
+
+        return DemoTranscriber()
     if kind == "remote":
         from .transcribers.remote import RemoteTranscriber
 
@@ -72,6 +76,10 @@ def build_diarizer(settings: Settings) -> Diarizer | None:
     kind = settings.diarizer
     if kind == "none":
         return None
+    if kind == "demo":
+        from ..demo import DemoDiarizer
+
+        return DemoDiarizer()
     if kind == "pyannote":
         from .diarizers.pyannote import PyannoteDiarizer
 

@@ -223,7 +223,13 @@ pnpm tauri dev      # Starts Tauri + Vite + Python backend (all in one)
 pnpm check          # Frontend type check
 pnpm test:backend   # Backend tests (no GPU needed; ML is faked)
 pnpm lint:backend   # ruff
+pnpm test:e2e       # Browser tests (Playwright) against a demo-mode backend
 ```
+
+The browser tests need Chromium once: `pnpm exec playwright install chromium`. Demo mode
+(`MNEMOSYNE_DEMO=1`, see `backend/mnemosyne/demo.py`) is also handy for trying the UI with
+no models or LLM server: run `bash tests-e2e/start-backend.sh` and point the app at
+`http://127.0.0.1:8018` in Settings → Connection.
 
 ### Releases
 

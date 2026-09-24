@@ -32,6 +32,10 @@ class SummarizationService:
             self.providers["openai"] = OpenAIProvider(api_key=settings.openai_api_key)
         if settings.anthropic_api_key:
             self.providers["anthropic"] = AnthropicProvider(api_key=settings.anthropic_api_key)
+        from .. import demo
+
+        if demo.enabled():
+            self.providers = {"demo": demo.DemoProvider()}
 
     async def list_all_models(self) -> list[dict]:
         results = []

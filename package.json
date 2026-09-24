@@ -15,9 +15,11 @@
     "dev:app": "WEBKIT_DISABLE_DMABUF_RENDERER=1 tauri dev",
     "test:backend": "cd backend && uv run pytest",
     "lint:backend": "cd backend && uv run ruff check . && uv run ruff format --check .",
-    "gen:api": "bash scripts/gen-api-types.sh"
+    "gen:api": "bash scripts/gen-api-types.sh",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@sveltejs/adapter-static": "^3.0.10",
     "@sveltejs/kit": "^2.50.2",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",

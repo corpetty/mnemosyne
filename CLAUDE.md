@@ -17,6 +17,7 @@ Read `docs/architecture.md` before changing data flow. `docs/api-reference.md` i
 pnpm tauri dev                 # full app: Vite + Tauri window + backend (spawned by Rust)
 pnpm check                     # svelte-check, must stay at 0 errors
 pnpm test:backend              # backend pytest (no GPU or network needed)
+pnpm test:e2e                  # Playwright browser tests against a demo-mode backend (port 8018)
 pnpm lint:backend              # ruff check + format --check
 cd backend && uv run pytest    # same as test:backend
 cd backend && uv run ruff format .   # auto-format before committing
@@ -39,6 +40,9 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
   New implementations go behind those Protocols, never into routes or the pipeline.
 - Long work runs as a Job (`jobs.py`) submitted from a route; progress flows over the
   `EventBus` to the WebSocket. Routes never call ML code directly.
+- Demo mode (`MNEMOSYNE_DEMO=1` + `transcriber`/`diarizer`/`default_provider` = "demo",
+  `mnemosyne/demo.py`) gives canned, deterministic transcripts and LLM replies. The e2e tests
+  (`tests-e2e/`, started by `tests-e2e/start-backend.sh`) depend on its exact strings.
 - `MNEMOSYNE_DATA_DIR` overrides the data directory; tests set it to a temp dir in `conftest.py`.
 - REST types in the frontend are generated: after changing a response/request model, run
   `pnpm gen:api` (writes `src/lib/api/schema.d.ts`; CI fails when it is stale).
