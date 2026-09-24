@@ -4,6 +4,7 @@ import type {
   MeetingStats,
   TaskItem,
   Brief,
+  IndexStatus,
   IssueResult,
   RepoCheck,
   Level,
@@ -317,6 +318,14 @@ export async function getBrief(title: string, attendees: string[], exclude?: str
   for (const a of attendees) q.append('attendees', a);
   if (exclude) q.set('exclude', exclude);
   return request(`/api/brief?${q}`);
+}
+
+export async function getIndexStatus(): Promise<IndexStatus> {
+  return request('/api/search/index');
+}
+
+export async function rebuildIndex(): Promise<IndexStatus> {
+  return request('/api/search/index/rebuild', { method: 'POST' });
 }
 
 // Action items across meetings

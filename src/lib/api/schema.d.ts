@@ -450,6 +450,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/search/index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Index Status */
+        get: operations["index_status_api_search_index_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search/index/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rebuild Index
+         * @description Drop every vector and re-embed all meetings in the background.
+         */
+        post: operations["rebuild_index_api_search_index_rebuild_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions": {
         parameters: {
             query?: never;
@@ -1238,6 +1275,23 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** IndexStatus */
+        IndexStatus: {
+            /** Enabled */
+            enabled: boolean;
+            /** Error */
+            error: string | null;
+            /** Indexed Sessions */
+            indexed_sessions: number;
+            /** Model */
+            model: string;
+            /** Pending */
+            pending: number;
+            /** Ready */
+            ready: boolean;
+            /** Total Sessions */
+            total_sessions: number;
+        };
         /** IssueResult */
         IssueResult: {
             /** Created */
@@ -1466,6 +1520,12 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Match
+             * @default keyword
+             * @enum {string}
+             */
+            match: "keyword" | "semantic" | "both";
             /** Score */
             score: number;
             /** Segments */
@@ -1481,6 +1541,11 @@ export interface components {
         SegmentHit: {
             /** Idx */
             idx: number;
+            /**
+             * Semantic
+             * @default false
+             */
+            semantic: boolean;
             /** Snippet */
             snippet: string;
             /** Speaker */
@@ -1676,6 +1741,8 @@ export interface components {
             echo_dedup?: boolean | null;
             /** Echo Similarity */
             echo_similarity?: number | null;
+            /** Embedding Model */
+            embedding_model?: string | null;
             /** Github Labels */
             github_labels?: string | null;
             /** Github Repo */
@@ -1740,6 +1807,8 @@ export interface components {
             remote_stt_model?: string | null;
             /** Remote Stt Url */
             remote_stt_url?: string | null;
+            /** Semantic Search */
+            semantic_search?: boolean | null;
             /** Speaker Match Threshold */
             speaker_match_threshold?: number | null;
             /** Summary Chunk Chars */
@@ -1801,6 +1870,8 @@ export interface components {
             echo_dedup: boolean;
             /** Echo Similarity */
             echo_similarity: number;
+            /** Embedding Model */
+            embedding_model: string;
             /** Github Labels */
             github_labels: string;
             /** Github Repo */
@@ -1865,6 +1936,8 @@ export interface components {
             remote_stt_model: string;
             /** Remote Stt Url */
             remote_stt_url: string;
+            /** Semantic Search */
+            semantic_search: boolean;
             /** Speaker Match Threshold */
             speaker_match_threshold: number;
             /** Summary Chunk Chars */
@@ -2925,6 +2998,7 @@ export interface operations {
             query: {
                 q: string;
                 limit?: number;
+                mode?: "hybrid" | "keyword";
             };
             header?: never;
             path?: never;
@@ -2948,6 +3022,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    index_status_api_search_index_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexStatus"];
+                };
+            };
+        };
+    };
+    rebuild_index_api_search_index_rebuild_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexStatus"];
                 };
             };
         };

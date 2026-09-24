@@ -1,6 +1,7 @@
 """Search result models."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import Field
 
@@ -12,6 +13,7 @@ class SegmentHit(ApiModel):
     speaker: str
     start: float
     snippet: str  # matches wrapped in [[ ]]
+    semantic: bool = False  # found by meaning, not by the words typed
 
 
 class SearchHit(ApiModel):
@@ -21,3 +23,4 @@ class SearchHit(ApiModel):
     score: float
     session_snippet: str | None = None  # match in name/summary/notes
     segments: list[SegmentHit] = Field(default_factory=list)
+    match: Literal["keyword", "semantic", "both"] = "keyword"

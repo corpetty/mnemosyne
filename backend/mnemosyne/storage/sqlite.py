@@ -24,7 +24,7 @@ from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -119,6 +119,15 @@ CREATE TABLE IF NOT EXISTS digests (
     model TEXT NOT NULL DEFAULT '',
     path TEXT,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chunk_vectors (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,           -- lines | summary
+    first_idx INTEGER NOT NULL,   -- -1 for a summary
+    last_idx INTEGER NOT NULL,
+    text_hash TEXT NOT NULL,
+    vec BLOB NOT NULL,            -- float16, unit length
+    PRIMARY KEY (session_id, kind, first_idx)
 );
 CREATE TABLE IF NOT EXISTS session_speakers (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -707,6 +716,103 @@ class SessionRepository:
             )
             for r in rows
         ]
+
+    # ---- semantic index ------------------------------------------------
+
+    def get_meta(self, key: str) -> str | None:
+        with self._lock:
+            r = self._conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return r["value"] if r else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO meta(key, value) VALUES (?, ?)"
+                " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+
+    def vector_hashes(self, session_id: str) -> dict[tuple[str, int], str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT kind, first_idx, text_hash FROM chunk_vectors WHERE session_id=?",
+                (session_id,),
+            ).fetchall()
+        return {(r["kind"], r["first_idx"]): r["text_hash"] for r in rows}
+
+    def replace_vectors(self, session_id: str, rows: list[tuple]) -> None:
+        """rows: (kind, first_idx, last_idx, text_hash, vec_bytes)."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM chunk_vectors WHERE session_id=?", (session_id,))
+            self._conn.executemany(
+                "INSERT INTO chunk_vectors(session_id, kind, first_idx, last_idx, text_hash, vec)"
+                " VALUES (?,?,?,?,?,?)",
+                [(session_id, *r) for r in rows],
+            )
+
+    def clear_vectors(self) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM chunk_vectors")
+
+    def all_vectors(self) -> list:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT session_id, kind, first_idx, last_idx, vec FROM chunk_vectors"
+            ).fetchall()
+
+    def indexed_session_count(self) -> int:
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT COUNT(DISTINCT session_id) AS n FROM chunk_vectors"
+            ).fetchone()
+        return int(r["n"])
+
+    def session_ids(self) -> list[str]:
+        with self._lock:
+            return [r["id"] for r in self._conn.execute("SELECT id FROM sessions").fetchall()]
+
+    def passage_window(self, session_id: str, lo: int, hi: int, focus: int, score: float):
+        """A transcript Passage for lines lo..hi of a session, or None."""
+        with self._lock:
+            m = self._conn.execute(
+                "SELECT id, name, created_at FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+            if m is None:
+                return None
+            rows = self._conn.execute(
+                """SELECT idx, speaker, start, text FROM segments
+                   WHERE session_id=? AND idx BETWEEN ? AND ? ORDER BY idx""",
+                (session_id, max(lo, 0), hi),
+            ).fetchall()
+        if not rows:
+            return None
+        return Passage(
+            session_id=session_id,
+            session_name=m["name"],
+            created_at=_dt(m["created_at"]),
+            lines=[
+                PassageLine(idx=r["idx"], speaker=r["speaker"], start=r["start"], text=r["text"])
+                for r in rows
+            ],
+            score=score,
+            focus_idx=focus,
+        )
+
+    def summary_passage(self, session_id: str, score: float):
+        with self._lock:
+            m = self._conn.execute(
+                "SELECT id, name, created_at, summary FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        if m is None or not (m["summary"] or "").strip():
+            return None
+        return Passage(
+            session_id=session_id,
+            session_name=m["name"],
+            created_at=_dt(m["created_at"]),
+            kind="summary",
+            text=m["summary"].strip(),
+            score=score,
+        )
 
     # ---- digests ---------------------------------------------------------
 

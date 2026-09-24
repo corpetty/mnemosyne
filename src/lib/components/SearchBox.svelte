@@ -82,6 +82,7 @@
 				<div class="rounded-lg border border-gray-800 bg-gray-900/60 p-2 space-y-1">
 					<button onclick={() => open(hit, null)} class="w-full text-left text-sm font-medium text-gray-200 hover:text-white truncate">
 						{hit.session_name}
+						{#if hit.match === 'semantic'}<span class="ml-1 text-[10px] font-normal text-purple-400" title="Matched by meaning, not by the exact words">related</span>{/if}
 					</button>
 					{#if hit.session_snippet}
 						<p class="text-[11px] text-gray-500 leading-4">
@@ -91,6 +92,7 @@
 					{#each hit.segments as seg (seg.idx)}
 						<button onclick={() => open(hit, seg.idx)} class="w-full text-left text-[11px] leading-4 text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 rounded px-1">
 							<span class="font-mono text-gray-600">{formatTime(seg.start)}</span>
+							{#if seg.semantic}<span class="text-purple-400" title="Matched by meaning">≈</span>{/if}
 							<span class="text-gray-500">{seg.speaker}:</span>
 							{#each runs(seg.snippet) as r}{#if r.hit}<mark class="bg-yellow-800/60 text-yellow-100 rounded px-0.5">{r.text}</mark>{:else}{r.text}{/if}{/each}
 						</button>

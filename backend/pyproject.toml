@@ -17,6 +17,7 @@ dependencies = [
     "mcp>=2.2",
     "icalendar>=6.0",
     "recurring-ical-events>=3.3",
+    "model2vec>=0.9",
 ]
 
 [project.optional-dependencies]

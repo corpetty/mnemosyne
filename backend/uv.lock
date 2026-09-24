@@ -1347,6 +1347,7 @@ dependencies = [
     { name = "httpx" },
     { name = "icalendar" },
     { name = "mcp" },
+    { name = "model2vec" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -1380,6 +1381,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28" },
     { name = "icalendar", specifier = ">=6.0" },
     { name = "mcp", specifier = ">=2.2" },
+    { name = "model2vec", specifier = ">=0.9" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "onnx-asr", extras = ["cpu", "hub"], marker = "extra == 'onnx'", specifier = ">=0.12" },
     { name = "pydantic", specifier = ">=2.0" },
@@ -1400,6 +1402,23 @@ provides-extras = ["gpu", "onnx"]
 dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.9" },
+]
+
+[[package]]
+name = "model2vec"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jinja2" },
+    { name = "joblib" },
+    { name = "numpy" },
+    { name = "safetensors" },
+    { name = "tokenizers" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fd/e5/118c4a8af078ff97d9228718fbcd7d4f7e9cae93c3af59652d6f3407010a/model2vec-0.9.0.tar.gz", hash = "sha256:f50229cea128c9db5cfa7b2173478294be3c84e5d3d7fb8487ebd7af285383ab", size = 4590528, upload-time = "2026-08-12T14:24:38.524Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/af/ea/80246465cafa36a6c8c8ac767778423940e5b826fa57c10ebd957b570c1c/model2vec-0.9.0-py3-none-any.whl", hash = "sha256:8bcf3258d5668678739c13226a562d39eeaeb8fcac9b142bc4aceef8800d5b9d", size = 59865, upload-time = "2026-08-12T14:24:36.626Z" },
 ]
 
 [[package]]

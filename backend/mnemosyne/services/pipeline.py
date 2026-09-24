@@ -268,6 +268,7 @@ def ask_question(app: AppContext, question: str, provider: str = "", model: str 
             prov,
             model or st.default_model,
             extra_instructions=glossary_instructions(parse_glossary(st.glossary)),
+            index=app.index,
         )
         app.repo.save_ask(ask)
         ctx.update("Answer ready")

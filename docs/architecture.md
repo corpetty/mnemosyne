@@ -144,6 +144,14 @@ turned into a safe query by quoting every term (`storage/sqlite.py::fts_query`).
 `complete()`, and maps `[n]` markers back to citations. Answers are stored in the `asks` table.
 LLM providers expose `complete(system, user, model)`; `summarize` is a wrapper over it.
 
+### Semantic search
+
+`search/index.py::VectorIndex` embeds transcript windows and summaries (`search/embeddings.py`:
+model2vec by default, a hashed embedder in tests and demo mode) into `chunk_vectors`, following
+`session` events with a short debounce and skipping unchanged chunks by hash. `search/hybrid.py`
+fuses those hits with the FTS5 results by reciprocal rank, for `/api/search` and for Ask's passages.
+Each embedder has its own `min_score` noise floor (measured, not guessed).
+
 ### Digests
 
 `services/digest_service.py` builds a digest of a date range from the stored summaries

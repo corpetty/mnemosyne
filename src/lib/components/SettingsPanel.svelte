@@ -5,8 +5,8 @@
 	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
 	import StorageSettings from './StorageSettings.svelte';
 	import { calendarState } from '$lib/stores/calendar.svelte.js';
-	import { checkGitHub } from '$lib/api/backend.js';
-	import type { ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
+	import { checkGitHub, getIndexStatus, rebuildIndex } from '$lib/api/backend.js';
+	import type { IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	let settings = $state<SettingsResponse | null>(null);
 	let providers = $state<ProviderModels[]>([]);
@@ -93,6 +93,8 @@
 				summary_style: v.summary_style,
 				summary_instructions: v.summary_instructions,
 				summary_chunk_chars: v.summary_chunk_chars,
+				semantic_search: v.semantic_search,
+				embedding_model: v.embedding_model,
 				obsidian_tags: v.obsidian_tags,
 				obsidian_link_people: v.obsidian_link_people,
 				obsidian_include_transcript: v.obsidian_include_transcript,
@@ -109,6 +111,24 @@
 			loading = false;
 		}
 	}
+
+	let indexStatus = $state<IndexStatus | null>(null);
+	async function refreshIndexStatus() {
+		try {
+			indexStatus = await getIndexStatus();
+		} catch {
+			indexStatus = null;
+		}
+	}
+	async function handleRebuild() {
+		indexStatus = await rebuildIndex();
+		toastState.info('Re-indexing all meetings in the background');
+	}
+	$effect(() => {
+		refreshIndexStatus();
+		const t = setInterval(refreshIndexStatus, 5000);
+		return () => clearInterval(t);
+	});
 
 	async function save() {
 		saving = true;
@@ -506,6 +526,35 @@
 					</div>
 				{/if}
 			</div>
+		</section>
+
+		<!-- Search -->
+		<section>
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">Search and Ask</h3>
+			<p class="text-xs text-gray-500 mb-3">
+				Besides exact words, find passages by meaning ("spending" finds "costs"). Uses a small local model (downloaded once,
+				about 250 MB, CPU only); meetings are indexed in the background.
+			</p>
+			<label class="flex items-center gap-2 mb-2">
+				<input type="checkbox" bind:checked={form.semantic_search} disabled={locked('semantic_search')} class="rounded border-gray-600 bg-gray-800" />
+				<span class="text-sm text-gray-300">Search by meaning too</span>
+			</label>
+			<label class="block max-w-md mb-2">
+				<span class={labelClass}>Embedding model (Hugging Face, model2vec)</span>
+				<input type="text" bind:value={form.embedding_model} disabled={locked('embedding_model') || !form.semantic_search} class={inputClass} />
+			</label>
+			{#if indexStatus}
+				<p class="text-xs {indexStatus.error ? 'text-yellow-600' : 'text-gray-500'}">
+					{#if indexStatus.error}
+						{indexStatus.error}
+					{:else if !indexStatus.enabled}
+						Off.
+					{:else}
+						{indexStatus.indexed_sessions} of {indexStatus.total_sessions} meetings indexed{#if indexStatus.pending}, {indexStatus.pending} pending{/if}{#if !indexStatus.ready} · model not loaded yet{/if}.
+					{/if}
+					<button onclick={handleRebuild} class="ml-2 text-gray-400 hover:text-gray-200 underline">Rebuild</button>
+				</p>
+			{/if}
 		</section>
 
 		<!-- Glossary -->

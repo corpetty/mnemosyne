@@ -247,10 +247,13 @@ All return the updated `SessionDetail`, recompute `participants`, and emit a `se
 
 ## Search
 
-### `GET /api/search?q=...&limit=20`
+### `GET /api/search?q=...&limit=20&mode=hybrid|keyword`
+Keyword search (FTS5) over transcript lines and session name/summary/notes, plus, in the default
+`hybrid` mode, meetings that match by meaning. Results are fused by reciprocal rank. Each hit has
+`match: "keyword" | "semantic" | "both"`; segment hits found by meaning have `semantic: true` and a
+plain snippet (keyword snippets mark matches with `[[ ]]`).
 
-Full-text search (SQLite FTS5) over transcript segments and session name, summary and notes. Every
-term is required; the last term matches as a prefix so results appear while typing. Matches are
+In the keyword part every term is required; the last term matches as a prefix so results appear while typing. Matches are
 wrapped in `[[ ]]` inside snippets.
 
 ```json
@@ -264,6 +267,14 @@ wrapped in `[[ ]]` inside snippets.
 ```
 
 ---
+
+### `GET /api/search/index` · `POST /api/search/index/rebuild`
+Semantic index status: `{enabled, model, ready, indexed_sessions, total_sessions, pending, error}`.
+Rebuild drops all vectors and re-embeds every meeting in the background. Meetings are split into
+windows of up to 8 lines / 600 characters plus one chunk for the summary (with decisions, items,
+questions and chapter titles), embedded with `embedding_model` (model2vec, default
+`minishlab/potion-retrieval-32M`, downloaded once) and re-indexed a few seconds after any `session`
+event. With `semantic_search` off, or when the model cannot load, search and Ask use keywords only.
 
 ## Ask across meetings
 

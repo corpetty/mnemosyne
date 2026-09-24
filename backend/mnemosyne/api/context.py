@@ -14,6 +14,7 @@ from ..audio.echo_cancel import EchoCancelManager
 from ..config import Settings
 from ..events import EventBus
 from ..jobs import JobManager
+from ..search.index import VectorIndex
 from ..services.calendar_service import CalendarService
 from ..services.model_service import ModelService
 from ..services.session_service import SessionService
@@ -37,6 +38,7 @@ class AppContext:
     calendar: CalendarService
     bus: EventBus
     jobs: JobManager
+    index: VectorIndex
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
     echo: EchoCancelManager = field(default_factory=EchoCancelManager)
     _retention_task: asyncio.Task | None = None
@@ -60,6 +62,7 @@ class AppContext:
             storage=StorageService(repo, settings.data_dir, settings.recordings_dir),
             calendar=CalendarService(settings.calendar_ics_url),
             bus=bus,
+            index=VectorIndex(repo, settings),
             jobs=JobManager(
                 bus,
                 concurrency={"transcribe": 1, "summarize": 2, "ask": 2, "digest": 1, "followup": 2},
@@ -71,6 +74,13 @@ class AppContext:
         self.settings = settings
         self.summarizer = SummarizationService(settings)
         self.speakers.threshold = settings.speaker_match_threshold
+        if (settings.semantic_search, settings.embedding_model) != (
+            self.index.enabled,
+            self.index.model,
+        ):
+            await self.index.stop()
+            self.index = VectorIndex(self.repo, settings)
+            self.index.start(self.bus)
         if settings.calendar_ics_url != self.calendar.source:
             self.calendar = CalendarService(settings.calendar_ics_url)
         await self.models.apply_settings(settings)
@@ -139,8 +149,10 @@ class AppContext:
                 logger.warning("Echo cancellation not started: %s", status.reason)
         self._retention_task = asyncio.create_task(self._retention_loop(retention_interval))
         self._digest_task = asyncio.create_task(self._digest_loop(digest_interval))
+        self.index.start(self.bus)
 
     async def shutdown(self) -> None:
+        await self.index.stop()
         for task in (self._retention_task, self._digest_task):
             if task is not None:
                 task.cancel()

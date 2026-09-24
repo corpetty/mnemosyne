@@ -49,6 +49,20 @@ def client(app):
 
 
 @pytest.fixture(autouse=True)
+def fake_embedder(monkeypatch):
+    """Never download an embedding model: hashed embeddings with a few synonyms."""
+    from mnemosyne.search import embeddings
+
+    monkeypatch.setattr(
+        embeddings,
+        "build_embedder",
+        lambda settings: embeddings.HashEmbedder(
+            synonyms=[{"budget", "costs", "spending"}, {"ship", "launch", "release"}]
+        ),
+    )
+
+
+@pytest.fixture(autouse=True)
 def fake_live_transcriber(monkeypatch) -> FakeTranscriber:
     """Never build a real (model-downloading) live transcriber in tests."""
     from mnemosyne.services.model_service import ModelService

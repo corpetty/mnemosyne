@@ -159,6 +159,10 @@ class Settings(BaseSettings):
     github_token: str = ""  # fine-grained token with Issues: read and write on that repo
     github_labels: str = "meeting-action"  # comma-separated
 
+    # Search and Ask: add meaning-based matches to keyword search (model2vec, CPU).
+    semantic_search: bool = True
+    embedding_model: str = "minishlab/potion-retrieval-32M"
+
     # Summaries
     summary_style: str = "meeting"  # see summarization/prompts.py STYLES
     summary_instructions: str = ""  # appended to every summary prompt

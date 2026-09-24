@@ -37,6 +37,7 @@ export type Digest = S['Digest'];
 export type MeetingStats = S['MeetingStats'];
 export type TaskItem = S['TaskItem'];
 export type Brief = S['Brief'];
+export type IndexStatus = S['IndexStatus'];
 export type SessionUsage = S['SessionUsage'];
 export type StorageReport = S['StorageReport'];
 export type CleanupResult = S['CleanupResult'];

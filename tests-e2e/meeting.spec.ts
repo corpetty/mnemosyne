@@ -62,6 +62,18 @@ test('search finds the line and opens the meeting', async () => {
   await page.getByPlaceholder('Search transcripts…').fill('');
 });
 
+test('search by meaning: "launch" finds "ship"', async () => {
+  const box = page.getByPlaceholder('Search transcripts…');
+  // The meeting is indexed a few seconds after import; retype until it shows up.
+  await expect(async () => {
+    await box.fill('');
+    await box.fill('launch');
+    await expect(page.getByText('related').first()).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 20_000 });
+  await expect(page.getByRole('button', { name: /≈.*ship the migration/ })).toBeVisible();
+  await box.fill('');
+});
+
 test('summarize produces decisions and action items', async () => {
   await page.getByRole('button', { name: 'Summary', exact: true }).click();
   await page.getByRole('button', { name: 'Summarize', exact: true }).click();

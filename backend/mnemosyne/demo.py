@@ -75,6 +75,10 @@ class DemoDiarizer:
         )
 
 
+# Words the demo embedder treats as the same, so semantic search can be shown and tested
+# ("when do we launch" finds "ship the migration").
+SYNONYMS = [{"ship", "launch", "release"}, {"docs", "documentation"}, {"bug", "regression"}]
+
 DEMO_SUMMARY = {
     "title": "Release planning",
     "summary": "The team reviewed the release. The Waku migration is code complete.",

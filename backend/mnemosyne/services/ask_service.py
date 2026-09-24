@@ -98,8 +98,11 @@ async def answer_question(
     provider_name: str,
     model: str,
     extra_instructions: str = "",
+    index=None,
 ) -> Ask:
-    passages = repo.retrieve(question)
+    from ..search.hybrid import hybrid_passages
+
+    passages = hybrid_passages(repo, index, question)
     if not passages:
         return Ask(question=question, answer=NO_RESULTS)
     provider = summarizer.providers.get(provider_name)
