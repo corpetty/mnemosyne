@@ -141,7 +141,7 @@ progress with ETA; glossary (transcription/glossary.py); MCP server (mcp_server.
 to GitHub issues (services/github_service.py); weekly digest (services/digest_service.py);
 Playwright e2e on a demo-mode backend; Tauri updater; Flatpak (flatpak/).
 
-Neat-ideas batch (docs/plans/2026-09-24-neat-ideas.md, unreleased): talk time
+Neat-ideas batch (docs/plans/2026-09-24-neat-ideas.md, released as 0.6.0): talk time
 (services/stats.py), chapters (`summary_data.chapters`), tasks across meetings
 (services/tasks.py, `ActionItem.done`, carried over on re-summarize), follow-up drafts
 (services/followup.py), pre-meeting brief (services/brief.py), mention alerts

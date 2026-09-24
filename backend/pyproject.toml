@@ -1,6 +1,6 @@
 [project]
 name = "mnemosyne-backend"
-version = "0.5.0"
+version = "0.6.0"
 description = "Mnemosyne backend: audio transcription, diarization, and summarization"
 requires-python = ">=3.11, <3.14"
 dependencies = [
