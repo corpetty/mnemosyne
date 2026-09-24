@@ -9,6 +9,7 @@
 	} from '$lib/app/controller.svelte.js';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import AskPanel from '$lib/components/AskPanel.svelte';
+	import AutoRecordBanner from '$lib/components/AutoRecordBanner.svelte';
 	import CalendarBanner from '$lib/components/CalendarBanner.svelte';
 	import DigestPanel from '$lib/components/DigestPanel.svelte';
 	import HomeView from '$lib/components/HomeView.svelte';
@@ -66,6 +67,7 @@
 <main class="h-screen bg-gray-950 text-gray-100 flex flex-col overflow-hidden">
 	<AppHeader />
 	<UpdateBanner />
+	<AutoRecordBanner />
 	<CalendarBanner />
 
 	<div class="flex flex-1 overflow-hidden">

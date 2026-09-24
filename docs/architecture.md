@@ -152,6 +152,16 @@ model2vec by default, a hashed embedder in tests and demo mode) into `chunk_vect
 fuses those hits with the FTS5 results by reciprocal rank, for `/api/search` and for Ask's passages.
 Each embedder has its own `min_score` noise floor (measured, not guessed).
 
+### Auto-record
+
+`AppContext._apps_loop` polls `pw-dump` every 5 s (only when `auto_record` is not `off`) and publishes
+`meeting_app` events when another app opens or closes a recording stream (`audio/streams.py`; our
+own pw-record streams are tagged `application.name=Mnemosyne`). The decisions live in the frontend
+controller, because it owns starting and stopping recordings: offer (ask) or start (auto) on
+`meeting_app started` or a starting calendar meeting, and stop an auto-started recording 60 s after
+its app stops, 5 minutes after its calendar meeting ends, or after `auto_stop_silence_minutes`
+without any source above -50 dB. Recordings started by hand are never stopped automatically.
+
 ### Digests
 
 `services/digest_service.py` builds a digest of a date range from the stored summaries

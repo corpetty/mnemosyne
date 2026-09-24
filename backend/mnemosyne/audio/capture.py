@@ -94,13 +94,13 @@ def build_record_command(
     microphone.) Sources are targeted by node name, which survives restarts.
     """
     cmd = ["pw-record", f"--rate={sample_rate}", f"--channels={channels}", f"--format={format}"]
-    props = []
+    # Named so the meeting-app monitor (audio/streams.py) can tell our streams apart.
+    props = ["application.name=Mnemosyne"]
     if device.is_output:
         props.append("stream.capture.sink=true")
     if node_name:  # lets pw-link output be matched to this exact recorder
         props.append(f"node.name={node_name}")
-    if props:
-        cmd += ["-P", "{ " + " ".join(props) + " }"]
+    cmd += ["-P", "{ " + " ".join(props) + " }"]
     cmd += ["--target", device.name or str(device.id), str(output_path)]
     return cmd
 

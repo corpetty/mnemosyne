@@ -43,6 +43,8 @@ class AppContext:
     echo: EchoCancelManager = field(default_factory=EchoCancelManager)
     _retention_task: asyncio.Task | None = None
     _digest_task: asyncio.Task | None = None
+    _apps_task: asyncio.Task | None = None
+    capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     level_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     github_transport: object | None = None  # tests inject an httpx transport
 
@@ -152,6 +154,32 @@ class AppContext:
         logger.info("Scheduled digest for %s", range_label(*week))
         return self.jobs.submit("digest", make_digest(self, *week))
 
+    def poll_capture_apps(self, dump: list | None = None) -> None:
+        """Compare the apps capturing audio with the last poll and publish changes."""
+        from ..audio.streams import capture_apps
+
+        ignore = {x.strip() for x in self.settings.auto_record_ignore_apps.split(",") if x.strip()}
+        now = capture_apps(dump, ignore)
+        before = {a.app for a in self.capture_apps_now}
+        after = {a.app for a in now}
+        self.capture_apps_now = now
+        for app in sorted(after - before):
+            self.bus.publish({"type": "meeting_app", "status": "started", "app": app})
+        for app in sorted(before - after):
+            self.bus.publish({"type": "meeting_app", "status": "stopped", "app": app})
+
+    async def _apps_loop(self, interval_seconds: float) -> None:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            if self.settings.auto_record == "off":
+                self.capture_apps_now = []
+                continue
+            try:
+                dump = await asyncio.to_thread(_pw_dump)
+                self.poll_capture_apps(dump)
+            except Exception as e:
+                logger.debug("Capture app poll failed: %s", e)
+
     async def _digest_loop(self, interval_seconds: float) -> None:
         while True:
             await asyncio.sleep(interval_seconds)
@@ -170,16 +198,25 @@ class AppContext:
         self._retention_task = asyncio.create_task(self._retention_loop(retention_interval))
         self._digest_task = asyncio.create_task(self._digest_loop(digest_interval))
         self.index.start(self.bus)
+        self._apps_task = asyncio.create_task(self._apps_loop(5.0))
 
     async def shutdown(self) -> None:
         await self.index.stop()
-        for task in (self._retention_task, self._digest_task):
+        for task in (self._retention_task, self._digest_task, self._apps_task):
             if task is not None:
                 task.cancel()
         await self.echo.stop()
         await self.jobs.shutdown()
         await self.models.unload()
         self.repo.close()
+
+
+def _pw_dump() -> list:
+    import json
+    import subprocess
+
+    out = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5, check=True)
+    return json.loads(out.stdout)
 
 
 def get_ctx(request: Request) -> AppContext:

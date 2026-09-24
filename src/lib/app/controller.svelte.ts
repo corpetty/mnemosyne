@@ -2,10 +2,11 @@
  * App behaviour that spans stores: connecting to the backend, recording actions
  * (buttons, shortcuts, tray, command line, calendar banner) and keyboard shortcuts.
  */
-import { exportToObsidian, getHealth } from '$lib/api/backend.js';
+import { exportToObsidian, getHealth, getSettings } from '$lib/api/backend.js';
 import { askState } from '$lib/stores/ask.svelte.js';
 import { digestState } from '$lib/stores/digest.svelte.js';
 import { audioState } from '$lib/stores/audio.svelte.js';
+import { autoRecordState, type AutoMode } from '$lib/stores/autorecord.svelte.js';
 import { calendarState } from '$lib/stores/calendar.svelte.js';
 import { connectionState } from '$lib/stores/connection.svelte.js';
 import { jobsState } from '$lib/stores/jobs.svelte.js';
@@ -118,6 +119,107 @@ export async function exportActive() {
   } catch (e) {
     toastState.error(e instanceof Error ? e.message : 'Export failed');
   }
+}
+
+// ---- auto-record ---------------------------------------------------------------------
+
+const APP_GRACE_MS = 60_000; // the meeting app may drop its stream briefly (device switch)
+const CALENDAR_GRACE_MS = 5 * 60_000;
+let lastSound = Date.now();
+let appGoneAt: number | null = null;
+const offeredApps = new Set<string>(); // ask once per app appearance
+const calendarHandled = new Set<string>();
+
+export async function loadAutoRecordSettings() {
+  try {
+    const s = await getSettings();
+    autoRecordState.mode = (s.values.auto_record as AutoMode) || 'off';
+    autoRecordState.silenceMinutes = s.values.auto_stop_silence_minutes ?? 10;
+  } catch {
+    /* keep previous */
+  }
+}
+
+async function autoStart(started: { by: 'app' | 'calendar'; app?: string; uid?: string; end?: string }, why: string) {
+  if (audioState.isRecording) return;
+  await startRecording(true);
+  if (audioState.isRecording) {
+    autoRecordState.started = started;
+    lastSound = Date.now();
+    appGoneAt = null;
+    toastState.info(`Recording started: ${why}`);
+    notifyDesktop('Mnemosyne is recording', why);
+  }
+}
+
+async function autoStop(reason: string) {
+  autoRecordState.started = null;
+  appGoneAt = null;
+  if (!audioState.isRecording) return;
+  await stopAndTranscribe();
+  toastState.info(`Recording stopped: ${reason}`);
+}
+
+function onMeetingApp(status: 'started' | 'stopped', app: string) {
+  const mode = autoRecordState.mode;
+  const started = autoRecordState.started;
+  if (status === 'stopped') {
+    offeredApps.delete(app);
+    if (autoRecordState.offer === app) autoRecordState.offer = null;
+    if (started?.by === 'app' && started.app === app) appGoneAt = Date.now();
+    return;
+  }
+  if (started?.by === 'app' && started.app === app) appGoneAt = null; // came back
+  if (mode === 'off' || audioState.isRecording) return;
+  if (mode === 'auto') {
+    autoStart({ by: 'app', app }, `${app} is using the microphone`);
+  } else if (!offeredApps.has(app)) {
+    offeredApps.add(app);
+    autoRecordState.offer = app;
+    notifyDesktop(`${app} is using the microphone`, 'Record this meeting in Mnemosyne?');
+  }
+}
+
+export function acceptAutoRecordOffer() {
+  const app = autoRecordState.offer;
+  autoRecordState.offer = null;
+  if (app) autoStart({ by: 'app', app }, `${app} is using the microphone`);
+}
+
+function autoRecordTick() {
+  const now = Date.now();
+  const started = autoRecordState.started;
+  if (!audioState.isRecording) {
+    autoRecordState.started = null;
+    const ev = calendarState.starting;
+    if (autoRecordState.mode === 'auto' && ev && !calendarHandled.has(ev.uid)) {
+      calendarHandled.add(ev.uid);
+      autoStart({ by: 'calendar', uid: ev.uid, end: ev.end }, `${ev.title} is starting`);
+    }
+    return;
+  }
+  if (!started) return; // started by hand: never stopped automatically
+  if (started.by === 'app' && appGoneAt !== null && now - appGoneAt > APP_GRACE_MS) {
+    autoStop(`${started.app} stopped using the microphone`);
+  } else if (started.by === 'calendar' && started.end && now > new Date(started.end).getTime() + CALENDAR_GRACE_MS) {
+    autoStop('the meeting ended');
+  } else if (autoRecordState.silenceMinutes > 0 && now - lastSound > autoRecordState.silenceMinutes * 60_000) {
+    autoStop(`${autoRecordState.silenceMinutes} minutes of silence`);
+  }
+}
+
+function listenForAutoRecord(): () => void {
+  loadAutoRecordSettings();
+  const timer = setInterval(autoRecordTick, 5000);
+  const off = wsState.onMessage((raw) => {
+    const msg = raw as BackendEvent;
+    if (msg.type === 'meeting_app') onMeetingApp(msg.status, msg.app);
+    else if (msg.type === 'levels' && Object.values(msg.levels).some((l) => l.rms_db > -50)) lastSound = Date.now();
+  });
+  return () => {
+    clearInterval(timer);
+    off();
+  };
 }
 
 // ---- Tauri shell (tray, command line) ---------------------------------------------
@@ -248,6 +350,7 @@ function onConnected(): () => void {
   jobsState.init();
   askState.init();
   digestState.init();
+  const stopAutoRecord = listenForAutoRecord();
   calendarState.start();
   audioState.listenForLevels();
   jobsState.onComplete((job) => {
@@ -262,7 +365,7 @@ function onConnected(): () => void {
     toastState.success('Transcription complete');
   });
   // Keep the sidebar in step with backend session state changes.
-  return wsState.onMessage((raw) => {
+  const stopSessions = wsState.onMessage((raw) => {
     const msg = raw as BackendEvent;
     if (msg.type === 'mention') {
       announceMention(msg.keyword, msg.speaker, msg.text);
@@ -279,6 +382,10 @@ function onConnected(): () => void {
       sessionState.refreshActive();
     }
   });
+  return () => {
+    stopSessions();
+    stopAutoRecord();
+  };
 }
 
 /**

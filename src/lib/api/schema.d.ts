@@ -98,6 +98,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audio/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Capture Apps
+         * @description Other apps recording audio right now (meeting apps, browsers in a call), as of the
+         *     last poll. Empty while auto_record is off.
+         */
+        get: operations["get_capture_apps_api_audio_apps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audio/echo-cancel": {
         parameters: {
             query?: never;
@@ -1208,6 +1229,15 @@ export interface components {
             /** Upcoming */
             upcoming: components["schemas"]["CalendarEvent"][];
         };
+        /** CaptureApp */
+        CaptureApp: {
+            /** App */
+            app: string;
+            /** Binary */
+            binary: string;
+            /** Node Id */
+            node_id: number;
+        };
         /** Chapter */
         Chapter: {
             /** Start */
@@ -1913,6 +1943,12 @@ export interface components {
             auto_label_speakers?: boolean | null;
             /** Auto Name Sessions */
             auto_name_sessions?: boolean | null;
+            /** Auto Record */
+            auto_record?: string | null;
+            /** Auto Record Ignore Apps */
+            auto_record_ignore_apps?: string | null;
+            /** Auto Stop Silence Minutes */
+            auto_stop_silence_minutes?: number | null;
             /** Auto Summarize */
             auto_summarize?: boolean | null;
             /** Auto Transcribe */
@@ -2044,6 +2080,12 @@ export interface components {
             auto_label_speakers: boolean;
             /** Auto Name Sessions */
             auto_name_sessions: boolean;
+            /** Auto Record */
+            auto_record: string;
+            /** Auto Record Ignore Apps */
+            auto_record_ignore_apps: string;
+            /** Auto Stop Silence Minutes */
+            auto_stop_silence_minutes: number;
             /** Auto Summarize */
             auto_summarize: boolean;
             /** Auto Transcribe */
@@ -2622,6 +2664,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_capture_apps_api_audio_apps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureApp"][];
                 };
             };
         };

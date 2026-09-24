@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { deleteSpeakerProfile, getSettings, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
+	import { loadAutoRecordSettings } from '$lib/app/controller.svelte.js';
 	import { updateState } from '$lib/stores/update.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
@@ -91,6 +92,9 @@
 				default_provider: v.default_provider,
 				default_model: v.default_model,
 				cloud_redaction: v.cloud_redaction,
+				auto_record: v.auto_record,
+				auto_stop_silence_minutes: v.auto_stop_silence_minutes,
+				auto_record_ignore_apps: v.auto_record_ignore_apps,
 				summary_style: v.summary_style,
 				summary_instructions: v.summary_instructions,
 				summary_chunk_chars: v.summary_chunk_chars,
@@ -141,6 +145,7 @@
 				if (secrets[key] !== '') update[key] = secrets[key];
 			}
 			settings = await updateSettings(update);
+			loadAutoRecordSettings();
 			secrets = emptySecrets();
 			providers = await listModels();
 			toastState.success('Settings saved');
@@ -531,6 +536,35 @@
 						{/each}
 					</div>
 				{/if}
+			</div>
+		</section>
+
+		<!-- Auto-record -->
+		<section>
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">Auto-record</h3>
+			<p class="text-xs text-gray-500 mb-3">
+				Notice when a meeting starts: an app (Zoom, Teams, a browser call…) starts using the microphone, or a calendar meeting begins.
+			</p>
+			<div class="grid grid-cols-2 gap-3">
+				<label>
+					<span class={labelClass}>When a meeting starts</span>
+					<select bind:value={form.auto_record} disabled={locked('auto_record')} class={inputClass}>
+						<option value="off">Do nothing</option>
+						<option value="ask">Ask me</option>
+						<option value="auto">Start recording</option>
+					</select>
+				</label>
+				<label>
+					<span class={labelClass}>Stop after this many silent minutes (0 = never)</span>
+					<input type="number" min="0" max="120" bind:value={form.auto_stop_silence_minutes} disabled={locked('auto_stop_silence_minutes')} class={inputClass} />
+				</label>
+				<label class="col-span-2">
+					<span class={labelClass}>Ignore these apps (comma-separated)</span>
+					<input type="text" bind:value={form.auto_record_ignore_apps} disabled={locked('auto_record_ignore_apps')} class={inputClass} />
+				</label>
+				<p class="col-span-2 text-[11px] text-gray-600 -mt-1">
+					Recordings started automatically stop a minute after the app stops using the microphone, 5 minutes after the calendar meeting ends, or after the silence above. They use the devices you last selected; the app must be open.
+				</p>
 			</div>
 		</section>
 

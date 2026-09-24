@@ -134,6 +134,12 @@ It lives as long as the backend or until turned off.
 `POST` body `{ "enabled": true|false }` loads/unloads it and persists `echo_cancel` in settings (so
 it comes back on the next start). `400` with a reason when the module or `pw-cli` is missing.
 
+### `GET /api/audio/apps`
+Other apps with an open recording stream right now (`Stream/Input/Audio` nodes in `pw-dump`), as of
+the last 5-second poll: `[{app, binary, node_id}]`, with friendly names for common meeting apps and
+browsers. Our own recorders (`application.name=Mnemosyne`) and `auto_record_ignore_apps` are left
+out; empty while `auto_record` is `off`. Changes are published as `meeting_app` events.
+
 ### `GET /api/audio/status/{session_id}`
 
 ```json
@@ -673,6 +679,7 @@ Then every backend event, in order:
 | `live_segment` | `session_id`, `source` (`mic`/`system`/`mixed`), `segment` | A provisional segment committed by the live transcriber (absolute times, no words); `speaker` is a saved voice's name, `Speaker N`, or the channel label |
 | `live_relabel` | `session_id`, `old`, `new` | A live speaker was recognised as a saved voice, or two live speakers were merged; relabel earlier live lines |
 | `mention` | `session_id`, `keyword`, `speaker`, `text`, `start` | A live line contained one of `mention_keywords` (whole words, any case; not from your own mic when it is recorded separately; each keyword at most once per 20 s of recording) |
+| `meeting_app` | `status` (`started`/`stopped`), `app` | Another app started or stopped recording audio (auto-record) |
 | `live_partial` | `session_id`, `source`, `speaker`, `text` | The still-changing tail for that source; replaces the previous partial (may be empty) |
 | `pong` | | Reply to `ping` |
 

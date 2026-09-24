@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from ...audio.capture import list_devices, start_recording, stop_recording
 from ...audio.levels import Level, SelfTestResult, sample_level, self_test
 from ...audio.mixer import mix_audio_files
+from ...audio.streams import CaptureApp
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, Recording, Session, SessionStatus
 from ...services.pipeline import live_transcribe, transcribe_session
@@ -383,3 +384,10 @@ async def capture_self_test(request: SelfTestRequest, ctx: AppContext = Depends(
     if ctx.active_recordings:
         raise HTTPException(status_code=409, detail="Stop the current recording first")
     return await self_test(device)
+
+
+@router.get("/apps", response_model=list[CaptureApp])
+async def get_capture_apps(ctx: AppContext = Depends(get_ctx)):
+    """Other apps recording audio right now (meeting apps, browsers in a call), as of the
+    last poll. Empty while auto_record is off."""
+    return ctx.capture_apps_now

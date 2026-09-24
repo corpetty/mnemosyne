@@ -174,6 +174,14 @@ class Settings(BaseSettings):
     # in parts and then merged, so small context windows still work. 0 never splits.
     summary_chunk_chars: int = 40000
 
+    # Auto-record: "off", "ask" (offer to record when a meeting app starts using the mic or a
+    # calendar meeting starts) or "auto" (just start). Auto-started recordings stop after the
+    # app stops (60 s grace), 5 minutes after the calendar meeting ends, or after
+    # auto_stop_silence_minutes of silence on every source (0 = never).
+    auto_record: str = "off"
+    auto_stop_silence_minutes: int = 10
+    auto_record_ignore_apps: str = "easyeffects, jamesdsp, pavucontrol, obs, audacity"
+
     # Digest: a scheduled digest of the week's meetings. digest_weekday is 0 (Monday)
     # to 6 (Sunday), -1 turns the schedule off; it runs at or after digest_hour.
     digest_weekday: int = -1

@@ -13,7 +13,7 @@ MIC = AudioDevice(id=76, name="alsa_input.usb.rode", description="RODE", media_c
 def test_sink_captured_from_its_monitor_ports():
     cmd = build_record_command(SINK, Path("/x.wav"), 48000, 1, "s16")
     assert cmd[:4] == ["pw-record", "--rate=48000", "--channels=1", "--format=s16"]
-    assert "-P" in cmd and cmd[cmd.index("-P") + 1] == "{ stream.capture.sink=true }"
+    assert cmd[cmd.index("-P") + 1] == "{ application.name=Mnemosyne stream.capture.sink=true }"
     assert (
         cmd[cmd.index("--target") + 1] == "alsa_output.usb.spdif"
     )  # the sink, not "<sink>.monitor"
@@ -23,5 +23,5 @@ def test_sink_captured_from_its_monitor_ports():
 
 def test_source_targeted_by_node_name():
     cmd = build_record_command(MIC, Path("/m.wav"), 48000, 1, "s16")
-    assert "-P" not in cmd
+    assert cmd[cmd.index("-P") + 1] == "{ application.name=Mnemosyne }"  # no capture.sink
     assert cmd[cmd.index("--target") + 1] == "alsa_input.usb.rode"
