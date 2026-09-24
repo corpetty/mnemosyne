@@ -90,6 +90,7 @@
 				vllm_url: v.vllm_url,
 				default_provider: v.default_provider,
 				default_model: v.default_model,
+				cloud_redaction: v.cloud_redaction,
 				summary_style: v.summary_style,
 				summary_instructions: v.summary_instructions,
 				summary_chunk_chars: v.summary_chunk_chars,
@@ -677,6 +678,11 @@
 						{/each}
 					</datalist>
 				</label>
+				<label class="flex items-center gap-2 col-span-2">
+					<input type="checkbox" bind:checked={form.cloud_redaction} disabled={locked('cloud_redaction')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Hide names, emails and phone numbers from OpenAI and Anthropic (swapped for placeholders, restored in the reply)</span>
+				</label>
+				<p class="col-span-2 text-[11px] text-gray-600 -mt-1">Meetings marked local-only (lock in the meeting header) are never sent to them at all.</p>
 			</div>
 		</section>
 

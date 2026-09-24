@@ -90,6 +90,7 @@ class Session(ApiModel):
     participants: list[str] = Field(default_factory=list)
     # Invitees from the calendar event this session was recorded during (names).
     attendees: list[str] = Field(default_factory=list)
+    local_only: bool = False  # never sent to a cloud LLM provider
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -112,3 +113,4 @@ class SessionSummary(ApiModel):
     has_summary: bool
     has_audio: bool = False
     participant_count: int
+    local_only: bool = False

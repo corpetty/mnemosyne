@@ -55,6 +55,21 @@ async def get_stats(session_id: str, ctx: AppContext = Depends(get_ctx)):
     return meeting_stats(_require(ctx, session_id).transcript)
 
 
+class LocalOnlyRequest(ApiModel):
+    local_only: bool
+
+
+@router.put("/{session_id}/local-only", response_model=Session)
+async def set_local_only(
+    session_id: str, request: LocalOnlyRequest, ctx: AppContext = Depends(get_ctx)
+):
+    """Local-only meetings are never sent to a cloud LLM provider (OpenAI, Anthropic)."""
+    _require(ctx, session_id)
+    session = ctx.repo.update_fields(session_id, local_only=request.local_only)
+    ctx.bus.publish({"type": "session", "session_id": session_id, "status": session.status.value})
+    return session
+
+
 @router.patch("/{session_id}", response_model=Session)
 async def rename_session(
     session_id: str, request: RenameRequest, ctx: AppContext = Depends(get_ctx)

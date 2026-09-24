@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 
 class SummarizationService:
     chunk_chars = 0  # 0: never split (see Settings.summary_chunk_chars)
+    # Names to hide from cloud providers when cloud_redaction is on; set by AppContext.
+    name_source: Callable[[], list[str]] | None = None
 
     def __init__(self, settings: Settings | None = None):
         self.providers: dict[str, SummarizationProvider] = {}
@@ -45,6 +47,13 @@ class SummarizationService:
             self.providers["openai"] = OpenAIProvider(api_key=settings.openai_api_key)
         if settings.anthropic_api_key:
             self.providers["anthropic"] = AnthropicProvider(api_key=settings.anthropic_api_key)
+        if settings.cloud_redaction:
+            from ..summarization.privacy import CLOUD_PROVIDERS, RedactingProvider
+
+            for name in CLOUD_PROVIDERS & set(self.providers):
+                self.providers[name] = RedactingProvider(
+                    self.providers[name], lambda: self.name_source() if self.name_source else []
+                )
         from .. import demo
 
         if demo.enabled():

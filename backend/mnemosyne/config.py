@@ -140,6 +140,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     default_provider: str = "ollama"
     default_model: str = ""
+    # Before sending anything to a cloud provider (openai, anthropic), replace emails, phone
+    # numbers and the names of people in your meetings with placeholders, and put them back
+    # in the reply.
+    cloud_redaction: bool = False
 
     # Server mode: when set, every /api request and the WebSocket must carry it
     # (Authorization: Bearer <token>, or ?token=). /health stays open.

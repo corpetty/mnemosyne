@@ -696,6 +696,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/local-only": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Local Only
+         * @description Local-only meetings are never sent to a cloud LLM provider (OpenAI, Anthropic).
+         */
+        put: operations["set_local_only_api_sessions__session_id__local_only_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/notes": {
         parameters: {
             query?: never;
@@ -1444,6 +1464,11 @@ export interface components {
             /** Rms Db */
             rms_db: number;
         };
+        /** LocalOnlyRequest */
+        LocalOnlyRequest: {
+            /** Local Only */
+            local_only: boolean;
+        };
         /** MeetingStats */
         MeetingStats: {
             /** Duration Seconds */
@@ -1758,6 +1783,11 @@ export interface components {
             /** Id */
             id: string;
             /**
+             * Local Only
+             * @default false
+             */
+            local_only: boolean;
+            /**
              * Name
              * @default Untitled Session
              */
@@ -1825,6 +1855,11 @@ export interface components {
             has_transcript: boolean;
             /** Id */
             id: string;
+            /**
+             * Local Only
+             * @default false
+             */
+            local_only: boolean;
             /** Name */
             name: string;
             /** Participant Count */
@@ -1886,6 +1921,8 @@ export interface components {
             calendar_auto_name?: boolean | null;
             /** Calendar Ics Url */
             calendar_ics_url?: string | null;
+            /** Cloud Redaction */
+            cloud_redaction?: boolean | null;
             /** Default Model */
             default_model?: string | null;
             /** Default Provider */
@@ -2015,6 +2052,8 @@ export interface components {
             calendar_auto_name: boolean;
             /** Calendar Ics Url */
             calendar_ics_url: string;
+            /** Cloud Redaction */
+            cloud_redaction: boolean;
             /** Data Dir */
             data_dir: string;
             /** Default Model */
@@ -3711,6 +3750,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_local_only_api_sessions__session_id__local_only_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocalOnlyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
                 };
             };
             /** @description Validation Error */

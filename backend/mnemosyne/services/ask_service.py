@@ -6,6 +6,7 @@ import re
 
 from ..models.ask import Ask, Citation, Passage
 from ..storage.sqlite import SessionRepository
+from ..summarization.privacy import is_cloud
 from .summarization_service import SummarizationService
 
 SYSTEM_PROMPT = """\
@@ -103,6 +104,9 @@ async def answer_question(
     from ..search.hybrid import hybrid_passages
 
     passages = hybrid_passages(repo, index, question)
+    if is_cloud(provider_name):
+        hidden = repo.local_only_ids()
+        passages = [p for p in passages if p.session_id not in hidden]
     if not passages:
         return Ask(question=question, answer=NO_RESULTS)
     provider = summarizer.providers.get(provider_name)

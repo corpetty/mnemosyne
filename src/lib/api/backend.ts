@@ -352,6 +352,13 @@ export async function summarizeThread(q: string): Promise<Job> {
   return request('/api/topics/thread/summary', { method: 'POST', body: JSON.stringify({ q }) });
 }
 
+export async function setLocalOnly(sessionId: string, localOnly: boolean): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/local-only`, {
+    method: 'PUT',
+    body: JSON.stringify({ local_only: localOnly })
+  });
+}
+
 // Action items across meetings
 export async function listActionItems(status: 'open' | 'done' | 'all' = 'open'): Promise<TaskItem[]> {
   return request(`/api/action-items?status=${status}`);

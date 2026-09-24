@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { startRecording, stopAndTranscribe } from '$lib/app/controller.svelte.js';
+	import { setLocalOnly } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
+	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { uiState, type Tab } from '$lib/stores/ui.svelte.js';
 	import AudioControls from './AudioControls.svelte';
 	import CalendarCard from './CalendarCard.svelte';
@@ -19,6 +21,18 @@
 		{ id: 'notes', label: 'Notes' },
 		{ id: 'export', label: 'Export' }
 	];
+
+	async function toggleLocalOnly() {
+		const s = sessionState.activeSession;
+		if (!s) return;
+		try {
+			await setLocalOnly(s.id, !s.local_only);
+			await sessionState.refreshActive();
+			await sessionState.loadSessions();
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not change the setting');
+		}
+	}
 </script>
 
 {#if sessionState.activeSession}
@@ -26,7 +40,19 @@
 <div class="border-b border-gray-800 px-6 pt-4 pb-0 flex-shrink-0">
 	<div class="flex items-center justify-between mb-3">
 		<h2 class="text-xl font-semibold truncate">{sessionState.activeSession.name}</h2>
-		<span class="text-xs text-gray-500 flex-shrink-0">
+		<span class="flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
+			<button
+				onclick={toggleLocalOnly}
+				aria-pressed={sessionState.activeSession.local_only}
+				title={sessionState.activeSession.local_only
+					? 'Local-only: never sent to OpenAI or Anthropic. Click to allow.'
+					: 'Mark local-only: never send this meeting to a cloud LLM'}
+				class="px-2 py-0.5 rounded border transition-colors {sessionState.activeSession.local_only
+					? 'border-amber-700 text-amber-300 bg-amber-950/40'
+					: 'border-gray-800 text-gray-500 hover:text-gray-300'}"
+			>
+				{sessionState.activeSession.local_only ? '🔒 Local only' : '🔓 Cloud allowed'}
+			</button>
 			{new Date(sessionState.activeSession.created_at).toLocaleString()}
 		</span>
 	</div>

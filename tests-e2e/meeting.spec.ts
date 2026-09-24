@@ -163,3 +163,13 @@ test('topics: follow a topic and ask where it stands', async () => {
   await page.getByRole('button', { name: 'Where does this stand?' }).click();
   await expect(page.getByLabel('Where it stands').getByText('The migration ships in October.')).toBeVisible();
 });
+
+test('local only: the lock marks a meeting in the header and sidebar', async () => {
+  await page.getByRole('button', { name: /^release-sync/ }).first().click();
+  const lock = page.getByRole('button', { name: /Cloud allowed/ });
+  await lock.click();
+  await expect(page.getByRole('button', { name: /Local only/ })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTitle('Local only').first()).toBeVisible();
+  await page.getByRole('button', { name: /Local only/ }).click();
+  await expect(page.getByRole('button', { name: /Cloud allowed/ })).toBeVisible();
+});

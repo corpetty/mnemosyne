@@ -194,6 +194,17 @@ speakers: [{speaker, talk_seconds, share, turns, longest_turn_seconds, words, wo
 timeline: [{speaker, start, end, first_idx}]}`. A turn is a run of consecutive lines by the same
 speaker; `speech_seconds` counts overlapping speech once.
 
+### `PUT /api/sessions/{session_id}/local-only`
+Body `{"local_only": true}`. A local-only meeting is never sent to a cloud LLM provider (`openai`,
+`anthropic`; Ollama and vLLM count as local): summarize and follow-up return 400 for a cloud
+provider (and their jobs refuse too), glossary LLM correction is skipped, and Ask, digests and topic
+threads leave it out when they use a cloud provider. `SessionSummary.local_only` shows it in lists.
+
+With the `cloud_redaction` setting, every prompt to a cloud provider has emails, phone numbers and
+the names of known people (participants, invitees, owners, saved voices; for multi-word names also
+each capitalized part) replaced by `[EMAIL_n]`, `[PHONE_n]`, `[PERSON_n]`, and the reply is restored
+before it is parsed.
+
 ### `PATCH /api/sessions/{session_id}`
 
 `{ "name": "New Name" }` → `SessionDetail`.

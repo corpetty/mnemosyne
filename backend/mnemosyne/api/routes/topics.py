@@ -14,6 +14,7 @@ from ...services.topics import (
     frequent_topics,
     thread_notes,
 )
+from ...summarization.privacy import is_cloud
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
@@ -52,6 +53,11 @@ async def summarize_thread(request: ThreadSummaryRequest, ctx: AppContext = Depe
         st = ctx.settings
         prov = request.provider or st.default_provider
         mdl = await ctx.summarizer.resolve_model(prov, request.model or st.default_model)
+        if is_cloud(prov):
+            hidden = ctx.repo.local_only_ids()
+            thread.meetings = [m for m in thread.meetings if m.id not in hidden]
+            if not thread.meetings:
+                raise ValueError(f'Only local-only meetings are about "{q}"')
         job.update(f"Reading {len(thread.meetings)} meetings with {prov}/{mdl}")
         text = await ctx.summarizer.complete(THREAD_PROMPT, thread_notes(thread), prov, mdl)
         return {"text": text.strip(), "query": q, "meetings": len(thread.meetings)}

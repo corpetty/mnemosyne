@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from ..jobs import JobContext
 from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus, transcript_hash
+from ..summarization.privacy import LOCAL_ONLY_ERROR, is_cloud
 from ..transcription.engine import AudioSource
 from ..transcription.glossary import (
     apply_corrections,
@@ -130,7 +131,13 @@ def transcribe_session(app: AppContext, session_id: str):
 
             glossary = parse_glossary(settings.glossary)
             segments, fixed = apply_corrections(segments, glossary)
-            if settings.glossary_llm_correct and glossary.terms and segments:
+            local_only = session is not None and session.local_only
+            if (
+                settings.glossary_llm_correct
+                and glossary.terms
+                and segments
+                and not (local_only and is_cloud(settings.default_provider))
+            ):
                 ctx.update("Checking names and terms...", progress=0.99)
 
                 async def complete(system: str, user: str) -> str:
@@ -198,6 +205,8 @@ def summarize_session(
         prov = provider or st.default_provider
         mdl = model or st.default_model
         sty = style or st.summary_style
+        if session.local_only and is_cloud(prov):
+            raise ValueError(LOCAL_ONLY_ERROR.format(provider=prov))
         instr = st.summary_instructions if instructions is None else instructions
         spelling = glossary_instructions(parse_glossary(st.glossary))
         if spelling:
@@ -288,6 +297,8 @@ def draft_followup(app: AppContext, session_id: str, style: str = "email", provi
             raise ValueError("Summarize the meeting first")
         st = app.settings
         prov = provider or st.default_provider
+        if session.local_only and is_cloud(prov):
+            raise ValueError(LOCAL_ONLY_ERROR.format(provider=prov))
         mdl = await app.summarizer.resolve_model(prov, model or st.default_model)
         extra = glossary_instructions(parse_glossary(st.glossary))
         system = f"{SYSTEM[style]}\n{extra}".strip() if extra else SYSTEM[style]
@@ -315,6 +326,8 @@ def make_digest(app: AppContext, start, end, provider: str = "", model: str = ""
         extra = glossary_instructions(parse_glossary(st.glossary))
         ctx.update("Gathering meetings...")
         sessions = await asyncio.to_thread(app.repo.sessions_between, start, end)
+        if is_cloud(prov):
+            sessions = [s for s in sessions if not s.local_only]
         if any(s.summary.strip() for s in sessions):
             mdl = await app.summarizer.resolve_model(prov, mdl)
 

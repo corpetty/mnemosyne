@@ -120,7 +120,7 @@
 					: 'hover:bg-gray-800/50'}"
 			>
 				<div class="flex items-center justify-between">
-					<span class="text-sm font-medium text-gray-200 truncate">{session.name}</span>
+					<span class="text-sm font-medium text-gray-200 truncate">{#if session.local_only}<span title="Local only" class="mr-1">🔒</span>{/if}{session.name}</span>
 					<button
 						onclick={(e) => handleDelete(e, session.id)}
 						class="text-gray-600 hover:text-red-400 text-xs px-1 transition-colors"

@@ -9,6 +9,7 @@ from ...jobs import Job
 from ...models.base import ApiModel
 from ...services.pipeline import draft_followup as followup_runner
 from ...services.pipeline import summarize_session as summarize_runner
+from ...summarization.privacy import LOCAL_ONLY_ERROR, is_cloud
 from ...summarization.prompts import STYLES
 from ..context import AppContext, get_ctx
 
@@ -61,6 +62,9 @@ async def draft_followup(
         raise HTTPException(status_code=404, detail="Session not found")
     if not session.summary or session.summary_data is None:
         raise HTTPException(status_code=400, detail="Summarize the meeting first")
+    prov = request.provider or ctx.settings.default_provider
+    if session.local_only and is_cloud(prov):
+        raise HTTPException(status_code=400, detail=LOCAL_ONLY_ERROR.format(provider=prov))
     return ctx.jobs.submit(
         "followup",
         followup_runner(ctx, session_id, request.style, request.provider, request.model),
@@ -78,6 +82,9 @@ async def summarize_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if not session.transcript:
         raise HTTPException(status_code=400, detail="Session has no transcript")
+    prov = request.provider or ctx.settings.default_provider
+    if session.local_only and is_cloud(prov):
+        raise HTTPException(status_code=400, detail=LOCAL_ONLY_ERROR.format(provider=prov))
     style = request.style or ctx.settings.summary_style
     if style not in STYLES:
         raise HTTPException(status_code=400, detail=f"Unknown style; choose one of {list(STYLES)}")

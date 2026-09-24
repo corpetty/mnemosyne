@@ -46,6 +46,18 @@ class AppContext:
     level_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     github_transport: object | None = None  # tests inject an httpx transport
 
+    def __post_init__(self) -> None:
+        self.summarizer.name_source = self.known_names
+
+    def known_names(self) -> list[str]:
+        """People's names, for redaction before cloud calls."""
+        from ..services.people import list_people
+
+        st = self.settings
+        return [
+            p.name for p in list_people(self.repo, (st.local_speaker_name, st.remote_speaker_name))
+        ]
+
     @classmethod
     def build(cls, settings: Settings) -> AppContext:
         settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -80,6 +92,7 @@ class AppContext:
         """Swap in new settings and rebuild anything that depends on them."""
         self.settings = settings
         self.summarizer = SummarizationService(settings)
+        self.summarizer.name_source = self.known_names
         self.speakers.threshold = settings.speaker_match_threshold
         if (settings.semantic_search, settings.embedding_model) != (
             self.index.enabled,

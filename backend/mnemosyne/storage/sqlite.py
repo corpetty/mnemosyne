@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     summary_data TEXT,
     notes TEXT NOT NULL DEFAULT '',
     participants TEXT NOT NULL DEFAULT '[]',
-    attendees TEXT NOT NULL DEFAULT '[]'
+    attendees TEXT NOT NULL DEFAULT '[]',
+    local_only INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC);
 CREATE TABLE IF NOT EXISTS segments (
@@ -209,6 +210,10 @@ class SessionRepository:
             self._conn.execute(
                 "ALTER TABLE sessions ADD COLUMN attendees TEXT NOT NULL DEFAULT '[]'"
             )
+        if "local_only" not in cols:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN local_only INTEGER NOT NULL DEFAULT 0"
+            )
         self._conn.commit()
 
     def _backfill_fts(self) -> None:
@@ -241,7 +246,7 @@ class SessionRepository:
 
     def list_summaries(self) -> list[SessionSummary]:
         sql = """
-        SELECT s.id, s.name, s.status, s.created_at, s.updated_at, s.participants,
+        SELECT s.id, s.name, s.status, s.created_at, s.updated_at, s.participants, s.local_only,
                length(s.summary) > 0 AS has_summary,
                s.audio_file IS NOT NULL AS has_audio,
                EXISTS(SELECT 1 FROM segments g WHERE g.session_id = s.id) AS has_transcript
@@ -260,6 +265,7 @@ class SessionRepository:
                 has_summary=bool(r["has_summary"]),
                 has_audio=bool(r["has_audio"]),
                 participant_count=len(json.loads(r["participants"])),
+                local_only=bool(r["local_only"]),
             )
             for r in rows
         ]
@@ -291,6 +297,7 @@ class SessionRepository:
             notes=row["notes"],
             participants=json.loads(row["participants"]),
             attendees=json.loads(row["attendees"]),
+            local_only=bool(row["local_only"]),
             transcript=[
                 TranscriptSegment(
                     text=r["text"],
@@ -323,14 +330,14 @@ class SessionRepository:
             self._conn.execute(
                 """INSERT INTO sessions(id, name, status, created_at, updated_at, audio_file,
                                         summary, summary_data, notes, participants,
-                                        attendees)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                                        attendees, local_only)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      name=excluded.name, status=excluded.status, updated_at=excluded.updated_at,
                      audio_file=excluded.audio_file, summary=excluded.summary,
                      summary_data=excluded.summary_data,
                      notes=excluded.notes, participants=excluded.participants,
-                     attendees=excluded.attendees""",
+                     attendees=excluded.attendees, local_only=excluded.local_only""",
                 (
                     session.id,
                     session.name,
@@ -343,6 +350,7 @@ class SessionRepository:
                     session.notes,
                     json.dumps(session.participants),
                     json.dumps(session.attendees),
+                    int(session.local_only),
                 ),
             )
             self._write_segments(session.id, session.transcript)
@@ -361,6 +369,7 @@ class SessionRepository:
             "notes",
             "participants",
             "attendees",
+            "local_only",
         }
         bad = set(fields) - allowed
         if bad:
@@ -374,6 +383,8 @@ class SessionRepository:
                 value = value.value
             if key in ("participants", "attendees"):
                 value = json.dumps(value)
+            if key == "local_only":
+                value = int(bool(value))
             if key == "summary_data":
                 value = value.model_dump_json() if isinstance(value, SummaryData) else value
             sets.append(f"{key}=?")
@@ -813,6 +824,11 @@ class SessionRepository:
             text=m["summary"].strip(),
             score=score,
         )
+
+    def local_only_ids(self) -> set[str]:
+        with self._lock:
+            rows = self._conn.execute("SELECT id FROM sessions WHERE local_only=1").fetchall()
+        return {r["id"] for r in rows}
 
     def people_rows(self) -> list:
         """id, name, created_at, participants, attendees, summary_data of every session."""
