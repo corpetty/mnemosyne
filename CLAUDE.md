@@ -83,6 +83,11 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
 - This machine runs EasyEffects: recording streams from the mic get rerouted to
   `easyeffects_source`, whose RNNoise outputs exact digital silence when nobody speaks. A −90 dB
   mic level with the mic unmuted is that, not a capture bug.
+- Updates: the Tauri updater (AppImage, deb and rpm) reads `latest.json` from the latest
+  GitHub release; `scripts/updater-manifest.py` writes it in the Release workflow. Bundles are
+  signed with `~/.tauri/mnemosyne.key` (no password; repo secret `TAURI_SIGNING_PRIVATE_KEY`,
+  public key in tauri.conf.json). Losing the key means shipped apps can never update again.
+  `createUpdaterArtifacts` is only turned on in CI (`--config`), so local builds need no key.
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.

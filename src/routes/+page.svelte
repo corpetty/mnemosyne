@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		checkForUpdateOnce,
 		connectApp,
 		handleKeydown,
 		invokeShell,
@@ -16,6 +17,7 @@
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
 	import StatusBar from '$lib/components/StatusBar.svelte';
 	import ToastContainer from '$lib/components/ToastContainer.svelte';
+	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
@@ -24,6 +26,7 @@
 	$effect(() => connectApp());
 	$effect(() => listenForRemoteActions());
 	$effect(() => runLaunchActionOnce());
+	$effect(() => checkForUpdateOnce());
 
 	// Mirror recording state into the tray label and tooltip.
 	$effect(() => {
@@ -59,6 +62,7 @@
 
 <main class="h-screen bg-gray-950 text-gray-100 flex flex-col overflow-hidden">
 	<AppHeader />
+	<UpdateBanner />
 	<CalendarBanner />
 
 	<div class="flex flex-1 overflow-hidden">

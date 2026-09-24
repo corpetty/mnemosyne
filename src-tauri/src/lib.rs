@@ -387,6 +387,14 @@ fn show_window(app: AppHandle) {
     show_main_window(&app);
 }
 
+/// Restart after an update is installed. Goes through the normal exit path, so the
+/// backend is killed (RunEvent::Exit) and the single-instance lock is released first.
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    info!("Restarting to apply update");
+    app.request_restart();
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Start recording", true, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Mnemosyne", true, None::<&str>)?;
@@ -433,6 +441,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(BackendState { child: Mutex::new(None) })
         .manage(LaunchAction(Mutex::new(
             action_from_args(std::env::args().skip(1)).map(str::to_string),
@@ -440,7 +449,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_recording_state,
             take_launch_action,
-            show_window
+            show_window,
+            restart_app
         ])
         .setup(|app| {
             app.handle().plugin(

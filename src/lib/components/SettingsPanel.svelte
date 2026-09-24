@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { deleteSpeakerProfile, getSettings, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
+	import { updateState } from '$lib/stores/update.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
 	import StorageSettings from './StorageSettings.svelte';
@@ -625,6 +626,33 @@
 		</div>
 
 		<StorageSettings locked={locked('audio_retention_days')} />
+
+		{#if updateState.supported}
+			<!-- Updates -->
+			<section>
+				<h3 class="text-lg font-semibold text-gray-200 mb-1">Updates</h3>
+				<p class="text-xs text-gray-500 mb-3">
+					Checked once at start. Updates are signed and downloaded from the GitHub release; deb and rpm installs ask for your password.
+				</p>
+				<div class="flex items-center gap-3 text-sm">
+					<button
+						onclick={() => updateState.check()}
+						disabled={updateState.status === 'checking' || updateState.status === 'downloading'}
+						class="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50"
+					>
+						{updateState.status === 'checking' ? 'Checking…' : 'Check for updates'}
+					</button>
+					{#if updateState.status === 'none'}
+						<span class="text-gray-400">Up to date ({updateState.current})</span>
+					{:else if updateState.status === 'available'}
+						<span class="text-emerald-400">{updateState.version} is available</span>
+						<button onclick={() => updateState.install()} class="text-xs text-emerald-400 hover:text-emerald-300 underline">Update and restart</button>
+					{:else if updateState.status === 'error'}
+						<span class="text-red-400 text-xs">{updateState.error}</span>
+					{/if}
+				</div>
+			</section>
+		{/if}
 
 		<!-- Server mode -->
 		<section>

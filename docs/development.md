@@ -335,15 +335,19 @@ runs summaries. No TLS is provided: use a trusted LAN, Tailscale, or a reverse p
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and PR: backend ruff + pytest (no GPU; ML is faked),
-`pnpm check` + `pnpm build`, and `cargo check` for the shell. `.github/workflows/release.yml` builds
-the deb, rpm and AppImage on `ubuntu-22.04` when a `vX.Y.Z` tag is pushed and attaches them, with a
-`SHA256SUMS` file, to the GitHub release:
+`pnpm check` + `pnpm build`, Playwright browser tests against a demo-mode backend, and `cargo check`
+for the shell. `.github/workflows/release.yml` builds the deb, rpm and AppImage on `ubuntu-22.04` when
+a `vX.Y.Z` tag is pushed and attaches them, with a `.sig` per bundle, `latest.json` (the updater
+manifest, from `scripts/updater-manifest.py`) and `SHA256SUMS`, to the GitHub release. Running the
+workflow by hand (`gh workflow run Release`) builds and signs without releasing:
 
 ```bash
 git tag v0.4.1 && git push origin v0.4.1
 ```
 
 Bump the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `package.json`, `backend/pyproject.toml` and `backend/mnemosyne/api/app.py` first (then `cargo check` and `uv lock`). Put release notes in `docs/releases/vX.Y.Z.md`; the workflow uses them as the release body, falling back to GitHub's generated notes.
+The notes also become the text of the in-app update prompt. Installed apps update from whatever release
+GitHub marks as latest, so do not mark a broken build as latest.
 
 ## Building for Production
 

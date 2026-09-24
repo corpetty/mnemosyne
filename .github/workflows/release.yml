@@ -34,15 +34,25 @@ jobs:
       - name: Build bundles
         env:
           NO_STRIP: "true" # linuxdeploy's bundled strip fails on .relr.dyn sections
-        run: pnpm tauri build --bundles deb,rpm,appimage
+          # Signs the updater artifacts (.sig per bundle). Key has no password.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: >
+          pnpm tauri build --bundles deb,rpm,appimage
+          --config '{"bundle":{"createUpdaterArtifacts":true}}'
       - name: Collect artifacts
         run: |
           mkdir -p dist
-          cp src-tauri/target/release/bundle/deb/*.deb dist/
-          cp src-tauri/target/release/bundle/rpm/*.rpm dist/
-          cp src-tauri/target/release/bundle/appimage/*.AppImage dist/
-          (cd dist && sha256sum * > SHA256SUMS)
+          cp src-tauri/target/release/bundle/deb/*.deb* dist/
+          cp src-tauri/target/release/bundle/rpm/*.rpm* dist/
+          cp src-tauri/target/release/bundle/appimage/*.AppImage* dist/
           ls -la dist
+      - name: Updater manifest (latest.json)
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          case "$tag" in v*) ;; *) tag="v$(jq -r .version src-tauri/tauri.conf.json)";; esac
+          python3 scripts/updater-manifest.py "$tag" dist "docs/releases/$tag.md"
+          (cd dist && sha256sum *.AppImage *.deb *.rpm > SHA256SUMS)
       - uses: actions/upload-artifact@v7
         with:
           name: mnemosyne-linux

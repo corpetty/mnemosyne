@@ -62,5 +62,13 @@
     "externalBin": [
       "binaries/mnemosyne-uv"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQzQTg1QzVBRUU5MTA3QjEKUldTeEI1SHVXbHlvMDNVT25ia0M2enozNDA0RWtyLzBySDc3TVRxcHRjRmdiRXFJK3owMlpLSzEK",
+      "endpoints": [
+        "https://github.com/corpetty/mnemosyne/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

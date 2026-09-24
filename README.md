@@ -235,6 +235,9 @@ no models or LLM server: run `bash tests-e2e/start-backend.sh` and point the app
 
 Pushing a `vX.Y.Z` tag builds the deb, rpm and AppImage in GitHub Actions and attaches them to a release
 (see `docs/development.md`). Download from the Releases page instead of building locally.
+From 0.5.0 on the app updates itself: it checks the latest release at start (and from
+Settings → Updates) and installs signed updates in place; deb and rpm installs ask for your
+password.
 
 ### Build Distributable
 

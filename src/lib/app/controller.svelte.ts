@@ -13,6 +13,7 @@ import { sessionState } from '$lib/stores/session.svelte.js';
 import { toastState } from '$lib/stores/toast.svelte.js';
 import { transcriptState } from '$lib/stores/transcript.svelte.js';
 import { uiState, type ShellStage } from '$lib/stores/ui.svelte.js';
+import { updateState } from '$lib/stores/update.svelte.js';
 import { wsState } from '$lib/stores/websocket.svelte.js';
 import type { BackendEvent } from '$lib/types/index.js';
 
@@ -135,6 +136,14 @@ export function listenForRemoteActions(): () => void {
     cancelled = true;
     unlisten?.();
   };
+}
+
+let updateChecked = false;
+/** Look for an app update once per run, shortly after the backend is up. */
+export function checkForUpdateOnce() {
+  if (uiState.backendStatus !== 'connected' || updateChecked || !updateState.supported) return;
+  updateChecked = true;
+  setTimeout(() => updateState.check(), 8000);
 }
 
 let launchActionChecked = false;
