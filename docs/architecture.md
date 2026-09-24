@@ -144,6 +144,14 @@ turned into a safe query by quoting every term (`storage/sqlite.py::fts_query`).
 `complete()`, and maps `[n]` markers back to citations. Answers are stored in the `asks` table.
 LLM providers expose `complete(system, user, model)`; `summarize` is a wrapper over it.
 
+### MCP server
+
+`mnemosyne/mcp_server.py` (`mnemosyne-mcp`, stdio, MCP Python SDK 2.x `MCPServer`) is a thin HTTP
+client of the backend (`MNEMOSYNE_URL`, `MNEMOSYNE_TOKEN`), so it works against the local app or a
+server-mode backend. Tools: `list_meetings`, `search_meetings`, `ask_meetings` (queues an `ask` job and
+polls it), `get_meeting` (paged transcript), `get_action_items`. Output is plain text with session ids
+for follow-up calls.
+
 ### Audio Files
 
 Recordings are stored in `data/recordings/{session_id}/`:

@@ -22,6 +22,7 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Search** across every transcript, summary and note, with jump-to-segment
 - **Calendar-aware**: paste your calendar's private ICS link and recordings are named after the meeting in progress, invitees are offered as speaker names, and a banner offers to record when a meeting starts
 - **Storage control**: see what audio takes space, delete audio but keep the transcript, or keep audio for N days only
+- **MCP server**: search, read and ask your meetings from Claude Code, Claude Desktop or any MCP client
 - **Ask your meetings** (Ctrl+K): questions answered from your transcripts with numbered citations that jump to the exact moment; history is kept
 - **Speakers that stick**: rename a speaker once and the app remembers the voice, labelling that person automatically in future meetings
 - **Level meters and a capture self-test**: see every source's level while recording, check a mic before a call, and verify that system audio is really captured from your output (it plays a short tone and checks it arrives)
@@ -131,6 +132,20 @@ mnemosyne --toggle
 and performs the action once ready. Recording from the tray or shortcut always starts a new session
 with the devices you last selected (remembered across restarts); if none are selected yet, the
 window opens on the Recording tab instead.
+
+### Use your meetings from Claude (MCP)
+
+Mnemosyne ships an MCP server, `mnemosyne-mcp`, with tools to list, search, read and ask across your
+meetings and to collect action items. It talks to the running app's backend. With the app installed:
+
+```bash
+claude mcp add mnemosyne -- ~/.local/share/com.corpetty.mnemosyne/venv/bin/mnemosyne-mcp
+```
+
+From a source checkout, use `uv run --directory /path/to/mnemosyne/backend mnemosyne-mcp` as the command.
+Set `MNEMOSYNE_URL` (default `http://127.0.0.1:8008`) and `MNEMOSYNE_TOKEN` for a remote backend in
+server mode, e.g. `claude mcp add mnemosyne -e MNEMOSYNE_URL=http://gpu-box:8008 -e MNEMOSYNE_TOKEN=... -- ...`.
+For Claude Desktop, add the same command under `mcpServers` in its config file.
 
 ### Keyboard Shortcuts
 
