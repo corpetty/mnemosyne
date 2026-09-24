@@ -97,6 +97,7 @@ async def answer_question(
     question: str,
     provider_name: str,
     model: str,
+    extra_instructions: str = "",
 ) -> Ask:
     passages = repo.retrieve(question)
     if not passages:
@@ -113,7 +114,10 @@ async def answer_question(
         model = models[0]
     block, used = format_passages(passages)
     user = f"Question: {question}\n\nExcerpts:\n\n{block}"
-    answer = (await provider.complete(SYSTEM_PROMPT, user, model)).strip()
+    system = (
+        f"{SYSTEM_PROMPT}\n{extra_instructions}".strip() if extra_instructions else SYSTEM_PROMPT
+    )
+    answer = (await provider.complete(system, user, model)).strip()
     return Ask(
         question=question,
         answer=answer,

@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     min_speakers: int | None = None
     max_speakers: int | None = 10
     auto_transcribe: bool = True
+    # Names and jargon, one per line; "wrong -> right" lines are applied as corrections.
+    glossary: str = ""
+    # Also let the LLM fix misheard glossary terms after transcription (default provider).
+    glossary_llm_correct: bool = False
     auto_summarize: bool = False  # queue a summary after each transcription
     auto_name_sessions: bool = True  # rename untitled sessions from the summary title
     # When mic and system audio are captured separately, the mic file is

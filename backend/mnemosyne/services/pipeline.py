@@ -16,6 +16,12 @@ from typing import TYPE_CHECKING
 from ..jobs import JobContext
 from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus, transcript_hash
 from ..transcription.engine import AudioSource
+from ..transcription.glossary import (
+    apply_corrections,
+    glossary_instructions,
+    llm_correct,
+    parse_glossary,
+)
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -121,6 +127,19 @@ def transcribe_session(app: AppContext, session_id: str):
                 )
             dropped = getattr(engine, "last_dropped_echo", 0)
 
+            glossary = parse_glossary(settings.glossary)
+            segments, fixed = apply_corrections(segments, glossary)
+            if settings.glossary_llm_correct and glossary.terms and segments:
+                ctx.update("Checking names and terms...", progress=0.99)
+
+                async def complete(system: str, user: str) -> str:
+                    return await app.summarizer.complete(
+                        system, user, settings.default_provider, settings.default_model
+                    )
+
+                segments, llm_fixed = await llm_correct(segments, glossary, complete)
+                fixed += llm_fixed
+
             app.sessions.set_transcript(session_id, segments)
             if settings.auto_summarize and segments:
                 app.jobs.submit(
@@ -130,7 +149,12 @@ def transcribe_session(app: AppContext, session_id: str):
             ctx.emit(
                 {"type": "status", "session_id": session_id, "message": "Transcription complete"}
             )
-            return {"segments": len(segments), "sources": len(sources), "echo_dropped": dropped}
+            return {
+                "segments": len(segments),
+                "sources": len(sources),
+                "echo_dropped": dropped,
+                "glossary_fixes": fixed,
+            }
         except Exception as e:
             app.sessions.set_status(session_id, SessionStatus.ERROR)
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})
@@ -174,6 +198,9 @@ def summarize_session(
         mdl = model or st.default_model
         sty = style or st.summary_style
         instr = st.summary_instructions if instructions is None else instructions
+        spelling = glossary_instructions(parse_glossary(st.glossary))
+        if spelling:
+            instr = f"{instr}\n{spelling}".strip()
         if session.attendees:
             instr = (
                 f'{instr}\nScheduled attendees of "{session.name}": '
@@ -230,7 +257,12 @@ def ask_question(app: AppContext, question: str, provider: str = "", model: str 
         prov = provider or st.default_provider
         ctx.update("Searching your meetings...")
         ask = await answer_question(
-            app.repo, app.summarizer, question, prov, model or st.default_model
+            app.repo,
+            app.summarizer,
+            question,
+            prov,
+            model or st.default_model,
+            extra_instructions=glossary_instructions(parse_glossary(st.glossary)),
         )
         app.repo.save_ask(ask)
         ctx.update("Answer ready")

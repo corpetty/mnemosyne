@@ -182,6 +182,15 @@ splits a diarized source 70/30 between transcription and speaker identification,
 callbacks from worker threads to the event loop. The pipeline throttles updates (stage change, 1 %,
 or 1 s) into `Job.progress` and `Job.message`; the UI derives time remaining from `started_at`.
 
+### Glossary
+
+`transcription/glossary.py` parses the `glossary` setting into terms and `wrong -> right`
+corrections. The transcribe runner applies corrections (whole words, case-insensitive) to every
+final transcript; with `glossary_llm_correct` it then asks the default LLM, in batches of 40 lines,
+to fix misrecognised glossary terms, accepting only edits that keep most of the line's words (so a
+rewrite is rejected). WhisperX gets the terms as its `initial_prompt` (the model reloads when the
+glossary changes); summaries and Ask get a "spell these exactly" instruction.
+
 ### Per-source speaker attribution
 
 The recorder keeps each captured source as its own file. `services/pipeline.py::sources_for_session`

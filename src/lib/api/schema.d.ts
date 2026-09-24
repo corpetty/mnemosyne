@@ -1318,6 +1318,10 @@ export interface components {
             echo_dedup?: boolean | null;
             /** Echo Similarity */
             echo_similarity?: number | null;
+            /** Glossary */
+            glossary?: string | null;
+            /** Glossary Llm Correct */
+            glossary_llm_correct?: boolean | null;
             /** Hf Token */
             hf_token?: string | null;
             /** Language */
@@ -1425,6 +1429,10 @@ export interface components {
             echo_dedup: boolean;
             /** Echo Similarity */
             echo_similarity: number;
+            /** Glossary */
+            glossary: string;
+            /** Glossary Llm Correct */
+            glossary_llm_correct: boolean;
             /** Hf Token */
             hf_token: string;
             /** Language */

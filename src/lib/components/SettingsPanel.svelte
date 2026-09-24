@@ -75,6 +75,8 @@
 				remote_stt_model: v.remote_stt_model,
 				diarization_model: v.diarization_model,
 				auto_transcribe: v.auto_transcribe,
+				glossary: v.glossary,
+				glossary_llm_correct: v.glossary_llm_correct,
 				auto_summarize: v.auto_summarize,
 				auto_name_sessions: v.auto_name_sessions,
 				calendar_auto_name: v.calendar_auto_name,
@@ -428,6 +430,26 @@
 					</div>
 				{/if}
 			</div>
+		</section>
+
+		<!-- Glossary -->
+		<section>
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">Names and terms</h3>
+			<p class="text-xs text-gray-500 mb-3">
+				One per line. Plain lines are names and jargon to spell correctly (used as a hint for WhisperX, for summaries and Ask).
+				Lines like <code class="text-gray-400">walk you -> Waku</code> are corrections applied to every transcript (whole words, any case). <code class="text-gray-400">#</code> starts a comment.
+			</p>
+			<textarea
+				bind:value={form.glossary}
+				disabled={locked('glossary')}
+				rows="6"
+				placeholder={"Waku\nNimbus\nJakub Sokołowski\nwalk you -> Waku"}
+				class="{inputClass} font-mono"
+			></textarea>
+			<label class="flex items-center gap-2 mt-2">
+				<input type="checkbox" bind:checked={form.glossary_llm_correct} disabled={locked('glossary_llm_correct')} class="rounded border-gray-600 bg-gray-800" />
+				<span class="text-sm text-gray-300">After transcription, let the LLM fix misheard names and terms from this list (uses the default provider; lines are never rephrased)</span>
+			</label>
 		</section>
 
 		<!-- Live -->

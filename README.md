@@ -17,6 +17,7 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Obsidian-native export**: `[[people]]` links, tags, topics in frontmatter, action items as tasks, optional transcript
 - **Playback synced to the transcript**: click any timestamp to hear that moment; the line being played is highlighted
 - **Import** existing audio or video files (button or drag-and-drop) through the same pipeline
+- **Glossary for names and jargon**: corrections applied to every transcript, a spelling hint for WhisperX and summaries, and an optional LLM pass that fixes misheard names without rephrasing
 - **Editable transcripts**: fix text, reassign a line to another speaker, merge or split segments in place
 - **Search** across every transcript, summary and note, with jump-to-segment
 - **Calendar-aware**: paste your calendar's private ICS link and recordings are named after the meeting in progress, invitees are offered as speaker names, and a banner offers to record when a meeting starts

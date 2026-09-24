@@ -21,6 +21,7 @@ class WhisperXTranscriber:
         compute_type: str = "float16",
         batch_size: int = 8,
         vad_method: str = "silero",
+        initial_prompt: str | None = None,
     ):
         import torch  # heavy; only when this transcriber is chosen
 
@@ -29,6 +30,7 @@ class WhisperXTranscriber:
         self.compute_type = compute_type if self.device == "cuda" else "int8"
         self.batch_size = batch_size
         self.vad_method = vad_method
+        self.initial_prompt = initial_prompt
         self._model: Any = None
         self._align: dict[str, tuple[Any, Any]] = {}
 
@@ -49,11 +51,13 @@ class WhisperXTranscriber:
         def _load():
             import whisperx
 
+            asr_options = {"initial_prompt": self.initial_prompt} if self.initial_prompt else None
             return whisperx.load_model(
                 self.model_size,
                 self.device,
                 compute_type=self.compute_type,
                 vad_method=self.vad_method,
+                asr_options=asr_options,
             )
 
         self._model = await asyncio.to_thread(_load)

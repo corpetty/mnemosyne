@@ -9,6 +9,7 @@ from __future__ import annotations
 from ..config import Settings
 from .composed import ComposedEngine
 from .engine import Diarizer, Transcriber
+from .glossary import initial_prompt, parse_glossary
 
 TRANSCRIBERS = ("whisperx", "parakeet", "remote")
 DIARIZERS = ("pyannote", "none")
@@ -24,6 +25,7 @@ def build_transcriber(settings: Settings, kind: str | None = None) -> Transcribe
             compute_type=settings.whisper_compute_type,
             batch_size=settings.whisper_batch_size,
             vad_method=settings.whisper_vad,
+            initial_prompt=initial_prompt(parse_glossary(settings.glossary)),
         )
     if kind == "parakeet":
         from .transcribers.parakeet import ParakeetTranscriber
@@ -109,6 +111,7 @@ ENGINE_SETTINGS = (
     "max_speakers",
     "echo_dedup",
     "echo_similarity",
+    "glossary",
 )
 
 LIVE_SETTINGS = (
