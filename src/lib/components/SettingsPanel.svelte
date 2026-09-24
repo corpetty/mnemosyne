@@ -100,6 +100,7 @@
 			};
 			providers = await listModels();
 			voices = await listSpeakers();
+			updateState.probe();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load settings';
 		} finally {

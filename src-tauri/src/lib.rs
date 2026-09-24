@@ -387,6 +387,13 @@ fn show_window(app: AppHandle) {
     show_main_window(&app);
 }
 
+/// Whether this install can update itself. Flatpaks update through Flatpak; the
+/// binary inside comes from the deb, so the updater would otherwise try dpkg.
+#[tauri::command]
+fn can_self_update() -> bool {
+    !Path::new("/.flatpak-info").exists()
+}
+
 /// Restart after an update is installed. Goes through the normal exit path, so the
 /// backend is killed (RunEvent::Exit) and the single-instance lock is released first.
 #[tauri::command]
@@ -469,7 +476,8 @@ pub fn run() {
             set_recording_state,
             take_launch_action,
             show_window,
-            restart_app
+            restart_app,
+            can_self_update
         ])
         .setup(|app| {
             app.handle().plugin(

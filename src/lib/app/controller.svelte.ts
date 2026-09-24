@@ -141,9 +141,11 @@ export function listenForRemoteActions(): () => void {
 let updateChecked = false;
 /** Look for an app update once per run, shortly after the backend is up. */
 export function checkForUpdateOnce() {
-  if (uiState.backendStatus !== 'connected' || updateChecked || !updateState.supported) return;
+  if (uiState.backendStatus !== 'connected' || updateChecked) return;
   updateChecked = true;
-  setTimeout(() => updateState.check(), 8000);
+  updateState.probe().then((ok) => {
+    if (ok) setTimeout(() => updateState.check(), 8000);
+  });
 }
 
 let launchActionChecked = false;

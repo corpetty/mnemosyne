@@ -21,14 +21,28 @@ class UpdateState {
   total = $state(0);
   dismissed = $state(false);
 
-  private update: Update | null = null;
+  /** Desktop shell and not a Flatpak (those update through Flatpak). */
+  supported = $state(false);
 
-  get supported(): boolean {
-    return inTauri();
+  private update: Update | null = null;
+  private probed: Promise<boolean> | null = null;
+
+  /** Ask the shell whether it can update itself; cached. */
+  probe(): Promise<boolean> {
+    this.probed ??= (async () => {
+      if (!inTauri()) return false;
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        return await invoke<boolean>('can_self_update');
+      } catch {
+        return false; // older shell without the command
+      }
+    })().then((ok) => (this.supported = ok));
+    return this.probed;
   }
 
   async check(): Promise<void> {
-    if (!inTauri()) {
+    if (!(await this.probe())) {
       this.status = 'unsupported';
       return;
     }
