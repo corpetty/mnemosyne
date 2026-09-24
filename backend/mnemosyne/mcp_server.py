@@ -135,6 +135,10 @@ async def get_meeting(
         out.append("Invited: " + ", ".join(s["attendees"]))
     if s.get("participants"):
         out.append("Speakers: " + ", ".join(s["participants"]))
+    if s.get("transcript"):
+        st = await backend.get(f"/api/sessions/{session_id}/stats")
+        talk = ", ".join(f"{x['speaker']} {round(100 * x['share'])}%" for x in st["speakers"])
+        out.append(f"Length: {_mmss(st['duration_seconds'])} · talk time: {talk}")
     if s.get("summary"):
         stale = " (out of date: transcript edited since)" if s.get("summary_stale") else ""
         out += ["", f"## Summary{stale}", s["summary"]]

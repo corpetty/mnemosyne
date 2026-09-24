@@ -12,6 +12,16 @@ const SPEAKER_COLORS = [
   'text-yellow-400',
   'text-red-400'
 ];
+const SPEAKER_BGS = [
+  'bg-blue-400',
+  'bg-green-400',
+  'bg-purple-400',
+  'bg-orange-400',
+  'bg-pink-400',
+  'bg-cyan-400',
+  'bg-yellow-400',
+  'bg-red-400'
+];
 
 /**
  * Transcript for the session currently shown in the UI.
@@ -38,6 +48,12 @@ class TranscriptState {
   private speakerColorMap = new Map<string, string>();
   private unsubscribe: (() => void) | null = null;
   private _onCompleteCallback: ((sessionId: string) => void) | null = null;
+
+  /** Background class matching getSpeakerColor (full names so Tailwind sees them). */
+  getSpeakerBg(speaker: string): string {
+    const text = this.getSpeakerColor(speaker);
+    return SPEAKER_BGS[SPEAKER_COLORS.indexOf(text)] ?? 'bg-gray-500';
+  }
 
   getSpeakerColor(speaker: string): string {
     if (!this.speakerColorMap.has(speaker)) {

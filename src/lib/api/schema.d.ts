@@ -659,6 +659,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Stats
+         * @description Talk time per speaker, turns and a who-spoke-when timeline.
+         */
+        get: operations["get_stats_api_sessions__session_id__stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/summarize": {
         parameters: {
             query?: never;
@@ -1146,6 +1166,21 @@ export interface components {
             peak_db: number;
             /** Rms Db */
             rms_db: number;
+        };
+        /** MeetingStats */
+        MeetingStats: {
+            /** Duration Seconds */
+            duration_seconds: number;
+            /** Silence Seconds */
+            silence_seconds: number;
+            /** Speakers */
+            speakers: components["schemas"]["SpeakerStats"][];
+            /** Speech Seconds */
+            speech_seconds: number;
+            /** Timeline */
+            timeline: components["schemas"]["Turn"][];
+            /** Turns */
+            turns: number;
         };
         /** NotesRequest */
         NotesRequest: {
@@ -1714,6 +1749,23 @@ export interface components {
              */
             updated_at: string;
         };
+        /** SpeakerStats */
+        SpeakerStats: {
+            /** Longest Turn Seconds */
+            longest_turn_seconds: number;
+            /** Share */
+            share: number;
+            /** Speaker */
+            speaker: string;
+            /** Talk Seconds */
+            talk_seconds: number;
+            /** Turns */
+            turns: number;
+            /** Words */
+            words: number;
+            /** Words Per Minute */
+            words_per_minute: number;
+        };
         /** SplitRequest */
         SplitRequest: {
             /** Offset */
@@ -1844,6 +1896,17 @@ export interface components {
             text: string;
             /** Words */
             words: components["schemas"]["WordSegment"][] | null;
+        };
+        /** Turn */
+        Turn: {
+            /** End */
+            end: number;
+            /** First Idx */
+            first_idx: number;
+            /** Speaker */
+            speaker: string;
+            /** Start */
+            start: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -3173,6 +3236,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_stats_api_sessions__session_id__stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingStats"];
                 };
             };
             /** @description Validation Error */

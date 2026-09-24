@@ -6,6 +6,7 @@
 	import type { SessionDetail } from '$lib/types/index.js';
 	import LiveTranscript from './LiveTranscript.svelte';
 	import SpeakerBar from './SpeakerBar.svelte';
+	import TalkTime from './TalkTime.svelte';
 	import JobProgress from './JobProgress.svelte';
 	import AudioPlayer from './AudioPlayer.svelte';
 	import { playerState } from '$lib/stores/player.svelte.js';
@@ -169,6 +170,7 @@
 		<LiveTranscript />
 	{:else}
 		<AudioPlayer />
+		<TalkTime />
 		<SpeakerBar />
 		{#if canEdit}
 			<p class="text-[11px] text-gray-600">Click text to edit (Enter saves, Esc cancels). Speaker menus reassign a line. Hover a line for merge and delete.</p>

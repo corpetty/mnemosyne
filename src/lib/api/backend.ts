@@ -1,6 +1,7 @@
 import type {
   Ask,
   Digest,
+  MeetingStats,
   IssueResult,
   RepoCheck,
   Level,
@@ -299,6 +300,10 @@ export async function listAsks(limit = 50): Promise<Ask[]> {
 
 export async function deleteAsk(id: string): Promise<void> {
   return request(`/api/asks/${id}`, { method: 'DELETE' });
+}
+
+export async function getSessionStats(id: string): Promise<MeetingStats> {
+  return request(`/api/sessions/${id}/stats`);
 }
 
 // Digests

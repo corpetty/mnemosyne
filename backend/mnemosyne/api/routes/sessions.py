@@ -6,6 +6,7 @@ from ...jobs import Job
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, Session, SessionSummary
 from ...services.pipeline import transcribe_session
+from ...services.stats import MeetingStats, meeting_stats
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -46,6 +47,12 @@ async def create_session(request: CreateSessionRequest, ctx: AppContext = Depend
 @router.get("/{session_id}", response_model=Session)
 async def get_session(session_id: str, ctx: AppContext = Depends(get_ctx)):
     return _require(ctx, session_id)
+
+
+@router.get("/{session_id}/stats", response_model=MeetingStats)
+async def get_stats(session_id: str, ctx: AppContext = Depends(get_ctx)):
+    """Talk time per speaker, turns and a who-spoke-when timeline."""
+    return meeting_stats(_require(ctx, session_id).transcript)
 
 
 @router.patch("/{session_id}", response_model=Session)

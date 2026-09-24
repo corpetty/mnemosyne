@@ -3,7 +3,7 @@
 # a fresh data dir and config on every start, port 8018 so a running app is untouched.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-data="$root/tests-e2e/.data"
+data="$root/tests-e2e/.data${E2E_BACKEND_PORT:+-$E2E_BACKEND_PORT}"
 rm -rf "$data"
 mkdir -p "$data/vault"
 cat > "$data/config.toml" <<TOML

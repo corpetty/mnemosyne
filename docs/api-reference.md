@@ -188,6 +188,12 @@ Summary list, newest first. Never includes transcripts.
 }
 ```
 
+### `GET /api/sessions/{session_id}/stats`
+Talk time from the transcript: `{duration_seconds, speech_seconds, silence_seconds, turns,
+speakers: [{speaker, talk_seconds, share, turns, longest_turn_seconds, words, words_per_minute}],
+timeline: [{speaker, start, end, first_idx}]}`. A turn is a run of consecutive lines by the same
+speaker; `speech_seconds` counts overlapping speech once.
+
 ### `PATCH /api/sessions/{session_id}`
 
 `{ "name": "New Name" }` → `SessionDetail`.

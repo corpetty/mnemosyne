@@ -23,6 +23,10 @@ test('import shows the diarized transcript', async () => {
   await expect(page.getByRole('button', { name: /^Transcript\s*\(6\)/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'SPEAKER_00', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'SPEAKER_01', exact: true })).toBeVisible();
+  // Who spoke when: six alternating turns; the talk-time table opens on click.
+  await expect(page.getByLabel('Who spoke when').getByRole('button')).toHaveCount(6);
+  await page.getByRole('button', { name: /Talk time/ }).click();
+  await expect(page.getByText('3 turns').first()).toBeVisible();
 });
 
 test('rename a speaker', async () => {
