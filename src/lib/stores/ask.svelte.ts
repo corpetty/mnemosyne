@@ -25,7 +25,12 @@ class AskState {
 
   async load() {
     try {
-      this.history = await api.listAsks();
+      const fetched = await api.listAsks();
+      // An answer can land while this request is in flight; merge rather than replace.
+      const seen = new Set(fetched.map((a) => a.id));
+      this.history = [...this.history.filter((a) => !seen.has(a.id)), ...fetched].sort((a, b) =>
+        b.created_at.localeCompare(a.created_at)
+      );
       this.loaded = true;
     } catch {
       /* backend unreachable; keep what we have */

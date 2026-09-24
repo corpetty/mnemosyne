@@ -14,6 +14,7 @@ from .routes.digests import router as digests_router
 from .routes.export import router as export_router
 from .routes.integrations import router as integrations_router
 from .routes.jobs import router as jobs_router
+from .routes.mobile import router as mobile_router
 from .routes.models import router as models_router
 from .routes.people import router as people_router
 from .routes.search import router as search_router
@@ -62,6 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(tasks_router)
     app.include_router(people_router)
     app.include_router(topics_router)
+    app.include_router(mobile_router)
     app.include_router(storage_router)
     app.include_router(calendar_router)
     app.include_router(integrations_router)

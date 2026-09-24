@@ -14,6 +14,17 @@ Missing or wrong tokens get `401` (`WWW-Authenticate: Bearer`); the WebSocket is
 4401. `/health`, `/docs` and `/openapi.json` stay open. Run the backend with `--host 0.0.0.0` to
 serve a LAN; there is no TLS, so keep it on trusted networks or behind a reverse proxy.
 
+
+### Recording from a phone
+`GET /m` (not under `/api`; needs `?token=` in server mode like the rest) is a small mobile page. In a
+secure context (HTTPS or localhost) it records in the page with MediaRecorder; otherwise, and always
+as a second option, it uses the phone's own recorder through a file input with `capture`. Either way
+it uploads to `/api/audio/import`, so the meeting is transcribed like any import.
+
+`GET /api/server/phone` → `{reachable, host, port, urls, note}`: whether the backend listens on a
+non-loopback address (from `mnemosyne-backend --host`), and candidate LAN addresses of the page with
+the token included. Settings → Server mode shows them with a QR code.
+
 ## Health
 
 ### `GET /health`

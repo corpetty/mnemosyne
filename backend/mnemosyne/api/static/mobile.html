@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#030712">
+<title>Mnemosyne · record</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.4 system-ui, sans-serif; background: #030712; color: #e5e7eb;
+         padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+  main { max-width: 28rem; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  h1 { font-size: 1.25rem; margin: 0; }
+  p { margin: 0; color: #9ca3af; font-size: .875rem; }
+  label { font-size: .75rem; color: #9ca3af; display: block; margin-bottom: 4px; }
+  input[type=text] { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #374151;
+                     background: #111827; color: #f3f4f6; font-size: 1rem; }
+  button, .file { display: block; width: 100%; text-align: center; padding: 18px; border: 0;
+                  border-radius: 14px; font-size: 1.1rem; font-weight: 600; cursor: pointer; }
+  #rec { background: #dc2626; color: white; }
+  #rec.on { background: #374151; }
+  .file { background: #1f2937; color: #e5e7eb; }
+  .file input { display: none; }
+  #timer { font: 600 2.5rem/1 ui-monospace, monospace; text-align: center; letter-spacing: .05em; }
+  #meter { height: 8px; border-radius: 4px; background: #1f2937; overflow: hidden; }
+  #meter div { height: 100%; width: 0; background: #22c55e; transition: width .1s; }
+  #status { min-height: 1.4em; text-align: center; }
+  .ok { color: #4ade80 !important; } .err { color: #f87171 !important; }
+  progress { width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Record a meeting</h1>
+    <p>The recording is sent to Mnemosyne on your computer and transcribed there.</p>
+  </div>
+  <div>
+    <label for="name">Name</label>
+    <input id="name" type="text" autocomplete="off">
+  </div>
+  <section id="live" hidden>
+    <div id="timer">0:00</div>
+    <div id="meter"><div></div></div>
+    <button id="rec" type="button">Start recording</button>
+    <p style="margin-top:8px">Keep this page open while recording.</p>
+  </section>
+  <label class="file" id="fileLabel">
+    <span id="fileText">Record with the phone's recorder</span>
+    <input id="file" type="file" accept="audio/*,video/*" capture>
+  </label>
+  <p id="insecure" hidden>Recording right here needs an HTTPS address; the phone's own recorder works anywhere.</p>
+  <progress id="progress" max="1" value="0" hidden></progress>
+  <p id="status"></p>
+</main>
+<script>
+(() => {
+  const token = new URLSearchParams(location.search).get('token') || '';
+  const $ = (id) => document.getElementById(id);
+  const name = $('name');
+  const now = new Date();
+  name.value = `Phone recording ${now.toLocaleDateString()} ${now.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`;
+
+  function status(text, cls = '') { $('status').textContent = text; $('status').className = cls; }
+
+  function upload(blob, filename) {
+    const form = new FormData();
+    form.append('file', blob, filename);
+    form.append('name', name.value.trim() || 'Phone recording');
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/audio/import');
+    if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+    const bar = $('progress');
+    bar.hidden = false; bar.value = 0;
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) bar.value = e.loaded / e.total; };
+    xhr.onload = () => {
+      bar.hidden = true;
+      if (xhr.status < 300) status('Uploaded. Transcribing on your computer.', 'ok');
+      else {
+        let msg = xhr.statusText;
+        try { msg = JSON.parse(xhr.responseText).detail || msg; } catch (_) {}
+        status(`Upload failed: ${msg}`, 'err');
+      }
+    };
+    xhr.onerror = () => { bar.hidden = true; status('Upload failed: cannot reach Mnemosyne', 'err'); };
+    status('Uploading…');
+    xhr.send(form);
+  }
+
+  $('file').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) upload(f, f.name || 'phone-recording.m4a');
+    e.target.value = '';
+  });
+
+  const canRecord = window.isSecureContext && navigator.mediaDevices && window.MediaRecorder;
+  if (!canRecord) { $('insecure').hidden = false; return; }
+  $('live').hidden = false;
+  $('fileText').textContent = "Or use the phone's recorder";
+
+  let rec = null, chunks = [], started = 0, tick = null, stream = null, wake = null, ctx = null, raf = 0;
+  const types = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm'];
+  const mime = types.find((t) => MediaRecorder.isTypeSupported(t)) || '';
+
+  async function start() {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
+    rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    chunks = [];
+    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    rec.onstop = () => {
+      const type = rec.mimeType || mime || 'audio/webm';
+      const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+      upload(new Blob(chunks, { type }), `phone-recording.${ext}`);
+    };
+    rec.start(1000);
+    started = Date.now();
+    tick = setInterval(() => {
+      const s = Math.floor((Date.now() - started) / 1000);
+      $('timer').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    }, 500);
+    try { wake = await navigator.wakeLock?.request('screen'); } catch (_) {}
+    ctx = new AudioContext();
+    const an = ctx.createAnalyser(); an.fftSize = 512;
+    ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Uint8Array(an.fftSize);
+    const draw = () => {
+      an.getByteTimeDomainData(buf);
+      let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+      $('meter').firstElementChild.style.width = `${Math.min(100, (peak / 128) * 140)}%`;
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    $('rec').textContent = 'Stop and send'; $('rec').classList.add('on');
+    status('Recording…');
+  }
+
+  function stop() {
+    clearInterval(tick); cancelAnimationFrame(raf);
+    rec.stop(); stream.getTracks().forEach((t) => t.stop());
+    ctx && ctx.close(); wake && wake.release();
+    rec = null;
+    $('rec').textContent = 'Start recording'; $('rec').classList.remove('on');
+  }
+
+  $('rec').addEventListener('click', async () => {
+    try { rec ? stop() : await start(); }
+    catch (e) { status(`Could not record: ${e.message || e}`, 'err'); }
+  });
+})();
+</script>
+</body>
+</html>

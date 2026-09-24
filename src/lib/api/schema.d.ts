@@ -582,6 +582,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/server/phone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Phone Link */
+        get: operations["phone_link_api_server_phone_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions": {
         parameters: {
             query?: never;
@@ -1699,6 +1716,19 @@ export interface components {
             name: string;
             /** Open Tasks */
             open_tasks: number;
+        };
+        /** PhoneLink */
+        PhoneLink: {
+            /** Host */
+            host: string;
+            /** Note */
+            note: string;
+            /** Port */
+            port: number;
+            /** Reachable */
+            reachable: boolean;
+            /** Urls */
+            urls: string[];
         };
         /** ProviderModels */
         ProviderModels: {
@@ -3621,6 +3651,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndexStatus"];
+                };
+            };
+        };
+    };
+    phone_link_api_server_phone_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PhoneLink"];
                 };
             };
         };

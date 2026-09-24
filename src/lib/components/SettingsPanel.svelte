@@ -4,6 +4,7 @@
 	import { updateState } from '$lib/stores/update.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
+	import PhoneLink from './PhoneLink.svelte';
 	import StorageSettings from './StorageSettings.svelte';
 	import { calendarState } from '$lib/stores/calendar.svelte.js';
 	import { checkGitHub, checkIntegration, getIndexStatus, rebuildIndex } from '$lib/api/backend.js';
@@ -899,6 +900,7 @@
 					{/if}
 				</div>
 			</label>
+			<PhoneLink />
 		</section>
 
 		<!-- Provider status -->

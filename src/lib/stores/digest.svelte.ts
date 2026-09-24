@@ -28,7 +28,12 @@ class DigestState {
 
   async load() {
     try {
-      this.history = await api.listDigests();
+      const fetched = await api.listDigests();
+      // A digest can land while this request is in flight; merge rather than replace.
+      const seen = new Set(fetched.map((d) => d.id));
+      this.history = [...this.history.filter((d) => !seen.has(d.id)), ...fetched].sort((a, b) =>
+        a.start < b.start ? 1 : a.start > b.start ? -1 : 0
+      );
       this.loaded = true;
     } catch {
       /* backend unreachable; keep what we have */

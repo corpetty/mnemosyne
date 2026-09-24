@@ -9,6 +9,7 @@ import type {
   PersonDetail,
   TopicCount,
   Thread,
+  PhoneLink,
   IssueResult,
   RepoCheck,
   Level,
@@ -357,6 +358,10 @@ export async function setLocalOnly(sessionId: string, localOnly: boolean): Promi
     method: 'PUT',
     body: JSON.stringify({ local_only: localOnly })
   });
+}
+
+export async function getPhoneLink(): Promise<PhoneLink> {
+  return request('/api/server/phone');
 }
 
 // Action items across meetings

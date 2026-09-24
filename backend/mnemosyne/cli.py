@@ -1,6 +1,7 @@
 """Command-line entry point: `mnemosyne-backend --host 127.0.0.1 --port 8008`."""
 
 import argparse
+import os
 import warnings
 
 
@@ -17,6 +18,9 @@ def main() -> None:
     )
     parser.add_argument("--port", type=int, default=8008, help="Bind port")
     args = parser.parse_args()
+    # The phone page (routes/mobile.py) tells whether other devices can reach us.
+    os.environ["MNEMOSYNE_BIND_HOST"] = args.host
+    os.environ["MNEMOSYNE_BIND_PORT"] = str(args.port)
     uvicorn.run(create_app(), host=args.host, port=args.port)
 
 

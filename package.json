@@ -25,6 +25,7 @@
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@tailwindcss/vite": "^4.2.0",
     "@tauri-apps/cli": "^2.10.0",
+    "@types/qrcode": "^1.5.6",
     "openapi-typescript": "^7.13.0",
     "svelte": "^5.49.2",
     "svelte-check": "^4.3.6",
@@ -38,7 +39,8 @@
     "@tauri-apps/plugin-notification": "^2.4.0",
     "@tauri-apps/plugin-updater": "^2.12.0",
     "dompurify": "^3.4.16",
-    "marked": "^18.0.14"
+    "marked": "^18.0.14",
+    "qrcode": "^1.5.4"
   },
   "packageManager": "pnpm@10.30.0"
 }
