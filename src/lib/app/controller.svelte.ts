@@ -40,6 +40,16 @@ export function toggleDigest() {
   sessionState.activeSession = null;
 }
 
+export function toggleTasks() {
+  if (uiState.showTasks) {
+    uiState.showTasks = false;
+    return;
+  }
+  uiState.closePanels();
+  uiState.showTasks = true;
+  sessionState.activeSession = null;
+}
+
 export function toggleSettings() {
   if (uiState.showSettings) {
     uiState.showSettings = false;

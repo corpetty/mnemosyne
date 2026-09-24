@@ -2,6 +2,7 @@ import type {
   Ask,
   Digest,
   MeetingStats,
+  TaskItem,
   IssueResult,
   RepoCheck,
   Level,
@@ -304,6 +305,18 @@ export async function deleteAsk(id: string): Promise<void> {
 
 export async function getSessionStats(id: string): Promise<MeetingStats> {
   return request(`/api/sessions/${id}/stats`);
+}
+
+// Action items across meetings
+export async function listActionItems(status: 'open' | 'done' | 'all' = 'open'): Promise<TaskItem[]> {
+  return request(`/api/action-items?status=${status}`);
+}
+
+export async function setActionItemDone(sessionId: string, idx: number, done: boolean): Promise<TaskItem> {
+  return request(`/api/sessions/${sessionId}/action-items/${idx}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ done })
+  });
 }
 
 // Digests

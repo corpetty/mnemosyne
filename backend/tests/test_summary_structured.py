@@ -79,7 +79,9 @@ def test_summarize_endpoint_stores_structured(client, ctx, fake_provider, transc
     data = session["summary_data"]
     assert data["style"] == "standup" and data["provider"] == "fake"
     assert data["decisions"] == ["d"]
-    assert data["action_items"] == [{"text": "a", "owner": "SPEAKER_00", "issue_url": None}]
+    assert data["action_items"] == [
+        {"text": "a", "owner": "SPEAKER_00", "issue_url": None, "done": False}
+    ]
     assert client.post(f"/api/sessions/{sid}/summarize", json={"style": "bogus"}).status_code == 400
     assert client.get("/api/summary-styles").json()[0]["id"] == "meeting"
 

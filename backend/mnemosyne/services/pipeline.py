@@ -22,6 +22,7 @@ from ..transcription.glossary import (
     llm_correct,
     parse_glossary,
 )
+from .tasks import carry_over
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -222,6 +223,9 @@ def summarize_session(
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})
             raise
         result["data"].source_hash = transcript_hash(session.transcript)
+        # Keep done flags and issue links of items that survive a re-summarize.
+        current = app.sessions.get_session(session_id)
+        carry_over(current.summary_data if current else None, result["data"])
         app.sessions.set_summary(session_id, result["summary"], result["data"])
         title = result["data"].title
         # Re-read: the user may have renamed the session while the LLM was running.

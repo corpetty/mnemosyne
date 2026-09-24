@@ -375,6 +375,18 @@ links in Obsidian frontmatter.
 
 ---
 
+## Action items across meetings
+
+### `GET /api/action-items?status=open|done|all&owner=`
+Every action item of every summarized meeting, newest meeting first (default `status=open`; `owner`
+matches case-insensitively): `[{session_id, session_name, created_at, idx, text, owner, done,
+issue_url}]`. `idx` is the item's position in that session's `summary_data.action_items`.
+
+### `PATCH /api/sessions/{session_id}/action-items/{idx}`
+Body `{"done": true}`. Returns the updated item and publishes a `session` event; 404 for an unknown
+session or index. Re-summarizing a meeting keeps `done` and `issue_url` on items whose text matches
+the previous summary's (same words, or at least 85% similar).
+
 ## GitHub issues from action items
 
 Settings: `github_repo` (owner/name), `github_token` (secret; a fine-grained token with

@@ -103,7 +103,8 @@ def appendix(summarized: list[Session], unsummarized: list[Session]) -> str:
         for s, a in items:
             owner = f" ({a.owner})" if a.owner else ""
             issue = f" [issue]({a.issue_url})" if a.issue_url else ""
-            out.append(f"- [ ] {a.text}{owner} · {link(s)}{issue}")
+            box = "x" if a.done else " "
+            out.append(f"- [{box}] {a.text}{owner} · {link(s)}{issue}")
     if unsummarized:
         out += ["", "## Not summarized"]
         out += [f"- {s.created_at.strftime('%a %b %d')} · {s.name}" for s in unsummarized]

@@ -58,7 +58,7 @@ async def test_list_search_get(backend, seeded):
 
     out = await get_meeting(backend, seeded.id)
     assert "# Release sync" in out and "## Decisions\n- Ship in October" in out
-    assert "- Update docs (Bob)" in out
+    assert "- [ ] Update docs (Bob)" in out
     assert "[01:05] Alice: The Waku migration ships in October" in out
     paged = await get_meeting(backend, seeded.id, offset=0, max_lines=1)
     assert "more: call again with offset=1" in paged
@@ -67,7 +67,7 @@ async def test_list_search_get(backend, seeded):
 @pytest.mark.anyio
 async def test_action_items(backend, seeded):
     out = await get_action_items(backend)
-    assert "## Release sync" in out and "- Update docs (Bob)" in out
+    assert "## Release sync" in out and "- [ ] Update docs (Bob)" in out
 
 
 @pytest.mark.anyio

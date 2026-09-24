@@ -16,6 +16,7 @@
 	import SessionView from '$lib/components/SessionView.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
 	import StatusBar from '$lib/components/StatusBar.svelte';
+	import TasksPanel from '$lib/components/TasksPanel.svelte';
 	import ToastContainer from '$lib/components/ToastContainer.svelte';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 	import { audioState } from '$lib/stores/audio.svelte.js';
@@ -81,6 +82,12 @@
 				<div class="flex-1 overflow-y-auto p-6">
 					<div class="max-w-3xl">
 						<AskPanel onOpenSession={() => (uiState.showAsk = false)} />
+					</div>
+				</div>
+			{:else if uiState.showTasks}
+				<div class="flex-1 overflow-y-auto p-6">
+					<div class="max-w-3xl">
+						<TasksPanel onOpenSession={() => (uiState.showTasks = false)} />
 					</div>
 				</div>
 			{:else if uiState.showDigest}

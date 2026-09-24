@@ -655,6 +655,35 @@ class SessionRepository:
             cur = self._conn.execute("DELETE FROM asks WHERE id=?", (ask_id,))
         return cur.rowcount > 0
 
+    # ---- action items ----------------------------------------------------
+
+    def list_action_items(self):
+        """Every action item of every summarized session, newest meeting first."""
+        from ..services.tasks import TaskItem
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, name, created_at, summary_data FROM sessions"
+                " WHERE summary_data IS NOT NULL ORDER BY created_at DESC"
+            ).fetchall()
+        out = []
+        for r in rows:
+            data = SummaryData.model_validate_json(r["summary_data"])
+            for i, a in enumerate(data.action_items):
+                out.append(
+                    TaskItem(
+                        session_id=r["id"],
+                        session_name=r["name"],
+                        created_at=_dt(r["created_at"]),
+                        idx=i,
+                        text=a.text,
+                        owner=a.owner,
+                        done=a.done,
+                        issue_url=a.issue_url,
+                    )
+                )
+        return out
+
     # ---- digests ---------------------------------------------------------
 
     def sessions_between(self, start: date, end: date) -> list[Session]:

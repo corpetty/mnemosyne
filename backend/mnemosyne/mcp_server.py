@@ -147,7 +147,9 @@ async def get_meeting(
         out += ["", "## Decisions"] + [f"- {x}" for x in d["decisions"]]
     if d.get("action_items"):
         out += ["", "## Action items"] + [
-            f"- {a['text']}" + (f" ({a['owner']})" if a.get("owner") else "")
+            ("- [x] " if a.get("done") else "- [ ] ")
+            + a["text"]
+            + (f" ({a['owner']})" if a.get("owner") else "")
             for a in d["action_items"]
         ]
     if d.get("open_questions"):
@@ -182,7 +184,10 @@ async def get_action_items(backend: Backend, days: int = 14) -> str:
         if items:
             out.append(f"## {s['name']} ({_date(s['created_at'])}) id={s['id']}")
             out += [
-                f"- {a['text']}" + (f" ({a['owner']})" if a.get("owner") else "") for a in items
+                ("- [x] " if a.get("done") else "- [ ] ")
+                + a["text"]
+                + (f" ({a['owner']})" if a.get("owner") else "")
+                for a in items
             ]
     return "\n".join(out) if out else f"No action items in the last {days} days."
 

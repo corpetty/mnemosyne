@@ -35,6 +35,7 @@ export type Citation = S['Citation'];
 export type Ask = S['Ask'];
 export type Digest = S['Digest'];
 export type MeetingStats = S['MeetingStats'];
+export type TaskItem = S['TaskItem'];
 export type SessionUsage = S['SessionUsage'];
 export type StorageReport = S['StorageReport'];
 export type CleanupResult = S['CleanupResult'];

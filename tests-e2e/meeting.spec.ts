@@ -101,3 +101,18 @@ test('export to the Obsidian vault', async () => {
   await page.getByRole('button', { name: 'Export to Obsidian' }).click();
   await expect(page.getByText(/release-sync\.md/).first()).toBeVisible();
 });
+
+test('tasks: tick off an action item across meetings', async () => {
+  await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+  await expect(page.getByText(/· 1 open\./)).toBeVisible();
+  // click, not check(): the item leaves the Open list as soon as it is done.
+  await page.getByRole('checkbox', { name: 'Done: Update the docs before the release' }).click();
+  await expect(page.getByText(/· 0 open\./)).toBeVisible();
+  await expect(page.getByText('Nothing matches.')).toBeVisible();
+  await page.getByRole('button', { name: 'done', exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: 'Done: Update the docs before the release' })).toBeChecked();
+  // The meeting's summary shows it as done too.
+  await page.getByRole('button', { name: /release-sync/ }).first().click();
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Reopen: Update the docs before the release' })).toBeVisible();
+});

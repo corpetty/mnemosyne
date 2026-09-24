@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/action-items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Action Items
+         * @description Action items from every summarized meeting, newest meeting first.
+         */
+        get: operations["list_action_items_api_action_items_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ask": {
         parameters: {
             query?: never;
@@ -470,6 +490,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/action-items/{idx}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Action Item */
+        patch: operations["update_action_item_api_sessions__session_id__action_items__idx__patch"];
+        trace?: never;
+    };
     "/api/sessions/{session_id}/attendees": {
         parameters: {
             query?: never;
@@ -849,12 +886,22 @@ export interface components {
     schemas: {
         /** ActionItem */
         ActionItem: {
+            /**
+             * Done
+             * @default false
+             */
+            done: boolean;
             /** Issue Url */
             issue_url: string | null;
             /** Owner */
             owner: string | null;
             /** Text */
             text: string;
+        };
+        /** ActionItemUpdate */
+        ActionItemUpdate: {
+            /** Done */
+            done: boolean;
         };
         /** Ask */
         Ask: {
@@ -1893,6 +1940,28 @@ export interface components {
             /** Id */
             id: string;
         };
+        /** TaskItem */
+        TaskItem: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Done */
+            done: boolean;
+            /** Idx */
+            idx: number;
+            /** Issue Url */
+            issue_url: string | null;
+            /** Owner */
+            owner: string | null;
+            /** Session Id */
+            session_id: string;
+            /** Session Name */
+            session_name: string;
+            /** Text */
+            text: string;
+        };
         /** TranscriptSegment */
         TranscriptSegment: {
             /** End */
@@ -1953,6 +2022,38 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_action_items_api_action_items_get: {
+        parameters: {
+            query?: {
+                status?: "open" | "done" | "all";
+                owner?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskItem"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     ask_api_ask_post: {
         parameters: {
             query?: never;
@@ -2880,6 +2981,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssueResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_action_item_api_sessions__session_id__action_items__idx__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                idx: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActionItemUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskItem"];
                 };
             };
             /** @description Validation Error */

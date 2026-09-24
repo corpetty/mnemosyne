@@ -12,7 +12,7 @@
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import Markdown from './Markdown.svelte';
-	import { createGitHubIssues } from '$lib/api/backend.js';
+	import { createGitHubIssues, setActionItemDone } from '$lib/api/backend.js';
 
 	let selected = $state<Set<number>>(new Set());
 	let creating = $state(false);
@@ -24,6 +24,17 @@
 			selected = new Set();
 		}
 	});
+
+	async function toggleDone(i: number, done: boolean) {
+		const session = sessionState.activeSession;
+		if (!session) return;
+		try {
+			await setActionItemDone(session.id, i, done);
+			await sessionState.refreshActive();
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not update the item');
+		}
+	}
 
 	function toggle(i: number) {
 		const next = new Set(selected);
@@ -196,7 +207,13 @@
 										{:else}
 											<input type="checkbox" checked={selected.has(i)} onchange={() => toggle(i)} class="mt-1 rounded border-gray-600 bg-gray-800" title="Select to create a GitHub issue" />
 										{/if}
-										<span>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}</span>
+										<button
+											onclick={() => toggleDone(i, !a.done)}
+											title={a.done ? 'Done · click to reopen' : 'Mark done'}
+											aria-label={a.done ? `Reopen: ${a.text}` : `Mark done: ${a.text}`}
+											class="text-xs mt-0.5 {a.done ? 'text-emerald-400' : 'text-gray-600 hover:text-gray-300'}"
+										>{a.done ? '✓' : '○'}</button>
+										<span class={a.done ? 'line-through text-gray-500' : ''}>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}</span>
 									</li>
 								{/each}
 							</ul>
