@@ -73,6 +73,9 @@ Backend setup: `cd backend && uv sync --extra gpu --group dev`. The `gpu` extra 
 - When testing a bundle with a fake `HOME`, put it on real disk (e.g. `~/.cache/...`), never
   under `/tmp`: `/tmp` is tmpfs here, uv cannot hardlink across filesystems and copies the
   7 GB venv into RAM, which has frozen the machine.
+- Fedora's uv RPM ships `/etc/uv/uv.toml` (python-downloads = "manual", python-preference =
+  "system"), which the bundled uv also reads; lib.rs overrides both via `UV_PYTHON_*` env vars.
+  Smoke tests with a fake HOME do not avoid /etc, so they catch this.
 - AppImage: build with `NO_STRIP=true` (linuxdeploy's strip chokes on `.relr.dyn`). The
   AppRun exports `PYTHONHOME`, `LD_LIBRARY_PATH` etc. for the GUI; `lib.rs` scrubs them
   before spawning uv/Python or the backend dies with "No module named encodings".

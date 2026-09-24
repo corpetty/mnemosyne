@@ -229,6 +229,11 @@ fn install_backend(app: &AppHandle, layout: &ReleaseLayout) -> Result<(), String
         .arg(&layout.backend_dir)
         .env("UV_PROJECT_ENVIRONMENT", &layout.venv)
         .env("UV_NO_PROGRESS", "1")
+        // Fedora's uv package ships /etc/uv/uv.toml with python-downloads = "manual"
+        // and python-preference = "system", which stop uv fetching the pinned Python.
+        // Environment variables take precedence over config files.
+        .env("UV_PYTHON_DOWNLOADS", "automatic")
+        .env("UV_PYTHON_PREFERENCE", "managed")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
