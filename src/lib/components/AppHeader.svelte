@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { toggleAsk, toggleDigest, togglePeople, toggleSettings, toggleTasks } from '$lib/app/controller.svelte.js';
+	import { toggleAsk, toggleDigest, togglePeople, toggleSettings, toggleTasks, toggleTopics } from '$lib/app/controller.svelte.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
@@ -52,6 +52,14 @@
 				{uiState.showPeople ? 'bg-gray-700 text-gray-200' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}"
 		>
 			People
+		</button>
+		<button
+			onclick={toggleTopics}
+			title="Follow a topic across meetings"
+			class="px-2.5 py-1 rounded text-xs font-medium transition-colors
+				{uiState.showTopics ? 'bg-gray-700 text-gray-200' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}"
+		>
+			Topics
 		</button>
 		<button
 			onclick={toggleDigest}

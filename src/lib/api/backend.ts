@@ -7,6 +7,8 @@ import type {
   IndexStatus,
   PersonSummary,
   PersonDetail,
+  TopicCount,
+  Thread,
   IssueResult,
   RepoCheck,
   Level,
@@ -336,6 +338,18 @@ export async function listPeople(): Promise<PersonSummary[]> {
 
 export async function getPerson(name: string): Promise<PersonDetail> {
   return request(`/api/people/${encodeURIComponent(name)}`);
+}
+
+export async function listTopics(): Promise<TopicCount[]> {
+  return request('/api/topics');
+}
+
+export async function getThread(q: string): Promise<Thread> {
+  return request(`/api/topics/thread?q=${encodeURIComponent(q)}`);
+}
+
+export async function summarizeThread(q: string): Promise<Job> {
+  return request('/api/topics/thread/summary', { method: 'POST', body: JSON.stringify({ q }) });
 }
 
 // Action items across meetings

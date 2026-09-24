@@ -23,6 +23,7 @@ from .routes.settings import router as settings_router
 from .routes.speakers import router as speakers_router
 from .routes.storage import router as storage_router
 from .routes.tasks import router as tasks_router
+from .routes.topics import router as topics_router
 from .websocket import router as ws_router
 
 
@@ -60,6 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(digests_router)
     app.include_router(tasks_router)
     app.include_router(people_router)
+    app.include_router(topics_router)
     app.include_router(storage_router)
     app.include_router(calendar_router)
     app.include_router(integrations_router)

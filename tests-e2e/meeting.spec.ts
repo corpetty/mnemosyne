@@ -155,3 +155,11 @@ test('people: a renamed speaker has a page with their meetings', async () => {
   await expect(person.getByRole('button', { name: 'release-sync', exact: true })).toBeVisible();
   await expect(person.getByText(/spoke 0:\d\d \(\d+%\)/).first()).toBeVisible();
 });
+
+test('topics: follow a topic and ask where it stands', async () => {
+  await page.getByRole('button', { name: 'Topics', exact: true }).click();
+  await page.getByRole('button', { name: /^waku/ }).click();
+  await expect(page.getByText('✔ Ship the Waku migration in October')).toBeVisible();
+  await page.getByRole('button', { name: 'Where does this stand?' }).click();
+  await expect(page.getByLabel('Where it stands').getByText('The migration ships in October.')).toBeVisible();
+});

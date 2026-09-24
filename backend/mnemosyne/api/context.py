@@ -65,7 +65,14 @@ class AppContext:
             index=VectorIndex(repo, settings),
             jobs=JobManager(
                 bus,
-                concurrency={"transcribe": 1, "summarize": 2, "ask": 2, "digest": 1, "followup": 2},
+                concurrency={
+                    "transcribe": 1,
+                    "summarize": 2,
+                    "ask": 2,
+                    "digest": 1,
+                    "followup": 2,
+                    "thread": 2,
+                },
             ),
         )
 

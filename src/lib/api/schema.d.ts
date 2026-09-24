@@ -978,6 +978,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/topics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Topics
+         * @description Topics from meeting summaries, most meetings first.
+         */
+        get: operations["list_topics_api_topics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/topics/thread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Thread
+         * @description Meetings about `q` (oldest first) with their matching chapters, decisions, items and
+         *     open questions.
+         */
+        get: operations["get_thread_api_topics_thread_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/topics/thread/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Summarize Thread
+         * @description Queue a `thread` job: the LLM writes where the topic stands. Result: `{text}`.
+         */
+        post: operations["summarize_thread_api_topics_thread_summary_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -2250,6 +2311,62 @@ export interface components {
             session_name: string;
             /** Text */
             text: string;
+        };
+        /** Thread */
+        Thread: {
+            /** Meetings */
+            meetings: components["schemas"]["ThreadMeeting"][];
+            /** Query */
+            query: string;
+        };
+        /** ThreadMeeting */
+        ThreadMeeting: {
+            /** Action Items */
+            action_items: components["schemas"]["TaskItem"][];
+            /** Chapters */
+            chapters: components["schemas"]["Chapter"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decisions */
+            decisions: string[];
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Open Questions */
+            open_questions: string[];
+            /** Summary */
+            summary: string;
+        };
+        /** ThreadSummaryRequest */
+        ThreadSummaryRequest: {
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /** Q */
+            q: string;
+        };
+        /** TopicCount */
+        TopicCount: {
+            /**
+             * Last Seen
+             * Format: date-time
+             */
+            last_seen: string;
+            /** Meetings */
+            meetings: number;
+            /** Topic */
+            topic: string;
         };
         /** TranscriptSegment */
         TranscriptSegment: {
@@ -4148,6 +4265,101 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SummaryStyle"][];
+                };
+            };
+        };
+    };
+    list_topics_api_topics_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopicCount"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_thread_api_topics_thread_get: {
+        parameters: {
+            query: {
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Thread"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    summarize_thread_api_topics_thread_summary_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThreadSummaryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

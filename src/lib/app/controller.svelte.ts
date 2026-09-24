@@ -60,6 +60,16 @@ export function togglePeople() {
   sessionState.activeSession = null;
 }
 
+export function toggleTopics() {
+  if (uiState.showTopics) {
+    uiState.showTopics = false;
+    return;
+  }
+  uiState.closePanels();
+  uiState.showTopics = true;
+  sessionState.activeSession = null;
+}
+
 export function toggleSettings() {
   if (uiState.showSettings) {
     uiState.showSettings = false;

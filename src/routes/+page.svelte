@@ -18,6 +18,7 @@
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
 	import StatusBar from '$lib/components/StatusBar.svelte';
 	import TasksPanel from '$lib/components/TasksPanel.svelte';
+	import TopicsPanel from '$lib/components/TopicsPanel.svelte';
 	import ToastContainer from '$lib/components/ToastContainer.svelte';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 	import { audioState } from '$lib/stores/audio.svelte.js';
@@ -89,6 +90,12 @@
 				<div class="flex-1 overflow-y-auto p-6">
 					<div class="max-w-4xl">
 						<PeoplePanel onOpenSession={() => (uiState.showPeople = false)} />
+					</div>
+				</div>
+			{:else if uiState.showTopics}
+				<div class="flex-1 overflow-y-auto p-6">
+					<div class="max-w-3xl">
+						<TopicsPanel onOpenSession={() => (uiState.showTopics = false)} />
 					</div>
 				</div>
 			{:else if uiState.showTasks}

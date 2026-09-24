@@ -425,6 +425,22 @@ With `obsidian_people_notes` on, exporting a meeting also writes `<subfolder>/pe
 its people (meetings, open and done tasks). A person who already has a note of that name anywhere
 in the vault is skipped, and notes without the `mnemosyne: person` frontmatter are never overwritten.
 
+## Topics
+
+### `GET /api/topics?limit=30`
+Topics from meeting summaries (`summary_data.topics`, normalized), most meetings first:
+`[{topic, meetings, last_seen}]`.
+
+### `GET /api/topics/thread?q=`
+Meetings about `q`, oldest first (up to 12): those whose topics name it, keyword hits and
+meaning hits, ranked by reciprocal rank fusion. Each has `{id, name, created_at, summary (first
+three sentences), chapters, decisions, action_items: [TaskItem], open_questions}`, filtered to the
+pieces that match the topic by words or by meaning.
+
+### `POST /api/topics/thread/summary`
+Body `{"q": "...", "provider": "", "model": ""}`. Queues a `thread` job: the LLM writes where the
+topic stands (current state, how it got there, what is still open). Result `{text, query, meetings}`.
+
 ## GitHub issues from action items
 
 Settings: `github_repo` (owner/name), `github_token` (secret; a fine-grained token with

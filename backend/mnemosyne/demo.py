@@ -106,6 +106,8 @@ class DemoProvider:
             return json.dumps(DEMO_SUMMARY)
         if "numbered excerpts" in system_prompt:
             return "The migration ships in October [1]."
+        if "where a topic stands" in system_prompt:
+            return "## Where it stands\nThe migration ships in October."
         if "follow-up" in system_prompt:
             return (
                 "Subject: Release planning follow-up\n\nThanks all. We ship the Waku "
