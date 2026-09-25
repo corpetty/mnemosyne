@@ -25,6 +25,8 @@ def main() -> None:
     import uvicorn
 
     from .api.app import create_app
+    from .config import load_settings
+    from .logs import setup_logging
 
     parser = argparse.ArgumentParser(description="Mnemosyne backend")
     parser.add_argument(
@@ -35,7 +37,9 @@ def main() -> None:
     # The phone page (routes/mobile.py) tells whether other devices can reach us.
     os.environ["MNEMOSYNE_BIND_HOST"] = args.host
     os.environ["MNEMOSYNE_BIND_PORT"] = str(args.port)
-    uvicorn.run(create_app(), host=args.host, port=args.port)
+    settings = load_settings()
+    setup_logging(settings.data_dir)
+    uvicorn.run(create_app(settings), host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

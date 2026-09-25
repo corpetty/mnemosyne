@@ -8,7 +8,7 @@
 	import PhoneLink from './PhoneLink.svelte';
 	import StorageSettings from './StorageSettings.svelte';
 	import { calendarState } from '$lib/stores/calendar.svelte.js';
-	import { checkGitHub, checkIntegration, getIndexStatus, rebuildIndex } from '$lib/api/backend.js';
+	import { checkGitHub, checkIntegration, getDiagnostics, getIndexStatus, rebuildIndex } from '$lib/api/backend.js';
 	import type { IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	let settings = $state<SettingsResponse | null>(null);
@@ -196,6 +196,31 @@
 		}
 	}
 
+	let copyingDiagnostics = $state(false);
+	let logFile = $state('');
+
+	/** Versions, engines, recent errors, settings without secrets and the backend log tail. */
+	async function copyDiagnostics() {
+		copyingDiagnostics = true;
+		try {
+			const d = await getDiagnostics();
+			logFile = d.log_file;
+			let app = '';
+			try {
+				const { getVersion } = await import('@tauri-apps/api/app');
+				app = `app ${await getVersion()}\n`;
+			} catch {
+				app = `browser ${navigator.userAgent}\n`;
+			}
+			await navigator.clipboard.writeText(app + d.text);
+			toastState.success('Diagnostics copied; read them before posting publicly');
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not collect diagnostics');
+		} finally {
+			copyingDiagnostics = false;
+		}
+	}
+
 	let calTest = $state<string | null>(null);
 	async function testCalendar() {
 		calTest = 'Checking…';
@@ -308,6 +333,24 @@
 				<button onclick={() => applyConnection(connUrl, connToken)} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Connect</button>
 				{#if !connectionState.isLocal}
 					<button onclick={() => applyConnection(LOCAL_BACKEND, '')} class="text-sm text-gray-400 hover:text-gray-200">Use local backend</button>
+				{/if}
+			</div>
+		</section>
+
+		<section>
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">Troubleshooting</h3>
+			<p class="text-xs text-gray-500 mb-3">
+				Copies versions, GPU, engines, recent errors, your settings (keys, names and addresses left out) and the end of
+				the backend log, ready to paste into an issue. Read it before posting publicly: the log can mention meeting names.
+			</p>
+			<div class="flex flex-wrap items-center gap-3">
+				<button
+					onclick={copyDiagnostics}
+					disabled={copyingDiagnostics}
+					class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 disabled:opacity-50"
+				>{copyingDiagnostics ? 'Collecting…' : 'Copy diagnostics'}</button>
+				{#if logFile}
+					<span class="text-xs text-gray-500">Backend log: <code class="text-gray-400 select-all">{logFile}</code></span>
 				{/if}
 			</div>
 		</section>

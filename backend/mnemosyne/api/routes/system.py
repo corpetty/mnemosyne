@@ -1,5 +1,6 @@
 """What this machine can do, for the setup wizard."""
 
+import asyncio
 import ctypes
 import importlib.util
 import platform
@@ -51,3 +52,18 @@ async def system_info(ctx: AppContext = Depends(get_ctx)):
         hf_token=bool(ctx.settings.hf_token),
         platform=f"{platform.system()} {platform.release()}",
     )
+
+
+class Diagnostics(ApiModel):
+    text: str
+    log_file: str  # where the backend log is, on the backend's machine
+
+
+@router.get("/system/diagnostics", response_model=Diagnostics)
+async def diagnostics(ctx: AppContext = Depends(get_ctx)):
+    """Versions, GPU, engines, jobs, settings without secrets and the log tail, as text."""
+    from ...logs import log_path
+    from ...services.diagnostics import build_report
+
+    text = await asyncio.to_thread(build_report, ctx)
+    return Diagnostics(text=text, log_file=str(log_path(ctx.settings.data_dir)))

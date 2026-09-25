@@ -1149,6 +1149,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Diagnostics
+         * @description Versions, GPU, engines, jobs, settings without secrets and the log tail, as text.
+         */
+        get: operations["diagnostics_api_system_diagnostics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/topics": {
         parameters: {
             query?: never;
@@ -1492,6 +1512,13 @@ export interface components {
             media_class: string;
             /** Name */
             name: string;
+        };
+        /** Diagnostics */
+        Diagnostics: {
+            /** Log File */
+            log_file: string;
+            /** Text */
+            text: string;
         };
         /** Digest */
         Digest: {
@@ -4896,6 +4923,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SystemInfo"];
+                };
+            };
+        };
+    };
+    diagnostics_api_system_diagnostics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Diagnostics"];
                 };
             };
         };

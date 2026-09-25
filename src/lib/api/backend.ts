@@ -11,6 +11,7 @@ import type {
   Thread,
   PhoneLink,
   SystemInfo,
+  Diagnostics,
   CopilotNotes,
   IssueResult,
   RepoCheck,
@@ -368,6 +369,10 @@ export async function getPhoneLink(): Promise<PhoneLink> {
 
 export async function getSystemInfo(): Promise<SystemInfo> {
   return request('/api/system');
+}
+
+export async function getDiagnostics(): Promise<Diagnostics> {
+  return request('/api/system/diagnostics');
 }
 
 export async function getCopilotNotes(sessionId: string): Promise<CopilotNotes | null> {

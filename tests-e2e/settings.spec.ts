@@ -42,3 +42,17 @@ test('settings are grouped in tabs', async ({ page }) => {
     await expect(page.getByRole('heading', { name: heading })).toBeVisible();
   }
 });
+
+test('copy diagnostics puts a report without secrets on the clipboard', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await openApp(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'General', exact: true }).click();
+  await page.getByRole('button', { name: 'Copy diagnostics' }).click();
+  await expect(page.getByText('Diagnostics copied')).toBeVisible();
+  await expect(page.getByText('Backend log:')).toBeVisible();
+  const text = await page.evaluate(() => navigator.clipboard.readText());
+  expect(text).toContain('## Mnemosyne diagnostics');
+  expect(text).toContain("transcriber = 'demo'");
+  expect(text).toMatch(/obsidian_vault_path = <set>/); // a path with the user's name in it
+});
