@@ -48,7 +48,7 @@
         ]
       },
       "appimage": {
-        "bundleMediaFramework": false
+        "bundleMediaFramework": true
       },
       "rpm": {
         "depends": [

@@ -29,6 +29,17 @@ test('import shows the diarized transcript', async () => {
   await expect(page.getByText('3 turns').first()).toBeVisible();
 });
 
+test('the audio player is created on first use, then seeks', async () => {
+  // Opening a meeting must not load media (it crashed WebKit in the AppImage).
+  await expect(page.locator('audio')).toHaveCount(0);
+  await page.getByTitle('Play from here').nth(2).click(); // the 0:07 line
+  await expect(page.locator('audio')).toHaveCount(1);
+  await expect
+    .poll(async () => page.locator('audio').evaluate((a: HTMLAudioElement) => a.currentTime))
+    .toBeGreaterThan(6.5);
+  await page.locator('audio').evaluate((a: HTMLAudioElement) => a.pause());
+});
+
 test('rename a speaker', async () => {
   await page.getByRole('button', { name: 'SPEAKER_01', exact: true }).click();
   await page.getByPlaceholder('Name').fill('Alice');
