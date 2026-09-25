@@ -24,6 +24,7 @@
   <url type="bugtracker">https://github.com/corpetty/mnemosyne/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.1" date="2026-09-25"/>
     <release version="0.7.0" date="2026-09-25"/>
     <release version="0.6.0" date="2026-09-24"/>
     <release version="0.5.0" date="2026-09-24"/>

@@ -2123,8 +2123,12 @@ export interface components {
             live_diarization?: boolean | null;
             /** Live Interval Seconds */
             live_interval_seconds?: number | null;
+            /** Live Silence Db */
+            live_silence_db?: number | null;
             /** Live Speaker Threshold */
             live_speaker_threshold?: number | null;
+            /** Live Threads */
+            live_threads?: number | null;
             /** Live Transcriber */
             live_transcriber?: string | null;
             /** Live Transcription */
@@ -2284,8 +2288,12 @@ export interface components {
             live_diarization: boolean;
             /** Live Interval Seconds */
             live_interval_seconds: number;
+            /** Live Silence Db */
+            live_silence_db: number;
             /** Live Speaker Threshold */
             live_speaker_threshold: number;
+            /** Live Threads */
+            live_threads: number;
             /** Live Transcriber */
             live_transcriber: string;
             /** Live Transcription */
