@@ -14,6 +14,10 @@ def quiet_known_warnings() -> None:
     the pattern must allow leading whitespace ('.*' does not cross a newline).
     """
     warnings.filterwarnings("ignore", message=r"\s*torchcodec is not installed correctly")
+    # pyannote turns TF32 off for reproducibility and says so on every run.
+    warnings.filterwarnings("ignore", message=r"\s*TensorFloat-32 \(TF32\) has been disabled")
+    # pyannote's statistics pooling on a one-frame chunk (very short speech turns).
+    warnings.filterwarnings("ignore", message=r"\s*std\(\): degrees of freedom is <= 0")
 
 
 def main() -> None:
