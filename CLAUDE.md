@@ -149,7 +149,7 @@ Neat-ideas batch (docs/plans/2026-09-24-neat-ideas.md, released as 0.6.0): talk 
 (services/followup.py), pre-meeting brief (services/brief.py), mention alerts
 (transcription/mentions.py, `mention` events, tauri-plugin-notification).
 
-Next batch (docs/plans/2026-09-24-next-batch.md, unreleased): map-reduce summaries, semantic search
+Next batch (docs/plans/2026-09-24-next-batch.md, released as 0.7.0): map-reduce summaries, semantic search
 (search/), people (services/people.py), topics (services/topics.py), local-only + redaction
 (summarization/privacy.py), auto-record (audio/streams.py + controller), Linear/Jira/Slack/Matrix
 (services/trackers.py, chat_post.py), phone page (/m), two-phase install + Flatpak GPU (lib.rs),
