@@ -490,6 +490,38 @@ fn restart_app(app: AppHandle) {
     app.request_restart();
 }
 
+/// If WebKit's web process dies (a broken media stack did this in the AppImage), reload the
+/// page instead of leaving a white window. At most three reloads a minute, so a page that
+/// crashes on load cannot loop forever.
+#[cfg(target_os = "linux")]
+fn reload_after_webview_crash(app: &AppHandle) {
+    use std::cell::RefCell;
+    use std::time::{Duration, Instant};
+    use webkit2gtk::WebViewExt;
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let _ = window.with_webview(|webview| {
+        let recent: RefCell<Vec<Instant>> = RefCell::new(Vec::new());
+        webview.inner().connect_web_process_terminated(move |view, reason| {
+            let now = Instant::now();
+            let mut recent = recent.borrow_mut();
+            recent.retain(|t| now.duration_since(*t) < Duration::from_secs(60));
+            if recent.len() >= 3 {
+                error!("WebKit web process terminated again ({reason:?}); not reloading");
+                return;
+            }
+            recent.push(now);
+            warn!("WebKit web process terminated ({reason:?}); reloading the window");
+            view.reload();
+        });
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn reload_after_webview_crash(_app: &AppHandle) {}
+
 /// Whether a shared library can be loaded (dlopen, closed right away).
 fn lib_loadable(name: &str) -> bool {
     let c = std::ffi::CString::new(name).unwrap();
@@ -591,6 +623,8 @@ pub fn run() {
             if let Ok(dir) = app.path().app_log_dir() {
                 info!("Logs: {}", log_dir_hint(&dir));
             }
+
+            reload_after_webview_crash(app.handle());
 
             // A missing tray host (e.g. GNOME without the AppIndicator extension) must
             // not stop the app. Without the appindicator library the tray crate panics,

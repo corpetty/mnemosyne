@@ -31,6 +31,11 @@
 		}
 	});
 
+	// "Available" means the meeting has audio; the element itself is created lazily.
+	$effect(() => {
+		playerState.available = !!src;
+	});
+
 	function fmt(t: number): string {
 		if (!isFinite(t)) return '0:00';
 		const m = Math.floor(t / 60);
@@ -48,17 +53,22 @@
 		>
 			{playerState.playing ? '❚❚' : '▶'}
 		</button>
-		<audio
-			bind:this={el}
-			{src}
-			preload="metadata"
-			onplay={() => (playerState.playing = true)}
-			onpause={() => (playerState.playing = false)}
-			ontimeupdate={() => (playerState.currentTime = el?.currentTime ?? 0)}
-			onloadedmetadata={() => { playerState.duration = el?.duration ?? 0; playerState.available = true; }}
-			onerror={() => (playerState.available = false)}
-			class="hidden"
-		></audio>
+		{#if playerState.wanted}
+			<audio
+				bind:this={el}
+				{src}
+				preload="metadata"
+				onplay={() => (playerState.playing = true)}
+				onpause={() => (playerState.playing = false)}
+				ontimeupdate={() => (playerState.currentTime = el?.currentTime ?? 0)}
+				onloadedmetadata={() => {
+					playerState.duration = el?.duration ?? 0;
+					playerState.ready();
+				}}
+				onerror={() => (playerState.available = false)}
+				class="hidden"
+			></audio>
+		{/if}
 		<input
 			type="range"
 			min="0"
