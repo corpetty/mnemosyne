@@ -15,7 +15,9 @@
 	);
 </script>
 
+<!-- No CSS transitions or animations here: levels update 4x a second while recording, and
+     WebKitGTK repaints on the CPU, so an animated meter keeps the UI thread busy. -->
 <div class="relative {compact ? 'w-12 h-1.5' : 'w-24 h-2'} rounded-full bg-gray-800 overflow-hidden" {title}>
-	<div class="absolute inset-y-0 left-0 {color} transition-[width] duration-150" style="width: {rms}%"></div>
+	<div class="absolute inset-y-0 left-0 {color}" style="width: {rms}%"></div>
 	<div class="absolute inset-y-0 w-0.5 bg-gray-200/70" style="left: calc({peak}% - 1px)"></div>
 </div>

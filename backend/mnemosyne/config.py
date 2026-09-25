@@ -114,6 +114,11 @@ class Settings(BaseSettings):
     live_interval_seconds: float = 5.0
     # Label live lines by voice (needs the pyannote diarizer's torch stack).
     live_diarization: bool = True
+    # CPU threads for the live transcriber (Parakeet/ONNX). It re-runs every few seconds for
+    # the whole recording; all cores would starve the desktop.
+    live_threads: int = 2
+    # Live audio quieter than this (dBFS) is not sent to the transcriber at all.
+    live_silence_db: float = -55.0
     # Live copilot: running notes (summary, decisions, action items, open questions) from
     # the live transcript while recording, refreshed at most this often, using the default
     # model. Needs the live transcript.

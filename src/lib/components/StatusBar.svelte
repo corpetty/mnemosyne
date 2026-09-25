@@ -10,7 +10,7 @@
 	<div class="flex items-center gap-4">
 		{#if audioState.isRecording}
 			<div class="flex items-center gap-1.5 text-red-400">
-				<span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+				<span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
 				Recording
 				{#each Object.entries(audioState.levels) as [id, lv] (id)}
 					<LevelMeter level={lv} compact />

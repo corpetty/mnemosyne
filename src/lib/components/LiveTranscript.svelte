@@ -25,7 +25,7 @@
 	<div class="rounded-lg border border-gray-800 bg-gray-900/60">
 		<div class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 text-xs text-gray-500">
 			{#if audioState.isRecording}
-				<span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+				<span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
 				<span>Live transcript</span>
 				{#if transcriptState.liveStatus}<span class="text-gray-600">· {transcriptState.liveStatus}</span>{/if}
 			{:else}

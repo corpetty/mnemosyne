@@ -137,6 +137,7 @@ async def test_live_labels_by_voice_and_relabels(tmp_path):
         [LiveSource(path=path, speaker="Remote", kind="system", diarize=True)],
         events.append,
         "s1",
+        silence_db=-200.0,
         embedder=FakeEmbedder({1: A, 2: B}),
         clusterer=clusterer,
     )
@@ -158,6 +159,7 @@ async def test_non_diarized_source_keeps_channel_label(tmp_path):
         [LiveSource(path=path, speaker="Me", kind="mic", diarize=False)],
         events.append,
         "s1",
+        silence_db=-200.0,
         embedder=FakeEmbedder({1: A}),
         clusterer=OnlineClusterer(),
     )
@@ -179,6 +181,7 @@ async def test_embedder_load_failure_falls_back(tmp_path):
         [LiveSource(path=path, speaker="Remote", kind="system", diarize=True)],
         events.append,
         "s1",
+        silence_db=-200.0,
         interval=0.01,
         embedder=Broken({1: A}),
         clusterer=OnlineClusterer(),
