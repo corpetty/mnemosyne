@@ -14,8 +14,6 @@ class PlayerState {
    * window) as soon as an <audio> element loaded metadata.
    */
   wanted = $state(false);
-  /** Silent playback (the release smoke test). */
-  muted = $state(false);
 
   private el: HTMLAudioElement | null = null;
   private pending: { seek: number | null; play: boolean } | null = null;

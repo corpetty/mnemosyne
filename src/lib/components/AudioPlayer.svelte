@@ -58,7 +58,6 @@
 				bind:this={el}
 				{src}
 				preload="metadata"
-				muted={playerState.muted}
 				onplay={() => (playerState.playing = true)}
 				onpause={() => (playerState.playing = false)}
 				ontimeupdate={() => (playerState.currentTime = el?.currentTime ?? 0)}
