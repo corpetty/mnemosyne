@@ -93,3 +93,26 @@ def test_jobs_api(client):
     assert client.get("/api/jobs").json() == []
     assert client.get("/api/jobs/nope").status_code == 404
     assert client.post("/api/jobs/nope/cancel").status_code == 409
+
+
+@pytest.mark.anyio
+async def test_late_progress_does_not_reopen_a_finished_job():
+    """Progress is scheduled onto the loop, so a report can run after the job ended (the demo
+    engine finishes in one loop turn). It used to publish the job as 'completed' again with a
+    stale message, and the UI showed 'Transcription complete' three times."""
+    bus = EventBus()
+    manager = JobManager(bus)
+    kept = {}
+
+    async def runner(ctx):
+        kept["ctx"] = ctx
+        return None
+
+    job = manager.submit("demo", runner)
+    while not job.is_terminal:
+        await asyncio.sleep(0.01)
+    q = bus.subscribe()
+    kept["ctx"].update("Transcribing audio...", progress=0.7)
+    assert q.empty()
+    assert job.progress == 1.0
+    assert job.message == ""

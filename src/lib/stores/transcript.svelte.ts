@@ -157,7 +157,9 @@ class TranscriptState {
   }
 
   private applyJob(job: Job) {
+    const previous = this.activeJob;
     this.activeJob = job;
+    if (previous?.id === job.id && previous.status === job.status && job.status !== 'running') return;
     switch (job.status) {
       case 'queued':
         this.isProcessing = true;

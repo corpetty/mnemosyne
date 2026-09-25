@@ -59,6 +59,8 @@ class JobContext:
         self._manager = manager
 
     def update(self, message: str | None = None, progress: float | None = None) -> None:
+        if self.job.is_terminal:  # a late progress report must not reopen a finished job
+            return
         if message is not None:
             self.job.message = message
         if progress is not None:
