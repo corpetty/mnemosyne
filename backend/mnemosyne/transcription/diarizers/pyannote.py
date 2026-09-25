@@ -70,7 +70,8 @@ class PyannoteDiarizer:
 
             # Decode with ffmpeg ourselves so Opus/OGG never depends on torchcodec.
             pcm = decode_audio(audio_path, sample_rate=16000)
-            waveform = torch.from_numpy(pcm).unsqueeze(0)
+            # decode_audio returns a read-only view of ffmpeg's output; torch wants writable.
+            waveform = torch.from_numpy(pcm.copy()).unsqueeze(0)
             kwargs = {}
             if min_speakers is not None:
                 kwargs["min_speakers"] = min_speakers
