@@ -12,7 +12,7 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 
 - **Live transcript while recording** (a few seconds behind speech, Parakeet on CPU) with **live speaker labels**: voices are told apart as they speak and people with a saved voice are named on the spot; replaced by the full diarized transcript after stop
 - **Pluggable transcription**: WhisperX (GPU), NVIDIA Parakeet TDT via ONNX (CPU, no torch), or any OpenAI-compatible speech server
-- **Speaker diarization** using pyannote.audio (community-1), or none
+- **Speaker diarization** using NVIDIA Nemotron-3-Diarization on NVIDIA GPUs, otherwise pyannote.audio (community-1), or none
 - **Structured summaries**: decisions, action items with owners, open questions and topics as data, with styles (meeting, standup, interview, lecture, brainstorm) and your own standing instructions
 - **Obsidian-native export**: `[[people]]` links, tags, topics in frontmatter, action items as tasks, optional transcript
 - **Playback synced to the transcript**: click any timestamp to hear that moment; the line being played is highlighted
@@ -213,7 +213,7 @@ All configuration is via environment variables in `backend/.env`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HF_TOKEN` | (required) | HuggingFace token for pyannote diarization models |
+| `HF_TOKEN` | | HuggingFace token for pyannote (diarization without an NVIDIA GPU, and voice profiles) |
 | `WHISPER_MODEL_SIZE` | `medium.en` | WhisperX model size (`base`, `small`, `medium`, `large-v2`, `large-v3`) |
 | `WHISPER_COMPUTE_TYPE` | `float16` | Compute type (`float16`, `int8`) |
 | `WHISPER_BATCH_SIZE` | `8` | Batch size for transcription (lower = less VRAM) |

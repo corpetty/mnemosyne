@@ -222,7 +222,7 @@ impl ReleaseLayout {
 }
 
 /// `uv sync` the backend into the per-user venv, passing each progress line to `on_line`.
-/// `gpu` adds the GPU extra (torch, WhisperX). `inexact` keeps packages the selected extras
+/// `gpu` adds the GPU extra (torch, WhisperX, NeMo). `inexact` keeps packages the selected extras
 /// do not need (so a base sync after an upgrade does not uninstall torch just to reinstall
 /// it in the GPU phase). Returns whether any package was installed or removed.
 fn uv_sync(

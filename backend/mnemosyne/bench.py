@@ -240,11 +240,13 @@ def audio_seconds(path: Path) -> float:
 
 
 def run(settings, audio: Path, reference: list[dict]) -> BenchResult:
+    from .transcription.registry import resolve_diarizer
+
     segs, runtime = asyncio.run(transcribe(settings, audio))
     errors, acc, mapping = score(reference, segs)
     seconds = audio_seconds(audio)
     return BenchResult(
-        engine=f"{settings.transcriber}+{settings.diarizer}",
+        engine=f"{settings.transcriber}+{resolve_diarizer(settings)}",
         audio_seconds=round(seconds, 1),
         runtime_seconds=round(runtime, 2),
         real_time_factor=round(runtime / seconds, 3) if seconds else 0.0,

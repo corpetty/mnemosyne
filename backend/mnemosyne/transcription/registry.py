@@ -12,7 +12,7 @@ from .engine import Diarizer, Transcriber
 from .glossary import initial_prompt, parse_glossary
 
 TRANSCRIBERS = ("whisperx", "parakeet", "remote")
-DIARIZERS = ("pyannote", "none")
+DIARIZERS = ("auto", "nemotron", "pyannote", "none")
 
 
 def build_transcriber(
@@ -61,9 +61,30 @@ def build_live_transcriber(settings: Settings) -> Transcriber:
     return build_transcriber(settings, settings.live_transcriber, threads=settings.live_threads)
 
 
+def nemotron_available() -> bool:
+    """NeMo is installed (the gpu extra) and torch sees a CUDA GPU."""
+    import importlib.util
+
+    try:
+        if importlib.util.find_spec("nemo") is None:
+            return False
+        import torch
+    except ImportError:
+        return False
+    return torch.cuda.is_available()
+
+
+def resolve_diarizer(settings: Settings) -> str:
+    """The diarizer `auto` stands for on this machine."""
+    if settings.diarizer != "auto":
+        return settings.diarizer
+    return "nemotron" if nemotron_available() else "pyannote"
+
+
 def build_live_embedder(settings: Settings):
-    """Speaker embedder for live labels, or None when pyannote/torch are unavailable."""
-    if settings.diarizer != "pyannote":
+    """pyannote speaker embedder (live labels; voice profiles under nemotron), or None when
+    pyannote/torch are unavailable."""
+    if settings.diarizer not in ("auto", "pyannote", "nemotron"):
         return None
     try:
         import pyannote.audio  # noqa: F401
@@ -76,7 +97,7 @@ def build_live_embedder(settings: Settings):
 
 
 def build_diarizer(settings: Settings) -> Diarizer | None:
-    kind = settings.diarizer
+    kind = resolve_diarizer(settings)
     if kind == "none":
         return None
     if kind == "demo":
@@ -87,6 +108,11 @@ def build_diarizer(settings: Settings) -> Diarizer | None:
         from .diarizers.pyannote import PyannoteDiarizer
 
         return PyannoteDiarizer(model=settings.diarization_model, hf_token=settings.hf_token)
+    if kind == "nemotron":
+        from .diarizers.nemotron import NemotronDiarizer
+
+        # Nemotron has no speaker embeddings; voice profiles use pyannote's embedder.
+        return NemotronDiarizer(embedder=build_live_embedder(settings))
     raise ValueError(f"Unknown diarizer '{kind}'. Choose one of {DIARIZERS}")
 
 

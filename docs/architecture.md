@@ -201,7 +201,7 @@ Transcription is two pluggable stages behind Protocols in `transcription/engine.
 | Stage | Protocol | Implementations |
 |---|---|---|
 | Speech to text | `Transcriber` | `whisperx` (faster-whisper + wav2vec2 alignment, GPU), `parakeet` (NVIDIA Parakeet TDT via onnx-asr, CPU or CUDA, no torch), `remote` (any OpenAI-compatible `/audio/transcriptions` server) |
-| Who spoke | `Diarizer` | `pyannote` (community-1 by default, GPU), `none` |
+| Who spoke | `Diarizer` | `nemotron` (NVIDIA Nemotron-3-Diarization via NeMo, GPU), `pyannote` (community-1, GPU), `none`; `auto` (default) picks nemotron when NeMo and CUDA are available, else pyannote |
 
 `ComposedEngine` (`transcription/composed.py`) joins one of each. `transcription/registry.py` builds it
 from settings (`transcriber`, `diarizer`, and per-implementation options). Heavy imports happen inside

@@ -41,7 +41,7 @@
 					transcriber = v.transcriber;
 				}
 				remoteUrl = v.remote_stt_url || '';
-				identifySpeakers = v.diarizer === 'pyannote';
+				identifySpeakers = v.diarizer !== 'none';
 				ollamaUrl = v.ollama_url || ollamaUrl;
 				vllmUrl = v.vllm_url || vllmUrl;
 				vaultPath = v.obsidian_vault_path || '';
@@ -67,7 +67,7 @@
 	}
 
 	function transcriptionUpdate(): SettingsUpdate {
-		const u: SettingsUpdate = { transcriber, diarizer: identifySpeakers ? 'pyannote' : 'none' };
+		const u: SettingsUpdate = { transcriber, diarizer: identifySpeakers ? 'auto' : 'none' };
 		if (transcriber === 'remote') u.remote_stt_url = remoteUrl.trim();
 		if (hfToken.trim()) u.hf_token = hfToken.trim();
 		return u;
@@ -194,8 +194,8 @@
 			<label class="flex items-start gap-2 pt-2">
 				<input type="checkbox" bind:checked={identifySpeakers} class="mt-1 rounded border-gray-600 bg-gray-800" />
 				<span class="text-sm text-gray-300">
-					Tell speakers apart (pyannote)
-					<span class="block text-xs text-gray-500">Needs a free Hugging Face token with the pyannote speaker-diarization-community-1 model accepted. Without it, lines are labelled by channel (you vs. everyone else).</span>
+					Tell speakers apart
+					<span class="block text-xs text-gray-500">On an NVIDIA GPU this uses Nemotron and needs no account. Otherwise it uses pyannote, which needs a free Hugging Face token with speaker-diarization-community-1 accepted; the token also lets Mnemosyne recognise voices across meetings. Without either, lines are labelled by channel (you vs. everyone else).</span>
 				</span>
 			</label>
 			{#if identifySpeakers && !system?.hf_token}

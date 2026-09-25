@@ -150,7 +150,7 @@ def build_report(app: AppContext, log_lines: int = 200) -> str:
         f"session {session}",
         *_gpu(),
         f"whisperx {_version('whisperx')}, onnx-asr {_version('onnx-asr')}, "
-        f"pyannote.audio {_version('pyannote.audio')}",
+        f"pyannote.audio {_version('pyannote.audio')}, nemo-toolkit {_version('nemo-toolkit')}",
         f"pw-record: {'found' if shutil.which('pw-record') else 'not found'}, "
         f"ffmpeg: {_run(['ffmpeg', '-hide_banner', '-version'])}",
         "",

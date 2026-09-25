@@ -411,7 +411,7 @@
 						<input type="number" min="2" max="30" step="1" bind:value={form.live_interval_seconds} disabled={locked('live_interval_seconds')} class={inputClass} />
 					</label>
 					<label class="flex items-center gap-2">
-						<input type="checkbox" bind:checked={form.live_diarization} disabled={locked('live_diarization') || form.diarizer !== 'pyannote'} class="rounded border-gray-600 bg-gray-800" />
+						<input type="checkbox" bind:checked={form.live_diarization} disabled={locked('live_diarization') || form.diarizer === 'none'} class="rounded border-gray-600 bg-gray-800" />
 						<span class="text-sm text-gray-300">Tell speakers apart live (known voices are named)</span>
 					</label>
 					<label>
@@ -546,6 +546,8 @@
 					<label>
 						<span class={labelClass}>Diarizer</span>
 						<select bind:value={form.diarizer} disabled={locked('diarizer')} class={inputClass}>
+							<option value="auto">Automatic (Nemotron on an NVIDIA GPU, else pyannote)</option>
+							<option value="nemotron">Nemotron (NVIDIA GPU, NeMo)</option>
 							<option value="pyannote">pyannote (GPU, torch)</option>
 							<option value="none">None (single speaker)</option>
 						</select>
@@ -610,9 +612,9 @@
 						</label>
 					{/if}
 
-					{#if form.diarizer === 'pyannote'}
+					{#if form.diarizer !== 'none'}
 						<label>
-							<span class={labelClass}>Diarization model</span>
+							<span class={labelClass}>pyannote model (also voice profiles)</span>
 							<input type="text" bind:value={form.diarization_model} disabled={locked('diarization_model')} class={inputClass} />
 						</label>
 						<label>
@@ -621,7 +623,7 @@
 						</label>
 						<label class="col-span-2">
 							<span class={labelClass}>
-								HuggingFace token (pyannote license)
+								HuggingFace token (pyannote license; Nemotron needs it only for voice profiles)
 								{#if settings.secrets_set.hf_token}<span class="text-green-500 ml-1">set</span>{/if}
 							</span>
 							<div class="flex gap-2">

@@ -23,10 +23,13 @@ dependencies = [
 [project.optional-dependencies]
 # ML inference stack. Install with: uv sync --extra gpu
 # torch/torchaudio are pinned to the CUDA 12.8 wheel index (see [[tool.uv.index]]).
+# NeMo runs the Nemotron diarizer; it comes from a pinned source tarball (see
+# [tool.uv.sources]) because PyPI 3.0.0 cannot load the model.
 gpu = [
     "torch==2.8.0",
     "torchaudio==2.8.0",
     "whisperx>=3.8.1,<4",
+    "nemo-toolkit[asr]",
 ]
 # Parakeet via ONNX Runtime (CPU). No torch. Add onnxruntime-gpu yourself for CUDA.
 onnx = [
@@ -63,6 +66,9 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
+# NeMo Speech main at 2026-09-23 (first commit with RoPE attention for Nemotron-3-Diarization).
+# A tarball, not git, so first-launch installs do not need git.
+nemo-toolkit = { url = "https://github.com/NVIDIA-NeMo/Speech/archive/cf724ac337d1ebc7d0dda1e23fb80916f52927a5.tar.gz" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

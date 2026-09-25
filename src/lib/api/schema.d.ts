@@ -2207,6 +2207,8 @@ export interface components {
             calendar_ics_url?: string | null;
             /** Cloud Redaction */
             cloud_redaction?: boolean | null;
+            /** Config Version */
+            config_version?: number | null;
             /** Copilot */
             copilot?: boolean | null;
             /** Copilot Interval Seconds */
@@ -2378,6 +2380,8 @@ export interface components {
             calendar_ics_url: string;
             /** Cloud Redaction */
             cloud_redaction: boolean;
+            /** Config Version */
+            config_version: number;
             /** Copilot */
             copilot: boolean;
             /** Copilot Interval Seconds */

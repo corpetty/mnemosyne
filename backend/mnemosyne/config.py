@@ -77,12 +77,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MNEMOSYNE_DATA_DIR", "data_dir"),
     )
 
+    # Bumped by load_settings() after migrating an older config file (0 = before 0.8.0).
+    config_version: int = 0
+
     # Transcription pipeline
     # The first-run setup wizard has been completed or skipped.
     setup_complete: bool = False
 
     transcriber: str = "whisperx"  # whisperx | parakeet | remote
-    diarizer: str = "pyannote"  # pyannote | none
+    # auto = nemotron when NeMo and a CUDA GPU are available, else pyannote.
+    diarizer: str = "auto"  # auto | nemotron | pyannote | none
     language: str = ""  # blank = auto-detect
     min_speakers: int | None = None
     max_speakers: int | None = 10
@@ -112,7 +116,7 @@ class Settings(BaseSettings):
     live_transcription: bool = True
     live_transcriber: str = "parakeet"  # parakeet | whisperx | remote
     live_interval_seconds: float = 5.0
-    # Label live lines by voice (needs the pyannote diarizer's torch stack).
+    # Label live lines by voice (needs a diarizer and the pyannote embedding model).
     live_diarization: bool = True
     # CPU threads for the live transcriber (Parakeet/ONNX). It re-runs every few seconds for
     # the whole recording; all cores would starve the desktop.
@@ -151,7 +155,7 @@ class Settings(BaseSettings):
     remote_stt_model: str = "whisper-1"
     remote_stt_api_key: str = ""
 
-    # pyannote diarizer
+    # pyannote diarizer; its embedding model also serves voice profiles under nemotron
     diarization_model: str = "pyannote/speaker-diarization-community-1"
 
     # LLM providers
@@ -285,8 +289,26 @@ class Settings(BaseSettings):
         return data
 
 
+CONFIG_VERSION = 1
+
+
 def load_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    if settings.config_version < CONFIG_VERSION:
+        _migrate(settings)
+        if config_file_path().exists():
+            save_settings(settings)
+    return settings
+
+
+def _migrate(settings: Settings) -> None:
+    """Upgrade values an older version wrote to the config file."""
+    if settings.config_version < 1 and "diarizer" not in settings.env_overrides():
+        # Before 0.8.0 every saved config said "pyannote" (the only diarizer); move it to
+        # "auto" so machines with an NVIDIA GPU get Nemotron.
+        if settings.diarizer == "pyannote":
+            settings.diarizer = "auto"
+    settings.config_version = CONFIG_VERSION
 
 
 def save_settings(settings: Settings, path: Path | None = None) -> Path:

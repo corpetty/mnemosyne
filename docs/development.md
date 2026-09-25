@@ -272,7 +272,9 @@ Settings (`Settings` UI or `~/.config/mnemosyne/config.toml`):
 
 | `diarizer` | Needs | Notes |
 |---|---|---|
-| `pyannote` (default) | `--extra gpu`, `HF_TOKEN` with the model license accepted | `pyannote/speaker-diarization-community-1` |
+| `auto` (default) | | `nemotron` when NeMo is installed and CUDA works, else `pyannote` |
+| `nemotron` | `--extra gpu`, NVIDIA GPU | `nvidia/Nemotron-3-Diarization`, max 8 speakers, ~0.7 GB VRAM. No token needed; voice profiles still use pyannote's embedder and so `HF_TOKEN` |
+| `pyannote` | `--extra gpu`, `HF_TOKEN` with the model license accepted | `pyannote/speaker-diarization-community-1` |
 | `none` | nothing | single speaker |
 
 Any transcriber works with any diarizer. `parakeet` + `none` or `remote` + `none` run with no torch installed.
