@@ -43,6 +43,7 @@ export type PersonDetail = S['PersonDetail'];
 export type TopicCount = S['TopicCount'];
 export type Thread = S['Thread'];
 export type PhoneLink = S['PhoneLink'];
+export type SystemInfo = S['SystemInfo'];
 export type SessionUsage = S['SessionUsage'];
 export type StorageReport = S['StorageReport'];
 export type CleanupResult = S['CleanupResult'];

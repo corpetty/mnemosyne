@@ -35,6 +35,14 @@ the token included. Settings → Server mode shows them with a QR code.
 
 ---
 
+
+### `GET /api/system`
+What this machine can do, for the setup wizard: `{gpu_driver, gpu_stack, parakeet, pipewire, ffmpeg,
+hf_token, platform}`. `gpu_driver` is an NVIDIA driver (nvidia-smi or a loadable libcuda);
+`gpu_stack` means torch and WhisperX are installed; `parakeet` means onnx-asr is. The setting
+`setup_complete` records that the first-run wizard was finished or skipped; the app opens the wizard
+when it is false and there are no meetings yet.
+
 ## Devices
 
 ### `GET /api/devices`

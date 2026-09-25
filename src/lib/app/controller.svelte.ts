@@ -2,7 +2,7 @@
  * App behaviour that spans stores: connecting to the backend, recording actions
  * (buttons, shortcuts, tray, command line, calendar banner) and keyboard shortcuts.
  */
-import { exportToObsidian, getHealth, getSettings } from '$lib/api/backend.js';
+import { exportToObsidian, getHealth, getSettings, listSessions } from '$lib/api/backend.js';
 import { askState } from '$lib/stores/ask.svelte.js';
 import { digestState } from '$lib/stores/digest.svelte.js';
 import { audioState } from '$lib/stores/audio.svelte.js';
@@ -71,6 +71,20 @@ export async function exportActive() {
     toastState.success(`Exported to ${result.path}`);
   } catch (e) {
     toastState.error(e instanceof Error ? e.message : 'Export failed');
+  }
+}
+
+// ---- first run -------------------------------------------------------------------
+
+/** Open the setup wizard on a fresh install: setup never completed and no meetings yet. */
+async function maybeRunSetup() {
+  try {
+    const [settings, sessions] = await Promise.all([getSettings(), listSessions()]);
+    if (!settings.values.setup_complete && sessions.length === 0 && uiState.view === 'home') {
+      openView('setup');
+    }
+  } catch {
+    /* not reachable yet; the next connect tries again */
   }
 }
 
@@ -304,6 +318,7 @@ function onConnected(): () => void {
   askState.init();
   digestState.init();
   const stopAutoRecord = listenForAutoRecord();
+  maybeRunSetup();
   calendarState.start();
   audioState.listenForLevels();
   jobsState.onComplete((job) => {

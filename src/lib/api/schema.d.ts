@@ -1091,6 +1091,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** System Info */
+        get: operations["system_info_api_system_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/topics": {
         parameters: {
             query?: never;
@@ -2184,6 +2201,8 @@ export interface components {
             remote_stt_url?: string | null;
             /** Semantic Search */
             semantic_search?: boolean | null;
+            /** Setup Complete */
+            setup_complete?: boolean | null;
             /** Slack Webhook Url */
             slack_webhook_url?: string | null;
             /** Speaker Match Threshold */
@@ -2345,6 +2364,8 @@ export interface components {
             remote_stt_url: string;
             /** Semantic Search */
             semantic_search: boolean;
+            /** Setup Complete */
+            setup_complete: boolean;
             /** Slack Webhook Url */
             slack_webhook_url: string;
             /** Speaker Match Threshold */
@@ -2531,6 +2552,23 @@ export interface components {
             description: string;
             /** Id */
             id: string;
+        };
+        /** SystemInfo */
+        SystemInfo: {
+            /** Ffmpeg */
+            ffmpeg: boolean;
+            /** Gpu Driver */
+            gpu_driver: boolean;
+            /** Gpu Stack */
+            gpu_stack: boolean;
+            /** Hf Token */
+            hf_token: boolean;
+            /** Parakeet */
+            parakeet: boolean;
+            /** Pipewire */
+            pipewire: boolean;
+            /** Platform */
+            platform: string;
         };
         /** TaskItem */
         TaskItem: {
@@ -4676,6 +4714,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SummaryStyle"][];
+                };
+            };
+        };
+    };
+    system_info_api_system_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemInfo"];
                 };
             };
         };

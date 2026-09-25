@@ -17,6 +17,7 @@
 	import SessionList from '$lib/components/SessionList.svelte';
 	import SessionView from '$lib/components/SessionView.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
+	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import StatusBar from '$lib/components/StatusBar.svelte';
 	import TasksPanel from '$lib/components/TasksPanel.svelte';
 	import TopicsPanel from '$lib/components/TopicsPanel.svelte';
@@ -35,7 +36,8 @@
 		people: { component: PeoplePanel, width: 'max-w-4xl' },
 		topics: { component: TopicsPanel, width: 'max-w-3xl' },
 		digest: { component: DigestPanel, width: 'max-w-3xl' },
-		settings: { component: SettingsPanel as Component<{ onOpenSession?: () => void }>, width: 'max-w-3xl' }
+		settings: { component: SettingsPanel as Component<{ onOpenSession?: () => void }>, width: 'max-w-3xl' },
+		setup: { component: SetupWizard as Component<{ onOpenSession?: () => void }>, width: 'max-w-2xl' }
 	};
 	const panel = $derived(PANELS[uiState.view]);
 

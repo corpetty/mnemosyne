@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     )
 
     # Transcription pipeline
+    # The first-run setup wizard has been completed or skipped.
+    setup_complete: bool = False
+
     transcriber: str = "whisperx"  # whisperx | parakeet | remote
     diarizer: str = "pyannote"  # pyannote | none
     language: str = ""  # blank = auto-detect

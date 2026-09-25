@@ -117,6 +117,10 @@ Summarization is LAN-first by default:
 
 ## Usage
 
+On first launch a short setup walks through your audio devices (with a level check and a
+system-audio capture test), the transcription engine, the model for summaries, and optionally
+your Obsidian vault and calendar. Run it again any time from Settings.
+
 1. **Create a session** using the sidebar
 2. **Select audio devices** — check the microphone and/or system audio monitors you want to capture
 3. **Record** — click Record or press `Ctrl+R`; press `Ctrl+S` to stop and transcribe
