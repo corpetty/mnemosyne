@@ -80,7 +80,14 @@ def test_summarize_endpoint_stores_structured(client, ctx, fake_provider, transc
     assert data["style"] == "standup" and data["provider"] == "fake"
     assert data["decisions"] == ["d"]
     assert data["action_items"] == [
-        {"text": "a", "owner": "SPEAKER_00", "issue_url": None, "done": False, "live": False}
+        {
+            "text": "a",
+            "owner": "SPEAKER_00",
+            "issue_url": None,
+            "done": False,
+            "live": False,
+            "at": None,
+        }
     ]
     assert client.post(f"/api/sessions/{sid}/summarize", json={"style": "bogus"}).status_code == 400
     assert client.get("/api/summary-styles").json()[0]["id"] == "meeting"
@@ -216,3 +223,28 @@ def test_auto_export_after_summary(client, ctx, fake_provider, transcribed_sessi
     ctx.settings.obsidian_vault_path = str(tmp_path / "gone")
     job = run_summarize(client, transcribed_session["id"], {"provider": "fake"})
     assert job["status"] == "completed" and job["result"]["exported"] is None
+
+
+def test_items_carry_the_time_they_came_up():
+    import json
+
+    from mnemosyne.summarization.prompts import parse_summary_response, snap_item_times
+
+    raw = json.dumps(
+        {
+            "summary": "s",
+            "decisions": [{"text": "Ship Friday", "at": "01:02"}, "Keep the name"],
+            "action_items": [{"text": "Docs", "owner": "S1", "at": "[00:31]"}],
+            "open_questions": [{"text": "Who?", "at": "99:00"}, {"text": "When?", "time": 12}],
+        }
+    )
+    _, data = parse_summary_response(raw)
+    assert data.decisions == ["Ship Friday", "Keep the name"]  # plain strings either way
+    assert data.decision_at == [62.0, None]
+    assert data.action_items[0].at == 31.0
+    assert data.question_at == [5940.0, 12.0]
+
+    snap_item_times(data, starts=[0.0, 10.0, 30.0, 60.5, 90.0])
+    assert data.decision_at == [60.5, None]  # snapped to the line start
+    assert data.action_items[0].at == 30.0
+    assert data.question_at == [None, 10.0]  # past the end of the meeting: dropped

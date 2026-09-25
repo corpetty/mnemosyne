@@ -1253,6 +1253,8 @@ export interface components {
     schemas: {
         /** ActionItem */
         ActionItem: {
+            /** At */
+            at: number | null;
             /**
              * Done
              * @default false
@@ -2641,6 +2643,8 @@ export interface components {
             action_items: components["schemas"]["ActionItem"][];
             /** Chapters */
             chapters: components["schemas"]["Chapter"][];
+            /** Decision At */
+            decision_at: (number | null)[];
             /** Decisions */
             decisions: string[];
             /**
@@ -2660,6 +2664,8 @@ export interface components {
              * @default
              */
             provider: string;
+            /** Question At */
+            question_at: (number | null)[];
             /**
              * Source Hash
              * @default

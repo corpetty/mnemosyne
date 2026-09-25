@@ -51,6 +51,7 @@ class ActionItem(ApiModel):
     issue_url: str | None = None  # set once an issue was created for this item
     done: bool = False
     live: bool = False  # noted by the live copilot; the final summary did not list it
+    at: float | None = None  # seconds: the transcript line where it came up
 
 
 class CopilotItem(ApiModel):
@@ -89,6 +90,10 @@ class SummaryData(ApiModel):
     decisions: list[str] = Field(default_factory=list)
     action_items: list[ActionItem] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
+    # Where each decision / open question came up (seconds, a line start, or None), in the
+    # same order as the lists above. Separate lists so `decisions` stays plain text.
+    decision_at: list[float | None] = Field(default_factory=list)
+    question_at: list[float | None] = Field(default_factory=list)
     chapters: list[Chapter] = Field(default_factory=list)
     followup: str = ""  # last drafted follow-up message (email or chat)
 

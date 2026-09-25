@@ -15,11 +15,13 @@ from ..summarization.prompts import (
     extract_json,
     get_system_prompt,
     mmss,
+    parse_seconds,
     parse_summary_response,
     part_payload,
     partial_instructions,
     reduce_system_prompt,
     snap_chapters,
+    snap_item_times,
     split_lines,
     transcript_lines,
 )
@@ -127,6 +129,7 @@ class SummarizationService:
                 provider, model, segments, lines, ranges, style, instructions, on_progress
             )
         data.chapters = snap_chapters(data.chapters, starts)
+        snap_item_times(data, starts)
         data.provider, data.model = provider_name, model
         return {"summary": summary, "data": data, "provider": provider_name, "model": model}
 
@@ -214,20 +217,34 @@ def merge_parts(parts: list[dict], style: str) -> tuple[str, SummaryData]:
                 out.append(x)
         return out
 
+    def unique_timed(key: str) -> tuple[list[str], list[float | None]]:
+        texts: list[str] = []
+        times: list[float | None] = []
+        for item in (i for p in parts for i in p[key]):
+            if not any(same_item(item["text"], t) for t in texts):
+                texts.append(item["text"])
+                times.append(parse_seconds(item.get("at")))
+        return texts, times
+
     summary = "\n\n".join(f"**{p['from']}–{p['to']}.** {p['summary']}" for p in parts)
     actions: list[ActionItem] = []
     for p in parts:
         for a in p["action_items"]:
             if not any(same_item(a["text"], b.text) for b in actions):
-                actions.append(ActionItem(text=a["text"], owner=a.get("owner")))
+                at = parse_seconds(a.get("at"))
+                actions.append(ActionItem(text=a["text"], owner=a.get("owner"), at=at))
     raw_chapters = json.dumps(
         {"summary": "x", "chapters": [c for p in parts for c in p["chapters"]]}
     )
+    decisions, decision_at = unique_timed("decisions")
+    questions, question_at = unique_timed("open_questions")
     return summary, SummaryData(
         style=style,
         topics=unique([t for p in parts for t in p["topics"]])[:8],
-        decisions=unique([d for p in parts for d in p["decisions"]]),
+        decisions=decisions,
+        decision_at=decision_at,
         action_items=actions,
-        open_questions=unique([q for p in parts for q in p["open_questions"]]),
+        open_questions=questions,
+        question_at=question_at,
         chapters=parse_summary_response(raw_chapters)[1].chapters,
     )

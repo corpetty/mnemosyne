@@ -100,7 +100,7 @@
 			: `${m}:${String(s).padStart(2, '0')}`;
 	}
 
-	/** Jump to the transcript line where a chapter starts (and play from there if audio exists). */
+	/** Jump to the transcript line at `start` (a chapter, or where a summary item came up). */
 	function openChapter(start: number) {
 		const session = sessionState.activeSession;
 		if (!session) return;
@@ -249,6 +249,16 @@
 	const jobError = $derived(lastJob?.status === 'failed' ? lastJob.error : null);
 </script>
 
+{#snippet at(seconds: number | null | undefined)}
+	{#if seconds != null}
+		<button
+			onclick={() => openChapter(seconds)}
+			class="ml-1.5 font-mono text-[11px] text-blue-400 hover:text-blue-300"
+			title="Show where this came up in the transcript"
+		>{fmtTime(seconds)}</button>
+	{/if}
+{/snippet}
+
 <div class="space-y-3">
 	{#if sessionState.activeSession?.summary}
 		<div class="relative space-y-3">
@@ -268,7 +278,7 @@
 						<section class="bg-gray-900 border border-gray-700 rounded-lg p-3">
 							<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Decisions</h4>
 							<ul class="space-y-1 text-sm text-gray-200 list-disc list-inside">
-								{#each data.decisions as d}<li>{d}</li>{/each}
+								{#each data.decisions as d, i}<li>{d}{@render at(data.decision_at[i])}</li>{/each}
 							</ul>
 						</section>
 					{/if}
@@ -289,7 +299,7 @@
 											aria-label={a.done ? `Reopen: ${a.text}` : `Mark done: ${a.text}`}
 											class="text-xs mt-0.5 {a.done ? 'text-emerald-400' : 'text-gray-600 hover:text-gray-300'}"
 										>{a.done ? '✓' : '○'}</button>
-										<span class={a.done ? 'line-through text-gray-500' : ''}>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}{#if a.live}<span class="ml-1.5 text-[10px] px-1 rounded bg-purple-900/50 text-purple-300" title="Heard by the live copilot during the meeting; the summary did not list it">live</span>{/if}</span>
+										<span class={a.done ? 'line-through text-gray-500' : ''}>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}{#if a.live}<span class="ml-1.5 text-[10px] px-1 rounded bg-purple-900/50 text-purple-300" title="Heard by the live copilot during the meeting; the summary did not list it">live</span>{/if}{@render at(a.at)}</span>
 									</li>
 								{/each}
 							</ul>
@@ -326,7 +336,7 @@
 						<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 md:col-span-2">
 							<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Open questions</h4>
 							<ul class="space-y-1 text-sm text-gray-200 list-disc list-inside">
-								{#each data.open_questions as q}<li>{q}</li>{/each}
+								{#each data.open_questions as q, i}<li>{q}{@render at(data.question_at[i])}</li>{/each}
 							</ul>
 						</section>
 					{/if}

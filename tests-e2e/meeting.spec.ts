@@ -98,6 +98,17 @@ test('summarize produces decisions and action items', async () => {
   await expect(page.getByText('Mobile regression owner', { exact: true })).toBeVisible();
 });
 
+test('summary items link to where they came up', async () => {
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  const links = page.getByTitle('Show where this came up in the transcript');
+  await expect(links).toHaveCount(3); // the decision, the action item, the open question
+  await expect(links.first()).toHaveText('0:07');
+  await links.first().click();
+  const line = page.locator('[data-idx]').filter({ hasText: 'then we ship the migration in October' });
+  await expect(line).toBeVisible();
+  await expect(line).toHaveClass(/bg-yellow-900/); // flashed
+});
+
 test('draft a follow-up email', async () => {
   await page.getByRole('button', { name: 'Summary', exact: true }).click();
   await page.getByRole('button', { name: 'Draft follow-up' }).click();

@@ -610,9 +610,10 @@ with empty structured fields). `summary_data` shape:
 ```json
 {
   "title": "Release planning", "style": "meeting", "provider": "ollama", "model": "llama3.1:latest",
-  "topics": ["release"], "decisions": ["Ship Friday"],
-  "action_items": [ { "text": "Update docs", "owner": "Alice" } ],
-  "open_questions": ["Who reviews?"],
+  "topics": ["release"], "decisions": ["Ship Friday"], "decision_at": [95.2],
+  "action_items": [ { "text": "Update docs", "owner": "Alice", "at": 301.0, "done": false,
+                      "live": false, "issue_url": null } ],
+  "open_questions": ["Who reviews?"], "question_at": [null],
   "chapters": [ { "start": 0.0, "title": "Release status" }, { "start": 312.4, "title": "Docs" } ]
 }
 ```
@@ -623,7 +624,11 @@ merged by one more LLM call (job messages "Summarizing part 2 of 5", "Merging 5 
 reply is not JSON, the parts are merged directly (deduplicated lists, chapters kept).
 
 `chapters[].start` is snapped to the start of the nearest transcript line (the model is asked for
-`MM:SS` timestamps as they appear in the prompt); chapters past the end are dropped.
+`MM:SS` timestamps as they appear in the prompt); chapters past the end are dropped. Likewise each
+decision, action item and open question gets the time of the line where it came up:
+`decision_at[i]` / `question_at[i]` (same order as `decisions` / `open_questions`) and
+`action_items[].at`, snapped to a line start, or `null` when the model gave none or it was more
+than 20 s from any line.
 
 **Errors:** `400` no transcript or unknown style, `404` session, `409` a summary is already running for
 the session.

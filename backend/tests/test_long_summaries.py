@@ -122,8 +122,8 @@ def test_merge_parts_unit():
             "to": "10:00",
             "summary": "a",
             "topics": ["x"],
-            "decisions": ["d"],
-            "action_items": [{"text": "t", "owner": None}],
+            "decisions": [{"text": "d", "at": "01:00"}],
+            "action_items": [{"text": "t", "owner": None, "at": "02:00"}],
             "open_questions": [],
             "chapters": [{"start": "00:00", "title": "A"}],
         },
@@ -133,14 +133,17 @@ def test_merge_parts_unit():
             "to": "20:00",
             "summary": "b",
             "topics": ["x", "y"],
-            "decisions": ["d."],
-            "action_items": [{"text": "t.", "owner": "S1"}],
-            "open_questions": ["q"],
+            "decisions": [{"text": "d.", "at": "12:00"}],
+            "action_items": [{"text": "t.", "owner": "S1", "at": None}],
+            "open_questions": [{"text": "q", "at": "15:00"}],
             "chapters": [{"start": "10:00", "title": "B"}],
         },
     ]
     summary, d = merge_parts(parts, "meeting")
     assert d.topics == ["x", "y"] and d.decisions == ["d"] and len(d.action_items) == 1
+    # Times survive the merge (the first occurrence of a duplicate wins).
+    assert d.decision_at == [60.0] and d.action_items[0].at == 120.0
+    assert d.open_questions == ["q"] and d.question_at == [900.0]
     assert [(c.start, c.title) for c in d.chapters] == [(0.0, "A"), (600.0, "B")]
 
 

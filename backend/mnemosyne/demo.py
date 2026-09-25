@@ -83,9 +83,11 @@ DEMO_SUMMARY = {
     "title": "Release planning",
     "summary": "The team reviewed the release. The Waku migration is code complete.",
     "topics": ["release", "waku"],
-    "decisions": ["Ship the Waku migration in October"],
-    "action_items": [{"text": "Update the docs before the release", "owner": "SPEAKER_01"}],
-    "open_questions": ["Who owns the mobile regression?"],
+    "decisions": [{"text": "Ship the Waku migration in October", "at": "00:07"}],
+    "action_items": [
+        {"text": "Update the docs before the release", "owner": "SPEAKER_01", "at": "00:10"}
+    ],
+    "open_questions": [{"text": "Who owns the mobile regression?", "at": "00:13"}],
     "chapters": [
         {"start": "00:00", "title": "Release status"},
         {"start": "00:13", "title": "Mobile regression owner"},

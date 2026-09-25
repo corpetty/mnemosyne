@@ -41,15 +41,17 @@ Respond with ONLY a JSON object, no prose before or after, with exactly these ke
   "title": "<3 to 7 word title for this conversation, no quotes or trailing punctuation>",
   "summary": "<markdown: 1-3 short paragraphs or bullet points covering the key discussion>",
   "topics": ["<3-8 short topic labels>"],
-  "decisions": ["<decisions or agreements reached, one per item; empty if none>"],
-  "action_items": [{"text": "<task>", "owner": "<speaker label or name, or null>"}],
-  "open_questions": ["<unresolved questions or things to follow up; empty if none>"],
+  "decisions": [{"text": "<a decision or agreement reached>", "at": "<MM:SS>"}],
+  "action_items": [{"text": "<task>", "owner": "<speaker label, name or null>", "at": "<MM:SS>"}],
+  "open_questions": [{"text": "<an unresolved question or thing to follow up>", "at": "<MM:SS>"}],
   "chapters": [{"start": "<MM:SS of the line where it begins>", "title": "<2 to 6 words>"}]
 }
 Rules:
 - Use the speaker labels exactly as they appear in the transcript; do not invent names.
 - Do not put action items or decisions inside the summary text; use the fields.
 - If the transcript is short or trivial, keep everything proportionally brief.
+- Decisions, action items and open questions may be empty lists. Each "at" is the timestamp
+  of the transcript line where the item comes up, exactly as it appears in brackets.
 - Chapters split the conversation by topic in time order, 3 to 8 of them (1 or 2 for a short
   one); the first starts at the first line. Use timestamps exactly as they appear in brackets.
 - Output must be valid JSON (escape quotes and newlines inside strings).
@@ -113,6 +115,7 @@ questions and chapters (timestamps in MM:SS or H:MM:SS are from the full convers
 Write one coherent summary of the whole conversation, remove duplicates across parts, keep
 every distinct decision and action item, drop open questions that a later part resolved,
 and merge chapters into 3 to 12 for the whole conversation, keeping their original timestamps.
+Keep each item's "at" timestamp (the earliest one when you merge duplicates).
 """
 
 
@@ -131,11 +134,24 @@ def part_payload(part: int, start: str, end: str, summary: str, data: SummaryDat
         "to": end,
         "summary": summary,
         "topics": data.topics,
-        "decisions": data.decisions,
-        "action_items": [{"text": a.text, "owner": a.owner} for a in data.action_items],
-        "open_questions": data.open_questions,
+        "decisions": _with_at(data.decisions, data.decision_at),
+        "action_items": [
+            {"text": a.text, "owner": a.owner, "at": _mmss_or_none(a.at)} for a in data.action_items
+        ],
+        "open_questions": _with_at(data.open_questions, data.question_at),
         "chapters": [{"start": mmss(c.start), "title": c.title} for c in data.chapters],
     }
+
+
+def _mmss_or_none(seconds: float | None) -> str | None:
+    return mmss(seconds) if seconds is not None else None
+
+
+def _with_at(texts: list[str], ats: list[float | None]) -> list[dict]:
+    return [
+        {"text": t, "at": _mmss_or_none(ats[i] if i < len(ats) else None)}
+        for i, t in enumerate(texts)
+    ]
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
@@ -170,6 +186,20 @@ def _str_list(value) -> list[str]:
     return out
 
 
+def _texts_and_times(value) -> tuple[list[str], list[float | None]]:
+    """Items given as strings or {"text", "at"} objects: their texts and times (seconds)."""
+    texts: list[str] = []
+    times: list[float | None] = []
+    if not isinstance(value, list):
+        return texts, times
+    for v in value:
+        text = _str_list([v])
+        if text:
+            texts.append(text[0])
+            times.append(parse_seconds(v.get("at", v.get("time"))) if isinstance(v, dict) else None)
+    return texts, times
+
+
 def _action_items(value) -> list[ActionItem]:
     out = []
     if not isinstance(value, list):
@@ -184,14 +214,16 @@ def _action_items(value) -> list[ActionItem]:
                 owner = owner.strip() if isinstance(owner, str) and owner.strip() else None
                 if owner and owner.lower() in ("null", "none", "n/a", "unknown", "unassigned"):
                     owner = None
-                out.append(ActionItem(text=text.strip(), owner=owner))
+                at = parse_seconds(v.get("at", v.get("time")))
+                out.append(ActionItem(text=text.strip(), owner=owner, at=at))
     return out
 
 
 _TS = re.compile(r"^\s*(?:(\d+):)?(\d{1,3}):(\d{2})(?:\.\d+)?\s*$")
 
 
-def _seconds(value) -> float | None:
+def parse_seconds(value) -> float | None:
+    """Seconds from a number or an [H:]MM:SS string (None when neither)."""
     if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
         return float(value)
     if isinstance(value, str):
@@ -209,7 +241,7 @@ def _chapters(value) -> list[Chapter]:
     for v in value:
         if not isinstance(v, dict):
             continue
-        start = _seconds(v.get("start", v.get("time")))
+        start = parse_seconds(v.get("start", v.get("time")))
         title = v.get("title") or v.get("name")
         if start is None or not isinstance(title, str) or not title.strip():
             continue
@@ -232,6 +264,22 @@ def snap_chapters(chapters: list[Chapter], starts: list[float]) -> list[Chapter]
     return sorted(out.values(), key=lambda c: c.start)
 
 
+def snap_item_times(data: SummaryData, starts: list[float], tolerance: float = 20.0) -> None:
+    """Snap the "at" of decisions, action items and open questions to the nearest line start;
+    drop times that are not within `tolerance` seconds of any line (in place)."""
+
+    def snap(t: float | None) -> float | None:
+        if t is None or not starts:
+            return None
+        nearest = min(starts, key=lambda s: abs(s - t))
+        return nearest if abs(nearest - t) <= tolerance else None
+
+    data.decision_at = [snap(t) for t in data.decision_at]
+    data.question_at = [snap(t) for t in data.question_at]
+    for item in data.action_items:
+        item.at = snap(item.at)
+
+
 def parse_summary_response(text: str, style: str = "meeting") -> tuple[str, SummaryData]:
     """Return (summary_markdown, structured). Never raises."""
     obj = extract_json(text)
@@ -247,13 +295,17 @@ def parse_summary_response(text: str, style: str = "meeting") -> tuple[str, Summ
         summary = summary.replace("\\n", "\n")
     title = obj.get("title")
     title = " ".join(title.split()).strip(" \"'.")[:80] if isinstance(title, str) else ""
+    decisions, decision_at = _texts_and_times(obj.get("decisions"))
+    questions, question_at = _texts_and_times(obj.get("open_questions"))
     data = SummaryData(
         title=title,
         style=style,
         topics=_str_list(obj.get("topics")),
-        decisions=_str_list(obj.get("decisions")),
+        decisions=decisions,
+        decision_at=decision_at,
         action_items=_action_items(obj.get("action_items")),
-        open_questions=_str_list(obj.get("open_questions")),
+        open_questions=questions,
+        question_at=question_at,
         chapters=_chapters(obj.get("chapters")),
     )
     return summary.strip(), data
