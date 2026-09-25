@@ -26,10 +26,15 @@ class ParakeetTranscriber:
         model: str = "nemo-parakeet-tdt-0.6b-v3",
         provider: str = "cpu",
         quantization: str | None = None,
+        threads: int | None = None,
     ):
         self.model = model
         self.provider = provider
         self.quantization = quantization
+        # CPU threads for ONNX Runtime; None uses every core. The live transcriber runs
+        # every few seconds for the whole meeting, so it gets a small budget or it starves
+        # the desktop (and the audio capture) while recording.
+        self.threads = threads
         self._asr: Any = None
 
     def is_loaded(self) -> bool:
@@ -48,10 +53,20 @@ class ParakeetTranscriber:
             providers = None
             if self.provider == "cuda":
                 providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            options = None
+            if self.threads:
+                import onnxruntime as ort
+
+                options = ort.SessionOptions()
+                options.intra_op_num_threads = self.threads
+                options.inter_op_num_threads = 1
             model = onnx_asr.load_model(
-                self.model, quantization=self.quantization, providers=providers
+                self.model,
+                quantization=self.quantization,
+                providers=providers,
+                sess_options=options,
             )
-            vad = onnx_asr.load_vad("silero", providers=providers)
+            vad = onnx_asr.load_vad("silero", providers=providers, sess_options=options)
             return model.with_vad(vad).with_timestamps()
 
         self._asr = await asyncio.to_thread(_load)

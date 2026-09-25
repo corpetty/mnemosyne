@@ -417,6 +417,7 @@ def live_transcribe(app: AppContext, session_id: str, recording):
             embedder=embedder,
             clusterer=clusterer,
             mentions=MentionSpotter(parse_keywords(settings.mention_keywords)),
+            silence_db=settings.live_silence_db,
         )
         try:
             await live.run()

@@ -98,6 +98,15 @@ class LiveSource:
         self.tail = WavTail(self.path)
 
 
+def _rms_db(pcm: np.ndarray) -> float:
+    """Loudness of int16 samples in dBFS (-inf-safe: at most -120)."""
+    if pcm.size == 0:
+        return -120.0
+    x = pcm.astype(np.float32) / 32768.0
+    rms = float(np.sqrt(np.mean(x * x)))
+    return 20 * np.log10(rms) if rms > 1e-6 else -120.0
+
+
 class LiveTranscriber:
     def __init__(
         self,
@@ -113,6 +122,7 @@ class LiveTranscriber:
         embedder: SpeakerEmbedder | None = None,
         clusterer: OnlineClusterer | None = None,
         mentions: MentionSpotter | None = None,
+        silence_db: float = -55.0,
     ):
         self.transcriber = transcriber
         self.sources = sources
@@ -126,6 +136,7 @@ class LiveTranscriber:
         self.embedder = embedder
         self.clusterer = clusterer
         self.mentions = mentions
+        self.silence_db = silence_db
         self.committed: list[TranscriptSegment] = []
 
     async def run(self) -> None:
@@ -170,6 +181,25 @@ class LiveTranscriber:
         rate = source.tail.sample_rate or 48000
         duration = source.buffer.size / rate
         if duration < self.min_buffer:
+            return
+        if not flush and _rms_db(source.buffer) < self.silence_db:
+            # Nobody is talking (EasyEffects' noise suppression makes the mic exact digital
+            # silence): skip the transcriber and keep only a short tail for the next words.
+            keep = int(self.commit_margin * rate)
+            if source.buffer.size > keep:
+                source.buffer_start += (source.buffer.size - keep) / rate
+                source.buffer = source.buffer[-keep:]
+            if source.partial:
+                source.partial = ""
+                self.emit(
+                    {
+                        "type": "live_partial",
+                        "session_id": self.session_id,
+                        "source": source.kind,
+                        "speaker": source.last_speaker or source.speaker,
+                        "text": "",
+                    }
+                )
             return
 
         segments = await self._transcribe_buffer(source, rate)

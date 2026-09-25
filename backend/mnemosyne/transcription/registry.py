@@ -15,7 +15,9 @@ TRANSCRIBERS = ("whisperx", "parakeet", "remote")
 DIARIZERS = ("pyannote", "none")
 
 
-def build_transcriber(settings: Settings, kind: str | None = None) -> Transcriber:
+def build_transcriber(
+    settings: Settings, kind: str | None = None, threads: int | None = None
+) -> Transcriber:
     kind = kind or settings.transcriber
     if kind == "whisperx":
         from .transcribers.whisperx import WhisperXTranscriber
@@ -34,6 +36,7 @@ def build_transcriber(settings: Settings, kind: str | None = None) -> Transcribe
             model=settings.parakeet_model,
             provider=settings.onnx_provider,
             quantization=settings.parakeet_quantization or None,
+            threads=threads,
         )
     if kind == "demo":
         from ..demo import DemoTranscriber
@@ -55,7 +58,7 @@ def build_transcriber(settings: Settings, kind: str | None = None) -> Transcribe
 def build_live_transcriber(settings: Settings) -> Transcriber:
     """A separate transcriber instance for live use, so it never shares state
     with the engine running final jobs."""
-    return build_transcriber(settings, settings.live_transcriber)
+    return build_transcriber(settings, settings.live_transcriber, threads=settings.live_threads)
 
 
 def build_live_embedder(settings: Settings):

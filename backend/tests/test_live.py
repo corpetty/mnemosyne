@@ -142,3 +142,30 @@ def test_live_disabled_by_setting(client, ctx, fake_pipewire):
     ctx.settings.live_transcription = False
     started = client.post("/api/audio/start", json={"device_ids": [1]}).json()
     assert started["live_job_id"] is None
+
+
+@pytest.mark.anyio
+async def test_silent_audio_is_not_transcribed(growing_wav):
+    """Digital silence (EasyEffects between sentences) never reaches the transcriber."""
+    events = []
+    t = DurationTranscriber()
+    source = LiveSource(path=growing_wav, speaker="Me", kind="mic")
+    live = LiveTranscriber(t, [source], events.append, "s1", commit_margin=1.0)
+    await live.transcriber.load()
+    _append_seconds(growing_wav, 5.0, value=0)
+    await live.tick()
+    assert t.calls == 0 and events == []
+    assert source.buffer.size / RATE == pytest.approx(1.0)  # only the margin is kept
+    assert source.buffer_start == pytest.approx(4.5)  # 0.5 s header region + 5 s - 1 s
+    _append_seconds(growing_wav, 3.0, value=1000)  # someone speaks
+    await live.tick()
+    assert t.calls == 1
+
+
+def test_parakeet_live_thread_budget():
+    from mnemosyne.config import Settings
+    from mnemosyne.transcription.registry import build_live_transcriber, build_transcriber
+
+    st = Settings(live_transcriber="parakeet", live_threads=2, transcriber="parakeet")
+    assert build_live_transcriber(st).threads == 2
+    assert build_transcriber(st).threads is None  # final transcription may use every core

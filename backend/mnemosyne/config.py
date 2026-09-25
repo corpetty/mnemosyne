@@ -111,6 +111,11 @@ class Settings(BaseSettings):
     live_interval_seconds: float = 5.0
     # Label live lines by voice (needs the pyannote diarizer's torch stack).
     live_diarization: bool = True
+    # CPU threads for the live transcriber (Parakeet/ONNX). It re-runs every few seconds for
+    # the whole recording; all cores would starve the desktop.
+    live_threads: int = 2
+    # Live audio quieter than this (dBFS) is not sent to the transcriber at all.
+    live_silence_db: float = -55.0
     # Alert (toast + desktop notification) when one of these comma-separated words is
     # heard in the live transcript from anyone but your own mic. Usually your name.
     mention_keywords: str = ""

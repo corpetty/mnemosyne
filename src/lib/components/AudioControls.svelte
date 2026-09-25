@@ -53,7 +53,7 @@
 
 	{#if audioState.isRecording}
 		<div class="flex items-center gap-2">
-			<span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+			<span class="w-2 h-2 rounded-full bg-red-500"></span>
 			<span class="text-sm font-mono text-gray-300">
 				{formatDuration(audioState.recordingDuration)}
 			</span>
