@@ -15,6 +15,7 @@ import asyncio
 import logging
 import struct
 import tempfile
+import time
 import wave
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -98,6 +99,20 @@ class LiveSource:
         self.tail = WavTail(self.path)
 
 
+def cpu_pressure(path: Path = Path("/proc/pressure/cpu")) -> float | None:
+    """Share of the last 10 s in which some task waited for a CPU (Linux PSI), in percent."""
+    try:
+        for line in path.read_text().splitlines():
+            if line.startswith("some "):
+                for field_ in line.split()[1:]:
+                    key, _, value = field_.partition("=")
+                    if key == "avg10":
+                        return float(value)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 def _rms_db(pcm: np.ndarray) -> float:
     """Loudness of int16 samples in dBFS (-inf-safe: at most -120)."""
     if pcm.size == 0:
@@ -123,6 +138,8 @@ class LiveTranscriber:
         clusterer: OnlineClusterer | None = None,
         mentions: MentionSpotter | None = None,
         silence_db: float = -55.0,
+        adaptive: bool = True,
+        pressure: Callable[[], float | None] = cpu_pressure,
     ):
         self.transcriber = transcriber
         self.sources = sources
@@ -137,6 +154,14 @@ class LiveTranscriber:
         self.clusterer = clusterer
         self.mentions = mentions
         self.silence_db = silence_db
+        # Back off when ticks cannot keep up or the machine is busy (see _adapt).
+        self.adaptive = adaptive
+        self.pressure = pressure
+        self.base_interval = interval
+        self.max_interval = max(interval, min(interval * 4, max_buffer / 2))
+        self.slowed_by: str | None = None
+        self._fast_ticks = 0
+        self._ready_status = "Live"
         self.committed: list[TranscriptSegment] = []
 
     async def run(self) -> None:
@@ -155,11 +180,14 @@ class LiveTranscriber:
                 logger.warning("Live speaker detection unavailable: %s", e)
                 self.embedder = None
                 status = "Live (speaker detection unavailable)"
+        self._ready_status = status
         self.emit(self._status(status))
         try:
             while True:
                 await asyncio.sleep(self.interval)
+                started = time.monotonic()
                 await self.tick()
+                self._adapt(time.monotonic() - started)
         except asyncio.CancelledError:
             try:
                 await self.tick(flush=True)
@@ -311,6 +339,41 @@ class LiveTranscriber:
             return await self.transcriber.transcribe(path, language=self.language)
         finally:
             Path(path).unlink(missing_ok=True)
+
+    # CPU pressure (percent of time something waited for a CPU) above which we back off.
+    PRESSURE_LIMIT = 40.0
+
+    def _adapt(self, elapsed: float) -> None:
+        """Stretch the tick interval (up to 4x) while transcription cannot keep up with the
+        audio or the CPU is contended, and shrink it back after five easy ticks. Nothing is
+        dropped: a longer interval just transcribes more audio per tick, and the final job
+        covers everything anyway."""
+        if not self.adaptive:
+            return
+        pressure = self.pressure()
+        busy = pressure is not None and pressure > self.PRESSURE_LIMIT
+        if elapsed > self.interval or busy:
+            self._fast_ticks = 0
+            reason = "CPU busy" if busy else "transcription is slow"
+            wider = min(self.interval * 2, self.max_interval)
+            if wider != self.interval:
+                self.interval = wider
+                logger.info("Live transcription every %.0f s (%s)", wider, reason)
+            if reason != self.slowed_by:
+                self.slowed_by = reason
+                self.emit(self._status(f"{self._ready_status} · slowed down ({reason})"))
+            return
+        if self.interval == self.base_interval or elapsed >= self.interval / 2:
+            self._fast_ticks = 0
+            return
+        self._fast_ticks += 1
+        if self._fast_ticks < 5:
+            return
+        self._fast_ticks = 0
+        self.interval = max(self.interval / 2, self.base_interval)
+        if self.interval == self.base_interval:
+            self.slowed_by = None
+            self.emit(self._status(self._ready_status))
 
     def _status(self, message: str) -> dict:
         return {"type": "live_status", "session_id": self.session_id, "message": message}

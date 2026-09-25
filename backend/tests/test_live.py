@@ -169,3 +169,69 @@ def test_parakeet_live_thread_budget():
     st = Settings(live_transcriber="parakeet", live_threads=2, transcriber="parakeet")
     assert build_live_transcriber(st).threads == 2
     assert build_transcriber(st).threads is None  # final transcription may use every core
+
+
+def _adaptive(tmp_path, pressure=lambda: None, interval=5.0):
+    events = []
+    source = LiveSource(path=tmp_path / "x.wav", speaker="Me")
+    live = LiveTranscriber(
+        DurationTranscriber(), [source], events.append, "s1", interval=interval, pressure=pressure
+    )
+    return live, events
+
+
+def test_slow_ticks_stretch_the_interval_up_to_four_times(tmp_path):
+    live, events = _adaptive(tmp_path)
+    live._adapt(6.0)  # a 5 s tick took 6 s: falling behind
+    assert live.interval == 10.0
+    live._adapt(11.0)
+    live._adapt(30.0)
+    assert live.interval == 15.0  # capped at max_buffer / 2 (30 s buffer)
+    assert [e["message"] for e in events] == [
+        "Live · slowed down (transcription is slow)"
+    ]  # one status per change, not per tick
+
+
+def test_fast_ticks_shrink_the_interval_back(tmp_path):
+    live, events = _adaptive(tmp_path)
+    live._adapt(6.0)
+    assert live.interval == 10.0
+    for _ in range(4):
+        live._adapt(1.0)
+    assert live.interval == 10.0  # needs five easy ticks in a row
+    live._adapt(1.0)
+    assert live.interval == 5.0
+    assert events[-1]["message"] == "Live"
+    live._adapt(1.0)
+    assert live.interval == 5.0  # never below the setting
+
+
+def test_cpu_pressure_slows_down_even_when_ticks_are_fast(tmp_path):
+    pressure = {"value": 75.0}
+    live, events = _adaptive(tmp_path, pressure=lambda: pressure["value"])
+    live._adapt(0.5)
+    assert live.interval == 10.0
+    assert events[-1]["message"] == "Live · slowed down (CPU busy)"
+    pressure["value"] = 5.0
+    for _ in range(5):
+        live._adapt(0.5)
+    assert live.interval == 5.0
+
+
+def test_adaptive_off_keeps_the_interval(tmp_path):
+    live, events = _adaptive(tmp_path)
+    live.adaptive = False
+    live._adapt(60.0)
+    assert live.interval == 5.0 and events == []
+
+
+def test_cpu_pressure_reads_psi(tmp_path):
+    from mnemosyne.transcription.live import cpu_pressure
+
+    psi = tmp_path / "cpu"
+    psi.write_text(
+        "some avg10=42.50 avg60=10.00 avg300=3.00 total=123\n"
+        "full avg10=1.00 avg60=0.00 avg300=0.00 total=4\n"
+    )
+    assert cpu_pressure(psi) == 42.5
+    assert cpu_pressure(tmp_path / "missing") is None

@@ -425,6 +425,7 @@ def live_transcribe(app: AppContext, session_id: str, recording):
             clusterer=clusterer,
             mentions=MentionSpotter(parse_keywords(settings.mention_keywords)),
             silence_db=settings.live_silence_db,
+            adaptive=settings.live_adaptive,
         )
         app.live[session_id] = live  # read by the copilot
         try:

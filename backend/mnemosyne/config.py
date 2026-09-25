@@ -119,6 +119,9 @@ class Settings(BaseSettings):
     live_threads: int = 2
     # Live audio quieter than this (dBFS) is not sent to the transcriber at all.
     live_silence_db: float = -55.0
+    # Transcribe less often (up to 4x the interval) while the live transcript falls behind
+    # or the CPU is busy, instead of competing with the desktop.
+    live_adaptive: bool = True
     # Live copilot: running notes (summary, decisions, action items, open questions) from
     # the live transcript while recording, refreshed at most this often, using the default
     # model. Needs the live transcript.

@@ -100,6 +100,7 @@
 				live_speaker_threshold: v.live_speaker_threshold,
 				mention_keywords: v.mention_keywords,
 				live_threads: v.live_threads,
+				live_adaptive: v.live_adaptive,
 				copilot: v.copilot,
 				copilot_interval_seconds: v.copilot_interval_seconds,
 				whisper_model_size: v.whisper_model_size,
@@ -377,6 +378,10 @@
 					<label>
 						<span class={labelClass}>CPU threads for the live transcript (more is not faster; all cores freezes the desktop)</span>
 						<input type="number" min="1" max="8" bind:value={form.live_threads} disabled={locked('live_threads') || !form.live_transcription} class={inputClass} />
+					</label>
+					<label class="flex items-center gap-2">
+						<input type="checkbox" bind:checked={form.live_adaptive} disabled={locked('live_adaptive') || !form.live_transcription} class="rounded border-gray-600 bg-gray-800" />
+						<span class="text-sm text-gray-300">Slow the live transcript down when it falls behind or the computer is busy</span>
 					</label>
 					<label>
 						<span class={labelClass}>Label for the system-audio channel</span>

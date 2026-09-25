@@ -2221,6 +2221,8 @@ export interface components {
             linear_api_key?: string | null;
             /** Linear Team */
             linear_team?: string | null;
+            /** Live Adaptive */
+            live_adaptive?: boolean | null;
             /** Live Diarization */
             live_diarization?: boolean | null;
             /** Live Interval Seconds */
@@ -2392,6 +2394,8 @@ export interface components {
             linear_api_key: string;
             /** Linear Team */
             linear_team: string;
+            /** Live Adaptive */
+            live_adaptive: boolean;
             /** Live Diarization */
             live_diarization: boolean;
             /** Live Interval Seconds */
