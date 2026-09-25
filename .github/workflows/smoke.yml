@@ -1,0 +1,38 @@
+name: Smoke test
+
+# Runs the built AppImage (scripts/smoke-appimage.sh). Called by the Release workflow after the
+# bundle job; run it by hand against an earlier build with that run's id.
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Release workflow run whose mnemosyne-linux artifact to test"
+        required: true
+
+permissions:
+  contents: read
+  actions: read # artifacts of another run
+
+jobs:
+  appimage:
+    name: Smoke test (AppImage)
+    runs-on: ubuntu-22.04 # the oldest system we ship for, like the bundle
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: mnemosyne-linux
+          path: dist
+          run-id: ${{ inputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Test dependencies
+        # The AppImage takes GL/EGL from the host, like every desktop provides.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfuse2 xvfb xauth pulseaudio pulseaudio-utils psmisc curl \
+            libegl1 libgl1 libgles2 libgl1-mesa-dri
+      - name: Bundled media stack, first launch, playback
+        run: bash scripts/smoke-appimage.sh dist/*.AppImage

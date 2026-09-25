@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: read # the smoke test downloads the bundle artifact
 
 jobs:
   bundle:
@@ -58,23 +59,8 @@ jobs:
           path: dist/*
 
   smoke:
-    name: Smoke test (AppImage)
     needs: bundle
-    runs-on: ubuntu-22.04 # the oldest system we ship for, like the bundle
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: mnemosyne-linux
-          path: dist
-      - name: Test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libfuse2 xvfb xauth pulseaudio pulseaudio-utils psmisc curl
-      - name: Bundled media stack, first launch, playback
-        run: bash scripts/smoke-appimage.sh dist/*.AppImage
+    uses: ./.github/workflows/smoke.yml
 
   flatpak:
     name: Flatpak (from the deb)
