@@ -95,7 +95,7 @@
 		<input
 			bind:this={fileInput}
 			type="file"
-			accept="audio/*,video/*,.ogg,.opus,.wav,.mp3,.m4a,.flac,.webm,.mp4,.mkv"
+			accept="audio/*,video/*,.ogg,.opus,.wav,.mp3,.m4a,.flac,.webm,.mp4,.mkv,.mov,.caf,.3gp,.amr,.aiff"
 			multiple
 			onchange={(e) => { importFiles((e.currentTarget as HTMLInputElement).files); (e.currentTarget as HTMLInputElement).value = ''; }}
 			class="hidden"

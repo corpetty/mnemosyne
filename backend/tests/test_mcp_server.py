@@ -103,3 +103,19 @@ async def test_server_exposes_tools(backend, seeded):
     result = await server.call_tool("search_meetings", {"query": "docs"})
     text = json.dumps(result.model_dump())
     assert "Release sync" in text
+
+
+@pytest.mark.anyio
+async def test_local_only_meetings_are_not_shared(backend, ctx, seeded, fake_provider):
+    from mnemosyne.mcp_server import LOCAL_ONLY_NOTE
+
+    ctx.repo.update_fields(seeded.id, local_only=True)
+    assert "Release sync" not in await list_meetings(backend)
+    assert "Release sync" not in await search_meetings(backend, "migration")
+    assert await get_meeting(backend, seeded.id) == LOCAL_ONLY_NOTE
+    assert "Update docs" not in await get_action_items(backend)
+    # Ask leaves it out even though the configured provider is local.
+    ctx.settings.default_provider = "fake"
+    out = await ask_meetings(backend, "When does the migration ship?")
+    assert "October" not in json.dumps(fake_provider.calls)
+    assert "Release sync" not in out

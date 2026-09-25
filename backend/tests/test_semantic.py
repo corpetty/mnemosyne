@@ -129,3 +129,34 @@ async def test_indexer_follows_session_events(ctx):
     assert ctx.repo.vector_hashes(s.id)
     assert idx.query("ship")[0].session_id == s.id
     await idx.stop()
+
+
+def test_failed_model_load_is_retried(ctx, monkeypatch):
+    from mnemosyne.search import index as index_mod
+
+    calls = {"n": 0}
+
+    def flaky(settings):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("offline")
+        return HashEmbedder()
+
+    idx = VectorIndex(ctx.repo, ctx.settings, flaky)
+    assert idx.embedder() is None and "offline" in idx.status().error
+    assert idx.embedder() is None and calls["n"] == 1  # not retried right away
+    monkeypatch.setattr(index_mod, "RETRY_SECONDS", 0)
+    assert idx.embedder() is not None and idx.status().error is None
+
+
+def test_unchanged_sessions_are_skipped_cheaply(ctx, monkeypatch):
+    infra, _ = _seed(ctx)
+    loads = []
+    real_get = ctx.repo.get
+    monkeypatch.setattr(ctx.repo, "get", lambda sid: loads.append(sid) or real_get(sid))
+    assert ctx.index.index_session(infra.id) == 0
+    assert loads == []  # skipped on the stamp, without loading the transcript
+    ctx.repo.update_fields(infra.id, name="Infra weekly (renamed)")
+    loads.clear()  # update_fields reads the session back itself
+    assert ctx.index.index_session(infra.id) == 2  # the summary chunk includes the name
+    assert loads == [infra.id]

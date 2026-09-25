@@ -15,6 +15,9 @@ class AskRequest(ApiModel):
     question: str
     provider: str = ""
     model: str = ""
+    # Leave local-only meetings out even with a local provider (the MCP server sets this:
+    # its answer goes to an assistant, usually a cloud LLM).
+    exclude_local_only: bool = False
 
 
 @router.post("/ask", response_model=Job)
@@ -25,7 +28,10 @@ async def ask(request: AskRequest, ctx: AppContext = Depends(get_ctx)):
         raise HTTPException(status_code=400, detail="Question must not be empty")
     if len(question) > 2000:
         raise HTTPException(status_code=400, detail="Question is too long")
-    return ctx.jobs.submit("ask", ask_question(ctx, question, request.provider, request.model))
+    return ctx.jobs.submit(
+        "ask",
+        ask_question(ctx, question, request.provider, request.model, request.exclude_local_only),
+    )
 
 
 @router.get("/asks", response_model=list[Ask])

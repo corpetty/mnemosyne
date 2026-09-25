@@ -764,6 +764,15 @@ class SessionRepository:
     def clear_vectors(self) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM chunk_vectors")
+            self._conn.execute("DELETE FROM meta WHERE key LIKE 'vecstamp:%'")
+
+    def session_stamp(self, session_id: str) -> str | None:
+        """Changes whenever the session or its transcript is written (updated_at)."""
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT updated_at FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        return r["updated_at"] if r else None
 
     def all_vectors(self) -> list:
         with self._lock:

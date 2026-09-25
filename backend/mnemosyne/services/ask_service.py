@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 from ..models.ask import Ask, Citation, Passage
@@ -100,11 +101,13 @@ async def answer_question(
     model: str,
     extra_instructions: str = "",
     index=None,
+    exclude_local_only: bool = False,
 ) -> Ask:
     from ..search.hybrid import hybrid_passages
 
-    passages = hybrid_passages(repo, index, question)
-    if is_cloud(provider_name):
+    # Embedding (and a first model load) is CPU work: keep it off the event loop.
+    passages = await asyncio.to_thread(hybrid_passages, repo, index, question)
+    if exclude_local_only or is_cloud(provider_name):
         hidden = repo.local_only_ids()
         passages = [p for p in passages if p.session_id not in hidden]
     if not passages:

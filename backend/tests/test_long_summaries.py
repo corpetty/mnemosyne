@@ -142,3 +142,22 @@ def test_merge_parts_unit():
     summary, d = merge_parts(parts, "meeting")
     assert d.topics == ["x", "y"] and d.decisions == ["d"] and len(d.action_items) == 1
     assert [(c.start, c.title) for c in d.chapters] == [(0.0, "A"), (600.0, "B")]
+
+
+@pytest.mark.anyio
+async def test_long_merges_happen_in_rounds():
+    """When the partial notes exceed the budget, groups are merged first, then the groups."""
+    reduce_reply = json.dumps({"summary": "merged", "decisions": ["d"]})
+    svc = SummarizationService()
+    svc.chunk_chars = 250  # each partial JSON is ~400 chars: every merge round halves the list
+    provider = ScriptedProvider(reduce_reply)
+    svc.providers = {"p": provider}
+    progress = []
+    out = await svc.summarize(_segments(12), "p", on_progress=progress.append)
+    maps = [c for c in provider.calls if c[0] == "map"]
+    reduces = [c for c in provider.calls if c[0] == "reduce"]
+    assert len(maps) == 4 and len(reduces) == 3  # two pair merges, then a final merge
+    for c in reduces:  # no merge prompt carries more than a pair of notes
+        assert len(json.loads(c[2])) <= 2
+    assert out["summary"] == "merged"
+    assert progress[-1] == "Merging 2 parts"

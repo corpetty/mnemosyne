@@ -252,6 +252,14 @@ IMPORT_EXTENSIONS = {
     ".mkv",
     ".aac",
     ".wma",
+    # What phones record: iOS camera and voice memos, Android recorders.
+    ".mov",
+    ".caf",
+    ".3gp",
+    ".3ga",
+    ".amr",
+    ".aif",
+    ".aiff",
 }
 
 

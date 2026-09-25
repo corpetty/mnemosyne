@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import logging
 import threading
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 WINDOW_CHARS = 600
 WINDOW_LINES = 8
+RETRY_SECONDS = 300  # after a failed model load (offline at startup), try again this late
 
 
 @dataclass
@@ -87,7 +89,9 @@ class VectorIndex:
         self._factory = embedder_factory
         self._embedder = None
         self.error: str | None = None
+        self._failed_at = 0.0
         self._lock = threading.Lock()
+        self._matrix_lock = threading.Lock()  # _keys and _matrix change together
         self._matrix: np.ndarray | None = None
         self._keys: list[tuple[str, str, int, int]] = []
         self._dirty = True
@@ -99,7 +103,9 @@ class VectorIndex:
 
     def embedder(self):
         """The loaded embedder, loading it on first use; None when disabled or broken."""
-        if not self.enabled or self.error:
+        if not self.enabled:
+            return None
+        if self.error and time.monotonic() - self._failed_at < RETRY_SECONDS:
             return None
         with self._lock:
             if self._embedder is None:
@@ -110,8 +116,10 @@ class VectorIndex:
                     self._embedder = factory(self._settings)
                 except Exception as e:  # no network for the first download, bad model name
                     self.error = f"Could not load {self.model}: {e}"
-                    logger.warning(self.error)
+                    self._failed_at = time.monotonic()
+                    logger.warning("%s (retrying in %d s)", self.error, RETRY_SECONDS)
                     return None
+                self.error = None
                 if self.repo.get_meta("embedder") != self._embedder.name:
                     self.repo.clear_vectors()
                     self.repo.set_meta("embedder", self._embedder.name)
@@ -125,12 +133,19 @@ class VectorIndex:
         emb = self.embedder()
         if emb is None:
             return 0
+        # Cheap check first: unchanged since it was last indexed (startup backfill).
+        stamp = self.repo.session_stamp(session_id)
+        if stamp is None:
+            return 0
+        if self.repo.get_meta(f"vecstamp:{session_id}") == stamp:
+            return 0
         session = self.repo.get(session_id)
         if session is None:
             return 0
         chunks = chunk_session(session)
         known = self.repo.vector_hashes(session_id)
         if {(c.kind, c.first): c.hash for c in chunks} == known:
+            self.repo.set_meta(f"vecstamp:{session_id}", stamp)
             return 0
         vecs = emb.embed([c.text for c in chunks]) if chunks else np.zeros((0, 1))
         self.repo.replace_vectors(
@@ -140,18 +155,28 @@ class VectorIndex:
                 for c, v in zip(chunks, vecs, strict=True)
             ],
         )
+        self.repo.set_meta(f"vecstamp:{session_id}", stamp)
         self._dirty = True
         return len(chunks)
 
-    def _load(self) -> None:
-        rows = self.repo.all_vectors()
-        self._keys = [(r["session_id"], r["kind"], r["first_idx"], r["last_idx"]) for r in rows]
-        self._matrix = (
-            np.vstack([np.frombuffer(r["vec"], dtype=np.float16) for r in rows]).astype(np.float32)
-            if rows
-            else None
-        )
-        self._dirty = False
+    def _snapshot(self) -> tuple[list, np.ndarray | None]:
+        """A consistent (keys, matrix) pair, reloaded when the index changed. Queries run on
+        the event loop and in worker threads while the indexer writes, so the pair is
+        rebuilt and swapped under a lock rather than assigned field by field."""
+        with self._matrix_lock:
+            if self._dirty:
+                self._dirty = False  # a write during the reload marks it dirty again
+                rows = self.repo.all_vectors()
+                keys = [(r["session_id"], r["kind"], r["first_idx"], r["last_idx"]) for r in rows]
+                matrix = (
+                    np.vstack([np.frombuffer(r["vec"], dtype=np.float16) for r in rows]).astype(
+                        np.float32
+                    )
+                    if rows
+                    else None
+                )
+                self._keys, self._matrix = keys, matrix
+            return self._keys, self._matrix
 
     # ---- queries ---------------------------------------------------------
 
@@ -162,16 +187,13 @@ class VectorIndex:
         if emb is None or not text.strip():
             return []
         min_score = emb.min_score + (0.05 if strict else 0.0)
-        if self._dirty:
-            self._load()
-        if self._matrix is None:
+        keys, matrix = self._snapshot()
+        if matrix is None:
             return []
         q = emb.embed([text])[0]
-        scores = self._matrix @ q
+        scores = matrix @ q
         order = np.argsort(-scores)[:k]
-        return [
-            VecHit(*self._keys[i], score=float(scores[i])) for i in order if scores[i] >= min_score
-        ]
+        return [VecHit(*keys[i], score=float(scores[i])) for i in order if scores[i] >= min_score]
 
     def status(self) -> IndexStatus:
         return IndexStatus(
@@ -239,6 +261,7 @@ class VectorIndex:
 
     async def rebuild(self) -> None:
         self.error = None
+        self._failed_at = 0.0
         await asyncio.to_thread(self.repo.clear_vectors)
         self._dirty = True
         self.schedule_all()

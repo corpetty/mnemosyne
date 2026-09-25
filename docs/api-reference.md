@@ -217,10 +217,15 @@ Body `{"local_only": true}`. A local-only meeting is never sent to a cloud LLM p
 provider (and their jobs refuse too), glossary LLM correction is skipped, and Ask, digests and topic
 threads leave it out when they use a cloud provider. `SessionSummary.local_only` shows it in lists.
 
+The MCP server (`mnemosyne-mcp`) never returns local-only meetings: they are left out of its list,
+search and action-item tools, `get_meeting` answers with a short note, and its Ask requests set
+`exclude_local_only` (below), since its answers go to an assistant.
+
 With the `cloud_redaction` setting, every prompt to a cloud provider has emails, phone numbers and
-the names of known people (participants, invitees, owners, saved voices; for multi-word names also
-each capitalized part) replaced by `[EMAIL_n]`, `[PHONE_n]`, `[PERSON_n]`, and the reply is restored
-before it is parsed.
+the names of known people (participants, invitees, owners, saved voices) replaced by `[EMAIL_n]`,
+`[PHONE_n]`, `[PERSON_n]`, and the reply is restored before it is parsed. Full multi-word names match
+in any case; single-word names and the parts of full names match only as written ("Will" but not
+"will"). Phone numbers are 9 to 15 digits that are not dates or thousands-grouped amounts.
 
 ### `PATCH /api/sessions/{session_id}`
 
@@ -309,8 +314,11 @@ event. With `semantic_search` off, or when the model cannot load, search and Ask
 ### `POST /api/ask`
 
 ```json
-{ "question": "When does the Waku migration ship?", "provider": "", "model": "" }
+{ "question": "When does the Waku migration ship?", "provider": "", "model": "", "exclude_local_only": false }
 ```
+
+`exclude_local_only` leaves local-only meetings out even with a local provider (they are always
+left out for a cloud provider).
 
 Queues an `ask` job (at most two at once) and returns it. The runner retrieves passages with an
 any-term FTS query over the question's meaningful words (stopwords dropped, longer words

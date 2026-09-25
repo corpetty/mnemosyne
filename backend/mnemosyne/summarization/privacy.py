@@ -23,6 +23,15 @@ def is_cloud(provider: str) -> bool:
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
 # 9+ digits with the usual separators; avoids timestamps like 12:30 and short numbers.
 _PHONE = re.compile(r"(?<![\w:])\+?\d[\d ()./-]{7,}\d(?![\w:])")
+_DATE = re.compile(r"^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$|^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$")
+_GROUPED = re.compile(r"^\d{1,3}(?:[ .]\d{3})+$")  # 1 000 000, 1.000.000
+
+
+def _is_phone(candidate: str) -> bool:
+    """A 9 to 15 digit number that is not a date or a thousands-grouped amount."""
+    digits = sum(c.isdigit() for c in candidate)
+    c = candidate.strip()
+    return 9 <= digits <= 15 and not _DATE.match(c) and not _GROUPED.match(c)
 
 
 class Redactor:
@@ -32,24 +41,27 @@ class Redactor:
     map to the same values."""
 
     def __init__(self, names: list[str]):
-        variants: set[str] = set()
+        full: set[str] = set()  # "Jakub Sokołowski": matched in any case
+        single: set[str] = set()  # "Will", "Jakub": matched as written, so "will" stays
         for n in names:
             n = " ".join(n.split())
             if len(n) < 2:
                 continue
-            variants.add(n)
             parts = n.split(" ")
-            if len(parts) > 1:  # "Jakub Sokołowski" also hides "Jakub" and "Sokołowski"
-                variants.update(p for p in parts if len(p) >= 3 and p[0].isupper())
-        self._names = sorted(variants, key=len, reverse=True)
-        self._name_re = (
-            re.compile(
-                r"(?<!\w)(" + "|".join(re.escape(v) for v in self._names) + r")(?!\w)",
-                re.IGNORECASE,
-            )
-            if self._names
-            else None
-        )
+            if len(parts) > 1:
+                full.add(n)
+                single.update(p for p in parts if len(p) >= 3 and p[0].isupper())
+            else:
+                single.add(n)
+
+        def pattern(words: set[str], flags: int = 0):
+            if not words:
+                return None
+            alts = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
+            return re.compile(r"(?<!\w)(" + alts + r")(?!\w)", flags)
+
+        self._full_re = pattern(full, re.IGNORECASE)
+        self._single_re = pattern(single)
         self._forward: dict[str, str] = {}
         self._back: dict[str, str] = {}
         self._counts: dict[str, int] = {}
@@ -65,9 +77,15 @@ class Redactor:
 
     def redact(self, text: str) -> str:
         text = _EMAIL.sub(lambda m: self._placeholder("EMAIL", m.group(0)), text)
-        text = _PHONE.sub(lambda m: self._placeholder("PHONE", m.group(0)), text)
-        if self._name_re is not None:
-            text = self._name_re.sub(lambda m: self._placeholder("PERSON", m.group(0)), text)
+        text = _PHONE.sub(
+            lambda m: (
+                self._placeholder("PHONE", m.group(0)) if _is_phone(m.group(0)) else m.group(0)
+            ),
+            text,
+        )
+        for name_re in (self._full_re, self._single_re):
+            if name_re is not None:
+                text = name_re.sub(lambda m: self._placeholder("PERSON", m.group(0)), text)
         return text
 
     def restore(self, text: str) -> str:

@@ -98,3 +98,25 @@ def test_import_options_and_errors(client, ctx, tmp_path):
     # failed imports do not leave orphaned sessions except the decode failure (marked error)
     names = [s["name"] for s in client.get("/api/sessions").json()]
     assert "empty" not in names
+
+
+@needs_ffmpeg
+def test_import_accepts_phone_video(client, ctx, tmp_path):
+    """iPhones record a .MOV when the phone page uses the camera's recorder."""
+    import subprocess
+
+    wav = tmp_path / "a.wav"
+    _wav(wav)
+    mov = tmp_path / "IMG_0001.MOV"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-c:a", "aac", str(mov)],
+        check=True,
+    )
+    with mov.open("rb") as f:
+        r = client.post(
+            "/api/audio/import",
+            files={"file": (mov.name, f, "video/quicktime")},
+            data={"transcribe": "false"},
+        )
+    assert r.status_code == 200, r.text
+    assert r.json()["session"]["name"] == "IMG_0001"

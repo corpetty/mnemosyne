@@ -1224,6 +1224,11 @@ export interface components {
         /** AskRequest */
         AskRequest: {
             /**
+             * Exclude Local Only
+             * @default false
+             */
+            exclude_local_only: boolean;
+            /**
              * Model
              * @default
              */

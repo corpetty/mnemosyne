@@ -16,18 +16,32 @@ def test_redactor_round_trip():
     r = Redactor(["Jakub Sokołowski", "Alice"])
     text = (
         "Alice asked jakub sokołowski (jakub@status.im, +48 601 234 567) at 12:30. "
-        "Jakub agreed; alice will follow up. Call ext 42."
+        "Jakub agreed; Alice will follow up. Call ext 42."
     )
     out = r.redact(text)
-    assert "Alice" not in out and "Jakub" not in out and "jakub" not in out
+    assert "Alice" not in out and "Jakub" not in out and "sokołowski" not in out
     assert "status.im" not in out and "601" not in out
     assert "12:30" in out and "42" in out  # times and short numbers stay
-    assert out.count("[PERSON_1]") == 2  # same person, same placeholder, any case
-    reply = "Summary: [PERSON_1] and [PERSON_2] met; email [EMAIL_1]. [PERSON_9] unknown."
+    assert out.count("[PERSON_2]") == 2  # "Alice" twice, same placeholder
+    reply = "Summary: [PERSON_2] and [PERSON_1] met; email [EMAIL_1]. [PERSON_9] unknown."
     back = r.restore(reply)
     assert back.startswith("Summary: Alice and jakub sokołowski met; email jakub@status.im.")
     assert "[PERSON_9]" in back
     assert Redactor([]).redact("no names here") == "no names here"
+
+
+def test_redactor_leaves_common_words_dates_and_amounts():
+    r = Redactor(["Will", "May Chen"])
+    out = r.redact(
+        "Will said we will ship on 2026-09-21, may slip to 21/09/2026; budget 1 000 000. "
+        "May Chen agreed; may chen too. Call Will on +1 (415) 555-0100."
+    )
+    assert "we will ship" in out and ", may slip" in out  # verbs untouched
+    assert "2026-09-21" in out and "21/09/2026" in out and "1 000 000" in out
+    assert "Will said" not in out and "Call [PERSON_" in out
+    assert "May Chen" not in out and "may chen" not in out  # full names: any case
+    assert "555-0100" not in out and "[PHONE_1]" in out
+    assert "we will ship" in r.restore(out)  # restoring does not recase other words
 
 
 @pytest.mark.anyio

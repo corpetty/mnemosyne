@@ -261,7 +261,13 @@ def summarize_session(
     return run
 
 
-def ask_question(app: AppContext, question: str, provider: str = "", model: str = ""):
+def ask_question(
+    app: AppContext,
+    question: str,
+    provider: str = "",
+    model: str = "",
+    exclude_local_only: bool = False,
+):
     """Build the ask job runner; the saved Ask is the job result."""
 
     async def run(ctx: JobContext) -> dict:
@@ -278,6 +284,7 @@ def ask_question(app: AppContext, question: str, provider: str = "", model: str 
             model or st.default_model,
             extra_instructions=glossary_instructions(parse_glossary(st.glossary)),
             index=app.index,
+            exclude_local_only=exclude_local_only,
         )
         app.repo.save_ask(ask)
         ctx.update("Answer ready")

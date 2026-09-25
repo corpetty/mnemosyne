@@ -148,8 +148,32 @@ class SummarizationService:
             raw = await provider.summarize("\n".join(lines[a:b]), model, system)
             summary, data = parse_summary_response(raw, style=style)
             parts.append(part_payload(n, start, end, summary, data))
+        return await self._merge(provider, model, parts, style, instructions, on_progress)
+
+    async def _merge(
+        self, provider, model, parts, style, instructions, on_progress
+    ) -> tuple[str, SummaryData]:
+        """Merge partial notes into one summary. When the notes themselves exceed the
+        budget (very long meetings), merge them in groups first, then merge the groups."""
+        groups = _group_parts(parts, self.chunk_chars) if self.chunk_chars else [parts]
+        if len(groups) > 1:
+            merged = []
+            for n, group in enumerate(groups, start=1):
+                if len(group) == 1:
+                    merged.append({**group[0], "part": n})
+                    continue
+                summary, data = await self._reduce_once(
+                    provider, model, group, style, instructions, on_progress
+                )
+                merged.append(part_payload(n, group[0]["from"], group[-1]["to"], summary, data))
+            return await self._merge(provider, model, merged, style, instructions, on_progress)
+        return await self._reduce_once(provider, model, parts, style, instructions, on_progress)
+
+    async def _reduce_once(
+        self, provider, model, parts, style, instructions, on_progress
+    ) -> tuple[str, SummaryData]:
         if on_progress:
-            on_progress(f"Merging {total} parts")
+            on_progress(f"Merging {len(parts)} parts")
         raw = await provider.complete(
             reduce_system_prompt(style, instructions),
             json.dumps(parts, ensure_ascii=False, indent=1),
@@ -162,6 +186,21 @@ class SummarizationService:
         if not data.chapters:
             data.chapters = merge_parts(parts, style)[1].chapters
         return summary, data
+
+
+def _group_parts(parts: list[dict], budget: int) -> list[list[dict]]:
+    """Consecutive groups whose JSON stays under `budget`, each with at least two parts
+    when possible, so every round of merging shrinks the list."""
+    groups: list[list[dict]] = [[]]
+    size = 0
+    for p in parts:
+        cost = len(json.dumps(p, ensure_ascii=False, indent=1))
+        if groups[-1] and size + cost > budget and len(groups[-1]) >= 2:
+            groups.append([])
+            size = 0
+        groups[-1].append(p)
+        size += cost
+    return groups
 
 
 def merge_parts(parts: list[dict], style: str) -> tuple[str, SummaryData]:

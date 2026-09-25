@@ -7,6 +7,7 @@ is created for someone who already has a note of that name anywhere in the vault
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from ..services.people import PersonDetail, is_person, person_detail
@@ -55,16 +56,29 @@ def render_person(d: PersonDetail, stems: dict[str, str]) -> str:
     return "\n".join(out)
 
 
+_SCAN_TTL = 600.0
+_scans: dict[tuple[Path, Path], tuple[float, set[str]]] = {}
+
+
+def _vault_stems(vault: Path, ours: Path) -> set[str]:
+    """Names of every note in the vault outside our people folder. Cached for a few
+    minutes: walking a large vault on every export (auto-export runs after each summary)
+    is slow."""
+    key = (vault, ours)
+    hit = _scans.get(key)
+    if hit is not None and time.monotonic() - hit[0] < _SCAN_TTL:
+        return hit[1]
+    stems = {p.stem for p in vault.rglob("*.md") if p.parent != ours and ".obsidian" not in p.parts}
+    _scans[key] = (time.monotonic(), stems)
+    return stems
+
+
 def write_person_notes(repo, vault: Path, subfolder: str, names, generic=()) -> list[Path]:
     wanted = {sanitize_filename(n): n for n in names if is_person(n, generic)}
     if not wanted:
         return []
     folder = vault / subfolder / "people"
-    theirs = {
-        p.stem
-        for p in vault.rglob("*.md")
-        if p.stem in wanted and p.parent != folder and ".obsidian" not in p.parts
-    }
+    theirs = set(wanted) & _vault_stems(vault, folder)
     stems = {s.id: note_stem(s) for s in repo.list_summaries()}
     written = []
     for stem, name in wanted.items():

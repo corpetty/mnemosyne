@@ -66,9 +66,19 @@ def _plain(snippet: str) -> str:
 
 # ---- tool implementations (plain async functions, testable without MCP) ---------------
 
+# Meetings marked local-only in the app are never handed to an assistant: the MCP client is
+# usually a cloud LLM, which is exactly what local-only rules out.
+LOCAL_ONLY_NOTE = (
+    "This meeting is marked local-only in Mnemosyne and is not shared with assistants."
+)
+
+
+async def _local_only_ids(backend: Backend) -> set[str]:
+    return {s["id"] for s in await backend.get("/api/sessions") if s.get("local_only")}
+
 
 async def list_meetings(backend: Backend, limit: int = 20, days: int | None = None) -> str:
-    sessions = await backend.get("/api/sessions")
+    sessions = [s for s in await backend.get("/api/sessions") if not s.get("local_only")]
     if days:
         cutoff = datetime.now() - timedelta(days=days)
         sessions = [s for s in sessions if datetime.fromisoformat(s["created_at"]) >= cutoff]
@@ -87,6 +97,8 @@ async def list_meetings(backend: Backend, limit: int = 20, days: int | None = No
 
 async def search_meetings(backend: Backend, query: str, limit: int = 10) -> str:
     hits = await backend.get("/api/search", q=query, limit=max(1, min(limit, 50)))
+    hidden = await _local_only_ids(backend)
+    hits = [h for h in hits if h["session_id"] not in hidden]
     if not hits:
         return f"No matches for {query!r}."
     out = []
@@ -100,7 +112,7 @@ async def search_meetings(backend: Backend, query: str, limit: int = 10) -> str:
 
 
 async def ask_meetings(backend: Backend, question: str, timeout: float = 240) -> str:
-    job = await backend.post("/api/ask", {"question": question})
+    job = await backend.post("/api/ask", {"question": question, "exclude_local_only": True})
     deadline = asyncio.get_running_loop().time() + timeout
     while True:
         job = await backend.get(f"/api/jobs/{job['id']}")
@@ -130,6 +142,8 @@ async def get_meeting(
     max_lines: int = 400,
 ) -> str:
     s = await backend.get(f"/api/sessions/{session_id}")
+    if s.get("local_only"):
+        return LOCAL_ONLY_NOTE
     out = [f"# {s['name']}", f"Date: {_date(s['created_at'])} · status: {s['status']}"]
     if s.get("attendees"):
         out.append("Invited: " + ", ".join(s["attendees"]))
@@ -175,7 +189,9 @@ async def get_action_items(backend: Backend, days: int = 14) -> str:
     sessions = [
         s
         for s in await backend.get("/api/sessions")
-        if s["has_summary"] and datetime.fromisoformat(s["created_at"]) >= cutoff
+        if s["has_summary"]
+        and not s.get("local_only")
+        and datetime.fromisoformat(s["created_at"]) >= cutoff
     ]
     out = []
     for s in sessions:
