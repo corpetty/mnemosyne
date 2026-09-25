@@ -1,18 +1,24 @@
 type ToastType = 'info' | 'success' | 'error';
 
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
 interface Toast {
   id: number;
   message: string;
   type: ToastType;
+  action?: ToastAction;
 }
 
 class ToastState {
   toasts = $state<Toast[]>([]);
   private nextId = 0;
 
-  show(message: string, type: ToastType = 'info', duration = 4000) {
+  show(message: string, type: ToastType = 'info', duration = 4000, action?: ToastAction) {
     const id = this.nextId++;
-    this.toasts = [...this.toasts, { id, message, type }];
+    this.toasts = [...this.toasts, { id, message, type, action }];
     setTimeout(() => this.dismiss(id), duration);
   }
 

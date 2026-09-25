@@ -27,6 +27,7 @@ async def websocket_endpoint(ws: WebSocket):
         {
             "type": "hello",
             "jobs": [j.model_dump(mode="json") for j in ctx.jobs.list(active_only=True)],
+            "recovered": [r.model_dump(mode="json") for r in ctx.recovered],
         }
     )
 

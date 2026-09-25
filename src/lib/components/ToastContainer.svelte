@@ -17,6 +17,18 @@
 			>
 				<div class="flex items-center justify-between gap-3">
 					<span>{toast.message}</span>
+					{#if toast.action}
+						{@const action = toast.action}
+						<button
+							onclick={() => {
+								action.run();
+								toastState.dismiss(toast.id);
+							}}
+							class="shrink-0 px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs"
+						>
+							{action.label}
+						</button>
+					{/if}
 					<button
 						onclick={() => toastState.dismiss(toast.id)}
 						class="text-gray-400 hover:text-gray-200 text-xs"

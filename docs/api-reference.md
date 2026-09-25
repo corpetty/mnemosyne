@@ -715,11 +715,19 @@ transcription engine is unloaded if its configuration changed.
 A read-mostly event stream. The only client message is `{ "type": "ping" }` (answered with `pong`).
 Work is started over HTTP.
 
-On connect the server sends a snapshot of in-flight jobs:
+On connect the server sends a snapshot of in-flight jobs and of the recordings recovered since the
+backend started:
 
 ```json
-{ "type": "hello", "jobs": [ { "...Job..." } ] }
+{ "type": "hello", "jobs": [ { "...Job..." } ], "recovered": [ { "...RecoveredRecording..." } ] }
 ```
+
+A recording is *interrupted* when the backend stops while a session is `recording` or `encoding`
+(crash, freeze, forced restart). On the next start a `recover` job per such session stops any
+`pw-record` still writing its files, repairs the WAV headers, encodes and mixes them like a normal
+stop (sources come from `recording.json`, written next to the audio at start) and sets the session to
+`created`, queuing transcription when `auto_transcribe` is on. With no usable audio the job fails and
+the session becomes `error`. `RecoveredRecording` is `{session_id, name, seconds, transcribing}`.
 
 Then every backend event, in order:
 
@@ -737,6 +745,7 @@ Then every backend event, in order:
 | `meeting_app` | `status` (`started`/`stopped`), `app` | Another app started or stopped recording audio (auto-record) |
 | `copilot_notes` | `session_id`, `notes` | The live copilot's running notes were updated |
 | `live_partial` | `session_id`, `source`, `speaker`, `text` | The still-changing tail for that source; replaces the previous partial (may be empty) |
+| `recovered` | `RecoveredRecording` fields | An interrupted recording was recovered (also listed in the next `hello`) |
 | `pong` | | Reply to `ping` |
 
 Clients should filter `transcription`/`status`/`error`/`live_*` by `session_id` and use `job` events for

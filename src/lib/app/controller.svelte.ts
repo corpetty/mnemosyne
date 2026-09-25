@@ -16,7 +16,7 @@ import { transcriptState } from '$lib/stores/transcript.svelte.js';
 import { uiState, type ShellStage, type View } from '$lib/stores/ui.svelte.js';
 import { updateState } from '$lib/stores/update.svelte.js';
 import { wsState } from '$lib/stores/websocket.svelte.js';
-import type { BackendEvent } from '$lib/types/index.js';
+import type { BackendEvent, RecoveredRecording } from '$lib/types/index.js';
 
 // ---- navigation ----------------------------------------------------------------
 
@@ -281,6 +281,30 @@ export function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+// ---- recovered recordings ---------------------------------------------------------
+
+const announcedRecoveries = new Set<string>();
+
+/** Tell the user once per page that a recording cut short by a crash was saved. */
+function announceRecovered(r: RecoveredRecording) {
+  if (announcedRecoveries.has(r.session_id)) return;
+  announcedRecoveries.add(r.session_id);
+  sessionState.loadSessions();
+  const length = r.seconds >= 60 ? ` (${Math.round(r.seconds / 60)} min)` : '';
+  const message = `Recovered "${r.name}"${length} after an interrupted recording`;
+  if (r.transcribing) {
+    toastState.show(`${message}; transcribing it now`, 'success', 10_000);
+    return;
+  }
+  toastState.show(message, 'success', 20_000, {
+    label: 'Transcribe',
+    run: async () => {
+      await sessionState.selectSession(r.session_id);
+      await transcriptState.transcribe(r.session_id);
+    }
+  });
+}
+
 // ---- mention alerts --------------------------------------------------------------
 
 function announceMention(keyword: string, speaker: string, text: string) {
@@ -337,6 +361,14 @@ function onConnected(): () => void {
     const msg = raw as BackendEvent;
     if (msg.type === 'mention') {
       announceMention(msg.keyword, msg.speaker, msg.text);
+      return;
+    }
+    if (msg.type === 'hello') {
+      for (const r of msg.recovered ?? []) announceRecovered(r);
+      return;
+    }
+    if (msg.type === 'recovered') {
+      announceRecovered(msg);
       return;
     }
     if (msg.type !== 'session') return;

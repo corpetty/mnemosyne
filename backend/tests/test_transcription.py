@@ -109,4 +109,4 @@ def test_hello_lists_active_jobs(client, ctx, fake_engine):
     ctx.sessions.set_audio(sid, "/fake/mixed.ogg", [])
     with client.websocket_connect("/ws") as ws:
         hello = ws.receive_json()
-        assert hello == {"type": "hello", "jobs": []}
+        assert hello == {"type": "hello", "jobs": [], "recovered": []}

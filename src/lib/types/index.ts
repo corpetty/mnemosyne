@@ -55,9 +55,18 @@ export type SelfTestResult = S['SelfTestResult'];
 export type RepoCheck = S['RepoCheck'];
 export type IssueResult = S['IssueResult'];
 
+/** A recording interrupted by a crash, finished when the backend started again. */
+export interface RecoveredRecording {
+  session_id: string;
+  name: string;
+  seconds: number;
+  transcribing: boolean;
+}
+
 /** Events pushed by the backend over /ws. */
 export type BackendEvent =
-  | { type: 'hello'; jobs: Job[] }
+  | { type: 'hello'; jobs: Job[]; recovered?: RecoveredRecording[] }
+  | ({ type: 'recovered' } & RecoveredRecording)
   | { type: 'pong' }
   | { type: 'job'; job: Job }
   | { type: 'session'; session_id: string; status: SessionStatus | 'deleted' | 'audio_deleted' }

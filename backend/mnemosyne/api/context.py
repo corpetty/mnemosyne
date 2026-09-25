@@ -47,6 +47,7 @@ class AppContext:
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     live: dict = field(default_factory=dict)  # session id -> running LiveTranscriber
     copilot_notes: dict = field(default_factory=dict)  # session id -> CopilotNotes
+    recovered: list = field(default_factory=list)  # RecoveredRecording, since this start
     level_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     http_transport: object | None = None  # tests inject an httpx transport for integrations
 
@@ -193,6 +194,10 @@ class AppContext:
     async def startup(
         self, retention_interval: float = 6 * 3600, digest_interval: float = 900
     ) -> None:
+        from ..services.recovery import recover_interrupted
+
+        # First, so retention and the index never see a half-finished recording.
+        recover_interrupted(self)
         if self.settings.echo_cancel:
             status = await self.echo.start()
             if not status.active:

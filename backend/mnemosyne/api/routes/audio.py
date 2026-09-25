@@ -17,6 +17,7 @@ from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, Recording, Session, SessionStatus
 from ...services.copilot import copilot_runner
 from ...services.pipeline import live_transcribe, transcribe_session
+from ...services.recovery import write_manifest
 from ..context import AppContext, get_ctx
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,10 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
     recording = await start_recording(request.device_ids, output_dir)
     if not recording.processes:
         raise HTTPException(status_code=400, detail="None of the selected devices could be opened")
+    try:
+        write_manifest(recording, {d.id: d for d in list_devices()})
+    except Exception:  # recovery then falls back to one "mic" track per file
+        logger.warning("Could not write the recording manifest", exc_info=True)
     ctx.active_recordings[session.id] = recording
     ctx.sessions.set_status(session.id, SessionStatus.RECORDING)
     ctx.level_tasks[session.id] = asyncio.create_task(_stream_levels(ctx, session.id, recording))
