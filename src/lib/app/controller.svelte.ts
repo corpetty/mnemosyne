@@ -13,73 +13,26 @@ import { jobsState } from '$lib/stores/jobs.svelte.js';
 import { sessionState } from '$lib/stores/session.svelte.js';
 import { toastState } from '$lib/stores/toast.svelte.js';
 import { transcriptState } from '$lib/stores/transcript.svelte.js';
-import { uiState, type ShellStage } from '$lib/stores/ui.svelte.js';
+import { uiState, type ShellStage, type View } from '$lib/stores/ui.svelte.js';
 import { updateState } from '$lib/stores/update.svelte.js';
 import { wsState } from '$lib/stores/websocket.svelte.js';
 import type { BackendEvent } from '$lib/types/index.js';
 
 // ---- navigation ----------------------------------------------------------------
 
-export function openAsk() {
-  uiState.closePanels();
-  uiState.showAsk = true;
-  sessionState.activeSession = null;
+/** Show a view in the main area (closing any open meeting). */
+export function openView(view: View) {
+  uiState.view = view;
+  if (view !== 'home') sessionState.activeSession = null;
 }
 
-export function toggleAsk() {
-  if (uiState.showAsk) uiState.showAsk = false;
-  else openAsk();
+/** Header buttons: open a view, or go back home when it is already open. */
+export function toggleView(view: View) {
+  openView(uiState.view === view && !sessionState.activeSession ? 'home' : view);
 }
 
-export function toggleDigest() {
-  if (uiState.showDigest) {
-    uiState.showDigest = false;
-    return;
-  }
-  uiState.closePanels();
-  uiState.showDigest = true;
-  sessionState.activeSession = null;
-}
-
-export function toggleTasks() {
-  if (uiState.showTasks) {
-    uiState.showTasks = false;
-    return;
-  }
-  uiState.closePanels();
-  uiState.showTasks = true;
-  sessionState.activeSession = null;
-}
-
-export function togglePeople() {
-  if (uiState.showPeople) {
-    uiState.showPeople = false;
-    return;
-  }
-  uiState.closePanels();
-  uiState.showPeople = true;
-  sessionState.activeSession = null;
-}
-
-export function toggleTopics() {
-  if (uiState.showTopics) {
-    uiState.showTopics = false;
-    return;
-  }
-  uiState.closePanels();
-  uiState.showTopics = true;
-  sessionState.activeSession = null;
-}
-
-export function toggleSettings() {
-  if (uiState.showSettings) {
-    uiState.showSettings = false;
-    return;
-  }
-  uiState.closePanels();
-  uiState.showSettings = true;
-  sessionState.activeSession = null;
-}
+export const openAsk = () => openView('ask');
+export const openSetup = () => openView('setup');
 
 // ---- recording -----------------------------------------------------------------
 

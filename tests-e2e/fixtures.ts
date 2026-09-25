@@ -29,7 +29,7 @@ export function makeWav(dir: string, name: string, seconds = 20): string {
 /** Open the app and wait for the backend connection. */
 export async function openApp(page: Page) {
   await page.goto('/');
-  await expect(page.getByText('API', { exact: true })).toBeVisible();
+  await expect(page.getByTitle('Connected', { exact: true })).toBeVisible();
 }
 
 /** Import a file through the sidebar and wait until its transcript is shown. */

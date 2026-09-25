@@ -25,7 +25,19 @@
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
-	import { uiState } from '$lib/stores/ui.svelte.js';
+	import { uiState, type View } from '$lib/stores/ui.svelte.js';
+	import type { Component } from 'svelte';
+
+	// Views shown in the main area when no meeting is open.
+	const PANELS: Partial<Record<View, { component: Component<{ onOpenSession?: () => void }>; width: string }>> = {
+		ask: { component: AskPanel, width: 'max-w-3xl' },
+		tasks: { component: TasksPanel, width: 'max-w-3xl' },
+		people: { component: PeoplePanel, width: 'max-w-4xl' },
+		topics: { component: TopicsPanel, width: 'max-w-3xl' },
+		digest: { component: DigestPanel, width: 'max-w-3xl' },
+		settings: { component: SettingsPanel as Component<{ onOpenSession?: () => void }>, width: 'max-w-3xl' }
+	};
+	const panel = $derived(PANELS[uiState.view]);
 
 	$effect(() => connectApp());
 	$effect(() => listenForRemoteActions());
@@ -82,40 +94,10 @@
 		<div class="flex-1 flex flex-col overflow-hidden">
 			{#if sessionState.activeSession}
 				<SessionView />
-			{:else if uiState.showAsk}
+			{:else if panel}
 				<div class="flex-1 overflow-y-auto p-6">
-					<div class="max-w-3xl">
-						<AskPanel onOpenSession={() => (uiState.showAsk = false)} />
-					</div>
-				</div>
-			{:else if uiState.showPeople}
-				<div class="flex-1 overflow-y-auto p-6">
-					<div class="max-w-4xl">
-						<PeoplePanel onOpenSession={() => (uiState.showPeople = false)} />
-					</div>
-				</div>
-			{:else if uiState.showTopics}
-				<div class="flex-1 overflow-y-auto p-6">
-					<div class="max-w-3xl">
-						<TopicsPanel onOpenSession={() => (uiState.showTopics = false)} />
-					</div>
-				</div>
-			{:else if uiState.showTasks}
-				<div class="flex-1 overflow-y-auto p-6">
-					<div class="max-w-3xl">
-						<TasksPanel onOpenSession={() => (uiState.showTasks = false)} />
-					</div>
-				</div>
-			{:else if uiState.showDigest}
-				<div class="flex-1 overflow-y-auto p-6">
-					<div class="max-w-3xl">
-						<DigestPanel onOpenSession={() => (uiState.showDigest = false)} />
-					</div>
-				</div>
-			{:else if uiState.showSettings}
-				<div class="flex-1 overflow-y-auto p-6">
-					<div class="max-w-2xl">
-						<SettingsPanel />
+					<div class={panel.width}>
+						<panel.component onOpenSession={() => (uiState.view = 'home')} />
 					</div>
 				</div>
 			{:else}

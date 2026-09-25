@@ -1,16 +1,15 @@
 /** App-level view state shared by the shell components. */
 export type Tab = 'recording' | 'transcript' | 'summary' | 'notes' | 'export';
 export type BackendStatus = 'checking' | 'connected' | 'unreachable';
+export type SettingsTab = 'general' | 'recording' | 'transcription' | 'ai' | 'notes';
 export type ShellStage = 'installing' | 'starting' | 'ready' | 'error' | null;
 
+/** What the main area shows when no meeting is open (an open meeting always wins). */
+export type View = 'home' | 'ask' | 'tasks' | 'people' | 'topics' | 'digest' | 'settings' | 'setup';
+
 class UiState {
-  /** Shown when no session is open (a session always takes the main area). */
-  showSettings = $state(false);
-  showAsk = $state(false);
-  showDigest = $state(false);
-  showTasks = $state(false);
-  showPeople = $state(false);
-  showTopics = $state(false);
+  view = $state<View>('home');
+  settingsTab = $state<SettingsTab>('recording');
   activeTab = $state<Tab>('recording');
   sidebarCollapsed = $state(false);
 
@@ -23,12 +22,7 @@ class UiState {
   gpuInstall = $state<{ state: 'installing' | 'done' | 'error'; message: string } | null>(null);
 
   closePanels() {
-    this.showAsk = false;
-    this.showDigest = false;
-    this.showTasks = false;
-    this.showPeople = false;
-    this.showTopics = false;
-    this.showSettings = false;
+    this.view = 'home';
   }
 }
 
