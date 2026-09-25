@@ -99,6 +99,7 @@
 				live_diarization: v.live_diarization,
 				live_speaker_threshold: v.live_speaker_threshold,
 				mention_keywords: v.mention_keywords,
+				live_threads: v.live_threads,
 				copilot: v.copilot,
 				copilot_interval_seconds: v.copilot_interval_seconds,
 				whisper_model_size: v.whisper_model_size,
@@ -372,6 +373,10 @@
 					<label>
 						<span class={labelClass}>Live speaker separation (0.35 merges more … 0.6 splits more)</span>
 						<input type="number" min="0.2" max="0.9" step="0.05" bind:value={form.live_speaker_threshold} disabled={locked('live_speaker_threshold') || !form.live_diarization} class={inputClass} />
+					</label>
+					<label>
+						<span class={labelClass}>CPU threads for the live transcript (more is not faster; all cores freezes the desktop)</span>
+						<input type="number" min="1" max="8" bind:value={form.live_threads} disabled={locked('live_threads') || !form.live_transcription} class={inputClass} />
 					</label>
 					<label>
 						<span class={labelClass}>Label for the system-audio channel</span>
