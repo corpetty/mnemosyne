@@ -57,6 +57,25 @@ jobs:
           name: mnemosyne-linux
           path: dist/*
 
+  smoke:
+    name: Smoke test (AppImage)
+    needs: bundle
+    runs-on: ubuntu-22.04 # the oldest system we ship for, like the bundle
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: mnemosyne-linux
+          path: dist
+      - name: Test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfuse2 xvfb xauth pulseaudio pulseaudio-utils psmisc curl
+      - name: Bundled media stack, first launch, playback
+        run: bash scripts/smoke-appimage.sh dist/*.AppImage
+
   flatpak:
     name: Flatpak (from the deb)
     needs: bundle
@@ -84,7 +103,7 @@ jobs:
   release:
     name: Attach to the GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [bundle, flatpak]
+    needs: [bundle, smoke, flatpak]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

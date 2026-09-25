@@ -490,6 +490,26 @@ fn restart_app(app: AppHandle) {
     app.request_restart();
 }
 
+/// Release smoke test (CI sets MNEMOSYNE_SMOKE=1; see scripts/smoke-appimage.sh).
+fn smoke_mode() -> bool {
+    std::env::var_os("MNEMOSYNE_SMOKE").is_some()
+}
+
+#[tauri::command]
+fn is_smoke_test() -> bool {
+    smoke_mode()
+}
+
+/// The page reports the smoke test's result (src/lib/app/smoke.ts); print it and exit.
+#[tauri::command]
+fn smoke_result(app: AppHandle, ok: bool, detail: String) {
+    if !smoke_mode() {
+        return;
+    }
+    println!("SMOKE {}: {detail}", if ok { "OK" } else { "FAIL" });
+    app.exit(if ok { 0 } else { 1 });
+}
+
 /// If WebKit's web process dies (a broken media stack did this in the AppImage), reload the
 /// page instead of leaving a white window. At most three reloads a minute, so a page that
 /// crashes on load cannot loop forever.
@@ -502,9 +522,15 @@ fn reload_after_webview_crash(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let _ = window.with_webview(|webview| {
+    let app = app.clone();
+    let _ = window.with_webview(move |webview| {
         let recent: RefCell<Vec<Instant>> = RefCell::new(Vec::new());
         webview.inner().connect_web_process_terminated(move |view, reason| {
+            if smoke_mode() {
+                println!("SMOKE FAIL: WebKit web process terminated ({reason:?})");
+                app.exit(3);
+                return;
+            }
             let now = Instant::now();
             let mut recent = recent.borrow_mut();
             recent.retain(|t| now.duration_since(*t) < Duration::from_secs(60));
@@ -608,7 +634,9 @@ pub fn run() {
             show_window,
             restart_app,
             can_self_update,
-            restart_backend
+            restart_backend,
+            is_smoke_test,
+            smoke_result
         ])
         .setup(|app| {
             app.handle().plugin(

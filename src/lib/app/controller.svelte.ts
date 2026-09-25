@@ -343,6 +343,7 @@ function onConnected(): () => void {
   digestState.init();
   const stopAutoRecord = listenForAutoRecord();
   maybeRunSetup();
+  void import('./smoke.js').then((m) => m.runSmokeTest());
   calendarState.start();
   audioState.listenForLevels();
   jobsState.onComplete((job) => {
