@@ -79,7 +79,8 @@ set +e
 wait "$app"
 code=$?
 set -e
-grep '^SMOKE' "$work/app.log" || true
+# Not anchored: a progress bar without a newline can precede the line.
+grep -o 'SMOKE .*' "$work/app.log" || true
 [ "$code" -eq 0 ] || fail "the app exited with $code"
-grep -q '^SMOKE OK' "$work/app.log" || fail "no SMOKE OK line"
+grep -q 'SMOKE OK' "$work/app.log" || fail "no SMOKE OK line"
 echo "Smoke test passed"
