@@ -65,8 +65,9 @@ for _ in $(seq 1200); do
 done
 curl -sf http://127.0.0.1:8008/health >/dev/null || fail "backend never became healthy"
 
-curl -sf -F "file=@$work/meeting.wav" -F name="Smoke test" -F transcribe=false \
-  http://127.0.0.1:8008/api/audio/import >/dev/null || fail "import failed"
+status=$(curl -s -o "$work/import.json" -w '%{http_code}' -F "file=@$work/meeting.wav" \
+  -F name="Smoke test" -F transcribe=false http://127.0.0.1:8008/api/audio/import)
+[ "$status" = 200 ] || fail "import returned $status: $(cat "$work/import.json")"
 
 echo "Waiting for the app to report..."
 for _ in $(seq 180); do

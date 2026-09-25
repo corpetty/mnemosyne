@@ -28,11 +28,12 @@ jobs:
           run-id: ${{ inputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Test dependencies
-        # The AppImage takes GL/EGL from the host, like every desktop provides.
+        # The AppImage takes GL/EGL from the host, like every desktop provides, and the backend
+        # uses the host's ffmpeg (a dependency of the deb and rpm).
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libfuse2 xvfb xauth pulseaudio pulseaudio-utils psmisc curl \
+            libfuse2 xvfb xauth pulseaudio pulseaudio-utils psmisc curl ffmpeg \
             libegl1 libgl1 libgles2 libgl1-mesa-dri
       - name: Bundled media stack, first launch, playback
         run: bash scripts/smoke-appimage.sh dist/*.AppImage
