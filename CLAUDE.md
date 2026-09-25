@@ -85,6 +85,10 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   Never `--target <sink>.monitor`: that is a PulseAudio name PipeWire does not resolve, and
   pw-record silently records the default microphone instead (this was a real bug until
   2026-09-24). Verify with `pw-link -l` that pw-record's inputs come from `<sink>:monitor_*`.
+- Never play test audio on this machine (pw-play, self-test tones included) without asking:
+  `pw-play --target <x>` falls back to the default output when `<x>` cannot run (a null sink
+  made with `pw-cli create-node` has no driver), and it played a synthetic voice into Corey's
+  podcast (2026-09-25). Test live features offline: transcribe a file and feed the segments in.
 - This machine runs EasyEffects: recording streams from the mic get rerouted to
   `easyeffects_source`, whose RNNoise outputs exact digital silence when nobody speaks. A −90 dB
   mic level with the mic unmuted is that, not a capture bug.
@@ -154,6 +158,10 @@ Next batch (docs/plans/2026-09-24-next-batch.md, released as 0.7.0): map-reduce 
 (summarization/privacy.py), auto-record (audio/streams.py + controller), Linear/Jira/Slack/Matrix
 (services/trackers.py, chat_post.py), phone page (/m), two-phase install + Flatpak GPU (lib.rs),
 mnemosyne-bench (bench.py).
+
+After 0.7.0 (2026-09-25): review fixes, one `uiState.view` + grouped header, Settings tabs,
+first-run setup wizard (components/SetupWizard.svelte, `/api/system`, `setup_complete`), live
+copilot (services/copilot.py, `copilot_notes` events, components/CopilotPanel.svelte).
 
 Candidates next: offline installer (pre-seeded uv cache); live
 diarization upgrades (Sortformer); publishing the Flatpak to Flathub (needs a license).
