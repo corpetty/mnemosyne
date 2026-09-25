@@ -50,6 +50,24 @@ class ActionItem(ApiModel):
     owner: str | None = None
     issue_url: str | None = None  # set once an issue was created for this item
     done: bool = False
+    live: bool = False  # noted by the live copilot; the final summary did not list it
+
+
+class CopilotItem(ApiModel):
+    text: str
+    owner: str | None = None
+
+
+class CopilotNotes(ApiModel):
+    """The live copilot's running notes (services/copilot.py), kept with the session."""
+
+    session_id: str
+    summary: list[str] = Field(default_factory=list)
+    decisions: list[str] = Field(default_factory=list)
+    action_items: list[CopilotItem] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    lines: int = 0  # transcript lines covered
+    updated_at: datetime = Field(default_factory=datetime.now)
 
 
 class Chapter(ApiModel):
@@ -91,6 +109,7 @@ class Session(ApiModel):
     # Invitees from the calendar event this session was recorded during (names).
     attendees: list[str] = Field(default_factory=list)
     local_only: bool = False  # never sent to a cloud LLM provider
+    copilot_notes: CopilotNotes | None = None  # last notes taken live while recording
 
     @computed_field  # type: ignore[prop-decorator]
     @property

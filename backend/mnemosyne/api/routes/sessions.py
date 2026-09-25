@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ...jobs import Job
 from ...models.base import ApiModel
-from ...models.session import DEFAULT_SESSION_NAME, Session, SessionSummary
-from ...services.copilot import CopilotNotes, copilot_ask_runner
+from ...models.session import DEFAULT_SESSION_NAME, CopilotNotes, Session, SessionSummary
+from ...services.copilot import copilot_ask_runner
 from ...services.pipeline import transcribe_session
 from ...services.stats import MeetingStats, meeting_stats
 from ..context import AppContext, get_ctx
@@ -59,8 +59,8 @@ async def get_stats(session_id: str, ctx: AppContext = Depends(get_ctx)):
 @router.get("/{session_id}/copilot", response_model=CopilotNotes | None)
 async def copilot_notes(session_id: str, ctx: AppContext = Depends(get_ctx)):
     """The running notes of the current (or last) recording of this session, if any."""
-    _require(ctx, session_id)
-    return ctx.copilot_notes.get(session_id)
+    session = _require(ctx, session_id)
+    return ctx.copilot_notes.get(session_id) or session.copilot_notes
 
 
 class CopilotAskRequest(ApiModel):

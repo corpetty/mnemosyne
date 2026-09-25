@@ -8,7 +8,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 
 from ..models.base import ApiModel
-from ..models.session import SummaryData
+from ..models.session import ActionItem, CopilotNotes, SummaryData
 
 
 class TaskItem(ApiModel):
@@ -45,6 +45,17 @@ def carry_over(old: SummaryData | None, new: SummaryData) -> SummaryData:
                 item.issue_url = item.issue_url or prev.issue_url
                 break
     return new
+
+
+def add_live_todos(notes: CopilotNotes | None, data: SummaryData) -> SummaryData:
+    """Append the copilot's to-dos that the final summary has no matching item for, marked
+    `live`, so nothing agreed during the meeting is lost."""
+    if notes is None:
+        return data
+    for todo in notes.action_items:
+        if not any(same_item(todo.text, item.text) for item in data.action_items):
+            data.action_items.append(ActionItem(text=todo.text, owner=todo.owner, live=True))
+    return data
 
 
 def filter_tasks(

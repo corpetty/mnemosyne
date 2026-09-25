@@ -1260,6 +1260,11 @@ export interface components {
             done: boolean;
             /** Issue Url */
             issue_url: string | null;
+            /**
+             * Live
+             * @default false
+             */
+            live: boolean;
             /** Owner */
             owner: string | null;
             /** Text */
@@ -1448,7 +1453,10 @@ export interface components {
             /** Text */
             text: string;
         };
-        /** CopilotNotes */
+        /**
+         * CopilotNotes
+         * @description The live copilot's running notes (services/copilot.py), kept with the session.
+         */
         CopilotNotes: {
             /** Action Items */
             action_items: components["schemas"]["CopilotItem"][];
@@ -2042,6 +2050,7 @@ export interface components {
             attendees: string[];
             /** Audio File */
             audio_file: string | null;
+            copilot_notes: components["schemas"]["CopilotNotes"] | null;
             /**
              * Created At
              * Format: date-time

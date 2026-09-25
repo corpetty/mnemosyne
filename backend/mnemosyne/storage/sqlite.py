@@ -18,13 +18,20 @@ from pathlib import Path
 from ..models.ask import Ask, Citation, Passage, PassageLine
 from ..models.digest import Digest
 from ..models.search import SearchHit, SegmentHit
-from ..models.session import Recording, Session, SessionStatus, SessionSummary, SummaryData
+from ..models.session import (
+    CopilotNotes,
+    Recording,
+    Session,
+    SessionStatus,
+    SessionSummary,
+    SummaryData,
+)
 from ..models.speaker import SpeakerProfile
 from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -43,7 +50,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     notes TEXT NOT NULL DEFAULT '',
     participants TEXT NOT NULL DEFAULT '[]',
     attendees TEXT NOT NULL DEFAULT '[]',
-    local_only INTEGER NOT NULL DEFAULT 0
+    local_only INTEGER NOT NULL DEFAULT 0,
+    copilot_notes TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC);
 CREATE TABLE IF NOT EXISTS segments (
@@ -214,6 +222,8 @@ class SessionRepository:
             self._conn.execute(
                 "ALTER TABLE sessions ADD COLUMN local_only INTEGER NOT NULL DEFAULT 0"
             )
+        if "copilot_notes" not in cols:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN copilot_notes TEXT")
         self._conn.commit()
 
     def _backfill_fts(self) -> None:
@@ -298,6 +308,11 @@ class SessionRepository:
             participants=json.loads(row["participants"]),
             attendees=json.loads(row["attendees"]),
             local_only=bool(row["local_only"]),
+            copilot_notes=(
+                CopilotNotes.model_validate_json(row["copilot_notes"])
+                if row["copilot_notes"]
+                else None
+            ),
             transcript=[
                 TranscriptSegment(
                     text=r["text"],
@@ -330,14 +345,15 @@ class SessionRepository:
             self._conn.execute(
                 """INSERT INTO sessions(id, name, status, created_at, updated_at, audio_file,
                                         summary, summary_data, notes, participants,
-                                        attendees, local_only)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                                        attendees, local_only, copilot_notes)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      name=excluded.name, status=excluded.status, updated_at=excluded.updated_at,
                      audio_file=excluded.audio_file, summary=excluded.summary,
                      summary_data=excluded.summary_data,
                      notes=excluded.notes, participants=excluded.participants,
-                     attendees=excluded.attendees, local_only=excluded.local_only""",
+                     attendees=excluded.attendees, local_only=excluded.local_only,
+                     copilot_notes=excluded.copilot_notes""",
                 (
                     session.id,
                     session.name,
@@ -351,6 +367,7 @@ class SessionRepository:
                     json.dumps(session.participants),
                     json.dumps(session.attendees),
                     int(session.local_only),
+                    session.copilot_notes.model_dump_json() if session.copilot_notes else None,
                 ),
             )
             self._write_segments(session.id, session.transcript)
@@ -370,6 +387,7 @@ class SessionRepository:
             "participants",
             "attendees",
             "local_only",
+            "copilot_notes",
         }
         bad = set(fields) - allowed
         if bad:
@@ -385,8 +403,8 @@ class SessionRepository:
                 value = json.dumps(value)
             if key == "local_only":
                 value = int(bool(value))
-            if key == "summary_data":
-                value = value.model_dump_json() if isinstance(value, SummaryData) else value
+            if key in ("summary_data", "copilot_notes") and value is not None:
+                value = value if isinstance(value, str) else value.model_dump_json()
             sets.append(f"{key}=?")
             values.append(value)
         sets.append("updated_at=?")

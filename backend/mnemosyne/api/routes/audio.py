@@ -121,6 +121,7 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
         live_job_id = job.id
         if ctx.settings.copilot:
             ctx.copilot_notes.pop(session.id, None)
+            ctx.repo.update_fields(session.id, copilot_notes=None)  # a new recording
             ctx.jobs.submit("copilot", copilot_runner(ctx, session.id), session.id)
 
     return StartRecordingResponse(

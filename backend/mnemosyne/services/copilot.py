@@ -2,8 +2,8 @@
 
 The copilot reads the live transcript (the running LiveTranscriber's committed lines) and asks
 the default LLM to *update* its previous notes with the lines added since, so each call stays
-small however long the meeting runs. Notes are pushed as `copilot_notes` events. The final
-summary after the recording replaces them.
+small however long the meeting runs. Notes are pushed as `copilot_notes` events and saved with
+the session; the final summary gets them as a hint, and to-dos it missed become tasks.
 """
 
 from __future__ import annotations
@@ -16,10 +16,8 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from pydantic import Field
-
 from ..jobs import JobContext
-from ..models.base import ApiModel
+from ..models.session import CopilotItem, CopilotNotes
 from ..models.transcript import TranscriptSegment
 from ..summarization.privacy import is_cloud
 from ..summarization.prompts import extract_json, transcript_lines
@@ -51,19 +49,22 @@ MIN_NEW_CHARS = 400  # don't call the LLM for a sentence or two
 ASK_CONTEXT_CHARS = 14000  # most recent transcript sent with a question
 
 
-class CopilotItem(ApiModel):
-    text: str
-    owner: str | None = None
-
-
-class CopilotNotes(ApiModel):
-    session_id: str
-    summary: list[str] = Field(default_factory=list)
-    decisions: list[str] = Field(default_factory=list)
-    action_items: list[CopilotItem] = Field(default_factory=list)
-    open_questions: list[str] = Field(default_factory=list)
-    lines: int = 0  # transcript lines covered
-    updated_at: datetime = Field(default_factory=datetime.now)
+def copilot_hint(notes: CopilotNotes | None) -> str:
+    """The live notes as extra instructions for the final summary (empty when there are none)."""
+    if notes is None:
+        return ""
+    parts = [
+        ("Decided", notes.decisions),
+        ("To do", [f"{a.text} ({a.owner})" if a.owner else a.text for a in notes.action_items]),
+        ("Open questions", notes.open_questions),
+    ]
+    body = "\n".join(f"{title}: " + "; ".join(items) for title, items in parts if items)
+    if not body:
+        return ""
+    return (
+        "Notes an assistant took live during the meeting (may be incomplete or wrong; the "
+        "transcript wins, use them only to avoid missing something):\n" + body
+    )
 
 
 def _strings(v) -> list[str]:
@@ -218,6 +219,7 @@ def copilot_runner(app: AppContext, session_id: str, tick: float = 5.0):
                 if fresh is None:
                     continue
                 app.copilot_notes[session_id] = fresh
+                app.repo.update_fields(session_id, copilot_notes=fresh)  # outlives the meeting
                 updates += 1
                 ctx.update(f"Notes updated ({fresh.lines} lines)")
                 ctx.emit(

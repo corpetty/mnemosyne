@@ -23,7 +23,8 @@ from ..transcription.glossary import (
     llm_correct,
     parse_glossary,
 )
-from .tasks import carry_over
+from .copilot import copilot_hint
+from .tasks import add_live_todos, carry_over
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -217,6 +218,9 @@ def summarize_session(
                 f"{', '.join(session.attendees)}. Speaker labels are not necessarily these "
                 "people; only attribute to a name when the transcript makes it clear."
             ).strip()
+        live_notes = copilot_hint(session.copilot_notes)
+        if live_notes:
+            instr = f"{instr}\n{live_notes}".strip()
 
         ctx.update(f"Summarizing with {prov}/{mdl or 'default model'}")
         ctx.emit({"type": "status", "session_id": session_id, "message": "Summarizing..."})
@@ -233,7 +237,9 @@ def summarize_session(
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})
             raise
         result["data"].source_hash = transcript_hash(session.transcript)
-        # Keep done flags and issue links of items that survive a re-summarize.
+        # To-dos the copilot heard that the summary missed; then keep done flags and issue
+        # links of items that survive a re-summarize.
+        add_live_todos(session.copilot_notes, result["data"])
         current = app.sessions.get_session(session_id)
         carry_over(current.summary_data if current else None, result["data"])
         app.sessions.set_summary(session_id, result["summary"], result["data"])

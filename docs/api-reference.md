@@ -218,7 +218,10 @@ Live copilot. While a session records with the live transcript on and the `copil
 `copilot` job keeps running notes `{session_id, summary, decisions, action_items: [{text, owner}],
 open_questions, lines, updated_at}`: the first as soon as there is enough speech, then at most every
 `copilot_interval_seconds` (default 180), each call folding only the lines since the last update into
-the previous notes. Updates arrive as `copilot_notes` events; GET returns the latest (or `null`).
+the previous notes. Updates arrive as `copilot_notes` events and are saved with the session
+(`Session.copilot_notes`, cleared when a new recording of it starts); GET returns the latest (or
+`null`). Summarizing passes the notes to the model as a hint, and copilot to-dos with no matching
+summary item are appended to `action_items` with `live: true`.
 POST `{"question": "..."}` queues a `copilot_ask` job answering from the transcript so far (the most
 recent ~14k characters and the notes), result `{question, answer, asked_at}`. Local-only meetings get
 no copilot when the default model is a cloud one.

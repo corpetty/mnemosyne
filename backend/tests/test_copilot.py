@@ -9,6 +9,7 @@ from mnemosyne.models.session import Session
 from mnemosyne.models.transcript import TranscriptSegment
 from mnemosyne.services.copilot import (
     MIN_NEW_CHARS,
+    CopilotItem,
     CopilotNotes,
     answer_live,
     copilot_runner,
@@ -104,6 +105,7 @@ async def test_runner_updates_on_enough_text_then_on_interval(ctx, fake_provider
         await asyncio.sleep(0.01)
     assert events[0]["type"] == "copilot_notes" and events[0]["notes"]["lines"] == 2
     assert ctx.copilot_notes[session.id].summary == ["so far"]
+    assert ctx.repo.get(session.id).copilot_notes.summary == ["so far"]  # saved as it goes
     live.committed.append(_seg(2, "z" * 2000))
     await asyncio.sleep(0.1)
     assert len(events) == 1  # more text, but the interval has not passed
@@ -133,3 +135,63 @@ def test_copilot_routes(client, ctx, fake_provider):
     result = client.get(f"/api/jobs/{job['id']}").json()
     assert result["status"] == "completed" and result["result"]["answer"] == "October [00:00]."
     assert "we ship in October" in fake_provider.calls[-1]["transcript"]
+
+
+def _notes(session_id, todos=(), decisions=()):
+    return CopilotNotes(
+        session_id=session_id,
+        summary=["talked"],
+        decisions=list(decisions),
+        action_items=[CopilotItem(text=t, owner=o) for t, o in todos],
+    )
+
+
+def test_notes_outlive_the_backend(settings, ctx):
+    from fastapi.testclient import TestClient
+
+    from mnemosyne.api.app import create_app
+
+    s = ctx.repo.save(Session(name="m"))
+    ctx.repo.update_fields(s.id, copilot_notes=_notes(s.id, decisions=["ship it"]))
+    ctx.repo.close()
+    with TestClient(create_app(settings)) as client:  # a restarted backend, same data dir
+        got = client.get(f"/api/sessions/{s.id}/copilot").json()
+        assert got["decisions"] == ["ship it"]
+        assert client.get(f"/api/sessions/{s.id}").json()["copilot_notes"]["summary"] == ["talked"]
+
+
+def test_summary_gets_the_notes_and_keeps_missed_todos(client, ctx, fake_provider):
+    from tests.conftest import run_summarize
+
+    s = ctx.repo.save(Session(name="m", transcript=[_seg(0, "we should update the docs and ship")]))
+    ctx.repo.update_fields(
+        s.id,
+        copilot_notes=_notes(
+            s.id,
+            todos=[("Update the docs", "Ana"), ("Book the venue", None)],
+            decisions=["ship Friday"],
+        ),
+    )
+    ctx.settings.default_provider = "fake"
+    fake_provider.summary = json.dumps(
+        {"summary": "- x", "action_items": [{"text": "Update the docs.", "owner": "Ana"}]}
+    )
+    run_summarize(client, s.id)
+
+    prompt = fake_provider.calls[-1]["system_prompt"]
+    assert "Notes an assistant took live" in prompt and "ship Friday" in prompt
+    items = ctx.repo.get(s.id).summary_data.action_items
+    assert [(i.text, i.live) for i in items] == [
+        ("Update the docs.", False),
+        ("Book the venue", True),  # heard live, missed by the summary
+    ]
+    run_summarize(client, s.id)  # re-summarizing does not add it twice
+    assert len(ctx.repo.get(s.id).summary_data.action_items) == 2
+
+
+def test_a_new_recording_starts_new_notes(client, ctx, fake_pipewire):
+    s = ctx.repo.save(Session(name="m"))
+    ctx.repo.update_fields(s.id, copilot_notes=_notes(s.id))
+    client.post("/api/audio/start", json={"device_ids": [1], "session_id": s.id})
+    assert ctx.repo.get(s.id).copilot_notes is None
+    client.post(f"/api/audio/stop/{s.id}", json={"transcribe": False})

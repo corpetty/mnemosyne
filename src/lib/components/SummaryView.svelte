@@ -239,6 +239,7 @@
 	});
 
 	const data = $derived(sessionState.activeSession?.summary_data ?? null);
+	const liveNotes = $derived(sessionState.activeSession?.copilot_notes ?? null);
 	const activeJob = $derived(
 		sessionState.activeSession ? jobsState.active(sessionState.activeSession.id, 'summarize') : null
 	);
@@ -288,7 +289,7 @@
 											aria-label={a.done ? `Reopen: ${a.text}` : `Mark done: ${a.text}`}
 											class="text-xs mt-0.5 {a.done ? 'text-emerald-400' : 'text-gray-600 hover:text-gray-300'}"
 										>{a.done ? '✓' : '○'}</button>
-										<span class={a.done ? 'line-through text-gray-500' : ''}>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}</span>
+										<span class={a.done ? 'line-through text-gray-500' : ''}>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}{#if a.live}<span class="ml-1.5 text-[10px] px-1 rounded bg-purple-900/50 text-purple-300" title="Heard by the live copilot during the meeting; the summary did not list it">live</span>{/if}</span>
 									</li>
 								{/each}
 							</ul>
@@ -426,5 +427,25 @@
 
 	{#if !sessionState.activeSession?.transcript?.length}
 		<p class="text-gray-600 text-sm">Record and transcribe audio first to generate a summary.</p>
+	{/if}
+
+	{#if liveNotes}
+		<details class="bg-gray-900 border border-gray-800 rounded-lg p-3 text-sm" open={!sessionState.activeSession?.summary}>
+			<summary class="cursor-pointer text-xs font-semibold text-gray-400 uppercase tracking-wide">
+				Live notes <span class="normal-case font-normal text-gray-600">· taken by the copilot while recording</span>
+			</summary>
+			<div class="mt-2 grid gap-3 md:grid-cols-2 text-gray-300">
+				{#each [['So far', liveNotes.summary], ['Decided', liveNotes.decisions], ['To do', liveNotes.action_items.map((a) => (a.owner ? `${a.text} · ${a.owner}` : a.text))], ['Open', liveNotes.open_questions]] as [title, items] (title)}
+					{#if items.length}
+						<section>
+							<h5 class="text-[11px] text-gray-500 mb-1">{title}</h5>
+							<ul class="space-y-0.5 list-disc list-inside">
+								{#each items as item}<li>{item}</li>{/each}
+							</ul>
+						</section>
+					{/if}
+				{/each}
+			</div>
+		</details>
 	{/if}
 </div>
