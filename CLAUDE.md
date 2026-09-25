@@ -98,6 +98,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; public key in
   tauri.conf.json). A key without a password cannot sign non-interactively (tauri-cli 2.10). Losing the key means shipped apps can never update again.
   `createUpdaterArtifacts` is only turned on in CI (`--config`), so local builds need no key.
+- The Release workflow runs the AppImage smoke test (reusable `smoke.yml`) before publishing. To
+  re-test an existing build without rebuilding: `gh workflow run "Smoke test" -f run_id=<Release
+  run id>`. The script refuses to run outside CI (it starts PulseAudio with a null sink).
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.
@@ -162,6 +165,14 @@ mnemosyne-bench (bench.py).
 After 0.7.0 (2026-09-25): review fixes, one `uiState.view` + grouped header, Settings tabs,
 first-run setup wizard (components/SetupWizard.svelte, `/api/system`, `setup_complete`), live
 copilot (services/copilot.py, `copilot_notes` events, components/CopilotPanel.svelte).
+Road to 0.8 (docs/plans/2026-09-25-road-to-0.8.md, unreleased): recovery of interrupted
+recordings on startup (services/recovery.py, `recording.json` per recording); AppImage smoke test
+in CI (.github/workflows/smoke.yml, scripts/smoke-appimage.sh, `MNEMOSYNE_SMOKE` in lib.rs and
+src/lib/app/smoke.ts); adaptive live interval (`live_adaptive`, /proc/pressure/cpu); backend log
+file `<data_dir>/logs/backend.log` (mnemosyne/logs.py) and Copy diagnostics
+(services/diagnostics.py); copilot notes saved with the session and fed to the summary; summary
+items with transcript times (`decision_at`, `question_at`, `ActionItem.at`); Ctrl+K palette
+(components/CommandPalette.svelte).
 
 Candidates next: offline installer (pre-seeded uv cache); live
 diarization upgrades (Sortformer); publishing the Flatpak to Flathub (needs a license).
