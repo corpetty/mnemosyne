@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ...jobs import Job
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, Session, SessionSummary
+from ...services.copilot import CopilotNotes, copilot_ask_runner
 from ...services.pipeline import transcribe_session
 from ...services.stats import MeetingStats, meeting_stats
 from ..context import AppContext, get_ctx
@@ -53,6 +54,32 @@ async def get_session(session_id: str, ctx: AppContext = Depends(get_ctx)):
 async def get_stats(session_id: str, ctx: AppContext = Depends(get_ctx)):
     """Talk time per speaker, turns and a who-spoke-when timeline."""
     return meeting_stats(_require(ctx, session_id).transcript)
+
+
+@router.get("/{session_id}/copilot", response_model=CopilotNotes | None)
+async def copilot_notes(session_id: str, ctx: AppContext = Depends(get_ctx)):
+    """The running notes of the current (or last) recording of this session, if any."""
+    _require(ctx, session_id)
+    return ctx.copilot_notes.get(session_id)
+
+
+class CopilotAskRequest(ApiModel):
+    question: str
+
+
+@router.post("/{session_id}/copilot/ask", response_model=Job)
+async def copilot_ask(
+    session_id: str, request: CopilotAskRequest, ctx: AppContext = Depends(get_ctx)
+):
+    """Queue a `copilot_ask` job: a short answer from the meeting so far (the live transcript
+    while recording). Result: `{question, answer, asked_at}`."""
+    _require(ctx, session_id)
+    question = request.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question must not be empty")
+    return ctx.jobs.submit(
+        "copilot_ask", copilot_ask_runner(ctx, session_id, question[:1000]), session_id=session_id
+    )
 
 
 class LocalOnlyRequest(ApiModel):

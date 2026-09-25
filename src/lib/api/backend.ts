@@ -11,6 +11,7 @@ import type {
   Thread,
   PhoneLink,
   SystemInfo,
+  CopilotNotes,
   IssueResult,
   RepoCheck,
   Level,
@@ -367,6 +368,14 @@ export async function getPhoneLink(): Promise<PhoneLink> {
 
 export async function getSystemInfo(): Promise<SystemInfo> {
   return request('/api/system');
+}
+
+export async function getCopilotNotes(sessionId: string): Promise<CopilotNotes | null> {
+  return request(`/api/sessions/${sessionId}/copilot`);
+}
+
+export async function askCopilot(sessionId: string, question: string): Promise<Job> {
+  return request(`/api/sessions/${sessionId}/copilot/ask`, { method: 'POST', body: JSON.stringify({ question }) });
 }
 
 // Action items across meetings

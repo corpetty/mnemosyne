@@ -425,10 +425,13 @@ def live_transcribe(app: AppContext, session_id: str, recording):
             clusterer=clusterer,
             mentions=MentionSpotter(parse_keywords(settings.mention_keywords)),
         )
+        app.live[session_id] = live  # read by the copilot
         try:
             await live.run()
         except asyncio.CancelledError:
             return _live_result(live)
+        finally:
+            app.live.pop(session_id, None)
         return _live_result(live)
 
     return run

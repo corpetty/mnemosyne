@@ -22,6 +22,7 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Search** across every transcript, summary and note, with jump-to-segment
 - **Calendar-aware**: paste your calendar's private ICS link and recordings are named after the meeting in progress, invitees are offered as speaker names, and a banner offers to record when a meeting starts
 - **Storage control**: see what audio takes space, delete audio but keep the transcript, or keep audio for N days only
+- **Live copilot**: while recording, running notes (so far, decided, to do, open) refresh every few minutes, and you can ask "what did they just say about X?" mid-meeting
 - **Talk time and chapters**: a who-spoke-when strip and talk-time table per meeting, and LLM chapters you can jump to from the summary
 - **Tasks across meetings**: every action item in one list, tick them off (kept when you re-summarize, `- [x]` in Obsidian)
 - **Follow-up drafts**: an email or chat recap of decisions and next steps, ready to paste

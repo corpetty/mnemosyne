@@ -15,6 +15,7 @@ from ...audio.mixer import mix_audio_files
 from ...audio.streams import CaptureApp
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, Recording, Session, SessionStatus
+from ...services.copilot import copilot_runner
 from ...services.pipeline import live_transcribe, transcribe_session
 from ..context import AppContext, get_ctx
 
@@ -113,6 +114,9 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
     if ctx.settings.live_transcription:
         job = ctx.jobs.submit("live", live_transcribe(ctx, session.id, recording), session.id)
         live_job_id = job.id
+        if ctx.settings.copilot:
+            ctx.copilot_notes.pop(session.id, None)
+            ctx.jobs.submit("copilot", copilot_runner(ctx, session.id), session.id)
 
     return StartRecordingResponse(
         session_id=session.id,
@@ -135,7 +139,7 @@ async def stop(
 
     # Stop live transcription first so it does not race the encoder for the files.
     for job in ctx.jobs.list(session_id=session_id, active_only=True):
-        if job.kind == "live":
+        if job.kind in ("live", "copilot"):
             await ctx.jobs.cancel(job.id)
 
     ctx.sessions.set_status(session_id, SessionStatus.ENCODING)

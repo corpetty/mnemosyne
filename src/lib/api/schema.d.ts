@@ -714,6 +714,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/copilot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Copilot Notes
+         * @description The running notes of the current (or last) recording of this session, if any.
+         */
+        get: operations["copilot_notes_api_sessions__session_id__copilot_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/copilot/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copilot Ask
+         * @description Queue a `copilot_ask` job: a short answer from the meeting so far (the live transcript
+         *     while recording). Result: `{question, answer, asked_at}`.
+         */
+        post: operations["copilot_ask_api_sessions__session_id__copilot_ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/export/markdown": {
         parameters: {
             query?: never;
@@ -1374,6 +1415,41 @@ export interface components {
             destinations: ("slack" | "matrix")[];
             /** Trackers */
             trackers: ("github" | "linear" | "jira")[];
+        };
+        /** CopilotAskRequest */
+        CopilotAskRequest: {
+            /** Question */
+            question: string;
+        };
+        /** CopilotItem */
+        CopilotItem: {
+            /** Owner */
+            owner: string | null;
+            /** Text */
+            text: string;
+        };
+        /** CopilotNotes */
+        CopilotNotes: {
+            /** Action Items */
+            action_items: components["schemas"]["CopilotItem"][];
+            /** Decisions */
+            decisions: string[];
+            /**
+             * Lines
+             * @default 0
+             */
+            lines: number;
+            /** Open Questions */
+            open_questions: string[];
+            /** Session Id */
+            session_id: string;
+            /** Summary */
+            summary: string[];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** CreateIssuesRequest */
         CreateIssuesRequest: {
@@ -2093,6 +2169,10 @@ export interface components {
             calendar_ics_url?: string | null;
             /** Cloud Redaction */
             cloud_redaction?: boolean | null;
+            /** Copilot */
+            copilot?: boolean | null;
+            /** Copilot Interval Seconds */
+            copilot_interval_seconds?: number | null;
             /** Default Model */
             default_model?: string | null;
             /** Default Provider */
@@ -2254,6 +2334,10 @@ export interface components {
             calendar_ics_url: string;
             /** Cloud Redaction */
             cloud_redaction: boolean;
+            /** Copilot */
+            copilot: boolean;
+            /** Copilot Interval Seconds */
+            copilot_interval_seconds: number;
             /** Data Dir */
             data_dir: string;
             /** Default Model */
@@ -3993,6 +4077,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    copilot_notes_api_sessions__session_id__copilot_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopilotNotes"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    copilot_ask_api_sessions__session_id__copilot_ask_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopilotAskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
             /** @description Validation Error */

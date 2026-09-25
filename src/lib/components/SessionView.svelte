@@ -6,6 +6,7 @@
 	import { uiState, type Tab } from '$lib/stores/ui.svelte.js';
 	import AudioControls from './AudioControls.svelte';
 	import CalendarCard from './CalendarCard.svelte';
+	import CopilotPanel from './CopilotPanel.svelte';
 	import MeetingBrief from './MeetingBrief.svelte';
 	import DeviceSelector from './DeviceSelector.svelte';
 	import LiveTranscript from './LiveTranscript.svelte';
@@ -85,6 +86,7 @@
 	<div class="max-w-4xl">
 		{#if uiState.activeTab === 'recording'}
 			<div class="space-y-4">
+				<CopilotPanel />
 				<CalendarCard />
 				{#if sessionState.activeSession.name !== 'Untitled Session' || sessionState.activeSession.attendees.length}
 					<MeetingBrief

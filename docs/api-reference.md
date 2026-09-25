@@ -213,6 +213,16 @@ Summary list, newest first. Never includes transcripts.
 }
 ```
 
+### `GET /api/sessions/{session_id}/copilot` · `POST /api/sessions/{session_id}/copilot/ask`
+Live copilot. While a session records with the live transcript on and the `copilot` setting on, a
+`copilot` job keeps running notes `{session_id, summary, decisions, action_items: [{text, owner}],
+open_questions, lines, updated_at}`: the first as soon as there is enough speech, then at most every
+`copilot_interval_seconds` (default 180), each call folding only the lines since the last update into
+the previous notes. Updates arrive as `copilot_notes` events; GET returns the latest (or `null`).
+POST `{"question": "..."}` queues a `copilot_ask` job answering from the transcript so far (the most
+recent ~14k characters and the notes), result `{question, answer, asked_at}`. Local-only meetings get
+no copilot when the default model is a cloud one.
+
 ### `GET /api/sessions/{session_id}/stats`
 Talk time from the transcript: `{duration_seconds, speech_seconds, silence_seconds, turns,
 speakers: [{speaker, talk_seconds, share, turns, longest_turn_seconds, words, words_per_minute}],
@@ -725,6 +735,7 @@ Then every backend event, in order:
 | `live_relabel` | `session_id`, `old`, `new` | A live speaker was recognised as a saved voice, or two live speakers were merged; relabel earlier live lines |
 | `mention` | `session_id`, `keyword`, `speaker`, `text`, `start` | A live line contained one of `mention_keywords` (whole words, any case; not from your own mic when it is recorded separately; each keyword at most once per 20 s of recording) |
 | `meeting_app` | `status` (`started`/`stopped`), `app` | Another app started or stopped recording audio (auto-record) |
+| `copilot_notes` | `session_id`, `notes` | The live copilot's running notes were updated |
 | `live_partial` | `session_id`, `source`, `speaker`, `text` | The still-changing tail for that source; replaces the previous partial (may be empty) |
 | `pong` | | Reply to `ping` |
 

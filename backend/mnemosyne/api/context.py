@@ -45,6 +45,8 @@ class AppContext:
     _digest_task: asyncio.Task | None = None
     _apps_task: asyncio.Task | None = None
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
+    live: dict = field(default_factory=dict)  # session id -> running LiveTranscriber
+    copilot_notes: dict = field(default_factory=dict)  # session id -> CopilotNotes
     level_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     http_transport: object | None = None  # tests inject an httpx transport for integrations
 

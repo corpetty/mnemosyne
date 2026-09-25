@@ -106,6 +106,17 @@ class DemoProvider:
             return json.dumps(DEMO_SUMMARY)
         if "numbered excerpts" in system_prompt:
             return "The migration ships in October [1]."
+        if "running notes for a meeting that is still in progress" in system_prompt:
+            return json.dumps(
+                {
+                    "summary": ["The team is going through the release."],
+                    "decisions": ["Ship the migration in October"],
+                    "action_items": [{"text": "Update the docs", "owner": "SPEAKER_01"}],
+                    "open_questions": ["Who owns the mobile regression?"],
+                }
+            )
+        if "meeting that is still in progress" in system_prompt:
+            return "The migration ships in October [00:07]."
         if "where a topic stands" in system_prompt:
             return "## Where it stands\nThe migration ships in October."
         if "follow-up" in system_prompt:

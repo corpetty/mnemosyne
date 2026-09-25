@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     live_interval_seconds: float = 5.0
     # Label live lines by voice (needs the pyannote diarizer's torch stack).
     live_diarization: bool = True
+    # Live copilot: running notes (summary, decisions, action items, open questions) from
+    # the live transcript while recording, refreshed at most this often, using the default
+    # model. Needs the live transcript.
+    copilot: bool = True
+    copilot_interval_seconds: int = 180
+
     # Alert (toast + desktop notification) when one of these comma-separated words is
     # heard in the live transcript from anyone but your own mic. Usually your name.
     mention_keywords: str = ""

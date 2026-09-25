@@ -44,6 +44,7 @@ export type TopicCount = S['TopicCount'];
 export type Thread = S['Thread'];
 export type PhoneLink = S['PhoneLink'];
 export type SystemInfo = S['SystemInfo'];
+export type CopilotNotes = S['CopilotNotes'];
 export type SessionUsage = S['SessionUsage'];
 export type StorageReport = S['StorageReport'];
 export type CleanupResult = S['CleanupResult'];
@@ -69,4 +70,5 @@ export type BackendEvent =
   | { type: 'live_relabel'; session_id: string; old: string; new: string }
   | { type: 'mention'; session_id: string; keyword: string; speaker: string; text: string; start: number }
   | { type: 'meeting_app'; status: 'started' | 'stopped'; app: string }
+  | { type: 'copilot_notes'; session_id: string; notes: CopilotNotes }
   | { type: 'levels'; session_id: string; levels: Record<string, Level> };

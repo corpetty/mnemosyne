@@ -99,6 +99,8 @@
 				live_diarization: v.live_diarization,
 				live_speaker_threshold: v.live_speaker_threshold,
 				mention_keywords: v.mention_keywords,
+				copilot: v.copilot,
+				copilot_interval_seconds: v.copilot_interval_seconds,
 				whisper_model_size: v.whisper_model_size,
 				whisper_compute_type: v.whisper_compute_type,
 				whisper_batch_size: v.whisper_batch_size,
@@ -374,6 +376,14 @@
 					<label>
 						<span class={labelClass}>Label for the system-audio channel</span>
 						<input type="text" bind:value={form.remote_speaker_name} disabled={locked('remote_speaker_name')} class={inputClass} />
+					</label>
+					<label class="flex items-center gap-2 col-span-2">
+						<input type="checkbox" bind:checked={form.copilot} disabled={locked('copilot') || !form.live_transcription} class="rounded border-gray-600 bg-gray-800" />
+						<span class="text-sm text-gray-300">Copilot: keep running notes (so far, decided, to do, open) while recording, with the default model</span>
+					</label>
+					<label>
+						<span class={labelClass}>Refresh the notes at most every (seconds)</span>
+						<input type="number" min="30" step="30" bind:value={form.copilot_interval_seconds} disabled={locked('copilot_interval_seconds') || !form.copilot} class={inputClass} />
 					</label>
 					<label class="col-span-2">
 						<span class={labelClass}>Alert me when these are said while recording (comma-separated, e.g. your name)</span>
