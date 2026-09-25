@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { uiState } from '$lib/stores/ui.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import type { SessionSummary } from '$lib/types/index.js';
 	import SearchBox from './SearchBox.svelte';
@@ -40,6 +41,14 @@
 	});
 
 	let fileInput = $state<HTMLInputElement>();
+	// "Import…" from the command palette.
+	let importsSeen = uiState.importRequest;
+	$effect(() => {
+		if (uiState.importRequest !== importsSeen) {
+			importsSeen = uiState.importRequest;
+			fileInput?.click();
+		}
+	});
 	let importing = $state(false);
 	let dragOver = $state(false);
 

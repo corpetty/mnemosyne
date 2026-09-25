@@ -11,6 +11,7 @@
 	import AskPanel from '$lib/components/AskPanel.svelte';
 	import AutoRecordBanner from '$lib/components/AutoRecordBanner.svelte';
 	import CalendarBanner from '$lib/components/CalendarBanner.svelte';
+	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import DigestPanel from '$lib/components/DigestPanel.svelte';
 	import HomeView from '$lib/components/HomeView.svelte';
 	import PeoplePanel from '$lib/components/PeoplePanel.svelte';
@@ -111,4 +112,7 @@
 	<StatusBar />
 </main>
 
+{#if uiState.paletteOpen}
+	<CommandPalette />
+{/if}
 <ToastContainer />

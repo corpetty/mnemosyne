@@ -12,6 +12,11 @@ class UiState {
   settingsTab = $state<SettingsTab>('recording');
   activeTab = $state<Tab>('recording');
   sidebarCollapsed = $state(false);
+  /** The Ctrl+K command palette, and what it asked other views to open. */
+  paletteOpen = $state(false);
+  personRequest = $state<string | null>(null);
+  topicRequest = $state<string | null>(null);
+  importRequest = $state(0); // bumped to open the sidebar's file picker
 
   backendStatus = $state<BackendStatus>('checking');
   // Progress from the Tauri shell while it installs/starts the backend (release builds).

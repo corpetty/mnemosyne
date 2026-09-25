@@ -31,7 +31,6 @@ export function toggleView(view: View) {
   openView(uiState.view === view && !sessionState.activeSession ? 'home' : view);
 }
 
-export const openAsk = () => openView('ask');
 export const openSetup = () => openView('setup');
 
 // ---- recording -----------------------------------------------------------------
@@ -260,6 +259,12 @@ export function runLaunchActionOnce() {
 // ---- keyboard ------------------------------------------------------------------
 
 export function handleKeydown(e: KeyboardEvent) {
+  // The palette opens from anywhere, text fields included.
+  if (e.ctrlKey && e.key === 'k') {
+    e.preventDefault();
+    uiState.paletteOpen = !uiState.paletteOpen;
+    return;
+  }
   const tag = (e.target as HTMLElement)?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   if (!e.ctrlKey) return;
@@ -271,7 +276,6 @@ export function handleKeydown(e: KeyboardEvent) {
       if (audioState.isRecording) stopAndTranscribe();
     },
     e: () => exportActive(),
-    k: () => openAsk(),
     b: () => (uiState.sidebarCollapsed = !uiState.sidebarCollapsed)
   };
   const action = actions[e.key];

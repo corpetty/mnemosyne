@@ -6,7 +6,7 @@
 	import { wsState } from '$lib/stores/websocket.svelte.js';
 
 	const NAV: { view: View; label: string; title: string }[] = [
-		{ view: 'ask', label: 'Ask', title: 'Ask across all meetings (Ctrl+K)' },
+		{ view: 'ask', label: 'Ask', title: 'Ask across all meetings' },
 		{ view: 'tasks', label: 'Tasks', title: 'Action items from all meetings' },
 		{ view: 'people', label: 'People', title: 'People across your meetings' },
 		{ view: 'topics', label: 'Topics', title: 'Follow a topic across meetings' },
@@ -69,6 +69,13 @@
 			></span>
 			<span class="hidden sm:inline">{status}</span>
 		</span>
+		<button
+			onclick={() => (uiState.paletteOpen = true)}
+			class="hidden sm:flex items-center gap-2 px-2 py-1 rounded border border-gray-800 text-xs text-gray-500 hover:text-gray-300 hover:border-gray-700"
+			title="Find a meeting, person, topic or setting, or ask a question"
+		>
+			Search <kbd class="px-1 rounded bg-gray-800 text-[10px] text-gray-400">Ctrl+K</kbd>
+		</button>
 		<button
 			onclick={() => toggleView('settings')}
 			aria-label="Settings"

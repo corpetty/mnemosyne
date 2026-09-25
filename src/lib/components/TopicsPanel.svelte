@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { uiState } from '$lib/stores/ui.svelte.js';
 	import { getThread, listTopics, summarizeThread } from '$lib/api/backend.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -19,6 +20,14 @@
 		listTopics()
 			.then((t) => (topics = t))
 			.catch(() => {});
+	});
+
+	// The command palette asks for a topic.
+	$effect(() => {
+		const want = uiState.topicRequest;
+		if (!want) return;
+		uiState.topicRequest = null;
+		void follow(want);
 	});
 
 	async function follow(q: string) {

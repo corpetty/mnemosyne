@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { uiState } from '$lib/stores/ui.svelte.js';
 	import { getPerson, listPeople, setActionItemDone } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -17,9 +18,18 @@
 			.then((p) => {
 				people = p;
 				loaded = true;
-				if (!selected && p.length) selected = p[0].name;
+				if (!selected && p.length) selected = uiState.personRequest ?? p[0].name;
 			})
 			.catch((e) => toastState.error(e instanceof Error ? e.message : 'Could not load people'));
+	});
+
+	// The command palette asks for a person.
+	$effect(() => {
+		const want = uiState.personRequest;
+		if (!want) return;
+		selected = want;
+		filter = '';
+		uiState.personRequest = null;
 	});
 
 	$effect(() => {
