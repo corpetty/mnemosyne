@@ -5,9 +5,19 @@ import os
 import warnings
 
 
+def quiet_known_warnings() -> None:
+    """Silence warnings that are expected and harmless here.
+
+    pyannote warns on import that torchcodec (its own audio decoder) cannot load, e.g. on
+    Fedora 44 whose FFmpeg 8 torchcodec 0.7 does not support. We never use that decoder:
+    audio reaches pyannote as in-memory waveforms. The message starts with a newline, so
+    the pattern must allow leading whitespace ('.*' does not cross a newline).
+    """
+    warnings.filterwarnings("ignore", message=r"\s*torchcodec is not installed correctly")
+
+
 def main() -> None:
-    # Silence noisy torchcodec/pyannote FFmpeg warnings on import.
-    warnings.filterwarnings("ignore", message=".*torchcodec.*")
+    quiet_known_warnings()
     import uvicorn
 
     from .api.app import create_app
