@@ -238,7 +238,10 @@ turns them into `AudioSource`s:
 - otherwise: the mixed file is used.
 
 Segments from all sources are merged by start time. `transcription/assign.py` maps diarization turns
-onto segments by time overlap, using word timings for a majority vote when available.
+onto segments by time overlap. With word timings (all our transcribers give them) each word takes its
+own speaker and a segment is split where the speaker changes: segments are cut at pauses, not speaker
+changes, so one speaker per segment caps word speaker accuracy at 95% even with perfect diarization
+(AMI ES2004a-d: 94% per segment, 98.4% per word with pyannote, 99.6% with Nemotron).
 
 ### Live transcription
 

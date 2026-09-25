@@ -30,18 +30,54 @@ def test_assign_by_overlap_and_nearest():
     assert [s.speaker for s in out] == ["A", "B", "B", "B"]  # last: nearest
 
 
-def test_assign_uses_word_majority():
+def _words(*spec):
+    return [WordSegment(word=w, start=a, end=b) for w, a, b in spec]
+
+
+def test_assign_uses_word_majority_when_not_splitting():
     turns = [
         SpeakerTurn(start=0, end=1, speaker="A"),
         SpeakerTurn(start=1, end=5, speaker="B"),
     ]
-    words = [
-        WordSegment(word="a", start=0.0, end=0.9),
-        WordSegment(word="b", start=1.1, end=2.0),
-        WordSegment(word="c", start=2.1, end=3.0),
+    words = _words(("a", 0.0, 0.9), ("b", 1.1, 2.0), ("c", 2.1, 3.0))
+    out = assign_speakers([_seg(0, 3, words=words)], turns, split=False)
+    assert [s.speaker for s in out] == ["B"]
+
+
+def test_assign_splits_a_segment_where_the_speaker_changes():
+    turns = [
+        SpeakerTurn(start=0, end=1.5, speaker="A"),
+        SpeakerTurn(start=1.5, end=5, speaker="B"),
+        SpeakerTurn(start=5, end=9, speaker="A"),
     ]
-    out = assign_speakers([_seg(0, 3, words=words)], turns)
-    assert out[0].speaker == "B"
+    words = _words(
+        ("Ship", 0.0, 0.4),
+        ("it.", 0.5, 1.0),  # A
+        ("Sure,", 1.6, 2.0),
+        ("Friday?", 2.1, 2.6),  # B
+        ("Yes.", 5.2, 5.6),  # A again
+    )
+    out = assign_speakers([_seg(0, 6, words=words, text="Ship it. Sure, Friday? Yes.")], turns)
+    assert [(s.speaker, s.text, s.start, s.end) for s in out] == [
+        ("A", "Ship it.", 0.0, 1.0),
+        ("B", "Sure, Friday?", 1.6, 2.6),
+        ("A", "Yes.", 5.2, 6.0),  # the first and last parts keep the segment's edges
+    ]
+    assert [len(s.words) for s in out] == [2, 2, 1]
+
+
+def test_one_speaker_keeps_the_segment_text_as_is():
+    turns = [SpeakerTurn(start=0, end=5, speaker="A")]
+    words = _words(("hello", 0.0, 0.5), ("there", 0.6, 1.0))
+    seg = _seg(0, 1, words=words, text="Hello there!")
+    assert assign_speakers([seg], turns)[0].text == "Hello there!"
+
+
+def test_words_outside_every_turn_join_their_neighbours():
+    turns = [SpeakerTurn(start=0, end=1, speaker="A"), SpeakerTurn(start=3, end=4, speaker="B")]
+    words = _words(("a", 0.2, 0.8), ("gap", 1.5, 1.8), ("b", 3.1, 3.5))
+    out = assign_speakers([_seg(0, 4, words=words)], turns, fill_nearest=False)
+    assert [(s.speaker, s.text) for s in out] == [("A", "a gap"), ("B", "b")]
 
 
 def test_assign_without_turns_is_unknown():
