@@ -1,1 +1,24 @@
 @import 'tailwindcss';
+
+/* The app is dark-only. Tell the engine, so native parts (scrollbars, date pickers, the
+   dropdown list of a select) are drawn dark too. */
+:root {
+	color-scheme: dark;
+}
+
+/* WebKitGTK draws a closed <select> with the GTK theme (light in the AppImage) and ignores
+   the background classes, leaving light text on a light box. Draw it ourselves instead.
+   Unlayered on purpose: it must win over px-* utilities to keep room for the arrow. */
+select {
+	appearance: none;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%239ca3af'%3E%3Cpath d='M5.3 7.3a1 1 0 0 1 1.4 0L10 10.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4z'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 0.4rem center;
+	background-size: 1em;
+	padding-right: 1.75em;
+}
+
+option {
+	background-color: #1f2937;
+	color: #e5e7eb;
+}
