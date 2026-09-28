@@ -146,6 +146,10 @@ test('export to the Obsidian vault', async () => {
 test('tasks: tick off an action item across meetings', async () => {
   await page.getByRole('button', { name: 'Tasks', exact: true }).click();
   await expect(page.getByText(/· 1 open\./)).toBeVisible();
+  // The demo summary gives it a deadline: listed under Deadlines, with its date.
+  const deadlines = page.getByRole('region', { name: 'Deadlines' });
+  await expect(deadlines.getByText('Update the docs before the release')).toBeVisible();
+  await expect(deadlines.getByText('Oct 1')).toBeVisible();
   // click, not check(): the item leaves the Open list as soon as it is done.
   await page.getByRole('checkbox', { name: 'Done: Update the docs before the release' }).click();
   await expect(page.getByText(/· 0 open\./)).toBeVisible();

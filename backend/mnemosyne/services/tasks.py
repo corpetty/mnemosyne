@@ -4,7 +4,7 @@ meeting is summarized again."""
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
 
 from ..models.base import ApiModel
@@ -20,6 +20,7 @@ class TaskItem(ApiModel):
     owner: str | None
     done: bool
     issue_url: str | None
+    due: date | None = None
 
 
 def _norm(text: str) -> str:
@@ -43,6 +44,7 @@ def carry_over(old: SummaryData | None, new: SummaryData) -> SummaryData:
                 used.add(i)
                 item.done = item.done or prev.done
                 item.issue_url = item.issue_url or prev.issue_url
+                item.due = item.due or prev.due
                 break
     return new
 
@@ -59,8 +61,14 @@ def add_live_todos(notes: CopilotNotes | None, data: SummaryData) -> SummaryData
 
 
 def filter_tasks(
-    tasks: list[TaskItem], status: str = "open", owner: str | None = None
+    tasks: list[TaskItem],
+    status: str = "open",
+    owner: str | None = None,
+    due: str | None = None,
+    today: date | None = None,
 ) -> list[TaskItem]:
+    """Filter by done state, owner and deadline (`due`: "overdue" or "week", i.e. due by the
+    end of the next seven days). Open tasks with a deadline come first, soonest first."""
     if status == "open":
         tasks = [t for t in tasks if not t.done]
     elif status == "done":
@@ -68,4 +76,11 @@ def filter_tasks(
     if owner:
         want = owner.casefold()
         tasks = [t for t in tasks if (t.owner or "").casefold() == want]
+    today = today or date.today()
+    if due == "overdue":
+        tasks = [t for t in tasks if t.due and t.due < today]
+    elif due == "week":
+        tasks = [t for t in tasks if t.due and t.due <= today + timedelta(days=7)]
+    if status == "open":
+        tasks = sorted(tasks, key=lambda t: (t.due is None, t.due or date.max))  # stable
     return tasks

@@ -115,6 +115,7 @@ class LinearTracker:
                         "teamId": team_id,
                         "title": _title(item),
                         "description": GitHubService.issue_body(session, item),
+                        **({"dueDate": item.due.isoformat()} if item.due else {}),
                     }
                 },
             )
@@ -195,6 +196,7 @@ class JiraTracker:
                             "summary": _title(item),
                             "issuetype": {"name": self.issue_type},
                             "description": _adf(GitHubService.issue_body(session, item)),
+                            **({"duedate": item.due.isoformat()} if item.due else {}),
                         }
                     },
                 )

@@ -730,6 +730,7 @@ class SessionRepository:
                         owner=a.owner,
                         done=a.done,
                         issue_url=a.issue_url,
+                        due=a.due,
                     )
                 )
         return out

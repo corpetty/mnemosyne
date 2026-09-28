@@ -82,7 +82,8 @@ def render_meeting_note(
                 owner = f" ({person(item.owner)})" if item.owner else ""
                 issue = f" [issue]({item.issue_url})" if item.issue_url else ""
                 box = "x" if item.done else " "
-                sections.append(f"- [{box}] {item.text}{owner}{issue}")
+                due = f" 📅 {item.due.isoformat()}" if item.due else ""  # Obsidian Tasks format
+                sections.append(f"- [{box}] {item.text}{owner}{issue}{due}")
             sections.append("")
         if summary_data.open_questions:
             sections.append("## Open Questions\n")

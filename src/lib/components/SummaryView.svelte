@@ -299,7 +299,7 @@
 											aria-label={a.done ? `Reopen: ${a.text}` : `Mark done: ${a.text}`}
 											class="text-xs mt-0.5 {a.done ? 'text-emerald-400' : 'text-gray-600 hover:text-gray-300'}"
 										>{a.done ? '✓' : '○'}</button>
-										<span class={a.done ? 'line-through text-gray-500' : ''}>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}{#if a.live}<span class="ml-1.5 text-[10px] px-1 rounded bg-purple-900/50 text-purple-300" title="Heard by the live copilot during the meeting; the summary did not list it">live</span>{/if}{@render at(a.at)}</span>
+										<span class={a.done ? 'line-through text-gray-500' : ''}>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}{#if a.due}<span class="text-amber-300/80 text-xs"> · due {new Date(`${a.due}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>{/if}{#if a.live}<span class="ml-1.5 text-[10px] px-1 rounded bg-purple-900/50 text-purple-300" title="Heard by the live copilot during the meeting; the summary did not list it">live</span>{/if}{@render at(a.at)}</span>
 									</li>
 								{/each}
 							</ul>

@@ -16,10 +16,12 @@ router = APIRouter(prefix="/api", tags=["tasks"])
 async def list_action_items(
     status: Literal["open", "done", "all"] = "open",
     owner: str | None = None,
+    due: Literal["overdue", "week"] | None = None,
     ctx: AppContext = Depends(get_ctx),
 ):
-    """Action items from every summarized meeting, newest meeting first."""
-    return filter_tasks(ctx.repo.list_action_items(), status, owner)
+    """Action items from every summarized meeting, newest meeting first (open ones with a
+    deadline first, soonest first)."""
+    return filter_tasks(ctx.repo.list_action_items(), status, owner, due)
 
 
 class ActionItemUpdate(ApiModel):

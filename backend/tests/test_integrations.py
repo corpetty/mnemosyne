@@ -2,7 +2,7 @@
 
 import base64
 import json
-from datetime import datetime
+from datetime import date, datetime
 
 import httpx
 
@@ -17,7 +17,7 @@ def _session(ctx, followup="Recap: ship in October."):
         summary_data=SummaryData(
             decisions=["Ship in October"],
             action_items=[
-                ActionItem(text="Update docs", owner="Alice"),
+                ActionItem(text="Update docs", owner="Alice", due=date(2026, 10, 1)),
                 ActionItem(text="Tag rc1"),
             ],
             followup=followup,
@@ -48,6 +48,9 @@ def test_linear(client, ctx):
             )
         inp = body["variables"]["input"]
         assert inp["teamId"] == "t1" and "Release sync" in inp["description"]
+        docs = inp["title"] == "Update docs"
+        assert inp.get("dueDate") == ("2026-10-01" if docs else None)
+        assert ("Due: 2026-10-01" in inp["description"]) == docs
         n = len([r for r in rec.requests if b"issueCreate" in r.content])
         return httpx.Response(
             200,
@@ -102,6 +105,9 @@ def test_jira(client, ctx):
         fields = json.loads(req.content)["fields"]
         assert fields["project"] == {"key": "OPS"} and fields["issuetype"] == {"name": "Task"}
         assert fields["description"]["type"] == "doc"
+        assert fields.get("duedate") == (
+            "2026-10-01" if fields["summary"] == "Update docs" else None
+        )
         if fields["summary"] == "Tag rc1":
             return httpx.Response(400, json={"errors": {"summary": "bad"}})
         return httpx.Response(201, json={"key": "OPS-7"})

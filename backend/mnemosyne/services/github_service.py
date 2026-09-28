@@ -93,6 +93,8 @@ class GitHubService:
         ]
         if item.owner:
             lines += ["", f"Owner (as named in the meeting): {item.owner}"]
+        if item.due:
+            lines += ["", f"Due: {item.due.isoformat()}"]
         d = session.summary_data
         if d and d.decisions:
             lines += ["", "Decisions in that meeting:"] + [f"- {x}" for x in d.decisions[:5]]

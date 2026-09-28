@@ -13,7 +13,8 @@ export interface paths {
         };
         /**
          * List Action Items
-         * @description Action items from every summarized meeting, newest meeting first.
+         * @description Action items from every summarized meeting, newest meeting first (open ones with a
+         *     deadline first, soonest first).
          */
         get: operations["list_action_items_api_action_items_get"];
         put?: never;
@@ -1335,6 +1336,8 @@ export interface components {
              * @default false
              */
             done: boolean;
+            /** Due */
+            due: string | null;
             /** Issue Url */
             issue_url: string | null;
             /**
@@ -2861,6 +2864,8 @@ export interface components {
             created_at: string;
             /** Done */
             done: boolean;
+            /** Due */
+            due: string | null;
             /** Idx */
             idx: number;
             /** Issue Url */
@@ -3002,6 +3007,7 @@ export interface operations {
             query?: {
                 status?: "open" | "done" | "all";
                 owner?: string | null;
+                due?: ("overdue" | "week") | null;
             };
             header?: never;
             path?: never;

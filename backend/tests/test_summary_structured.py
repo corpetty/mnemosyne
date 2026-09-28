@@ -87,6 +87,7 @@ def test_summarize_endpoint_stores_structured(client, ctx, fake_provider, transc
             "done": False,
             "live": False,
             "at": None,
+            "due": None,
         }
     ]
     assert client.post(f"/api/sessions/{sid}/summarize", json={"style": "bogus"}).status_code == 400
@@ -248,3 +249,39 @@ def test_items_carry_the_time_they_came_up():
     assert data.decision_at == [60.5, None]  # snapped to the line start
     assert data.action_items[0].at == 30.0
     assert data.question_at == [None, 10.0]  # past the end of the meeting: dropped
+
+
+def test_action_items_carry_a_due_date():
+    import json
+
+    from mnemosyne.summarization.prompts import meeting_date_instructions, parse_summary_response
+
+    raw = json.dumps(
+        {
+            "summary": "s",
+            "action_items": [
+                {"text": "Docs", "due": "2026-10-02"},
+                {"text": "Venue", "due": "Friday"},  # not a date: no due date
+                {"text": "Budget", "due": None},
+            ],
+        }
+    )
+    _, data = parse_summary_response(raw)
+    assert [str(a.due) if a.due else None for a in data.action_items] == ["2026-10-02", None, None]
+    hint = meeting_date_instructions(datetime(2026, 9, 25, 10, 0))
+    assert "Friday 2026-09-25" in hint
+
+
+def test_obsidian_marks_due_dates_for_the_tasks_plugin(tmp_path):
+    from datetime import date
+
+    session = Session(
+        name="m",
+        summary="s",
+        summary_data=SummaryData(
+            action_items=[ActionItem(text="Docs", due=date(2026, 10, 2)), ActionItem(text="x")]
+        ),
+    )
+    note = ObsidianExporter(str(tmp_path)).render(session)
+    assert "- [ ] Docs 📅 2026-10-02" in note
+    assert "- [ ] x" in note and "- [ ] x 📅" not in note  # no deadline, no marker

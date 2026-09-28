@@ -1,7 +1,7 @@
 """Session data models."""
 
 import hashlib
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Literal
 from uuid import uuid4
@@ -52,6 +52,7 @@ class ActionItem(ApiModel):
     done: bool = False
     live: bool = False  # noted by the live copilot; the final summary did not list it
     at: float | None = None  # seconds: the transcript line where it came up
+    due: date | None = None  # a deadline named in the meeting, resolved to a date
 
 
 class CopilotItem(ApiModel):

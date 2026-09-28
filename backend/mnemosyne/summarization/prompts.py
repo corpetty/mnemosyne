@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date, datetime
 
 from ..models.session import ActionItem, Chapter, SummaryData
 
@@ -42,7 +43,8 @@ Respond with ONLY a JSON object, no prose before or after, with exactly these ke
   "summary": "<markdown: 1-3 short paragraphs or bullet points covering the key discussion>",
   "topics": ["<3-8 short topic labels>"],
   "decisions": [{"text": "<a decision or agreement reached>", "at": "<MM:SS>"}],
-  "action_items": [{"text": "<task>", "owner": "<speaker label, name or null>", "at": "<MM:SS>"}],
+  "action_items": [{"text": "<task>", "owner": "<speaker label, name or null>", "at": "<MM:SS>",
+                    "due": "<YYYY-MM-DD when a deadline is said, else null>"}],
   "open_questions": [{"text": "<an unresolved question or thing to follow up>", "at": "<MM:SS>"}],
   "chapters": [{"start": "<MM:SS of the line where it begins>", "title": "<2 to 6 words>"}]
 }
@@ -215,11 +217,30 @@ def _action_items(value) -> list[ActionItem]:
                 if owner and owner.lower() in ("null", "none", "n/a", "unknown", "unassigned"):
                     owner = None
                 at = parse_seconds(v.get("at", v.get("time")))
-                out.append(ActionItem(text=text.strip(), owner=owner, at=at))
+                due = _date(v.get("due", v.get("deadline")))
+                out.append(ActionItem(text=text.strip(), owner=owner, at=at, due=due))
     return out
 
 
 _TS = re.compile(r"^\s*(?:(\d+):)?(\d{1,3}):(\d{2})(?:\.\d+)?\s*$")
+
+
+def _date(value) -> date | None:
+    """An ISO date (YYYY-MM-DD); anything else, "Friday" included, is no date."""
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value.strip()[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def meeting_date_instructions(when: datetime) -> str:
+    """Lets the model turn "by Friday" into a date."""
+    return (
+        f"The meeting took place on {when:%A %Y-%m-%d}. For an action item with a deadline "
+        '("by Friday", "end of the month"), give "due" as the date it means, YYYY-MM-DD.'
+    )
 
 
 def parse_seconds(value) -> float | None:

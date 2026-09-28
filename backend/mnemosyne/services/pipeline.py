@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from ..jobs import JobContext
 from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus, transcript_hash
 from ..summarization.privacy import LOCAL_ONLY_ERROR, is_cloud
+from ..summarization.prompts import meeting_date_instructions
 from ..transcription.engine import AudioSource
 from ..transcription.glossary import (
     apply_corrections,
@@ -219,6 +220,7 @@ def summarize_session(
                 f"{', '.join(session.attendees)}. Speaker labels are not necessarily these "
                 "people; only attribute to a name when the transcript makes it clear."
             ).strip()
+        instr = f"{instr}\n{meeting_date_instructions(session.created_at)}".strip()
         live_notes = copilot_hint(session.copilot_notes)
         if live_notes:
             instr = f"{instr}\n{live_notes}".strip()

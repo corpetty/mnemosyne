@@ -93,3 +93,50 @@ def test_resummarize_keeps_done(client, ctx, transcribed_session, fake_provider)
     assert run_summarize(client, sid, {"provider": "fake"})["status"] == "completed"
     items = ctx.repo.get(sid).summary_data.action_items
     assert [(i.text, i.done) for i in items] == [("write the plan", True), ("New thing", False)]
+
+
+def test_due_dates_sort_and_filter():
+    from datetime import date
+
+    from mnemosyne.services.tasks import TaskItem, filter_tasks
+
+    def task(text, due=None, done=False):
+        return TaskItem(
+            session_id="s",
+            session_name="m",
+            created_at=datetime(2026, 9, 25),
+            idx=0,
+            text=text,
+            owner=None,
+            done=done,
+            issue_url=None,
+            due=due,
+        )
+
+    tasks = [
+        task("no date"),
+        task("next month", date(2026, 10, 30)),
+        task("overdue", date(2026, 9, 20)),
+        task("this week", date(2026, 9, 29)),
+        task("done late", date(2026, 9, 1), done=True),
+    ]
+    today = date(2026, 9, 28)
+    assert [t.text for t in filter_tasks(tasks, today=today)] == [
+        "overdue",
+        "this week",
+        "next month",
+        "no date",
+    ]
+    assert [t.text for t in filter_tasks(tasks, due="overdue", today=today)] == ["overdue"]
+    assert [t.text for t in filter_tasks(tasks, due="week", today=today)] == [
+        "overdue",
+        "this week",
+    ]
+
+
+def test_due_survives_a_resummarize_that_drops_it():
+    from datetime import date
+
+    old = SummaryData(action_items=[ActionItem(text="Update the docs", due=date(2026, 10, 1))])
+    new = SummaryData(action_items=[ActionItem(text="Update the docs.")])
+    assert carry_over(old, new).action_items[0].due == date(2026, 10, 1)
