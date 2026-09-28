@@ -16,3 +16,9 @@ class TranscriptSegment(ApiModel):
     start: float
     end: float
     words: list[WordSegment] | None = None
+
+
+def line_at(transcript: list[TranscriptSegment], at: float) -> TranscriptSegment | None:
+    """The line being said at a moment: the last one to start by then (or the first)."""
+    said = [s for s in transcript if s.start <= at + 0.5]
+    return said[-1] if said else (transcript[0] if transcript else None)

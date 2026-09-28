@@ -42,6 +42,38 @@ class CalendarEvent(ApiModel):
     end: datetime
     location: str = ""
     attendees: list[str] = Field(default_factory=list)
+    description: str = ""  # plain text (calendars often send HTML)
+
+
+def plain_text(value: str) -> str:
+    """An event description as plain text: HTML line breaks and list items become lines."""
+    import html
+    import re
+
+    text = re.sub(r"(?i)<\s*(br|/p|/div|/li|/h\d)\s*/?>", "\n", value)
+    text = re.sub(r"(?i)<\s*li[^>]*>", "\n- ", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    return "\n".join(line.rstrip() for line in html.unescape(text).splitlines()).strip()
+
+
+def agenda_from_description(description: str, limit: int = 12) -> list[str]:
+    """Agenda points in an event description: the list under an "Agenda" heading, else every
+    list item (- item, * item, • item, 1. item, 1) item)."""
+    import re
+
+    item = re.compile(r"^\s*(?:[-*•]|\d{1,2}[.)])\s+(.+?)\s*$")
+    lines = description.splitlines()
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*#*\s*agenda\b", line, re.IGNORECASE):
+            lines = lines[i + 1 :]
+            points = []
+            for rest in lines:
+                if m := item.match(rest):
+                    points.append(m.group(1))
+                elif points and rest.strip():
+                    break  # the list ended
+            return points[:limit]
+    return [m.group(1) for line in lines if (m := item.match(line))][:limit]
 
 
 def _local_tz():
@@ -106,6 +138,7 @@ def parse_events(ics_text: str, start: datetime, end: datetime) -> list[Calendar
                 end=e,
                 location=str(comp.get("LOCATION", "")).strip(),
                 attendees=people,
+                description=plain_text(str(comp.get("DESCRIPTION", ""))),
             )
         )
     events.sort(key=lambda ev: ev.start)

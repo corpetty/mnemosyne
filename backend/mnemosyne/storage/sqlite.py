@@ -19,6 +19,8 @@ from ..models.ask import Ask, Citation, Passage, PassageLine
 from ..models.digest import Digest
 from ..models.search import SearchHit, SegmentHit
 from ..models.session import (
+    AgendaItem,
+    Bookmark,
     CopilotNotes,
     Recording,
     Session,
@@ -147,6 +149,18 @@ CREATE TABLE IF NOT EXISTS session_speakers (
     embedding TEXT NOT NULL,
     PRIMARY KEY (session_id, label)
 );
+
+-- A bookmark is kept as (part, seconds into it): a part's place on the meeting's timeline is
+-- known only once its recording is saved (services/parts.py).
+CREATE TABLE IF NOT EXISTS bookmarks (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    part INTEGER NOT NULL DEFAULT 0,
+    seconds REAL NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bookmarks_session ON bookmarks(session_id);
 """
 
 
@@ -276,6 +290,8 @@ class SessionRepository:
             self._conn.execute(
                 "ALTER TABLE recordings ADD COLUMN part_offset REAL NOT NULL DEFAULT 0"
             )
+        if "agenda" not in cols:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN agenda TEXT NOT NULL DEFAULT '[]'")
         if "speakers_reviewed" not in cols:
             self._conn.execute(
                 "ALTER TABLE sessions ADD COLUMN speakers_reviewed INTEGER NOT NULL DEFAULT 0"
@@ -375,6 +391,12 @@ class SessionRepository:
             rec_rows = self._conn.execute(
                 "SELECT * FROM recordings WHERE session_id=? ORDER BY created_at", (session_id,)
             ).fetchall()
+            mark_rows = self._conn.execute(
+                "SELECT * FROM bookmarks WHERE session_id=?", (session_id,)
+            ).fetchall()
+        part_starts: dict[int, float] = {}
+        for r in rec_rows:
+            part_starts.setdefault(r["part"], r["part_offset"])
         return Session(
             id=row["id"],
             name=row["name"],
@@ -398,6 +420,7 @@ class SessionRepository:
                 else None
             ),
             speakers_reviewed=bool(row["speakers_reviewed"]),
+            agenda=[AgendaItem.model_validate(a) for a in json.loads(row["agenda"] or "[]")],
             transcript=[
                 TranscriptSegment(
                     text=r["text"],
@@ -421,6 +444,18 @@ class SessionRepository:
                 )
                 for r in rec_rows
             ],
+            bookmarks=sorted(
+                (
+                    Bookmark(
+                        id=r["id"],
+                        at=round(part_starts.get(r["part"], 0.0) + r["seconds"], 2),
+                        note=r["note"],
+                        created_at=_dt(r["created_at"]),
+                    )
+                    for r in mark_rows
+                ),
+                key=lambda b: b.at,
+            ),
         )
 
     # ---- writes --------------------------------------------------------
@@ -433,8 +468,8 @@ class SessionRepository:
                 """INSERT INTO sessions(id, name, status, created_at, updated_at, audio_file,
                                         summary, summary_data, notes, participants,
                                         attendees, local_only, copilot_notes,
-                                        speakers_reviewed)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                        speakers_reviewed, agenda)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      name=excluded.name, status=excluded.status, updated_at=excluded.updated_at,
                      audio_file=excluded.audio_file, summary=excluded.summary,
@@ -442,7 +477,8 @@ class SessionRepository:
                      notes=excluded.notes, participants=excluded.participants,
                      attendees=excluded.attendees, local_only=excluded.local_only,
                      copilot_notes=excluded.copilot_notes,
-                     speakers_reviewed=excluded.speakers_reviewed""",
+                     speakers_reviewed=excluded.speakers_reviewed,
+                     agenda=excluded.agenda""",
                 (
                     session.id,
                     session.name,
@@ -458,6 +494,7 @@ class SessionRepository:
                     int(session.local_only),
                     session.copilot_notes.model_dump_json() if session.copilot_notes else None,
                     int(session.speakers_reviewed),
+                    json.dumps([a.model_dump() for a in session.agenda]),
                 ),
             )
             self._write_segments(session.id, session.transcript)
@@ -479,6 +516,7 @@ class SessionRepository:
             "local_only",
             "copilot_notes",
             "speakers_reviewed",
+            "agenda",
         }
         bad = set(fields) - allowed
         if bad:
@@ -492,6 +530,8 @@ class SessionRepository:
                 value = value.value
             if key in ("participants", "attendees"):
                 value = json.dumps(value)
+            if key == "agenda":
+                value = json.dumps([a if isinstance(a, dict) else a.model_dump() for a in value])
             if key in ("local_only", "speakers_reviewed"):
                 value = int(bool(value))
             if key in ("summary_data", "copilot_notes") and value is not None:
@@ -552,6 +592,54 @@ class SessionRepository:
                 return False
             self._conn.execute("DELETE FROM recordings WHERE session_id=?", (session_id,))
         return True
+
+    # ---- bookmarks -----------------------------------------------------
+
+    def add_bookmark(self, session_id: str, part: int, seconds: float, note: str = "") -> str:
+        from uuid import uuid4
+
+        bookmark_id = str(uuid4())[:8]
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO bookmarks (id, session_id, part, seconds, note, created_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (
+                    bookmark_id,
+                    session_id,
+                    part,
+                    max(0.0, seconds),
+                    note,
+                    datetime.now().isoformat(),
+                ),
+            )
+        return bookmark_id
+
+    def update_bookmark(self, session_id: str, bookmark_id: str, note: str) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE bookmarks SET note=? WHERE id=? AND session_id=?",
+                (note, bookmark_id, session_id),
+            )
+        return cur.rowcount > 0
+
+    def delete_bookmark(self, session_id: str, bookmark_id: str) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "DELETE FROM bookmarks WHERE id=? AND session_id=?", (bookmark_id, session_id)
+            )
+        return cur.rowcount > 0
+
+    def move_bookmarks(self, moves: list[tuple[str, int, str, int]]) -> None:
+        """(session, part) -> (session, part), all at once: meetings combined
+        (services/combine.py) renumber their parts."""
+        with self._lock, self._conn:
+            rows = self._conn.execute("SELECT id, session_id, part FROM bookmarks").fetchall()
+            where = {(old_s, old_p): (new_s, new_p) for old_s, old_p, new_s, new_p in moves}
+            for r in rows:
+                if (dest := where.get((r["session_id"], r["part"]))) is not None:
+                    self._conn.execute(
+                        "UPDATE bookmarks SET session_id=?, part=? WHERE id=?", (*dest, r["id"])
+                    )
 
     def delete(self, session_id: str) -> bool:
         with self._lock, self._conn:

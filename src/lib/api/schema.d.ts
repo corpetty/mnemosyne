@@ -1004,6 +1004,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/agenda": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Agenda
+         * @description The points to get through: before the meeting, or during it (the copilot then marks
+         *     the ones that came up).
+         */
+        put: operations["set_agenda_api_sessions__session_id__agenda_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/attendees": {
         parameters: {
             query?: never;
@@ -1039,6 +1060,41 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/bookmarks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add */
+        post: operations["add_api_sessions__session_id__bookmarks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/bookmarks/{bookmark_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete */
+        delete: operations["delete_api_sessions__session_id__bookmarks__bookmark_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update */
+        patch: operations["update_api_sessions__session_id__bookmarks__bookmark_id__patch"];
         trace?: never;
     };
     "/api/sessions/{session_id}/clip": {
@@ -1768,6 +1824,37 @@ export interface components {
             /** Glossary */
             glossary: string;
         };
+        /**
+         * AgendaItem
+         * @description A point to get through in a meeting; the copilot marks it covered once it came up.
+         */
+        "AgendaItem-Input": {
+            /**
+             * Covered
+             * @default false
+             */
+            covered: boolean;
+            /** Text */
+            text: string;
+        };
+        /**
+         * AgendaItem
+         * @description A point to get through in a meeting; the copilot marks it covered once it came up.
+         */
+        "AgendaItem-Output": {
+            /**
+             * Covered
+             * @default false
+             */
+            covered: boolean;
+            /** Text */
+            text: string;
+        };
+        /** AgendaUpdate */
+        AgendaUpdate: {
+            /** Items */
+            items: components["schemas"]["AgendaItem-Input"][];
+        };
         /** Ask */
         Ask: {
             /**
@@ -1877,6 +1964,42 @@ export interface components {
              */
             transcribe: boolean;
         };
+        /**
+         * Bookmark
+         * @description A moment marked as important, while recording (a shortcut, the tray, a button) or later
+         *     on a transcript line. The summary gives these moments weight.
+         */
+        Bookmark: {
+            /** At */
+            at: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** BookmarkCreate */
+        BookmarkCreate: {
+            /** At */
+            at?: number | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** BookmarkUpdate */
+        BookmarkUpdate: {
+            /** Note */
+            note: string;
+        };
         /** Brief */
         Brief: {
             /** Last Summary */
@@ -1892,6 +2015,11 @@ export interface components {
         CalendarEvent: {
             /** Attendees */
             attendees: string[];
+            /**
+             * Description
+             * @default
+             */
+            description: string;
             /**
              * End
              * Format: date-time
@@ -2028,6 +2156,8 @@ export interface components {
         CopilotNotes: {
             /** Action Items */
             action_items: components["schemas"]["CopilotItem"][];
+            /** Agenda Covered */
+            agenda_covered: number[];
             /** Decisions */
             decisions: string[];
             /**
@@ -2782,10 +2912,14 @@ export interface components {
         };
         /** Session */
         Session: {
+            /** Agenda */
+            agenda: components["schemas"]["AgendaItem-Output"][];
             /** Attendees */
             attendees: string[];
             /** Audio File */
             audio_file: string | null;
+            /** Bookmarks */
+            bookmarks: components["schemas"]["Bookmark"][];
             copilot_notes: components["schemas"]["CopilotNotes"] | null;
             /**
              * Created At
@@ -5360,6 +5494,41 @@ export interface operations {
             };
         };
     };
+    set_agenda_api_sessions__session_id__agenda_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgendaUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgendaItem-Output"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     set_attendees_api_sessions__session_id__attendees_put: {
         parameters: {
             query?: never;
@@ -5413,6 +5582,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_api_sessions__session_id__bookmarks_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BookmarkCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Bookmark"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_sessions__session_id__bookmarks__bookmark_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                bookmark_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_api_sessions__session_id__bookmarks__bookmark_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                bookmark_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BookmarkUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Bookmark"];
                 };
             };
             /** @description Validation Error */

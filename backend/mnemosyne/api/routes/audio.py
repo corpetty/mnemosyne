@@ -113,7 +113,13 @@ async def _apply_calendar(ctx: AppContext, session: Session) -> Session:
         return session
     if event is None:
         return session
-    ctx.repo.update_fields(session.id, attendees=event.attendees)
+    from ...models.session import AgendaItem
+    from ...services.calendar_service import agenda_from_description
+
+    fields: dict = {"attendees": event.attendees}
+    if not session.agenda and (points := agenda_from_description(event.description)):
+        fields["agenda"] = [AgendaItem(text=p) for p in points]
+    ctx.repo.update_fields(session.id, **fields)
     return ctx.sessions.rename_session(session.id, event.title) or session
 
 

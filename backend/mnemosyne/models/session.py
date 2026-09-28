@@ -72,6 +72,7 @@ class CopilotNotes(ApiModel):
     decisions: list[str] = Field(default_factory=list)
     action_items: list[CopilotItem] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
+    agenda_covered: list[int] = Field(default_factory=list)  # agenda points (1-based) discussed
     lines: int = 0  # transcript lines covered
     updated_at: datetime = Field(default_factory=datetime.now)
 
@@ -103,6 +104,23 @@ class SummaryData(ApiModel):
     followup: str = ""  # last drafted follow-up message (email or chat)
 
 
+class AgendaItem(ApiModel):
+    """A point to get through in a meeting; the copilot marks it covered once it came up."""
+
+    text: str
+    covered: bool = False
+
+
+class Bookmark(ApiModel):
+    """A moment marked as important, while recording (a shortcut, the tray, a button) or later
+    on a transcript line. The summary gives these moments weight."""
+
+    id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    at: float  # seconds on the meeting's timeline
+    note: str = ""
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
 class Session(ApiModel):
     id: str = Field(default_factory=lambda: str(uuid4())[:8])
     name: str = DEFAULT_SESSION_NAME
@@ -121,6 +139,8 @@ class Session(ApiModel):
     local_only: bool = False  # never sent to a cloud LLM provider
     copilot_notes: CopilotNotes | None = None  # last notes taken live while recording
     speakers_reviewed: bool = False  # the "who is who" card was completed or dismissed
+    bookmarks: list[Bookmark] = Field(default_factory=list)  # in time order
+    agenda: list[AgendaItem] = Field(default_factory=list)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

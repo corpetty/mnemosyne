@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { startRecording, stopAndTranscribe } from '$lib/app/controller.svelte.js';
+	import { markMoment, startRecording, stopAndTranscribe } from '$lib/app/controller.svelte.js';
 	import { setLocalOnly } from '$lib/api/backend.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { uiState, type Tab } from '$lib/stores/ui.svelte.js';
 	import AudioControls from './AudioControls.svelte';
+	import AgendaCard from './AgendaCard.svelte';
 	import CalendarCard from './CalendarCard.svelte';
 	import CopilotPanel from './CopilotPanel.svelte';
 	import MeetingActions from './MeetingActions.svelte';
@@ -103,6 +104,13 @@
 				<div class="space-y-3">
 					<div class="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-red-900/60 bg-red-950/20 px-3 py-2">
 						<AudioControls onStartOverride={() => startRecording()} onStopOverride={stopAndTranscribe} />
+						<button
+							onclick={markMoment}
+							title="Mark this moment as important (Ctrl+M); the summary gives it weight"
+							class="rounded border border-amber-700/70 bg-amber-950/40 px-2.5 py-1 text-sm text-amber-200 hover:bg-amber-900/50"
+						>
+							🔖 Mark{audioState.marks ? ` · ${audioState.marks}` : ''}
+						</button>
 						<RecordingSources />
 					</div>
 					<!-- Side by side when wide; stacked (copilot, then the live transcript) when narrow. -->
@@ -115,6 +123,7 @@
 				<div class="space-y-4">
 					<CopilotPanel />
 					<CalendarCard />
+					<AgendaCard />
 					{#if sessionState.activeSession.name !== 'Untitled Session' || sessionState.activeSession.attendees.length}
 						<MeetingBrief
 							title={sessionState.activeSession.name}

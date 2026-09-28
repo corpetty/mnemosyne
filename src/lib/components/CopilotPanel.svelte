@@ -5,6 +5,7 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
+	import AgendaCard from './AgendaCard.svelte';
 	import type { BackendEvent, CopilotNotes } from '$lib/types/index.js';
 
 	let notes = $state<CopilotNotes | null>(null);
@@ -65,6 +66,9 @@
 			</span>
 		</header>
 
+		{#if recordingHere}
+			<AgendaCard covered={notes?.agenda_covered ?? []} compact />
+		{/if}
 		{#if !empty && notes}
 			<div class="grid gap-3 sm:grid-cols-2 text-sm">
 				{#if notes.summary.length}

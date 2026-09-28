@@ -34,6 +34,7 @@ class Piece:
     """One part of a meeting, cut out of it."""
 
     session: Session
+    part: int  # its part number in its meeting
     at: datetime  # when it was recorded
     length: float
     audio: Path  # its audio (the meeting's own file, or a private cut)
@@ -64,6 +65,7 @@ def pieces(app: AppContext, session: Session, stack: contextlib.ExitStack) -> li
         out.append(
             Piece(
                 session=session,
+                part=part,
                 at=min((r.created_at for r in recordings), default=session.created_at),
                 length=(end if end is not None else total) - start,
                 audio=audio,
@@ -214,6 +216,10 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
             audio.unlink(missing_ok=True)
 
     app.sessions.set_audio(target.id, str(final), recordings)
+    # Bookmarks follow their parts, which are numbered anew (before the other meeting goes).
+    app.repo.move_bookmarks(
+        [(piece.session.id, piece.part, target.id, n) for n, piece in enumerate(all_pieces)]
+    )
     if segments:
         app.sessions.set_transcript(target.id, segments)
     embeddings = dict(app.repo.get_session_embeddings(target.id))

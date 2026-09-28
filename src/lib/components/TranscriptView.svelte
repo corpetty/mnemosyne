@@ -17,6 +17,7 @@
 	import JobProgress from './JobProgress.svelte';
 	import AudioPlayer from './AudioPlayer.svelte';
 	import SpeakerNamingCard from './SpeakerNamingCard.svelte';
+	import BookmarksBar from './BookmarksBar.svelte';
 	import QuoteBar from './QuoteBar.svelte';
 	import { playerState } from '$lib/stores/player.svelte.js';
 
@@ -232,6 +233,7 @@
 		<SpeakerNamingCard />
 		<TalkTime />
 		<SpeakerBar />
+		<BookmarksBar />
 		{#if canEdit}
 			<p class="text-[11px] text-gray-600">Click text to edit (Enter saves, Esc cancels). Speaker menus reassign a line. Hover a line for merge and delete.</p>
 		{/if}

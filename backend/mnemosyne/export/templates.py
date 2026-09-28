@@ -28,6 +28,8 @@ def render_meeting_note(
     include_transcript: bool = True,
     duration_seconds: float | None = None,
     attendees: list[str] | None = None,
+    bookmarks: list[tuple[float, str, str]] | None = None,  # (seconds, line said, note)
+    agenda: list[tuple[str, bool]] | None = None,  # (point, covered)
 ) -> str:
     """Render a complete Obsidian-compatible note with YAML frontmatter.
 
@@ -96,6 +98,22 @@ def render_meeting_note(
                 for c in summary_data.chapters
             )
             sections.append("")
+
+    if agenda:
+        sections.append("## Agenda\n")
+        sections.extend(f"- [{'x' if covered else ' '}] {text}" for text, covered in agenda)
+        sections.append("")
+
+    if bookmarks:
+        sections.append("## Bookmarks\n")
+        for at, said, note in bookmarks:
+            line = f"- {int(at // 60):02d}:{int(at % 60):02d}"
+            if note:
+                line += f" **{note}**"
+            if said:
+                line += f" {said}"
+            sections.append(line)
+        sections.append("")
 
     if notes:
         sections.append("## Notes\n")

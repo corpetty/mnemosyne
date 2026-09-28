@@ -1,5 +1,7 @@
 import type {
   ActiveRecording,
+  AgendaItem,
+  Bookmark,
   AddCorrectionResult,
   GlossarySuggestion,
   BackupStatus,
@@ -171,6 +173,27 @@ export async function transcribeSession(sessionId: string): Promise<Job> {
 // Jobs
 export async function listJobs(activeOnly = false): Promise<Job[]> {
   return request(`/api/jobs?active_only=${activeOnly}`);
+}
+
+/** A meeting's agenda, in order (the copilot marks points covered as they come up). */
+export async function setAgenda(sessionId: string, items: AgendaItem[]): Promise<AgendaItem[]> {
+  return request(`/api/sessions/${sessionId}/agenda`, { method: 'PUT', body: JSON.stringify({ items }) });
+}
+
+/** Mark a moment of a meeting: `at` seconds on its timeline, or (while recording) now. */
+export async function addBookmark(sessionId: string, at?: number, note = ''): Promise<Bookmark> {
+  return request(`/api/sessions/${sessionId}/bookmarks`, {
+    method: 'POST',
+    body: JSON.stringify({ at: at ?? null, note })
+  });
+}
+
+export async function updateBookmark(sessionId: string, id: string, note: string): Promise<Bookmark> {
+  return request(`/api/sessions/${sessionId}/bookmarks/${id}`, { method: 'PATCH', body: JSON.stringify({ note }) });
+}
+
+export async function deleteBookmark(sessionId: string, id: string): Promise<void> {
+  await request(`/api/sessions/${sessionId}/bookmarks/${id}`, { method: 'DELETE' });
 }
 
 /** Glossary entries a transcript correction suggests (a misheard name, product, acronym). */

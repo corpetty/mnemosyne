@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ...jobs import Job
 from ...models.base import ApiModel
-from ...models.session import DEFAULT_SESSION_NAME, CopilotNotes, Session, SessionSummary
+from ...models.session import (
+    DEFAULT_SESSION_NAME,
+    AgendaItem,
+    CopilotNotes,
+    Session,
+    SessionSummary,
+)
 from ...services.combine import combine_runner
 from ...services.copilot import copilot_ask_runner
 from ...services.pipeline import transcribe_session
@@ -121,6 +127,22 @@ async def update_notes(session_id: str, request: NotesRequest, ctx: AppContext =
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+class AgendaUpdate(ApiModel):
+    items: list[AgendaItem]  # in order; a point keeps `covered` as sent
+
+
+@router.put("/{session_id}/agenda", response_model=list[AgendaItem])
+async def set_agenda(session_id: str, request: AgendaUpdate, ctx: AppContext = Depends(get_ctx)):
+    """The points to get through: before the meeting, or during it (the copilot then marks
+    the ones that came up)."""
+    items = [a.model_copy(update={"text": a.text.strip()}) for a in request.items if a.text.strip()]
+    session = ctx.repo.update_fields(session_id, agenda=items[:30])
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    ctx.bus.publish({"type": "session", "session_id": session_id, "status": session.status.value})
+    return session.agenda
 
 
 class CombineRequest(ApiModel):

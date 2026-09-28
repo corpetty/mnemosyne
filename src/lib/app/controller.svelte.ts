@@ -3,6 +3,7 @@
  * (buttons, shortcuts, tray, command line, calendar banner) and keyboard shortcuts.
  */
 import {
+  addBookmark,
   exportToObsidian,
   getActiveRecordings,
   getEncryption,
@@ -122,6 +123,24 @@ function announceCaptureHealth(msg: Extract<BackendEvent, { type: 'capture_healt
     run: restartCapture
   });
   notifyDesktop('Recording problem', `${msg.message}. Open Mnemosyne to restart the capture.`);
+}
+
+/** Mark this moment of the recording as important (Mark button, Ctrl+M, tray,
+ *  `mnemosyne --mark`). The summary gives marked moments weight. */
+export async function markMoment() {
+  const sessionId = audioState.activeSessionId;
+  if (!audioState.isRecording || !sessionId) {
+    toastState.info('Marks are for a recording in progress');
+    return;
+  }
+  try {
+    const b = await addBookmark(sessionId);
+    audioState.marks += 1;
+    const m = Math.floor(b.at / 60);
+    toastState.success(`Marked ${m}:${String(Math.floor(b.at % 60)).padStart(2, '0')}`);
+  } catch (e) {
+    toastState.error(e instanceof Error ? e.message : 'Could not mark this moment');
+  }
 }
 
 export async function exportActive() {
@@ -322,6 +341,10 @@ async function waitForJob(jobId: string) {
 /** start-record | stop-record | toggle-record, from the tray, CLI, or calendar banner;
  *  quit-requested when the window is closed or Quit chosen during a recording. */
 export async function handleRemoteAction(action: string) {
+  if (action === 'mark') {
+    await markMoment();
+    return;
+  }
   if (action === 'quit-requested') {
     if (audioState.isRecording) uiState.quitAsk = true;
     else await invokeShell('quit_app'); // it stopped meanwhile
@@ -402,6 +425,7 @@ export function handleKeydown(e: KeyboardEvent) {
       if (audioState.isRecording) stopAndTranscribe();
     },
     e: () => exportActive(),
+    m: () => void markMoment(),
     b: () => (uiState.sidebarCollapsed = !uiState.sidebarCollapsed)
   };
   const action = actions[e.key];
@@ -500,6 +524,10 @@ function onConnected(): () => void {
     }
     if (msg.type === 'capture_health') {
       announceCaptureHealth(msg);
+      return;
+    }
+    if (msg.type === 'bookmarks') {
+      if (sessionState.activeSession?.id === msg.session_id) sessionState.refreshActive();
       return;
     }
     if (msg.type === 'hello') {

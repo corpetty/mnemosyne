@@ -12,6 +12,8 @@ export type StartRecordingResponse = S['StartRecordingResponse'];
 export type StopRecordingResponse = Omit<S['StopRecordingResponse'], 'session'> & { session: SessionDetail };
 export type RecordingStatus = S['RecordingStatus'];
 export type ActiveRecording = S['ActiveRecording'];
+export type Bookmark = S['Bookmark'];
+export type AgendaItem = S['AgendaItem-Output'];
 export type GlossarySuggestion = S['GlossarySuggestion'];
 export type AddCorrectionResult = S['AddCorrectionResult'];
 export type SessionDetail = S['Session'];
@@ -102,6 +104,7 @@ export type BackendEvent =
   | { type: 'meeting_app'; status: 'started' | 'stopped'; app: string }
   | { type: 'copilot_notes'; session_id: string; notes: CopilotNotes }
   | { type: 'levels'; session_id: string; levels: Record<string, Level> }
+  | { type: 'bookmarks'; session_id: string } // a meeting's bookmarks changed
   | {
       // A source stopped being captured, or is captured again (backend audio/health.py).
       type: 'capture_health';

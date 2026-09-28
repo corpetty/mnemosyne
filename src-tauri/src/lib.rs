@@ -628,6 +628,7 @@ const ACTION_EVENT: &str = "tray-action";
 
 struct TrayState {
     toggle: MenuItem<Wry>,
+    mark: MenuItem<Wry>,
 }
 
 /// An action requested on the command line of the *first* launch; the UI asks for
@@ -640,6 +641,7 @@ fn action_from_args<I: IntoIterator<Item = S>, S: AsRef<str>>(args: I) -> Option
             "--toggle" => return Some("toggle-record"),
             "--start" => return Some("start-record"),
             "--stop" => return Some("stop-record"),
+            "--mark" => return Some("mark"),
             _ => {}
         }
     }
@@ -697,6 +699,7 @@ fn set_recording_state(app: AppHandle, recording: bool) -> Result<(), String> {
             .toggle
             .set_text(if recording { "Stop recording" } else { "Start recording" })
             .map_err(|e| e.to_string())?;
+        state.mark.set_enabled(recording).map_err(|e| e.to_string())?;
     }
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_tooltip(Some(if recording {
@@ -821,11 +824,13 @@ fn gpu_available() -> bool {
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Start recording", true, None::<&str>)?;
+    // Marks a moment of the recording as important (also `mnemosyne --mark`); off otherwise.
+    let mark = MenuItem::with_id(app, "mark", "Mark this moment", false, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Mnemosyne", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
-        &[&toggle, &show, &PredefinedMenuItem::separator(app)?, &quit],
+        &[&toggle, &mark, &show, &PredefinedMenuItem::separator(app)?, &quit],
     )?;
     let mut builder = TrayIconBuilder::with_id("main")
         .tooltip("Mnemosyne")
@@ -833,6 +838,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "toggle" => {
                 let _ = app.emit(ACTION_EVENT, "toggle-record");
+            }
+            "mark" => {
+                let _ = app.emit(ACTION_EVENT, "mark");
             }
             "show" => show_main_window(app),
             "quit" => quit_or_ask(app),
@@ -842,7 +850,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         builder = builder.icon(icon.clone());
     }
     builder.build(app)?;
-    app.manage(TrayState { toggle });
+    app.manage(TrayState { toggle, mark });
     Ok(())
 }
 
@@ -964,6 +972,7 @@ mod tests {
         assert_eq!(action_from_args(["mnemosyne", "--toggle"]), Some("toggle-record"));
         assert_eq!(action_from_args(["--start"]), Some("start-record"));
         assert_eq!(action_from_args(["x", "--stop", "--toggle"]), Some("stop-record"));
+        assert_eq!(action_from_args(["mnemosyne", "--mark"]), Some("mark"));
         assert_eq!(action_from_args(["mnemosyne"]), None);
         assert_eq!(action_from_args(Vec::<String>::new()), None);
     }

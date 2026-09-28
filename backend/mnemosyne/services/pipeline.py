@@ -28,7 +28,7 @@ from ..transcription.glossary import (
     llm_correct,
     parse_glossary,
 )
-from .copilot import copilot_hint
+from .copilot import agenda_hint, bookmark_hint, copilot_hint
 from .tasks import add_live_todos, carry_over
 
 if TYPE_CHECKING:
@@ -307,6 +307,12 @@ def summarize_session(
         live_notes = copilot_hint(session.copilot_notes)
         if live_notes:
             instr = f"{instr}\n{live_notes}".strip()
+        planned = agenda_hint(session.agenda)
+        if planned:
+            instr = f"{instr}\n{planned}".strip()
+        marked = bookmark_hint(session.bookmarks, session.transcript)
+        if marked:
+            instr = f"{instr}\n{marked}".strip()
 
         ctx.update(f"Summarizing with {prov}/{mdl or 'default model'}")
         ctx.emit({"type": "status", "session_id": session_id, "message": "Summarizing..."})

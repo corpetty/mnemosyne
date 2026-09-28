@@ -25,6 +25,8 @@ class AudioState {
   recordingDuration = $state(0);
   error = $state<string | null>(null);
   loading = $state(false);
+  /** Moments marked in this recording (markMoment). */
+  marks = $state(0);
   /** Sources not being captured, by device id: 'stopped' or 'stalled' (`capture_health`). */
   problems = $state<Record<string, string>>({});
   /** Live input levels per device id while recording (from `levels` events). */
@@ -121,6 +123,7 @@ class AudioState {
       this.activeSessionId = res.session_id;
       this.isRecording = true;
       this.problems = {};
+      this.marks = 0;
       this.recordingDuration = 0;
       this.durationInterval = setInterval(() => {
         this.recordingDuration++;

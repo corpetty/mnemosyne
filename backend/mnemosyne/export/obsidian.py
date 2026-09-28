@@ -22,6 +22,14 @@ def note_stem(session: Session) -> str:
     return f"{session.created_at.strftime('%Y-%m-%d')}-{sanitize_filename(session.name)}"
 
 
+def _bookmark(session: Session, bookmark) -> tuple[float, str, str]:
+    from ..models.transcript import line_at
+
+    line = line_at(session.transcript, bookmark.at)
+    said = f"{line.speaker}: {line.text}" if line is not None else ""
+    return bookmark.at, said, bookmark.note
+
+
 class ObsidianExporter:
     """Exports sessions as markdown files to an Obsidian vault."""
 
@@ -55,6 +63,8 @@ class ObsidianExporter:
             include_transcript=self.include_transcript,
             duration_seconds=duration,
             attendees=session.attendees,
+            bookmarks=[_bookmark(session, b) for b in session.bookmarks],
+            agenda=[(a.text, a.covered) for a in session.agenda],
         )
 
     def export(self, session: Session) -> Path:

@@ -40,6 +40,10 @@ Respond with ONLY a JSON object:
  "open_questions": ["<questions raised and not answered yet>"]}
 Use speaker labels as they appear; do not invent names."""
 
+AGENDA_PROMPT = """
+The meeting has an agenda (numbered below). Also return "agenda_covered": the numbers of the
+agenda points the meeting has discussed so far (keep the ones from your previous notes)."""
+
 ASK_PROMPT = """\
 You answer a question about a meeting that is still in progress, from its transcript so far and
 the running notes. Be brief (one to three sentences). Cite the time of the relevant line like
@@ -67,11 +71,33 @@ def copilot_hint(notes: CopilotNotes | None) -> str:
     )
 
 
+def bookmark_hint(bookmarks, transcript) -> str:
+    """Moments the user marked, as extra instructions for the summary (empty when none)."""
+    from ..models.transcript import line_at
+    from ..summarization.prompts import mmss
+
+    lines = []
+    for b in bookmarks:
+        line = line_at(transcript, b.at)
+        text = f"[{mmss(b.at)}]"
+        if line is not None:
+            text += f" {line.speaker}: {line.text}"
+        if b.note:
+            text += f" (note: {b.note})"
+        lines.append(text)
+    if not lines:
+        return ""
+    return (
+        "The user marked these moments as important while listening; make sure the summary "
+        "covers what was said there:\n" + "\n".join(lines)
+    )
+
+
 def _strings(v) -> list[str]:
     return [x.strip() for x in v if isinstance(x, str) and x.strip()] if isinstance(v, list) else []
 
 
-def parse_notes(raw: str, session_id: str, lines: int) -> CopilotNotes | None:
+def parse_notes(raw: str, session_id: str, lines: int, agenda_size: int = 0) -> CopilotNotes | None:
     obj = extract_json(raw) or _loose_json(raw)
     if obj is None:
         return None
@@ -85,8 +111,12 @@ def parse_notes(raw: str, session_id: str, lines: int) -> CopilotNotes | None:
             items.append(CopilotItem(text=a["text"].strip(), owner=owner))
         elif isinstance(a, str) and a.strip():
             items.append(CopilotItem(text=a.strip()))
+    covered = sorted(
+        {n for n in obj.get("agenda_covered") or [] if isinstance(n, int) and 1 <= n <= agenda_size}
+    )
     return CopilotNotes(
         session_id=session_id,
+        agenda_covered=covered,
         summary=_strings(obj.get("summary")),
         decisions=_strings(obj.get("decisions")),
         action_items=items,
@@ -116,23 +146,42 @@ async def update_notes(
     previous: CopilotNotes | None,
     session_id: str,
     segments: list[TranscriptSegment],
+    agenda: list[str] | None = None,
 ) -> CopilotNotes | None:
     """Fold the lines after `previous.lines` into the notes. None if the model's reply
-    could not be read (the previous notes stay)."""
+    could not be read (the previous notes stay). With an agenda, the notes also say which
+    points have been covered (once covered, a point stays covered)."""
     start = previous.lines if previous else 0
     new = segments[start:]
     if not new:
         return previous
-    prev_json = (
-        previous.model_dump_json(include={"summary", "decisions", "action_items", "open_questions"})
-        if previous
-        else "{}"
-    )
+    keys = {"summary", "decisions", "action_items", "open_questions"}
+    if agenda:
+        keys.add("agenda_covered")
+    prev_json = previous.model_dump_json(include=keys) if previous else "{}"
     user = f"Previous notes:\n{prev_json}\n\nTranscript lines since then:\n" + "\n".join(
         transcript_lines(_segment_dicts(new))
     )
-    raw = await complete(NOTES_PROMPT, user)
-    return parse_notes(raw, session_id, len(segments))
+    system = NOTES_PROMPT
+    if agenda:
+        system += AGENDA_PROMPT
+        user = "Agenda:\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(agenda, 1)) + "\n\n" + user
+    raw = await complete(system, user)
+    fresh = parse_notes(raw, session_id, len(segments), len(agenda or []))
+    if fresh is not None and previous is not None:
+        fresh.agenda_covered = sorted(set(fresh.agenda_covered) | set(previous.agenda_covered))
+    return fresh
+
+
+def agenda_hint(agenda) -> str:
+    """The planned agenda, as extra instructions for the summary (empty when none)."""
+    if not agenda:
+        return ""
+    points = "\n".join(f"{i}. {a.text}" for i, a in enumerate(agenda, 1))
+    return (
+        "The planned agenda of this meeting:\n" + points + "\nIf a point was not discussed, "
+        'list it under open questions as "Not discussed: <point>".'
+    )
 
 
 async def answer_live(
@@ -208,8 +257,10 @@ def copilot_runner(app: AppContext, session_id: str, tick: float = 5.0):
                     ready = due
                 if not ready:
                     continue
+                current = app.sessions.get_session(session_id)
+                agenda = [a.text for a in current.agenda] if current else []
                 try:
-                    fresh = await update_notes(complete, notes, session_id, segments)
+                    fresh = await update_notes(complete, notes, session_id, segments, agenda)
                 except Exception as e:  # provider down: try again next round
                     logger.warning("Copilot update failed: %s", e)
                     ctx.update(f"Copilot: {e}")
@@ -220,6 +271,12 @@ def copilot_runner(app: AppContext, session_id: str, tick: float = 5.0):
                     continue
                 app.copilot_notes[session_id] = fresh
                 app.repo.update_fields(session_id, copilot_notes=fresh)  # outlives the meeting
+                if current is not None and current.agenda and fresh.agenda_covered:
+                    marked = [
+                        a.model_copy(update={"covered": a.covered or i in fresh.agenda_covered})
+                        for i, a in enumerate(current.agenda, 1)
+                    ]
+                    app.repo.update_fields(session_id, agenda=marked)
                 updates += 1
                 ctx.update(f"Notes updated ({fresh.lines} lines)")
                 ctx.emit(

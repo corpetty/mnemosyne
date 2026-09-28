@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { clipUrl, makeQuote, saveClip } from '$lib/api/backend.js';
+	import { addBookmark, clipUrl, makeQuote, saveClip } from '$lib/api/backend.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -15,6 +15,20 @@
 
 	function fmt(t: number): string {
 		return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+	}
+
+	/** Bookmark the first selected line. */
+	async function bookmark() {
+		const s = sessionState.activeSession;
+		if (!s) return;
+		try {
+			await addBookmark(s.id, s.transcript[from].start);
+			await sessionState.refreshActive();
+			toastState.success('Bookmarked');
+			onclose();
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not bookmark');
+		}
 	}
 
 	async function copyText() {
@@ -74,5 +88,8 @@
 			{busy === 'audio' ? 'Cutting…' : 'Save audio clip'}
 		</button>
 	{/if}
+	<button onclick={bookmark} disabled={!!busy} class="px-2 py-0.5 rounded bg-amber-950/60 hover:bg-amber-900/60 border border-amber-800/70 text-amber-200 disabled:opacity-50">
+		🔖 Bookmark
+	</button>
 	<button onclick={onclose} aria-label="Cancel the quote" class="px-1 text-gray-500 hover:text-gray-200">✕</button>
 </div>
