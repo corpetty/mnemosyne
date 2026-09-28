@@ -159,3 +159,80 @@ def test_token_is_masked_in_settings(client, ctx):
     ctx.settings.api_token = "s3cret"
     body = client.get("/api/settings", headers={"Authorization": "Bearer s3cret"}).json()
     assert body["values"]["api_token"] == "" and body["secrets_set"]["api_token"] is True
+
+
+# ---- the echo canceller's microphone ---------------------------------------------
+
+MIC = "alsa_input.usb-RODE_Microphones_RODE_NT-USB-00.analog-stereo"
+
+
+def test_load_command_pins_the_chosen_mic():
+    cmd = load_command(mic=MIC)
+    capture = cmd[cmd.index("capture.props") : cmd.index("source.props")]
+    assert f'target.object = "{MIC}"' in capture and "node.dont-reconnect = true" in capture
+    default = load_command()
+    assert "target.object" not in default and "dont-reconnect" not in default
+
+
+@pytest.mark.parametrize("bad", ["mnemosyne_aec_source", 'x" } evil = { "', "has space"])
+def test_load_command_refuses_our_own_source_and_odd_names(bad):
+    with pytest.raises(ValueError):
+        load_command(mic=bad)
+
+
+@pytest.mark.anyio
+async def test_a_new_mic_restarts_the_module(fake_pwcli):
+    script, log = fake_pwcli
+    m = EchoCancelManager(pw_cli=str(script))
+    await m.start(MIC)
+    first = m._proc
+    await m.start(MIC)  # same mic: left alone
+    assert m._proc is first and log.read_text().count("load-module") == 1
+    st = await m.start("easyeffects_source")
+    assert st.active and st.mic == "easyeffects_source" and m.mic == "easyeffects_source"
+    assert m._proc is not first and first.returncode is not None  # the old one was stopped
+    assert log.read_text().count("load-module") == 2
+    await m.stop()
+
+
+def test_echo_cancel_api_mic_and_deferred_restart(
+    client, ctx, fake_pwcli, fake_pipewire, monkeypatch
+):
+    from mnemosyne.api.routes import audio as audio_routes
+    from mnemosyne.audio.capture import AudioDevice
+
+    script, log = fake_pwcli
+    ctx.echo = EchoCancelManager(pw_cli=str(script))
+    devices = [
+        AudioDevice(id=1, name=MIC, description="RODE NT-USB", media_class="Audio/Source"),
+        AudioDevice(
+            id=5, name="easyeffects_source", description="EasyEffects", media_class="Audio/Source"
+        ),
+    ]
+    monkeypatch.setattr(audio_routes, "list_devices", lambda: devices)
+
+    def echo(mic):
+        return client.post("/api/audio/echo-cancel", json={"enabled": True, "mic": mic})
+
+    body = echo(MIC).json()
+    assert body["mic"] == MIC and body["mic_description"] == "RODE NT-USB"
+    assert ctx.settings.echo_cancel_mic == MIC
+    assert echo("mnemosyne_aec_source").status_code == 400
+
+    # Recording from the echo-cancelled source (node 146): a new mic waits.
+    sid = client.post("/api/audio/start", json={"device_ids": [146]}).json()["session_id"]
+    body = echo("easyeffects_source").json()
+    assert body["mic"] == MIC and body["pending_mic"] == "easyeffects_source"
+    assert log.read_text().count("load-module") == 1
+    client.post(f"/api/audio/stop/{sid}", json={"transcribe": False})
+
+    # The next recording restarts it; the new source's node id replaces the old one.
+    ids = iter([146, 147])
+    monkeypatch.setattr(ec, "find_source_node", lambda node_name=ec.SOURCE_NODE: next(ids, 147))
+    sid = client.post("/api/audio/start", json={"device_ids": [146]}).json()["session_id"]
+    assert ctx.echo.mic == "easyeffects_source" and log.read_text().count("load-module") == 2
+    assert [p.device_id for p in ctx.active_recordings[sid].processes] == [147]
+    client.post(f"/api/audio/stop/{sid}", json={"transcribe": False})
+
+    body = echo("").json()
+    assert body["mic"] is None and ctx.settings.echo_cancel_mic == ""  # back to the default

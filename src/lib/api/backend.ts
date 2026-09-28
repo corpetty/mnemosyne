@@ -1,5 +1,6 @@
 import type {
   Ask,
+  EchoCancelStatus,
   Digest,
   MeetingStats,
   TaskItem,
@@ -284,20 +285,15 @@ export async function importAudio(
 }
 
 // Echo cancellation
-export interface EchoCancelStatus {
-  supported: boolean;
-  reason: string | null;
-  active: boolean;
-  enabled: boolean;
-  source_node_id: number | null;
-}
+export type { EchoCancelStatus };
 
 export async function getEchoCancel(): Promise<EchoCancelStatus> {
   return request('/api/audio/echo-cancel');
 }
 
-export async function setEchoCancel(enabled: boolean): Promise<EchoCancelStatus> {
-  return request('/api/audio/echo-cancel', { method: 'POST', body: JSON.stringify({ enabled }) });
+/** `mic`: the microphone's node name to cancel echo on ("" = the default source; omitted = keep). */
+export async function setEchoCancel(enabled: boolean, mic?: string): Promise<EchoCancelStatus> {
+  return request('/api/audio/echo-cancel', { method: 'POST', body: JSON.stringify({ enabled, mic }) });
 }
 
 // Ask across meetings

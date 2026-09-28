@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -32,11 +33,34 @@ MODULE_PATHS = (
 )
 
 
-def load_command(source_name: str = SOURCE_NODE, description: str = SOURCE_DESCRIPTION) -> str:
+# PipeWire node names are plain identifiers; anything else is not put into the module args.
+_NODE_NAME = re.compile(r"^[A-Za-z0-9_.:@+-]+$")
+
+
+def valid_mic(mic: str | None) -> str | None:
+    """The mic node name to capture from, or None for the default source. Never our own
+    echo-cancelled source (it would feed on itself), never a malformed name."""
+    if not mic:
+        return None
+    if mic.startswith("mnemosyne_aec") or not _NODE_NAME.match(mic):
+        raise ValueError(f"Cannot use {mic!r} as the echo canceller's microphone")
+    return mic
+
+
+def load_command(
+    source_name: str = SOURCE_NODE,
+    description: str = SOURCE_DESCRIPTION,
+    mic: str | None = None,
+    capture_name: str = CAPTURE_NODE,
+) -> str:
+    """pw-cli command loading the module. With `mic` (a node.name) the capture side is pinned
+    to that microphone and never moved; without it WirePlumber picks the default source."""
+    mic = valid_mic(mic)
+    target = f' target.object = "{mic}" node.dont-reconnect = true' if mic else ""
     return (
         "load-module libpipewire-module-echo-cancel { monitor.mode = true "
-        f'capture.props = {{ node.name = "{CAPTURE_NODE}" '
-        'node.description = "Mnemosyne AEC capture" } '
+        f'capture.props = {{ node.name = "{capture_name}" '
+        f'node.description = "Mnemosyne AEC capture"{target} }} '
         f'source.props = {{ node.name = "{source_name}" node.description = "{description}" }} '
         "}\n"
     )
@@ -48,12 +72,14 @@ class EchoCancelStatus:
     reason: str | None
     active: bool
     source_node_id: int | None
+    mic: str | None = None  # node.name the running module captures from (None: default source)
 
 
 class EchoCancelManager:
     def __init__(self, pw_cli: str = "pw-cli"):
         self.pw_cli = pw_cli
         self._proc: asyncio.subprocess.Process | None = None
+        self.mic: str | None = None  # what the running module captures from
 
     # ---- capability ----------------------------------------------------
 
@@ -73,13 +99,20 @@ class EchoCancelManager:
     def active(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 
-    async def start(self) -> EchoCancelStatus:
+    async def start(self, mic: str | None = None) -> EchoCancelStatus:
+        """Load the module capturing from `mic` (a node.name; None = the default source).
+        Already running with another mic: restart it on the new one."""
+        mic = valid_mic(mic)
         ok, reason = self.supported()
         if not ok:
             return EchoCancelStatus(False, reason, False, None)
         if self.active:
-            return await self.status()
-        logger.info("Loading PipeWire echo-cancel module (monitor mode)")
+            if mic == self.mic:
+                return await self.status()
+            await self.stop()
+        logger.info(
+            "Loading PipeWire echo-cancel module (monitor mode, mic %s)", mic or "default source"
+        )
         self._proc = await asyncio.create_subprocess_exec(
             self.pw_cli,
             stdin=asyncio.subprocess.PIPE,
@@ -87,14 +120,15 @@ class EchoCancelManager:
             stderr=asyncio.subprocess.DEVNULL,
         )
         assert self._proc.stdin is not None
-        self._proc.stdin.write(load_command().encode())
+        self._proc.stdin.write(load_command(mic=mic).encode())
+        self.mic = mic
         await self._proc.stdin.drain()
         # Give PipeWire a moment to create the nodes, then verify.
         for _ in range(20):
             await asyncio.sleep(0.1)
             node = find_source_node()
             if node is not None:
-                return EchoCancelStatus(True, None, True, node)
+                return EchoCancelStatus(True, None, True, node, mic)
         await self.stop()
         return EchoCancelStatus(True, "module loaded but no source appeared", False, None)
 
@@ -115,7 +149,8 @@ class EchoCancelManager:
     async def status(self) -> EchoCancelStatus:
         ok, reason = self.supported()
         node = find_source_node() if ok else None
-        return EchoCancelStatus(ok, reason, self.active and node is not None, node)
+        active = self.active and node is not None
+        return EchoCancelStatus(ok, reason, active, node, self.mic if active else None)
 
 
 def find_source_node(node_name: str = SOURCE_NODE) -> int | None:

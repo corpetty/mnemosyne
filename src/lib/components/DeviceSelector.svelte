@@ -48,11 +48,16 @@
 		}
 	}
 
+	// Microphones the echo canceller can listen to: real inputs, never its own output.
+	const aecMics = $derived(audioState.inputDevices.filter((d) => !d.is_echo_cancelled && !d.is_monitor));
+
 	async function toggleEcho() {
 		if (!echo) return;
 		toggling = true;
 		try {
-			echo = await setEchoCancel(!echo.active);
+			// Enabling: cancel echo on the mic picked below (it gets swapped for the echo-cancelled one).
+			const picked = aecMics.find((d) => audioState.selectedDeviceIds.has(d.id));
+			echo = await setEchoCancel(!echo.active, !echo.active && picked ? picked.name : undefined);
 			await audioState.loadDevices();
 			if (echo.active) {
 				// Prefer the echo-cancelled mic over raw mics.
@@ -74,6 +79,19 @@
 		}
 	}
 
+	async function changeEchoMic(name: string) {
+		toggling = true;
+		try {
+			echo = await setEchoCancel(true, name);
+			await audioState.loadDevices(); // the echo-cancelled source is new when it restarts
+			if (echo.pending_mic) toastState.info('The new microphone is used from the next recording');
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not change the microphone');
+		} finally {
+			toggling = false;
+		}
+	}
+
 	$effect(() => {
 		audioState.loadDevices();
 		loadEcho();
@@ -86,6 +104,24 @@
 			<span class="font-medium text-gray-300">Echo cancellation</span>
 			<span class="text-gray-600"> · removes what your speakers play from the mic, so you can record without headphones</span>
 		</div>
+		{#if echo.active}
+			<label class="flex items-center gap-1.5 text-xs text-gray-500 shrink-0">
+				on
+				<select
+					value={echo.pending_mic ?? echo.mic ?? ''}
+					onchange={(e) => changeEchoMic((e.currentTarget as HTMLSelectElement).value)}
+					disabled={toggling}
+					aria-label="Microphone the echo canceller uses"
+					class="max-w-48 bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-200"
+				>
+					<option value="">System default mic</option>
+					{#each aecMics as d (d.name)}<option value={d.name}>{d.description}</option>{/each}
+					{#if echo.mic && !aecMics.some((d) => d.name === echo?.mic)}
+						<option value={echo.mic}>{echo.mic_description ?? echo.mic} (not connected)</option>
+					{/if}
+				</select>
+			</label>
+		{/if}
 		<button
 			onclick={toggleEcho}
 			disabled={toggling || audioState.isRecording}

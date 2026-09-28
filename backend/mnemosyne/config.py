@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     local_speaker_name: str = "Me"
     # PipeWire WebRTC echo cancellation (virtual "echo cancelled" mic source).
     echo_cancel: bool = False
+    # Microphone (PipeWire node.name) the echo canceller captures from; blank = default source.
+    echo_cancel_mic: str = ""
     # Drop mic segments that repeat what came out of the speakers (no headphones).
     echo_dedup: bool = True
     echo_similarity: float = 0.8

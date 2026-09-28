@@ -199,7 +199,11 @@ class AppContext:
         # First, so retention and the index never see a half-finished recording.
         recover_interrupted(self)
         if self.settings.echo_cancel:
-            status = await self.echo.start()
+            try:
+                status = await self.echo.start(self.settings.echo_cancel_mic or None)
+            except ValueError as e:  # a bad saved mic: fall back to the default source
+                logger.warning("%s", e)
+                status = await self.echo.start()
             if not status.active:
                 logger.warning("Echo cancellation not started: %s", status.reason)
         self._retention_task = asyncio.create_task(self._retention_loop(retention_interval))

@@ -44,6 +44,7 @@ export type TopicCount = S['TopicCount'];
 export type Thread = S['Thread'];
 export type PhoneLink = S['PhoneLink'];
 export type SystemInfo = S['SystemInfo'];
+export type EchoCancelStatus = S['EchoCancelResponse'];
 export type Diagnostics = S['Diagnostics'];
 export type CopilotNotes = S['CopilotNotes'];
 export type SessionUsage = S['SessionUsage'];

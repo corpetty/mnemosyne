@@ -103,8 +103,9 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
     if session.id in ctx.active_recordings:
         raise HTTPException(status_code=409, detail="Session is already recording")
 
+    device_ids = await _apply_echo_mic(ctx, request.device_ids)
     output_dir = ctx.settings.recordings_dir / session.id
-    recording = await start_recording(request.device_ids, output_dir)
+    recording = await start_recording(device_ids, output_dir)
     if not recording.processes:
         raise HTTPException(status_code=400, detail="None of the selected devices could be opened")
     try:
@@ -330,21 +331,60 @@ class EchoCancelResponse(ApiModel):
     active: bool
     enabled: bool  # the persisted setting
     source_node_id: int | None
+    mic: str | None  # node.name the running canceller captures from; None = default source
+    mic_description: str | None  # its display name, None when not connected or default
+    # A different mic was chosen while recording: used from the next recording on.
+    pending_mic: str | None
 
 
 class EchoCancelRequest(ApiModel):
     enabled: bool
+    # Microphone node.name to capture from; "" = the default source; omitted = keep the saved one.
+    mic: str | None = None
+
+
+def _wanted_mic(ctx: AppContext) -> str | None:
+    return ctx.settings.echo_cancel_mic or None
 
 
 async def _echo_response(ctx: AppContext) -> EchoCancelResponse:
     st = await ctx.echo.status()
+    description = None
+    if st.mic:
+        try:
+            description = next((d.description for d in list_devices() if d.name == st.mic), None)
+        except Exception:
+            logger.debug("Could not list devices for the echo canceller's mic", exc_info=True)
+    pending = _wanted_mic(ctx) if st.active and _wanted_mic(ctx) != st.mic else None
     return EchoCancelResponse(
         supported=st.supported,
         reason=st.reason,
         active=st.active,
         enabled=ctx.settings.echo_cancel,
         source_node_id=st.source_node_id,
+        mic=st.mic,
+        mic_description=description,
+        pending_mic=pending,
     )
+
+
+async def _apply_echo_mic(ctx: AppContext, device_ids: list[int]) -> list[int]:
+    """Before a recording starts: restart the echo canceller on a mic chosen since it last
+    started (never mid-recording). The echo-cancelled source gets a new node id when it
+    restarts, so the requested device ids are updated to match."""
+    from ...audio.echo_cancel import find_source_node
+
+    if not (ctx.echo.active and ctx.settings.echo_cancel) or ctx.echo.mic == _wanted_mic(ctx):
+        return device_ids
+    old_id = find_source_node()
+    try:
+        st = await ctx.echo.start(_wanted_mic(ctx))
+    except ValueError as e:
+        logger.warning("%s", e)
+        return device_ids
+    if old_id is None or st.source_node_id is None:
+        return device_ids
+    return [st.source_node_id if d == old_id else d for d in device_ids]
 
 
 @router.get("/echo-cancel", response_model=EchoCancelResponse)
@@ -355,18 +395,32 @@ async def echo_cancel_status(ctx: AppContext = Depends(get_ctx)):
 @router.post("/echo-cancel", response_model=EchoCancelResponse)
 async def echo_cancel_set(request: EchoCancelRequest, ctx: AppContext = Depends(get_ctx)):
     """Load or unload the PipeWire echo-cancel module and remember the choice."""
+    from ...audio.echo_cancel import valid_mic
     from ...config import save_settings
 
+    if request.mic is not None:
+        try:
+            valid_mic(request.mic)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    changed = False
+    if request.mic is not None and request.mic != ctx.settings.echo_cancel_mic:
+        ctx.settings.echo_cancel_mic = request.mic
+        changed = True
     if request.enabled:
-        st = await ctx.echo.start()
-        if not st.active:
-            raise HTTPException(
-                status_code=400, detail=st.reason or "Could not start echo cancellation"
-            )
+        # A new mic while recording waits for the next recording (see _apply_echo_mic).
+        if not (ctx.echo.active and ctx.active_recordings):
+            st = await ctx.echo.start(_wanted_mic(ctx))
+            if not st.active:
+                raise HTTPException(
+                    status_code=400, detail=st.reason or "Could not start echo cancellation"
+                )
     else:
         await ctx.echo.stop()
     if ctx.settings.echo_cancel != request.enabled:
         ctx.settings.echo_cancel = request.enabled
+        changed = True
+    if changed:
         save_settings(ctx.settings)
     return await _echo_response(ctx)
 

@@ -1592,6 +1592,8 @@ export interface components {
         EchoCancelRequest: {
             /** Enabled */
             enabled: boolean;
+            /** Mic */
+            mic?: string | null;
         };
         /** EchoCancelResponse */
         EchoCancelResponse: {
@@ -1599,6 +1601,12 @@ export interface components {
             active: boolean;
             /** Enabled */
             enabled: boolean;
+            /** Mic */
+            mic: string | null;
+            /** Mic Description */
+            mic_description: string | null;
+            /** Pending Mic */
+            pending_mic: string | null;
             /** Reason */
             reason: string | null;
             /** Source Node Id */
@@ -2227,6 +2235,8 @@ export interface components {
             digest_weekday?: number | null;
             /** Echo Cancel */
             echo_cancel?: boolean | null;
+            /** Echo Cancel Mic */
+            echo_cancel_mic?: string | null;
             /** Echo Dedup */
             echo_dedup?: boolean | null;
             /** Echo Similarity */
@@ -2406,6 +2416,8 @@ export interface components {
             digest_weekday: number;
             /** Echo Cancel */
             echo_cancel: boolean;
+            /** Echo Cancel Mic */
+            echo_cancel_mic: string;
             /** Echo Dedup */
             echo_dedup: boolean;
             /** Echo Similarity */

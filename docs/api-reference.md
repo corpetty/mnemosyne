@@ -147,11 +147,18 @@ into a long-lived `pw-cli` child (no config files, no daemon restart), which exp
 It lives as long as the backend or until turned off.
 
 ```json
-{ "supported": true, "reason": null, "active": true, "enabled": true, "source_node_id": 146 }
+{ "supported": true, "reason": null, "active": true, "enabled": true, "source_node_id": 146,
+  "mic": "alsa_input.usb-RODE_Microphones_RODE_NT-USB-00.analog-stereo",
+  "mic_description": "RODE NT-USB Analog Stereo", "pending_mic": null }
 ```
 
-`POST` body `{ "enabled": true|false }` loads/unloads it and persists `echo_cancel` in settings (so
-it comes back on the next start). `400` with a reason when the module or `pw-cli` is missing.
+`POST` body `{ "enabled": true|false, "mic": "<node.name>" }` loads/unloads it and persists
+`echo_cancel` (and `echo_cancel_mic`) in settings, so it comes back on the next start. `mic` pins the
+module's capture side to that microphone (`target.object`, `node.dont-reconnect`); `""` means the
+default source, and leaving it out keeps the saved one. Choosing another mic restarts the module,
+except while recording: then `pending_mic` is set and the restart happens when the next recording
+starts (device ids naming the echo-cancelled source are updated to its new node id). `400` with a
+reason when the module or `pw-cli` is missing, or the mic is the echo-cancelled source itself.
 
 ### `GET /api/audio/apps`
 Other apps with an open recording stream right now (`Stream/Input/Audio` nodes in `pw-dump`), as of
