@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { startRecording, stopAndTranscribe } from '$lib/app/controller.svelte.js';
 	import { setLocalOnly } from '$lib/api/backend.js';
+	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { uiState, type Tab } from '$lib/stores/ui.svelte.js';
@@ -10,10 +11,16 @@
 	import MeetingBrief from './MeetingBrief.svelte';
 	import DeviceSelector from './DeviceSelector.svelte';
 	import LiveTranscript from './LiveTranscript.svelte';
+	import RecordingSources from './RecordingSources.svelte';
 	import NotesEditor from './NotesEditor.svelte';
 	import ObsidianExport from './ObsidianExport.svelte';
 	import SummaryView from './SummaryView.svelte';
 	import TranscriptView from './TranscriptView.svelte';
+
+	// This meeting is being recorded right now.
+	const recordingHere = $derived(
+		audioState.isRecording && audioState.activeSessionId === sessionState.activeSession?.id
+	);
 
 	const tabs: { id: Tab; label: string }[] = [
 		{ id: 'recording', label: 'Recording' },
@@ -83,29 +90,44 @@
 
 <!-- Tab content -->
 <div class="flex-1 overflow-y-auto p-6">
-	<div class="max-w-4xl">
+	<div class={recordingHere && uiState.activeTab === 'recording' ? 'max-w-7xl' : 'max-w-4xl'}>
 		{#if uiState.activeTab === 'recording'}
-			<div class="space-y-4">
-				<CopilotPanel />
-				<CalendarCard />
-				{#if sessionState.activeSession.name !== 'Untitled Session' || sessionState.activeSession.attendees.length}
-					<MeetingBrief
-						title={sessionState.activeSession.name}
-						attendees={sessionState.activeSession.attendees}
-						exclude={sessionState.activeSession.id}
+			{#if recordingHere}
+				<!-- While recording: controls on top, then the live transcript and the copilot side by side. -->
+				<div class="space-y-3">
+					<div class="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-red-900/60 bg-red-950/20 px-3 py-2">
+						<AudioControls onStartOverride={() => startRecording()} onStopOverride={stopAndTranscribe} />
+						<RecordingSources />
+					</div>
+					<!-- Side by side when wide; stacked (copilot, then the live transcript) when narrow. -->
+					<div class="grid gap-4 lg:grid-cols-5">
+						<div class="lg:col-span-2 lg:order-2"><CopilotPanel /></div>
+						<div class="lg:col-span-3 lg:order-1"><LiveTranscript tall /></div>
+					</div>
+				</div>
+			{:else}
+				<div class="space-y-4">
+					<CopilotPanel />
+					<CalendarCard />
+					{#if sessionState.activeSession.name !== 'Untitled Session' || sessionState.activeSession.attendees.length}
+						<MeetingBrief
+							title={sessionState.activeSession.name}
+							attendees={sessionState.activeSession.attendees}
+							exclude={sessionState.activeSession.id}
+						/>
+					{/if}
+					<DeviceSelector />
+					<AudioControls
+						onStartOverride={() => startRecording()}
+						onStopOverride={stopAndTranscribe}
 					/>
-				{/if}
-				<DeviceSelector />
-				<AudioControls
-					onStartOverride={() => startRecording()}
-					onStopOverride={stopAndTranscribe}
-				/>
-				<p class="text-xs text-gray-600">
-					Shortcuts: <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+R</kbd> Record
-					&middot; <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+S</kbd> Stop
-				</p>
-				<LiveTranscript />
-			</div>
+					<p class="text-xs text-gray-600">
+						Shortcuts: <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+R</kbd> Record
+						&middot; <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+S</kbd> Stop
+					</p>
+					<LiveTranscript />
+				</div>
+			{/if}
 		{:else if uiState.activeTab === 'transcript'}
 			<TranscriptView />
 		{:else if uiState.activeTab === 'summary'}

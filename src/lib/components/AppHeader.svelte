@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RecordingPill from './RecordingPill.svelte';
 	import { toggleView } from '$lib/app/controller.svelte.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -42,13 +43,13 @@
 		</button>
 	</div>
 
-	<nav class="flex items-center rounded-lg bg-gray-900 border border-gray-800 p-0.5" aria-label="Views">
+	<nav class="flex min-w-0 shrink items-center overflow-x-auto rounded-lg bg-gray-900 border border-gray-800 p-0.5" aria-label="Views">
 		{#each NAV as item (item.view)}
 			<button
 				onclick={() => toggleView(item.view)}
 				title={item.title}
 				aria-current={active(item.view) ? 'page' : undefined}
-				class="px-3 py-1 rounded-md text-xs font-medium transition-colors
+				class="px-2 lg:px-3 py-1 rounded-md text-xs font-medium transition-colors
 					{active(item.view) ? 'bg-gray-700 text-gray-100' : 'text-gray-400 hover:text-gray-200'}"
 			>
 				{item.label}
@@ -56,7 +57,7 @@
 		{/each}
 	</nav>
 
-	<div class="ml-auto flex items-center gap-3 text-xs">
+	<div class="ml-auto flex shrink-0 items-center gap-3 text-xs">
 		<span class="flex items-center gap-1.5 text-gray-500" title={status}>
 			<span
 				class="w-2 h-2 rounded-full {uiState.backendStatus === 'connected'
@@ -67,11 +68,12 @@
 						? 'bg-yellow-500 animate-pulse'
 						: 'bg-red-500'}"
 			></span>
-			<span class="hidden sm:inline">{status}</span>
+			<span class="hidden xl:inline">{status}</span>
 		</span>
+		<RecordingPill />
 		<button
 			onclick={() => (uiState.paletteOpen = true)}
-			class="hidden sm:flex items-center gap-2 px-2 py-1 rounded border border-gray-800 text-xs text-gray-500 hover:text-gray-300 hover:border-gray-700"
+			class="hidden lg:flex items-center gap-2 px-2 py-1 rounded border border-gray-800 text-xs text-gray-500 hover:text-gray-300 hover:border-gray-700"
 			title="Find a meeting, person, topic or setting, or ask a question"
 		>
 			Search <kbd class="px-1 rounded bg-gray-800 text-[10px] text-gray-400">Ctrl+K</kbd>

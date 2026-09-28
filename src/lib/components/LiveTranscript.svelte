@@ -2,6 +2,9 @@
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 
+	// Tall while recording, next to the copilot; compact elsewhere.
+	let { tall = false }: { tall?: boolean } = $props();
+
 	function formatTime(seconds: number): string {
 		const m = Math.floor(seconds / 60);
 		const s = Math.floor(seconds % 60);
@@ -32,7 +35,7 @@
 				<span>Live transcript (provisional)</span>
 			{/if}
 		</div>
-		<div bind:this={container} class="max-h-64 overflow-y-auto p-3 space-y-1.5 text-sm">
+		<div bind:this={container} class="{tall ? 'h-[60vh]' : 'max-h-64'} overflow-y-auto p-3 space-y-1.5 text-sm">
 			{#each transcriptState.liveSegments as seg}
 				{@const mentioned = transcriptState.mentionStarts.includes(seg.start)}
 				<div class="flex gap-3 {mentioned ? 'rounded bg-amber-900/30 ring-1 ring-amber-700/60' : ''}" title={mentioned ? 'You were mentioned' : undefined}>
