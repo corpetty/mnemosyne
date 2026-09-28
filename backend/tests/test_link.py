@@ -2,8 +2,10 @@
 (a stand-in script here; the real tunnel is tested in link/tests)."""
 
 import asyncio
+import json
 import stat
 import sys
+import time
 
 import pytest
 
@@ -70,9 +72,38 @@ def test_setting_turns_it_on(client, ctx, tmp_path, monkeypatch):
         body = client.get("/api/pairing/remote").json()
         if body["running"]:
             break
-        import time
-
         time.sleep(0.05)
     assert body == {"enabled": True, "running": True, "endpoint_id": "e1d", "error": None}
     assert client.put("/api/settings", json={"remote_access": False}).status_code == 200
     assert client.get("/api/pairing/remote").json()["running"] is False
+
+
+def test_relays_setting_restarts_the_sidecar(client, ctx, tmp_path, monkeypatch):
+    argv_file = tmp_path / "argv.json"
+    body = (
+        f"json.dump(sys.argv[1:], open({str(argv_file)!r}, 'w'))\n"
+        'print(json.dumps({"endpoint_id": "e1d", "ticket": "t"}), flush=True)\n'
+        "time.sleep(60)"
+    )
+    monkeypatch.setenv("MNEMOSYNE_LINK_BIN", fake_link(tmp_path, body))
+
+    def started_with():
+        for _ in range(100):
+            if client.get("/api/pairing/remote").json()["running"] and argv_file.exists():
+                return json.loads(argv_file.read_text())
+            time.sleep(0.05)
+        raise AssertionError("sidecar did not start")
+
+    client.put("/api/settings", json={"remote_access": True})
+    assert "--relay" not in started_with()  # blank: n0's public relays
+    argv_file.unlink()
+    relays = "https://relay-eu.example.org, https://relay-us.example.org"
+    client.put("/api/settings", json={"remote_relays": relays})
+    args = started_with()
+    assert args[args.index("--relay") :] == [
+        "--relay",
+        "https://relay-eu.example.org",
+        "--relay",
+        "https://relay-us.example.org",
+    ]
+    client.put("/api/settings", json={"remote_access": False})

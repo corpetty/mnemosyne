@@ -1,0 +1,28 @@
+# iroh-relay for Mnemosyne remote access. See README.md in this folder.
+#
+# Open to any iroh endpoint: no accounts, tokens or extra services. Traffic between two
+# endpoints is end-to-end encrypted, so this server only forwards packets it cannot read, and
+# it stores nothing. The limits keep its bandwidth, and so the hosting bill, bounded.
+
+http_bind_addr = "[::]:80"
+enable_quic_addr_discovery = true
+# Prometheus metrics, for your eyes only.
+metrics_bind_addr = "127.0.0.1:9090"
+
+[tls]
+https_bind_addr = "[::]:443"
+hostname = "relay.example.org"   # your DNS name, pointing at this server
+cert_mode = "LetsEncrypt"
+cert_dir = "/var/lib/iroh-relay/certs"
+contact = "you@example.org"      # Let's Encrypt expiry notices
+
+[limits]
+# New connections per second, and the burst allowed above that.
+accept_conn_limit = 20.0
+accept_conn_burst = 100
+
+[limits.client.rx]
+# Per connected endpoint. Meetings are 64 kbps audio; 1 MB/s plays one back 100 times faster
+# than real time while stopping one client from using the whole server.
+bytes_per_second = 1_000_000
+max_burst_bytes = 4_000_000

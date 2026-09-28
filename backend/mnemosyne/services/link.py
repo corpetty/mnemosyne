@@ -4,8 +4,9 @@
 The sidecar holds this machine's iroh key (<data_dir>/link.key), accepts end-to-end encrypted
 connections from computers paired as "desktop" devices (services/pairing.py, which it reads
 from paired_devices.json), and forwards them to this backend on 127.0.0.1. Devices elsewhere
-reach it through n0's public relays when a direct connection is not possible; relays only see
-encrypted packets. On start it prints one JSON line: its endpoint id and ticket.
+reach it through relays when a direct connection is not possible: n0's public ones, or those in
+the `remote_relays` setting (iroh-relay servers we or the user run). Relays only see encrypted
+packets. On start it prints one JSON line: its endpoint id and ticket.
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ class LinkService:
         self.data_dir = data_dir
         self.port = port
         self.binary = binary
+        self.relays: list[str] = []  # blank: n0's public relays
         self.status = LinkStatus()
         self._proc: asyncio.subprocess.Process | None = None
         self._task: asyncio.Task | None = None
@@ -114,6 +116,7 @@ class LinkService:
             f"127.0.0.1:{self.port}",
             "--data-dir",
             str(self.data_dir),
+            *[arg for url in self.relays for arg in ("--relay", url)],
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

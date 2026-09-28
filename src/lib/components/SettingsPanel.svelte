@@ -96,6 +96,7 @@
 			form = {
 				phone_url: v.phone_url,
 				remote_access: v.remote_access,
+				remote_relays: v.remote_relays,
 				transcriber: v.transcriber,
 				diarizer: v.diarizer,
 				language: v.language,
@@ -1145,7 +1146,14 @@
 					<input type="checkbox" bind:checked={form.remote_access} disabled={locked('remote_access')} />
 					Remote access: let computers you pair reach this backend from anywhere
 				</label>
-				<RemoteAccessHome enabled={settings.values.remote_access} tokenSet={settings.secrets_set.api_token} />
+				{#if form.remote_access}
+					<label class="block max-w-md mt-2 ml-6">
+						<span class={labelClass}>Relays (comma-separated)</span>
+						<input type="text" bind:value={form.remote_relays} disabled={locked('remote_relays')} placeholder="blank: n0's free public relays" class={inputClass} />
+						<span class="text-xs text-gray-600">iroh-relay servers you run, e.g. <code>https://relay.example.org</code> (docs/remote-access.md). Paired computers follow this; after changing it, pair them again.</span>
+					</label>
+				{/if}
+				<RemoteAccessHome enabled={settings.values.remote_access} relays={settings.values.remote_relays} tokenSet={settings.secrets_set.api_token} />
 				<label class="block max-w-md mt-3">
 					<span class={labelClass}>Phone address</span>
 					<input type="text" bind:value={form.phone_url} disabled={locked('phone_url')} placeholder="blank: this computer's network address" class={inputClass} />

@@ -9,7 +9,9 @@
 use std::{path::PathBuf, sync::Arc};
 
 use log::{info, warn};
-use mnemosyne_link::{bind, load_or_create_key, serve_local, EndpointTicket, Invite, Remote};
+use mnemosyne_link::{
+    bind, load_or_create_key, serve_local, EndpointTicket, Invite, Relays, Remote,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tokio::{net::TcpListener, sync::Mutex};
@@ -137,7 +139,10 @@ async fn ensure_started(app: &AppHandle) -> Result<Option<String>, String> {
     }
     let ticket: EndpointTicket = saved.ticket.parse().map_err(|e| format!("ticket: {e}"))?;
     let key = load_or_create_key(&dir(app)?.join("remote.key")).map_err(|e| format!("{e:#}"))?;
-    let endpoint = bind(key, true).await.map_err(|e| format!("{e:#}"))?;
+    // Home's ticket names its relays: n0's public ones, or ones it runs itself.
+    let endpoint = bind(key, &Relays::for_ticket(&ticket))
+        .await
+        .map_err(|e| format!("{e:#}"))?;
     let remote = Arc::new(Remote::new(endpoint, ticket));
     start_with(app, &mut tunnel, remote, saved.port)
         .await
@@ -177,7 +182,9 @@ pub async fn remote_start(app: AppHandle) -> Result<Option<String>, String> {
 pub async fn remote_pair(app: AppHandle, invite: String, name: String) -> Result<Paired, String> {
     let invite: Invite = invite.parse().map_err(|e| format!("{e:#}"))?;
     let key = load_or_create_key(&dir(&app)?.join("remote.key")).map_err(|e| format!("{e:#}"))?;
-    let endpoint = bind(key, true).await.map_err(|e| format!("{e:#}"))?;
+    let endpoint = bind(key, &Relays::for_ticket(&invite.ticket))
+        .await
+        .map_err(|e| format!("{e:#}"))?;
     let remote = Arc::new(Remote::new(endpoint, invite.ticket.clone()));
     let token = match remote.pair(&invite.code, &name).await {
         Ok(token) => token,

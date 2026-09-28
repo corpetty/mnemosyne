@@ -4,8 +4,12 @@
 	import { createPairingCode, getRemoteAccess } from '$lib/api/backend.js';
 	import type { PairingCode, RemoteAccess } from '$lib/types/index.js';
 
-	/** Saved settings this depends on: remote_access and whether an API token is set. */
-	let { enabled = false, tokenSet = false }: { enabled?: boolean; tokenSet?: boolean } = $props();
+	/** Saved settings this depends on: remote_access, remote_relays and whether an API token is set. */
+	let {
+		enabled = false,
+		relays = '',
+		tokenSet = false
+	}: { enabled?: boolean; relays?: string; tokenSet?: boolean } = $props();
 
 	let status = $state<RemoteAccess | null>(null);
 	let code = $state<PairingCode | null>(null);
@@ -14,7 +18,7 @@
 
 	// The sidecar takes a few seconds to reach a relay after it is turned on: poll until it runs.
 	$effect(() => {
-		void [enabled, tokenSet];
+		void [enabled, relays, tokenSet];
 		let stop = false;
 		const poll = async () => {
 			for (let i = 0; i < 30 && !stop; i++) {
@@ -53,7 +57,8 @@
 			Off. When on, computers you pair reach this backend from anywhere over an end-to-end encrypted connection;
 			nothing listens on the internet.
 		{:else if status.running}
-			On. Paired computers can connect; relays only pass along encrypted traffic.
+			On{relays.trim() ? ', through your relays' : ", through n0's free public relays"}. Paired computers can connect;
+			relays only pass along encrypted traffic.
 		{:else if status.error}
 			<span class="text-red-400">{status.error}</span>
 		{:else}

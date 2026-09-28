@@ -3,7 +3,7 @@
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
-use mnemosyne_link::{bind, serve_home, serve_local, Home, Remote};
+use mnemosyne_link::{bind, serve_home, serve_local, Home, Relays, Remote};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -80,7 +80,9 @@ async fn pair_then_tunnel_then_remove() {
     let devices_file = dir.path().join("paired_devices.json");
     let backend = fake_backend(devices_file.clone()).await;
 
-    let home_ep = bind(iroh::SecretKey::generate(), false).await.unwrap();
+    let home_ep = bind(iroh::SecretKey::generate(), &Relays::Off)
+        .await
+        .unwrap();
     let home_addr = home_ep.addr();
     tokio::spawn(serve_home(
         home_ep.clone(),
@@ -90,7 +92,9 @@ async fn pair_then_tunnel_then_remove() {
         },
     ));
 
-    let device_ep = bind(iroh::SecretKey::generate(), false).await.unwrap();
+    let device_ep = bind(iroh::SecretKey::generate(), &Relays::Off)
+        .await
+        .unwrap();
     let remote = Arc::new(Remote::new(device_ep.clone(), home_addr));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local = listener.local_addr().unwrap();
@@ -111,6 +115,50 @@ async fn pair_then_tunnel_then_remove() {
     // Removed: new requests are refused at once.
     std::fs::write(&devices_file, r#"{"devices": []}"#).unwrap();
     assert!(!get(local).await.contains("hi"));
+
+    device_ep.close().await;
+    home_ep.close().await;
+}
+
+#[tokio::test]
+async fn through_our_own_relay() {
+    // A local iroh-relay stands in for one we host; both ends only know its address, so every
+    // byte goes through it (no direct addresses in the ticket, no n0 services).
+    let (_map, relay_url, _server) = iroh::test_utils::run_relay_server().await.unwrap();
+    let relays = mnemosyne_link::Relays::Custom(vec![relay_url.clone()]);
+    let trust_test_relay = |b: iroh::endpoint::Builder| {
+        b.ca_tls_config(iroh_relay::tls::CaTlsConfig::insecure_skip_verify())
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let devices_file = dir.path().join("paired_devices.json");
+    let backend = fake_backend(devices_file.clone()).await;
+
+    let home_ep = mnemosyne_link::bind_with(iroh::SecretKey::generate(), &relays, trust_test_relay)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), home_ep.online())
+        .await
+        .unwrap();
+    let home_addr = iroh::EndpointAddr::new(home_ep.id()).with_relay_url(relay_url);
+    tokio::spawn(serve_home(
+        home_ep.clone(),
+        Home {
+            backend,
+            devices_file,
+        },
+    ));
+
+    let device_ep =
+        mnemosyne_link::bind_with(iroh::SecretKey::generate(), &relays, trust_test_relay)
+            .await
+            .unwrap();
+    let remote = Arc::new(Remote::new(device_ep.clone(), home_addr));
+    assert_eq!(remote.pair("good", "Laptop").await.unwrap(), "device-token");
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local = listener.local_addr().unwrap();
+    tokio::spawn(serve_local(remote, listener));
+    assert!(get(local).await.ends_with("hi"));
 
     device_ep.close().await;
     home_ep.close().await;

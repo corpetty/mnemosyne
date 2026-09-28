@@ -3082,6 +3082,8 @@ export interface components {
             phone_url?: string | null;
             /** Remote Access */
             remote_access?: boolean | null;
+            /** Remote Relays */
+            remote_relays?: string | null;
             /** Remote Speaker Name */
             remote_speaker_name?: string | null;
             /** Remote Stt Api Key */
@@ -3289,6 +3291,8 @@ export interface components {
             phone_url: string;
             /** Remote Access */
             remote_access: boolean;
+            /** Remote Relays */
+            remote_relays: string;
             /** Remote Speaker Name */
             remote_speaker_name: string;
             /** Remote Stt Api Key */

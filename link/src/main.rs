@@ -7,7 +7,9 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use iroh_tickets::endpoint::EndpointTicket;
-use mnemosyne_link::{bind, load_or_create_key, serve_home, serve_local, Home, Invite, Remote};
+use mnemosyne_link::{
+    bind, load_or_create_key, serve_home, serve_local, Home, Invite, Relays, Remote,
+};
 use tokio::net::TcpListener;
 
 #[derive(Parser)]
@@ -27,6 +29,10 @@ enum Command {
         /// The backend's data directory: holds link.key and paired_devices.json.
         #[arg(long)]
         data_dir: PathBuf,
+        /// A relay to use instead of n0's public ones (repeat for several). Devices follow
+        /// the relays in home's ticket, so they need no setting of their own.
+        #[arg(long = "relay")]
+        relays: Vec<String>,
         /// Only accept direct connections on this machine (no relays).
         #[arg(long)]
         no_relay: bool,
@@ -71,11 +77,17 @@ async fn main() -> Result<()> {
         Command::Home {
             backend,
             data_dir,
+            relays,
             no_relay,
         } => {
             let key = load_or_create_key(&data_dir.join("link.key"))?;
-            let endpoint = bind(key, !no_relay).await?;
-            if !no_relay
+            let relays = if no_relay {
+                Relays::Off
+            } else {
+                Relays::from_urls(&relays)?
+            };
+            let endpoint = bind(key, &relays).await?;
+            if relays != Relays::Off
                 && tokio::time::timeout(Duration::from_secs(10), endpoint.online())
                     .await
                     .is_err()
@@ -104,7 +116,12 @@ async fn main() -> Result<()> {
             no_relay,
         } => {
             let invite: Invite = invite.parse()?;
-            let endpoint = bind(load_or_create_key(&key_file)?, !no_relay).await?;
+            let relays = if no_relay {
+                Relays::Off
+            } else {
+                Relays::for_ticket(&invite.ticket)
+            };
+            let endpoint = bind(load_or_create_key(&key_file)?, &relays).await?;
             let remote = Remote::new(endpoint.clone(), invite.ticket.clone());
             let token = remote.pair(&invite.code, &name).await?;
             print_json(serde_json::json!({"token": token, "ticket": invite.ticket.to_string()}));
@@ -116,7 +133,12 @@ async fn main() -> Result<()> {
             listen,
             no_relay,
         } => {
-            let endpoint = bind(load_or_create_key(&key_file)?, !no_relay).await?;
+            let relays = if no_relay {
+                Relays::Off
+            } else {
+                Relays::for_ticket(&ticket)
+            };
+            let endpoint = bind(load_or_create_key(&key_file)?, &relays).await?;
             let listener = TcpListener::bind(listen).await?;
             print_json(serde_json::json!({"listen": listener.local_addr()?.to_string()}));
             let remote = Arc::new(Remote::new(endpoint.clone(), ticket));

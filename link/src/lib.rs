@@ -22,7 +22,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use iroh::{
     endpoint::{presets, Connection, RecvStream, SendStream},
-    Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey,
+    Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -79,19 +79,70 @@ fn decode_hex(s: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
-/// Bind an endpoint. With `relay` it uses n0's public relays and address lookup, so it can
-/// be reached from anywhere; without, only directly on this machine (tests, debugging).
-pub async fn bind(key: SecretKey, relay: bool) -> Result<Endpoint> {
-    let builder = if relay {
-        Endpoint::builder(presets::N0)
-    } else {
-        Endpoint::builder(presets::Minimal)
+/// Which relays an endpoint uses to be reachable and to reach others.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Relays {
+    /// None: only direct connections on this machine (tests, debugging).
+    Off,
+    /// n0's public relays, with n0's address lookup.
+    N0,
+    /// Relays we or the user run (iroh-relay); no n0 service is used at all.
+    Custom(Vec<RelayUrl>),
+}
+
+impl Relays {
+    /// From a list of relay URLs; an empty list means n0's public relays.
+    pub fn from_urls<S: AsRef<str>>(urls: &[S]) -> Result<Self> {
+        let urls = urls
+            .iter()
+            .map(|u| u.as_ref().trim())
+            .filter(|u| !u.is_empty())
+            .map(|u| u.parse().with_context(|| format!("invalid relay URL {u}")))
+            .collect::<Result<Vec<RelayUrl>>>()?;
+        Ok(if urls.is_empty() {
+            Relays::N0
+        } else {
+            Relays::Custom(urls)
+        })
+    }
+
+    /// What a device uses to reach the home in `ticket`: the home's own relays, unless they
+    /// are n0's (then n0's, with address lookup, in case home moves to another n0 relay).
+    pub fn for_ticket(ticket: &EndpointTicket) -> Self {
+        let urls: Vec<RelayUrl> = ticket.endpoint_addr().relay_urls().cloned().collect();
+        if urls.is_empty() || urls.iter().any(is_n0) {
+            Relays::N0
+        } else {
+            Relays::Custom(urls)
+        }
+    }
+}
+
+fn is_n0(url: &RelayUrl) -> bool {
+    url.host_str()
+        .is_some_and(|h| h.trim_end_matches('.').ends_with(".iroh.link"))
+}
+
+/// Bind an endpoint using `relays`.
+pub async fn bind(key: SecretKey, relays: &Relays) -> Result<Endpoint> {
+    bind_with(key, relays, |b| b).await
+}
+
+/// [`bind`], with a last adjustment to the builder (tests trust a local relay's certificate).
+pub async fn bind_with(
+    key: SecretKey,
+    relays: &Relays,
+    adjust: impl FnOnce(iroh::endpoint::Builder) -> iroh::endpoint::Builder,
+) -> Result<Endpoint> {
+    let builder = match relays {
+        Relays::N0 => Endpoint::builder(presets::N0),
+        Relays::Custom(urls) => Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(urls.iter().cloned().collect())),
+        Relays::Off => Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Disabled)
-            .bind_addr("127.0.0.1:0")?
+            .bind_addr("127.0.0.1:0")?,
     };
-    Ok(builder
-        .secret_key(key)
-        .alpns(vec![ALPN.to_vec()])
+    Ok(adjust(builder.secret_key(key).alpns(vec![ALPN.to_vec()]))
         .bind()
         .await?)
 }
@@ -436,5 +487,38 @@ pub async fn serve_local(remote: Arc<Remote>, listener: TcpListener) -> Result<(
                 tracing::debug!("tunnel ended: {e:#}");
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_choice() {
+        assert_eq!(Relays::from_urls::<&str>(&[]).unwrap(), Relays::N0);
+        assert_eq!(Relays::from_urls(&[" ", ""]).unwrap(), Relays::N0);
+        let own = Relays::from_urls(&["https://relay.example.org"]).unwrap();
+        assert!(matches!(own, Relays::Custom(ref u) if u.len() == 1));
+        assert!(Relays::from_urls(&["not a url"]).is_err());
+
+        let id = SecretKey::generate().public();
+        let ticket = |url: &str| {
+            EndpointTicket::new(EndpointAddr::new(id).with_relay_url(url.parse().unwrap()))
+        };
+        // A home on n0's relays: devices use n0 too, with its address lookup.
+        assert_eq!(
+            Relays::for_ticket(&ticket("https://euc1-1.relay.n0.iroh.link.")),
+            Relays::N0
+        );
+        // A home on its own relay: devices use exactly that relay.
+        assert_eq!(
+            Relays::for_ticket(&ticket("https://relay.example.org")),
+            Relays::Custom(vec!["https://relay.example.org".parse().unwrap()])
+        );
+        assert_eq!(
+            Relays::for_ticket(&EndpointTicket::new(EndpointAddr::new(id))),
+            Relays::N0
+        );
     }
 }

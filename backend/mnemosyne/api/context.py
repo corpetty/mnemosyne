@@ -164,10 +164,12 @@ class AppContext:
         await self.apply_remote_access()
 
     async def apply_remote_access(self) -> None:
+        relays = [u.strip() for u in self.settings.remote_relays.split(",") if u.strip()]
+        if self.link.active and (not self.settings.remote_access or relays != self.link.relays):
+            await self.link.stop()
+        self.link.relays = relays
         if self.settings.remote_access and not self.link.active:
             self.link.start()
-        elif not self.settings.remote_access and self.link.active:
-            await self.link.stop()
 
     def busy_sessions(self) -> set[str]:
         """Sessions whose audio must not be touched right now."""

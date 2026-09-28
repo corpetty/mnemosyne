@@ -190,6 +190,9 @@ class Settings(BaseSettings):
     # Remote access: run the mnemosyne-link sidecar (services/link.py) so paired computers
     # can reach this backend from anywhere over an end-to-end encrypted iroh connection.
     remote_access: bool = False
+    # Relays for remote access, comma-separated (e.g. https://relay.example.org, an iroh-relay
+    # you run). Blank: n0's free public relays. Paired computers follow home's choice.
+    remote_relays: str = ""
 
     # Calendar: private ICS address (or a local .ics path). Recordings started during
     # a meeting are named after it and remember its attendees.

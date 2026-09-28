@@ -52,7 +52,9 @@ outside the database, so they are checked even while encrypted meetings are lock
 - `GET /api/pairing/me` → the device making the request (with its own token), else `404`.
 - `GET /api/pairing/remote` → `{enabled, running, endpoint_id, error}`: remote access. With the
   `remote_access` setting on, the backend runs `mnemosyne-link home` (the `link/` crate, found via
-  `MNEMOSYNE_LINK_BIN`, `PATH`, or a build in `link/target`), restarting it if it dies. It accepts
+  `MNEMOSYNE_LINK_BIN`, `PATH`, or a build in `link/target`), restarting it if it dies, and again
+  when `remote_relays` changes (comma-separated iroh-relay URLs, passed as `--relay`; blank means
+  n0's public relays; see deploy/relay/). It accepts
   iroh connections from paired computers only (re-reading `paired_devices.json`, so removal takes
   effect at once) and forwards each stream to this backend on `127.0.0.1`.
 

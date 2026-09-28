@@ -213,7 +213,9 @@ tokens that only open the phone upload path; `phone_url` setting; Tailscale guid
 docs/remote-access.md. Remote access over iroh (link/ crate, `mnemosyne-link home` run by
 services/link.py while `remote_access` is on): paired computers ("desktop" devices, bound to their
 iroh endpoint id) tunnel TCP to 127.0.0.1:8008; tested with `cargo test` in link/. Desktop app
-integration and Settings UI not built yet; Logos Messaging is the later transport.
+integration: src-tauri/src/remote.rs + Settings (RemoteConnect, RemoteAccessHome). Relays:
+`remote_relays` (blank = n0's public ones); computers follow the relays in home's ticket; self-host
+with deploy/relay/ (open iroh-relay, rate limits, no gating service). Logos Messaging is later.
 
 Nemotron diarizer (2026-09-25, transcription/diarizers/nemotron.py): NVIDIA Nemotron-3-Diarization
 (Streaming Sortformer, max 8 speakers) via NeMo, default on NVIDIA through `diarizer = "auto"`;

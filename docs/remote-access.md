@@ -5,7 +5,7 @@ today is [Tailscale](https://tailscale.com): the backend stays on `127.0.0.1`, n
 the internet, and phones get an HTTPS address, which lets the phone page record inside the browser.
 
 Mnemosyne's own remote access (below, experimental) needs no Tailscale: an end-to-end encrypted
-iroh connection that only paired computers can open. It has no Settings UI yet.
+iroh connection that only paired computers can open, through n0's relays or your own.
 
 ## What you need
 
@@ -56,27 +56,39 @@ traffic, so keep this to networks you trust.
 
 ## Built-in remote access (experimental)
 
-The `link/` crate builds `mnemosyne-link`. With the `remote_access` setting on (Settings UI to come;
-for now `REMOTE_ACCESS=true` or `remote_access = true` in config.toml, plus an API token), the
-backend runs `mnemosyne-link home`. It dials out to n0's public relays, so nothing listens on the
-internet, and accepts connections only from computers paired with it. Relays forward encrypted
-packets they cannot read; when both machines can reach each other directly, iroh switches to a
-direct path.
+Mnemosyne's own remote access needs no Tailscale or VPN app: an end-to-end encrypted
+[iroh](https://github.com/n0-computer/iroh) connection that only computers you pair can open.
+Nothing on the home machine listens on the internet; it dials out to a relay.
 
-Pairing and connecting from another computer, for now from a terminal:
+1. **Home machine:** Settings → General → Server mode. Set an API token, tick **Remote access**,
+   save. Once it says "On", choose **Pair a computer** and copy the invite (it works once, for
+   10 minutes).
+2. **Other computer** (desktop app): Settings → General → Connection → Remote access. Paste the
+   invite, name the computer, and choose **Connect through remote access**. The app keeps its own
+   key, runs a local tunnel (`127.0.0.1:8009`), and restarts it with the app.
+3. Paired computers are listed under **Paired devices** on the home machine. **Remove** cuts one off
+   at once. **Disconnect** on the other computer forgets the home machine.
+
+A paired computer's key opens the whole API, as the API token does. Recording still happens on the
+home machine.
+
+### Relays
+
+Relays only pass along packets they cannot read, and only until the two machines find a direct
+path. By default Mnemosyne uses n0's free public relays, which are rate-limited and meant for
+testing. To use your own, run the open-source iroh-relay server (a ready config and compose file are
+in [deploy/relay/](../deploy/relay/README.md)), put its address in **Relays** under Remote access on
+the home machine, and pair your computers again. Computers follow the home machine's relays; they
+have no relay setting of their own. With your own relays, n0 is not involved at all.
+
+### From a terminal
+
+`mnemosyne-link` (the `link/` crate, bundled with the app) also pairs and connects without the app:
 
 ```bash
-cargo build --release --manifest-path link/Cargo.toml
-# On the home machine: an invite for a computer (valid 10 minutes, once).
-curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"kind":"desktop"}' http://127.0.0.1:8008/api/pairing/codes
-# On the other computer: pair (prints this computer's own API token and the home ticket) ...
 mnemosyne-link pair '<invite>' --key-file ~/.config/mnemosyne/link.key --name Laptop
-# ... then serve home on a local port and point Settings → Connection at it, with that token.
-mnemosyne-link connect '<ticket>' --key-file ~/.config/mnemosyne/link.key --listen 127.0.0.1:8009
+mnemosyne-link connect '<ticket printed by pair>' --key-file ~/.config/mnemosyne/link.key --listen 127.0.0.1:8009
 ```
-
-Paired computers are listed with the phones and removed the same way.
 
 ## Troubleshooting
 
