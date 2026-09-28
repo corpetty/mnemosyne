@@ -107,6 +107,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - The Release workflow runs the AppImage smoke test (reusable `smoke.yml`) before publishing. To
   re-test an existing build without rebuilding: `gh workflow run "Smoke test" -f run_id=<Release
   run id>`. The script refuses to run outside CI (it starts PulseAudio with a null sink).
+- Meetings can have several parts (services/parts.py): `Recording.part`/`offset`, the session's
+  `audio_file` is all parts joined, transcript times are on that joined timeline. Never replace a
+  session's audio or transcript wholesale when recording into it again; go through `add_part()`.
 - Encryption at rest: code that reads audio must go through `storage.crypto.plaintext()` (files
   may be `<name>.enc`), and new audio must be sealed with `seal_session_audio()`. Tests and demo
   mode never use the real keyring (MemoryKeyStore / FileKeyStore); keep it that way.
@@ -192,6 +195,9 @@ dates on action items; Report a problem (clipboard + GitHub new-issue link); off
 (scripts/build-offline-appimage.sh, `offline/` in the bundle, `install_offline` in lib.rs);
 encryption at rest (storage/crypto.py, services/encryption.py: SQLCipher + AES-GCM `.enc` audio,
 key in the keyring, locked mode answers 423); MIT metadata and docs/flathub.md (not submitted).
+Released as 0.9.0. After it (unreleased): recording screen (Stop pill in the header, live transcript
+beside the copilot), calendar source off/ics/desktop (services/desktop_calendar.py reads GNOME
+Online Accounts via evolution-data-server over D-Bus with jeepney), multi-part meetings.
 
 Nemotron diarizer (2026-09-25, transcription/diarizers/nemotron.py): NVIDIA Nemotron-3-Diarization
 (Streaming Sortformer, max 8 speakers) via NeMo, default on NVIDIA through `diarizer = "auto"`;
