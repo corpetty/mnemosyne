@@ -24,6 +24,7 @@
 	import TopicsPanel from '$lib/components/TopicsPanel.svelte';
 	import ToastContainer from '$lib/components/ToastContainer.svelte';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
+	import UnlockScreen from '$lib/components/UnlockScreen.svelte';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
@@ -85,29 +86,33 @@
 	<AutoRecordBanner />
 	<CalendarBanner />
 
-	<div class="flex flex-1 overflow-hidden">
-		{#if !uiState.sidebarCollapsed}
-			<aside class="w-60 border-r border-gray-800 flex flex-col flex-shrink-0">
-				<div class="flex-1 overflow-y-auto p-3">
-					<SessionList />
-				</div>
-			</aside>
-		{/if}
-
-		<div class="flex-1 flex flex-col overflow-hidden">
-			{#if sessionState.activeSession}
-				<SessionView />
-			{:else if panel}
-				<div class="flex-1 overflow-y-auto p-6">
-					<div class={panel.width}>
-						<panel.component onOpenSession={() => (uiState.view = 'home')} />
+	{#if uiState.locked}
+		<UnlockScreen />
+	{:else}
+		<div class="flex flex-1 overflow-hidden">
+			{#if !uiState.sidebarCollapsed}
+				<aside class="w-60 border-r border-gray-800 flex flex-col flex-shrink-0">
+					<div class="flex-1 overflow-y-auto p-3">
+						<SessionList />
 					</div>
-				</div>
-			{:else}
-				<HomeView />
+				</aside>
 			{/if}
+
+			<div class="flex-1 flex flex-col overflow-hidden">
+				{#if sessionState.activeSession}
+					<SessionView />
+				{:else if panel}
+					<div class="flex-1 overflow-y-auto p-6">
+						<div class={panel.width}>
+							<panel.component onOpenSession={() => (uiState.view = 'home')} />
+						</div>
+					</div>
+				{:else}
+					<HomeView />
+				{/if}
+			</div>
 		</div>
-	</div>
+	{/if}
 
 	<StatusBar />
 </main>

@@ -2,7 +2,7 @@
  * App behaviour that spans stores: connecting to the backend, recording actions
  * (buttons, shortcuts, tray, command line, calendar banner) and keyboard shortcuts.
  */
-import { exportToObsidian, getHealth, getSettings, listSessions } from '$lib/api/backend.js';
+import { exportToObsidian, getEncryption, getHealth, getSettings, listSessions } from '$lib/api/backend.js';
 import { askState } from '$lib/stores/ask.svelte.js';
 import { digestState } from '$lib/stores/digest.svelte.js';
 import { audioState } from '$lib/stores/audio.svelte.js';
@@ -431,6 +431,12 @@ export function connectApp(): () => void {
         const h = await getHealth();
         connectionState.host = h.host ?? null;
         connectionState.authRequired = !!h.auth_required;
+        const encryption = await getEncryption().catch(() => null);
+        if (encryption?.locked) {
+          uiState.backendStatus = 'connected';
+          uiState.locked = true; // the unlock screen reloads the page once the code is in
+          return;
+        }
         if (!cancelled) unsubscribeSessions = onConnected();
         return;
       } catch {

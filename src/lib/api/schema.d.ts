@@ -370,6 +370,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/encryption": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Status */
+        get: operations["get_status_api_encryption_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/encryption/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disable
+         * @description Decrypt everything again and forget the key.
+         */
+        post: operations["disable_api_encryption_disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/encryption/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enable
+         * @description Encrypt the database and every audio file; returns the recovery code (shown once).
+         */
+        post: operations["enable_api_encryption_enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/encryption/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unlock
+         * @description The keyring lost the key (new computer, reset keyring): open the meetings with the
+         *     recovery code, and keep the key in the keyring again.
+         */
+        post: operations["unlock_api_encryption_unlock_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/integrations": {
         parameters: {
             query?: never;
@@ -1713,6 +1791,22 @@ export interface components {
             /** Supported */
             supported: boolean;
         };
+        /** EncryptionEnabled */
+        EncryptionEnabled: {
+            /** Errors */
+            errors: string[];
+            /** Files */
+            files: number;
+            /** Recovery Code */
+            recovery_code: string;
+        };
+        /** EncryptionStatus */
+        EncryptionStatus: {
+            /** Enabled */
+            enabled: boolean;
+            /** Locked */
+            locked: boolean;
+        };
         /** ExportResponse */
         ExportResponse: {
             /** Message */
@@ -2020,6 +2114,11 @@ export interface components {
             is_recording: boolean;
             /** Session Id */
             session_id: string;
+        };
+        /** RecoveryRequest */
+        RecoveryRequest: {
+            /** Recovery Code */
+            recovery_code: string;
         };
         /** RelatedMeeting */
         RelatedMeeting: {
@@ -2547,6 +2646,10 @@ export interface components {
             echo_similarity: number;
             /** Embedding Model */
             embedding_model: string;
+            /** Encrypt At Rest */
+            encrypt_at_rest: boolean;
+            /** Encryption Check */
+            encryption_check: string;
             /** Github Labels */
             github_labels: string;
             /** Github Repo */
@@ -3664,6 +3767,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_status_api_encryption_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EncryptionStatus"];
+                };
+            };
+        };
+    };
+    disable_api_encryption_disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EncryptionStatus"];
+                };
+            };
+        };
+    };
+    enable_api_encryption_enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EncryptionEnabled"];
+                };
+            };
+        };
+    };
+    unlock_api_encryption_unlock_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecoveryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EncryptionStatus"];
                 };
             };
             /** @description Validation Error */

@@ -22,6 +22,8 @@ finish-args:
   - --filesystem=home
   # Mention alerts.
   - --talk-name=org.freedesktop.Notifications
+  # The encryption key in the desktop keyring (Secret Service).
+  - --talk-name=org.freedesktop.secrets
   # Tray icon.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --filesystem=xdg-run/tray-icon:create

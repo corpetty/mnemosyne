@@ -31,10 +31,13 @@ class SettingsResponse(ApiModel):
 
 # Every Settings field except data_dir, all optional. Derived from Settings so a
 # new field is updatable without touching this file. Secrets: "" keeps, null clears.
+# Encryption is turned on and off through /api/encryption, which also converts the data:
+# flipping the flag alone would lock the data away.
+_NOT_UPDATABLE = {"data_dir", "encrypt_at_rest", "encryption_check"}
 _UPDATABLE = {
     name: (field.annotation | None, None)
     for name, field in Settings.model_fields.items()
-    if name != "data_dir"
+    if name not in _NOT_UPDATABLE
 }
 SettingsUpdate = create_model("SettingsUpdate", **_UPDATABLE)
 

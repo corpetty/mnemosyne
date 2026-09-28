@@ -1,5 +1,7 @@
 import type {
   Ask,
+  EncryptionEnabled,
+  EncryptionStatus,
   Quote,
   EchoCancelStatus,
   Digest,
@@ -226,6 +228,26 @@ export async function saveClip(sessionId: string, clipId: string, path: string):
   return request(`/api/sessions/${sessionId}/clips/${clipId}/save`, {
     method: 'POST',
     body: JSON.stringify({ path })
+  });
+}
+
+// Encryption at rest
+export async function getEncryption(): Promise<EncryptionStatus> {
+  return request('/api/encryption');
+}
+
+export async function enableEncryption(): Promise<EncryptionEnabled> {
+  return request('/api/encryption/enable', { method: 'POST' });
+}
+
+export async function disableEncryption(): Promise<EncryptionStatus> {
+  return request('/api/encryption/disable', { method: 'POST' });
+}
+
+export async function unlockEncryption(recoveryCode: string): Promise<EncryptionStatus> {
+  return request('/api/encryption/unlock', {
+    method: 'POST',
+    body: JSON.stringify({ recovery_code: recoveryCode })
   });
 }
 

@@ -33,8 +33,16 @@ def settings(tmp_path, monkeypatch) -> Settings:
 
 
 @pytest.fixture
-def app(settings):
-    return create_app(settings)
+def keystore():
+    """Tests never touch the real keyring."""
+    from mnemosyne.storage.crypto import MemoryKeyStore
+
+    return MemoryKeyStore()
+
+
+@pytest.fixture
+def app(settings, keystore):
+    return create_app(settings, keystore=keystore)
 
 
 @pytest.fixture

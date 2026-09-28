@@ -6,8 +6,8 @@ import re
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, Response
 
 from ...audio.capture import list_devices, start_recording, stop_recording
 from ...audio.levels import Level, SelfTestResult, sample_level, self_test
@@ -16,8 +16,10 @@ from ...audio.streams import CaptureApp
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, Recording, Session, SessionStatus
 from ...services.copilot import copilot_runner
+from ...services.encryption import seal_session_audio
 from ...services.pipeline import live_transcribe, transcribe_session
 from ...services.recovery import write_manifest
+from ...storage.crypto import EncryptedFile, is_encrypted
 from ..context import AppContext, get_ctx
 
 logger = logging.getLogger(__name__)
@@ -177,6 +179,7 @@ async def stop(
         individual_files, recording.output_dir / f"{recording.session_id}_mixed.ogg"
     )
     ctx.sessions.set_audio(session_id, str(mixed_path), recordings)
+    seal_session_audio(ctx, session_id)
     ctx.sessions.set_status(session_id, SessionStatus.CREATED)
 
     want_transcribe = ctx.settings.auto_transcribe
@@ -229,9 +232,36 @@ _MEDIA_TYPES = {
 }
 
 
+def encrypted_response(request: Request, path: Path, key: bytes | None, filename: str) -> Response:
+    """Serve an encrypted file's plaintext, honouring Range requests (the player seeks).
+    Open-ended ranges get at most 4 MiB at a time."""
+    if key is None:
+        raise HTTPException(status_code=423, detail="Meetings are encrypted and locked")
+    f = EncryptedFile(path, key)
+    media = _MEDIA_TYPES.get(Path(filename).suffix.lower(), "application/octet-stream")
+    headers = {"accept-ranges": "bytes", "content-disposition": f'inline; filename="{filename}"'}
+    m = re.fullmatch(r"bytes=(\d*)-(\d*)", (request.headers.get("range") or "").strip())
+    if m and (m.group(1) or m.group(2)):
+        first, last = m.groups()
+        if first:
+            start = int(first)
+            end = int(last) if last else min(f.size - 1, start + 4 * 1024 * 1024 - 1)
+        else:  # the last N bytes
+            start, end = max(0, f.size - int(last)), f.size - 1
+        end = min(end, f.size - 1)
+        if start > end:
+            return Response(status_code=416, headers={"content-range": f"bytes */{f.size}"})
+        headers["content-range"] = f"bytes {start}-{end}/{f.size}"
+        return Response(f.read(start, end + 1), 206, media_type=media, headers=headers)
+    return Response(f.read(), media_type=media, headers=headers)
+
+
 @router.get("/file/{session_id}")
 async def get_audio(
-    session_id: str, recording: str | None = None, ctx: AppContext = Depends(get_ctx)
+    session_id: str,
+    request: Request,
+    recording: str | None = None,
+    ctx: AppContext = Depends(get_ctx),
 ):
     """Stream a session's audio (the mixed file by default, or one recording by id).
     Supports HTTP range requests so the player can seek."""
@@ -246,6 +276,9 @@ async def get_audio(
         path = match.path
     if not path or not Path(path).is_file():
         raise HTTPException(status_code=404, detail="No audio file for this session")
+    if is_encrypted(path):
+        name = Path(path).name[: -len(".enc")]
+        return await asyncio.to_thread(encrypted_response, request, Path(path), ctx.file_key, name)
     media = _MEDIA_TYPES.get(Path(path).suffix.lower(), "application/octet-stream")
     return FileResponse(path, media_type=media, filename=Path(path).name)
 
@@ -309,6 +342,7 @@ async def import_audio(
         str(mixed),
         [Recording(source="import", device_id=-1, device_name=original.name, path=str(saved))],
     )
+    seal_session_audio(ctx, session.id)
     ctx.sessions.set_status(session.id, SessionStatus.CREATED)
 
     job_id = None

@@ -58,3 +58,38 @@ class TokenAuthMiddleware:
             }
         )
         await send({"type": "http.response.body", "body": body})
+
+
+LOCKED_OPEN = ("/api/encryption", "/api/system")
+
+
+class LockedMiddleware:
+    """While the meetings are encrypted and the key is missing, the API answers 423 except
+    for what unlocking needs (the UI then asks for the recovery code)."""
+
+    def __init__(self, app: ASGIApp, ctx: AppContext):
+        self.app = app
+        self.ctx = ctx
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = scope.get("path", "")
+        if (
+            scope["type"] != "http"
+            or not self.ctx.locked
+            or not path.startswith("/api/")
+            or path.startswith(LOCKED_OPEN)
+            or scope.get("method") == "OPTIONS"
+        ):
+            return await self.app(scope, receive, send)
+        body = b'{"detail":"Meetings are encrypted and locked: enter the recovery code"}'
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 423,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"access-control-allow-origin", b"*"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})

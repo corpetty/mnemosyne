@@ -1,14 +1,16 @@
 """Share a quote from a transcript: its text, and an audio clip of it."""
 
+import asyncio
 import re
 import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from ...models.base import ApiModel
 from ...services.clips import clip_filename, cut_clip, quote_text
+from ...storage.crypto import EncryptedFile, is_encrypted
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/sessions", tags=["clips"])
@@ -53,12 +55,12 @@ async def make_quote(session_id: str, request: ClipRequest, ctx: AppContext = De
     clip = None
     if request.audio and session.audio_file:
         try:
-            path = await cut_clip(session, _clips_dir(ctx, session_id), first, last)
+            await cut_clip(session, _clips_dir(ctx, session_id), first, last, ctx.file_key)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         start, end = session.transcript[first].start, session.transcript[last].end
         clip = Clip(
-            id=path.stem,
+            id=f"{first}-{last}",
             filename=clip_filename(session, start),
             seconds=round(end - start, 1),
         )
@@ -68,10 +70,11 @@ async def make_quote(session_id: str, request: ClipRequest, ctx: AppContext = De
 def _clip_path(ctx: AppContext, session_id: str, clip_id: str) -> Path:
     if not CLIP_ID.match(clip_id):
         raise HTTPException(status_code=404, detail="Clip not found")
-    path = _clips_dir(ctx, session_id) / f"{clip_id}.ogg"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Clip not found")
-    return path
+    for name in (f"{clip_id}.ogg", f"{clip_id}.ogg.enc"):
+        path = _clips_dir(ctx, session_id) / name
+        if path.exists():
+            return path
+    raise HTTPException(status_code=404, detail="Clip not found")
 
 
 @router.get("/{session_id}/clips/{clip_id}")
@@ -83,7 +86,18 @@ async def get_clip(session_id: str, clip_id: str, ctx: AppContext = Depends(get_
         name = path.name
     else:
         name = clip_filename(session, session.transcript[first].start)
+    if is_encrypted(path):
+        if ctx.file_key is None:
+            raise HTTPException(status_code=423, detail="Meetings are encrypted and locked")
+        data = await asyncio.to_thread(EncryptedFile(path, ctx.file_key).read)
+        return Response(data, media_type="audio/ogg", headers=_attachment(name))
     return FileResponse(path, media_type="audio/ogg", filename=name)
+
+
+def _attachment(name: str) -> dict[str, str]:
+    from urllib.parse import quote
+
+    return {"content-disposition": f"attachment; filename*=utf-8''{quote(name)}"}
 
 
 @router.post("/{session_id}/clips/{clip_id}/save")
@@ -102,5 +116,10 @@ async def save_clip(
     target = Path(body.path).expanduser()
     if not target.parent.is_dir():
         raise HTTPException(status_code=400, detail="That folder does not exist")
-    shutil.copyfile(source, target)
+    if is_encrypted(source):
+        if ctx.file_key is None:
+            raise HTTPException(status_code=423, detail="Meetings are encrypted and locked")
+        await asyncio.to_thread(EncryptedFile(source, ctx.file_key).write_plain, target)
+    else:
+        shutil.copyfile(source, target)
     return {"path": str(target)}

@@ -204,6 +204,9 @@ def recover_session(app: AppContext, session_id: str):
         mixed = folder / f"{recording_id or session_id}_mixed.ogg"
         mixed = await asyncio.to_thread(mix_audio_files, [Path(r.path) for r in recordings], mixed)
         app.sessions.set_audio(session_id, str(mixed), recordings)
+        from .encryption import seal_session_audio
+
+        seal_session_audio(app, session_id)
         app.sessions.set_status(session_id, SessionStatus.CREATED)
 
         transcribing = False

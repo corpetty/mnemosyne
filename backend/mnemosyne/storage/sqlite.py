@@ -192,13 +192,56 @@ def fts_query(user_query: str) -> str:
     return " ".join(quoted)
 
 
+def _connect(db_path: Path, key: bytes | None):
+    """A connection to the database; with `key`, through SQLCipher (encrypted at rest)."""
+    if key is None:
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+    import sqlcipher3
+
+    conn = sqlcipher3.connect(str(db_path), check_same_thread=False)
+    conn.row_factory = sqlcipher3.Row
+    conn.execute(f"PRAGMA key = \"x'{key.hex()}'\"")
+    conn.execute("SELECT count(*) FROM sqlite_master")  # fails here on a wrong key
+    return conn
+
+
+def convert_database(src: Path, dst: Path, src_key: bytes | None, dst_key: bytes | None) -> None:
+    """Copy a database into a new file, encrypting or decrypting it (sqlcipher_export)."""
+    import sqlcipher3
+
+    dst.unlink(missing_ok=True)
+    conn = sqlcipher3.connect(str(src))
+    try:
+        if src_key is not None:
+            conn.execute(f"PRAGMA key = \"x'{src_key.hex()}'\"")
+        target = f"x'{dst_key.hex()}'" if dst_key is not None else ""
+        conn.execute(f'ATTACH DATABASE ? AS converted KEY "{target}"', (str(dst),))
+        conn.execute("SELECT sqlcipher_export('converted')")
+        conn.execute("DETACH DATABASE converted")
+    finally:
+        conn.close()
+
+
 class SessionRepository:
-    def __init__(self, db_path: Path):
-        self.db_path = db_path
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db_path: Path, key: bytes | None = None):
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        self._open(db_path, key)
+
+    def reopen(self, db_path: Path, key: bytes | None = None) -> None:
+        """Switch this repository (and everything holding it) to another database file or key:
+        after unlocking, or when encryption is turned on or off."""
+        with self._lock:
+            self._conn.close()
+            self._open(db_path, key)
+
+    def _open(self, db_path: Path, key: bytes | None) -> None:
+        self.db_path = db_path
+        self.encrypted = key is not None
+        if str(db_path) != ":memory:":
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = _connect(db_path, key)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)

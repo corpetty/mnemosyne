@@ -160,6 +160,22 @@ except while recording: then `pending_mic` is set and the restart happens when t
 starts (device ids naming the echo-cancelled source are updated to its new node id). `400` with a
 reason when the module or `pw-cli` is missing, or the mic is the echo-cancelled source itself.
 
+### `GET /api/encryption` · `POST /api/encryption/enable|disable|unlock`
+
+Encryption at rest (opt-in). `GET` → `{enabled, locked}`. `POST …/enable` (no body; `409` while
+recording or with jobs running, `400` without a system keyring) creates a random 256-bit master
+key, keeps it in the Secret Service keyring (one entry per data directory), rewrites the database
+with SQLCipher and encrypts every recording, mix and clip to `<name>.enc` (AES-256-GCM in 64 KiB
+chunks, keys derived with HKDF). It returns `{recovery_code, files, errors}`; the recovery code (the
+master key in base32) is shown only then. From then on new audio is encrypted when a recording stops
+or a file is imported; transcription reads private plaintext copies in `$XDG_RUNTIME_DIR` that are
+removed afterwards; playback decrypts the requested byte range. Not encrypted: WAVs while recording,
+Obsidian notes, `config.toml`, the log. `POST …/disable` decrypts everything and removes the key.
+When the keyring does not have the key at startup the backend is *locked*: every other `/api`
+route answers `423` until `POST …/unlock {"recovery_code": "…"}` (checked against a fingerprint in
+the settings) opens the database and puts the key back in the keyring. `encrypt_at_rest` cannot be
+changed through `PUT /api/settings`.
+
 ### `GET /api/audio/apps`
 Other apps with an open recording stream right now (`Stream/Input/Audio` nodes in `pw-dump`), as of
 the last 5-second poll: `[{app, binary, node_id}]`, with friendly names for common meeting apps and

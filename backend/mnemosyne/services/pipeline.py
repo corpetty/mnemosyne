@@ -8,6 +8,8 @@ submit these; they never run ML work inline.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import dataclasses
 import logging
 import time
 from pathlib import Path
@@ -15,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from ..jobs import JobContext
 from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus, transcript_hash
+from ..storage.crypto import plaintext
 from ..summarization.privacy import LOCAL_ONLY_ERROR, is_cloud
 from ..summarization.prompts import meeting_date_instructions
 from ..transcription.engine import AudioSource
@@ -100,15 +103,23 @@ def transcribe_session(app: AppContext, session_id: str):
                 ctx.update(stage + "...", progress=round(min(max(frac, 0.0), 0.99), 3))
 
             segments = []
-            async for segment in engine.transcribe_sources(sources, on_progress=on_progress):
-                segments.append(segment)
-                ctx.emit(
-                    {
-                        "type": "transcription",
-                        "session_id": session_id,
-                        "segment": segment.model_dump(),
-                    }
-                )
+            with contextlib.ExitStack() as stack:
+                # Encrypted audio: the engine reads private plaintext copies, removed after.
+                plain = [
+                    dataclasses.replace(
+                        s, path=str(stack.enter_context(plaintext(s.path, app.file_key)))
+                    )
+                    for s in sources
+                ]
+                async for segment in engine.transcribe_sources(plain, on_progress=on_progress):
+                    segments.append(segment)
+                    ctx.emit(
+                        {
+                            "type": "transcription",
+                            "session_id": session_id,
+                            "segment": segment.model_dump(),
+                        }
+                    )
 
             embeddings = dict(getattr(engine, "last_speaker_embeddings", {}) or {})
             mapping = app.speakers.match(embeddings) if settings.auto_label_speakers else {}

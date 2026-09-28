@@ -18,6 +18,10 @@ dependencies = [
     "icalendar>=6.0",
     "recurring-ical-events>=3.3",
     "model2vec>=0.9",
+    # Encryption at rest (opt-in): AES-GCM files, SQLCipher database, key in the keyring.
+    "cryptography>=43",
+    "sqlcipher3-binary>=0.5.4",
+    "keyring>=25",
 ]
 
 [project.optional-dependencies]

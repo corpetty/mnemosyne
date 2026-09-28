@@ -11,6 +11,7 @@
 	import { checkGitHub, checkIntegration, getIndexStatus, rebuildIndex } from '$lib/api/backend.js';
 	import { collectDiagnostics } from '$lib/app/diagnostics.js';
 	import ReportProblem from './ReportProblem.svelte';
+	import EncryptionSettings from './EncryptionSettings.svelte';
 	import type { IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	let settings = $state<SettingsResponse | null>(null);
@@ -358,6 +359,8 @@
 		{#if reporting}
 			<ReportProblem onclose={() => (reporting = false)} />
 		{/if}
+
+		<EncryptionSettings />
 	{/if}
 
 	{#if loading && !settings}

@@ -17,6 +17,8 @@ class UiState {
   personRequest = $state<string | null>(null);
   topicRequest = $state<string | null>(null);
   importRequest = $state(0); // bumped to open the sidebar's file picker
+  /** Meetings are encrypted and the key is missing: show the unlock screen. */
+  locked = $state(false);
 
   backendStatus = $state<BackendStatus>('checking');
   // Progress from the Tauri shell while it installs/starts the backend (release builds).

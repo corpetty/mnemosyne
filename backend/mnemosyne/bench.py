@@ -305,12 +305,23 @@ def main(argv: list[str] | None = None) -> None:
         if args.synthetic:
             audio, reference = synthesize(Path(tmp))
         elif args.session:
+            from .storage.crypto import SystemKeyStore, derive, is_encrypted
             from .storage.sqlite import SessionRepository
 
-            session = SessionRepository(settings.db_path).get(args.session)
+            master = SystemKeyStore(settings.data_dir).get() if settings.encrypt_at_rest else None
+            if settings.encrypt_at_rest and master is None:
+                sys.exit("Meetings are encrypted and the key is not in the keyring")
+            db_key = derive(master, "db") if master else None
+            session = SessionRepository(settings.db_path, db_key).get(args.session)
             if session is None or not session.audio_file or not session.transcript:
                 sys.exit(f"Session {args.session} not found, or it has no audio or transcript")
             audio = Path(session.audio_file)
+            if is_encrypted(audio):
+                from .storage.crypto import EncryptedFile
+
+                plain = Path(tmp) / audio.name.removesuffix(".enc")
+                EncryptedFile(audio, derive(master, "files")).write_plain(plain)
+                audio = plain
             reference = [s.model_dump() for s in session.transcript]
         else:
             if not args.reference:

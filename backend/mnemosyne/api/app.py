@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import Settings, load_settings
-from .auth import TokenAuthMiddleware
+from .auth import LockedMiddleware, TokenAuthMiddleware
 from .context import AppContext
 from .routes.ask import router as ask_router
 from .routes.audio import router as audio_router
@@ -12,6 +12,7 @@ from .routes.calendar import router as calendar_router
 from .routes.clips import router as clips_router
 from .routes.devices import router as devices_router
 from .routes.digests import router as digests_router
+from .routes.encryption import router as encryption_router
 from .routes.export import router as export_router
 from .routes.integrations import router as integrations_router
 from .routes.jobs import router as jobs_router
@@ -30,8 +31,8 @@ from .routes.topics import router as topics_router
 from .websocket import router as ws_router
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    ctx = AppContext.build(settings or load_settings())
+def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
+    ctx = AppContext.build(settings or load_settings(), keystore)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -48,12 +49,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.add_middleware(LockedMiddleware, ctx=ctx)
     app.add_middleware(TokenAuthMiddleware, ctx=ctx)
 
     app.include_router(devices_router)
     app.include_router(audio_router)
     app.include_router(sessions_router)
     app.include_router(clips_router)
+    app.include_router(encryption_router)
     app.include_router(models_router)
     app.include_router(export_router)
     app.include_router(settings_router)

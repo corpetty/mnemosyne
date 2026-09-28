@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     # labelled with this name instead of being diarized.
     local_speaker_name: str = "Me"
     # PipeWire WebRTC echo cancellation (virtual "echo cancelled" mic source).
+    # Encryption at rest (services/encryption.py): the database and audio files, key in the
+    # system keyring. encryption_check tells the right key from a wrong one.
+    encrypt_at_rest: bool = False
+    encryption_check: str = ""
     echo_cancel: bool = False
     # Microphone (PipeWire node.name) the echo canceller captures from; blank = default source.
     echo_cancel_mic: str = ""

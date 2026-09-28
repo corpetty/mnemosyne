@@ -6,6 +6,8 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 from fastapi import Request, WebSocket
 
@@ -44,10 +46,16 @@ class AppContext:
     _retention_task: asyncio.Task | None = None
     _digest_task: asyncio.Task | None = None
     _apps_task: asyncio.Task | None = None
+    _intervals: tuple[float, float] = (6 * 3600, 900)
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     live: dict = field(default_factory=dict)  # session id -> running LiveTranscriber
     copilot_notes: dict = field(default_factory=dict)  # session id -> CopilotNotes
     recovered: list = field(default_factory=list)  # RecoveredRecording, since this start
+    # Encryption at rest: where the master key lives, the key once known, and whether the
+    # meetings are encrypted but the key is missing (then only the recovery code gets in).
+    keystore: Any = None
+    master_key: bytes | None = None
+    locked: bool = False
     level_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     http_transport: object | None = None  # tests inject an httpx transport for integrations
 
@@ -63,13 +71,43 @@ class AppContext:
             p.name for p in list_people(self.repo, (st.local_speaker_name, st.remote_speaker_name))
         ]
 
+    @property
+    def file_key(self) -> bytes | None:
+        """Key for encrypted audio files (None when encryption is off or locked)."""
+        from ..storage.crypto import derive
+
+        return derive(self.master_key, "files") if self.master_key else None
+
     @classmethod
-    def build(cls, settings: Settings) -> AppContext:
+    def build(cls, settings: Settings, keystore: Any = None) -> AppContext:
+        from ..storage.crypto import SystemKeyStore, derive, key_check
+
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         bus = EventBus()
-        repo = SessionRepository(settings.db_path)
-        import_json_sessions(repo, settings.sessions_dir)
+        if keystore is None:
+            from ..demo import enabled as demo_mode
+            from ..storage.crypto import FileKeyStore
+
+            keystore = (
+                FileKeyStore(settings.data_dir / "demo-key")
+                if demo_mode()
+                else SystemKeyStore(settings.data_dir)
+            )
+        master, locked = None, False
+        if settings.encrypt_at_rest:
+            master = keystore.get()
+            if master is None or key_check(master) != settings.encryption_check:
+                logger.warning("Meetings are encrypted and the key is not available: locked")
+                master, locked = None, True
+        if locked:  # an empty stand-in until the recovery code arrives (see unlock)
+            repo = SessionRepository(Path(":memory:"))
+        else:
+            repo = SessionRepository(settings.db_path, derive(master, "db") if master else None)
+            import_json_sessions(repo, settings.sessions_dir)
         return cls(
+            keystore=keystore,
+            master_key=master,
+            locked=locked,
             settings=settings,
             repo=repo,
             sessions=SessionService(repo, settings.recordings_dir, bus),
@@ -194,8 +232,28 @@ class AppContext:
     async def startup(
         self, retention_interval: float = 6 * 3600, digest_interval: float = 900
     ) -> None:
+        from ..storage.crypto import clean_scratch
+
+        self._intervals = (retention_interval, digest_interval)
+        clean_scratch()
+        if self.locked:
+            logger.warning("Waiting for the recovery code before starting")
+            return
+        await self._start_services()
+
+    async def unlock(self, master: bytes) -> None:
+        """The recovery code arrived: keep the key, open the real database, start up."""
+        from ..storage.crypto import derive
+
+        self.repo.reopen(self.settings.db_path, derive(master, "db"))
+        self.keystore.set(master)
+        self.master_key, self.locked = master, False
+        await self._start_services()
+
+    async def _start_services(self) -> None:
         from ..services.recovery import recover_interrupted
 
+        retention_interval, digest_interval = self._intervals
         # First, so retention and the index never see a half-finished recording.
         recover_interrupted(self)
         if self.settings.echo_cancel:
