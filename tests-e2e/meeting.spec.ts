@@ -81,7 +81,8 @@ test('search by meaning: "launch" finds "ship"', async () => {
     await box.fill('launch');
     await expect(page.getByText('related').first()).toBeVisible({ timeout: 1000 });
   }).toPass({ timeout: 20_000 });
-  await expect(page.getByRole('button', { name: /≈.*ship the migration/ })).toBeVisible();
+  // Other specs may leave meetings with the same demo lines: any match will do.
+  await expect(page.getByRole('button', { name: /≈.*ship the migration/ }).first()).toBeVisible();
   await box.fill('');
 });
 

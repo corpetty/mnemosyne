@@ -151,6 +151,14 @@ export async function updateNotes(sessionId: string, notes: string): Promise<Ses
   });
 }
 
+/** `otherId` joins `sessionId` (its parts in recording order), then is deleted. A job. */
+export async function combineSessions(sessionId: string, otherId: string): Promise<Job> {
+  return request(`/api/sessions/${sessionId}/combine`, {
+    method: 'POST',
+    body: JSON.stringify({ other_id: otherId })
+  });
+}
+
 export async function transcribeSession(sessionId: string): Promise<Job> {
   return request(`/api/sessions/${sessionId}/transcribe`, { method: 'POST' });
 }
@@ -332,11 +340,12 @@ export function audioUrl(sessionId: string, recordingId?: string): string {
 
 export async function importAudio(
   file: File,
-  opts: { name?: string; transcribe?: boolean } = {}
+  opts: { name?: string; transcribe?: boolean; sessionId?: string } = {}
 ): Promise<StopRecordingResponse> {
   const form = new FormData();
   form.append('file', file, file.name);
   if (opts.name) form.append('name', opts.name);
+  if (opts.sessionId) form.append('session_id', opts.sessionId); // added as the meeting's next part
   if (opts.transcribe === false) form.append('transcribe', 'false');
   const res = await fetch(`${base()}/api/audio/import`, {
     method: 'POST',

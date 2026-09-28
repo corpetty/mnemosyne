@@ -348,6 +348,15 @@ Deletes the session, its transcript, and its recordings directory. → `{ "messa
 
 `{ "notes": "..." }` → `SessionDetail`.
 
+### `POST /api/sessions/{session_id}/combine`
+`{other_id}` → a `combine` job (`services/combine.py`): every part of both meetings in the order
+it was recorded, one joined audio and transcript; the other meeting's speakers matched to this
+one's by voice (a name given there and not matched stays). Its recordings and clips move into
+this meeting's folder, its notes are appended, the stricter `local_only` wins, and it is deleted.
+A summary is made again when either had one. 400 without audio, 409 while recording or busy.
+`POST /api/audio/import` with a `session_id` form field adds a file to that meeting as its next
+part instead of making a new meeting (only that part is transcribed).
+
 ### `POST /api/sessions/{session_id}/transcribe`
 
 Queue a transcription job for the session's `audio_file`. **Response:** `Job`.

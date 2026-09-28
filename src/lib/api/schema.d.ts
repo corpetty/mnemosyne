@@ -190,7 +190,8 @@ export interface paths {
         put?: never;
         /**
          * Import Audio
-         * @description Create a session from an uploaded audio/video file and (by default) transcribe it.
+         * @description Create a session from an uploaded audio/video file and (by default) transcribe it. With
+         *     `session_id`, the file is added to that meeting as its next part instead.
          */
         post: operations["import_audio_api_audio_import_post"];
         delete?: never;
@@ -952,6 +953,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/combine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Combine
+         * @description Combine two meetings (services/combine.py): their parts in recording order, one audio
+         *     and transcript, the other meeting's speakers matched by voice. A `combine` job.
+         */
+        post: operations["combine_api_sessions__session_id__combine_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/copilot": {
         parameters: {
             query?: never;
@@ -1688,6 +1710,8 @@ export interface components {
             file: string;
             /** Name */
             name?: string | null;
+            /** Session Id */
+            session_id?: string | null;
             /**
              * Transcribe
              * @default true
@@ -1804,6 +1828,11 @@ export interface components {
             first_idx: number;
             /** Last Idx */
             last_idx: number;
+        };
+        /** CombineRequest */
+        CombineRequest: {
+            /** Other Id */
+            other_id: string;
         };
         /** Configured */
         Configured: {
@@ -4995,6 +5024,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    combine_api_sessions__session_id__combine_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CombineRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
             /** @description Validation Error */

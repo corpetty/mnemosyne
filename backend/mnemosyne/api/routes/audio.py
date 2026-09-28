@@ -470,12 +470,16 @@ async def import_audio(
     file: UploadFile = File(...),
     name: str | None = Form(None),
     transcribe: bool = Form(True),
+    session_id: str | None = Form(None),
     ctx: AppContext = Depends(get_ctx),
 ):
-    """Create a session from an uploaded audio/video file and (by default) transcribe it."""
+    """Create a session from an uploaded audio/video file and (by default) transcribe it. With
+    `session_id`, the file is added to that meeting as its next part instead."""
     original = Path(file.filename or "import")
     if original.suffix.lower() not in IMPORT_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Unsupported file type {original.suffix!r}")
+    if session_id:
+        return await _import_part(ctx, session_id, file, original, transcribe)
 
     session = ctx.sessions.create_session(name or original.stem)
     out_dir = ctx.settings.recordings_dir / session.id
@@ -512,6 +516,50 @@ async def import_audio(
         job_id=job_id,
         will_transcribe=transcribe,
         message=f"Imported {original.name}",
+    )
+
+
+async def _import_part(ctx: AppContext, session_id: str, file, original: Path, transcribe: bool):
+    """An audio file added to a meeting as its next part (after what it has)."""
+    session = ctx.sessions.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session_id in ctx.active_recordings or ctx.jobs.list(
+        session_id=session_id, active_only=True
+    ):
+        raise HTTPException(status_code=409, detail="The meeting is busy; try again soon")
+    part = next_part(session)
+    out_dir = ctx.settings.recordings_dir / session_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    saved = out_dir / (f"import{part}_" + (_SAFE.sub("_", original.name) or "file"))
+    with saved.open("wb") as f:
+        shutil.copyfileobj(file.file, f, length=1024 * 1024)
+    if saved.stat().st_size == 0:
+        saved.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    try:
+        mixed = await asyncio.to_thread(
+            mix_audio_files, [saved], out_dir / f"import{part}_mixed.ogg"
+        )
+    except Exception as e:
+        saved.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"Could not decode audio: {e}") from e
+    had_transcript = bool(session.transcript)
+    recording = Recording(source="import", device_id=-1, device_name=original.name, path=str(saved))
+    await add_part(ctx, session_id, part, [recording], mixed)
+    await asyncio.to_thread(seal_session_audio, ctx, session_id)
+
+    job_id = None
+    if transcribe:
+        parts = [part] if part and had_transcript else None  # only the new part
+        job_id = ctx.jobs.submit(
+            "transcribe", transcribe_session(ctx, session_id, parts), session_id
+        ).id
+    return StopRecordingResponse(
+        session=ctx.sessions.get_session(session_id),
+        job_id=job_id,
+        will_transcribe=transcribe,
+        message=f"Added {original.name} to the meeting",
     )
 
 

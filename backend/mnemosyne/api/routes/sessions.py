@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ...jobs import Job
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, CopilotNotes, Session, SessionSummary
+from ...services.combine import combine_runner
 from ...services.copilot import copilot_ask_runner
 from ...services.pipeline import transcribe_session
 from ...services.stats import MeetingStats, meeting_stats
@@ -120,6 +121,29 @@ async def update_notes(session_id: str, request: NotesRequest, ctx: AppContext =
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+class CombineRequest(ApiModel):
+    other_id: str  # this meeting joins the one in the path, and is then deleted
+
+
+@router.post("/{session_id}/combine", response_model=Job)
+async def combine(session_id: str, request: CombineRequest, ctx: AppContext = Depends(get_ctx)):
+    """Combine two meetings (services/combine.py): their parts in recording order, one audio
+    and transcript, the other meeting's speakers matched by voice. A `combine` job."""
+    if request.other_id == session_id:
+        raise HTTPException(status_code=400, detail="Choose another meeting")
+    for sid in (session_id, request.other_id):
+        session = ctx.sessions.get_session(sid)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        if not session.audio_file:
+            raise HTTPException(status_code=400, detail=f"“{session.name}” has no audio")
+        if sid in ctx.active_recordings:
+            raise HTTPException(status_code=409, detail=f"“{session.name}” is being recorded")
+        if ctx.jobs.list(session_id=sid, active_only=True):
+            raise HTTPException(status_code=409, detail=f"“{session.name}” is busy; try again soon")
+    return ctx.jobs.submit("combine", combine_runner(ctx, session_id, request.other_id), session_id)
 
 
 @router.post("/{session_id}/transcribe", response_model=Job)

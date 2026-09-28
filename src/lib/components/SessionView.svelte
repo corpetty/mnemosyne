@@ -8,6 +8,7 @@
 	import AudioControls from './AudioControls.svelte';
 	import CalendarCard from './CalendarCard.svelte';
 	import CopilotPanel from './CopilotPanel.svelte';
+	import MeetingActions from './MeetingActions.svelte';
 	import MeetingBrief from './MeetingBrief.svelte';
 	import DeviceSelector from './DeviceSelector.svelte';
 	import LiveTranscript from './LiveTranscript.svelte';
@@ -53,6 +54,7 @@
 	<div class="flex items-center justify-between mb-3">
 		<h2 class="text-xl font-semibold truncate">{sessionState.activeSession.name}</h2>
 		<span class="flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
+			<MeetingActions />
 			<button
 				onclick={toggleLocalOnly}
 				aria-pressed={sessionState.activeSession.local_only}
