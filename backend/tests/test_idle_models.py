@@ -24,7 +24,7 @@ async def test_unloaded_after_the_idle_time(models):
     await _loaded(models)
     t = models.last_used
     assert not await models.unload_if_idle(busy=False, now=t + 14 * 60)
-    assert await models.unload_if_idle(busy=False, now=t + 15 * 60)
+    assert await models.unload_if_idle(busy=False, now=t + 15 * 60 + 0.001)  # float-safe
     assert not models.loaded and models._engine is None
 
 
