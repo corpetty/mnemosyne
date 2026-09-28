@@ -9,6 +9,7 @@ pyannote embedding model (`embedder`); without one, `embeddings` stays empty.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -113,9 +114,13 @@ class NemotronDiarizer:
             pcm = await asyncio.to_thread(_resample, pcm, sample_rate, RATE)
 
         def _run():
-            import torch
+            try:
+                import torch
 
-            with torch.inference_mode():
+                no_grad = torch.inference_mode()
+            except ImportError:  # only in tests with a stand-in model (NeMo needs torch)
+                no_grad = contextlib.nullcontext()
+            with no_grad:
                 segments = self._model.diarize(
                     audio=[pcm], sample_rate=RATE, batch_size=1, verbose=False
                 )
