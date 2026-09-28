@@ -1,6 +1,7 @@
 """Export endpoints."""
 
 import logging
+import shutil
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -33,9 +34,39 @@ def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianEx
     )
 
 
+def _resources(ctx: AppContext, session, exporter: ObsidianExporter) -> list[str]:
+    """The meeting's resources as note links; files are copied (decrypted) next to the notes,
+    in attachments/."""
+    import re
+
+    from ...services.assets import file_path
+    from ...storage.crypto import plaintext
+
+    out = []
+    for asset in session.assets:
+        if asset.kind == "link":
+            out.append(f"[{asset.title}]({asset.url})")
+            continue
+        relative, _ = ctx.repo.asset_file(asset.id)
+        if not relative:
+            continue
+        name = re.sub(r"[\\/:*?\"<>|#^\[\]]", "_", f"{asset.id}-{asset.filename or 'file'}")
+        target = exporter.vault_path / exporter.subfolder / "attachments" / name
+        try:
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with plaintext(file_path(ctx, relative), ctx.file_key) as plain:
+                    shutil.copyfile(plain, target)
+            out.append(f"[[{name}|{asset.title}]]")
+        except Exception:
+            logger.warning("Could not copy resource %s to the vault", asset.id, exc_info=True)
+    return out
+
+
 def export_session(ctx: AppContext, session, vault_path: str):
     """Write the meeting note and, when enabled, the notes of the people in it."""
-    path = build_exporter(ctx, vault_path, session).export(session)
+    exporter = build_exporter(ctx, vault_path, session)
+    path = exporter.export(session, _resources(ctx, session, exporter))
     st = ctx.settings
     if st.obsidian_people_notes:
         from pathlib import Path

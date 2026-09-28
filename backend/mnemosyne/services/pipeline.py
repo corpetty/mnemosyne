@@ -312,6 +312,11 @@ def summarize_session(
         planned = agenda_hint(session.agenda)
         if planned:
             instr = f"{instr}\n{planned}".strip()
+        from .assets import resources_hint
+
+        shared = resources_hint(app, session_id)
+        if shared:
+            instr = f"{instr}\n{shared}".strip()
         marked = bookmark_hint(session.bookmarks, session.transcript)
         if marked:
             instr = f"{instr}\n{marked}".strip()

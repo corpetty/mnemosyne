@@ -149,7 +149,13 @@ def enable(app: AppContext) -> EncryptionEnabled:
     for sid in _all_session_ids(app):
         n, errs = _convert_audio(app, sid, app.file_key)
         files, errors = files + n, errors + errs
-    logger.info("Encryption on: database and %d audio files", files)
+    from .assets import convert_files
+
+    try:
+        files += convert_files(app, app.file_key)
+    except Exception as e:
+        errors.append(f"resources: {e}")
+    logger.info("Encryption on: database and %d files", files)
     return EncryptionEnabled(recovery_code=recovery_code(master), files=files, errors=errors)
 
 
@@ -162,6 +168,9 @@ def disable(app: AppContext) -> int:
         if errors:
             raise RuntimeError("Could not decrypt: " + "; ".join(errors))
         files += n
+    from .assets import convert_files
+
+    files += convert_files(app, None)
     _replace_database(app, None, derive(app.master_key, "db"))
     app.settings.encrypt_at_rest = False
     app.settings.encryption_check = ""

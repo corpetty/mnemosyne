@@ -20,6 +20,7 @@ from ..models.digest import Digest
 from ..models.search import SearchHit, SegmentHit
 from ..models.session import (
     AgendaItem,
+    Asset,
     Bookmark,
     CopilotNotes,
     Recording,
@@ -161,6 +162,27 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS bookmarks_session ON bookmarks(session_id);
+
+-- Resources (links, files) in a library; a meeting lists those attached to it.
+-- path: a file's place under <data_dir>/assets (relative, so backups move), maybe .enc.
+CREATE TABLE IF NOT EXISTS assets (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    url TEXT,
+    filename TEXT,
+    size INTEGER,
+    path TEXT,
+    text TEXT,
+    source TEXT NOT NULL DEFAULT 'manual',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_assets (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, asset_id)
+);
 """
 
 
@@ -238,6 +260,20 @@ def convert_database(src: Path, dst: Path, src_key: bytes | None, dst_key: bytes
         conn.execute("DETACH DATABASE converted")
     finally:
         conn.close()
+
+
+def _asset(r) -> Asset:
+    return Asset(
+        id=r["id"],
+        kind=r["kind"],
+        title=r["title"],
+        url=r["url"],
+        filename=r["filename"],
+        size=r["size"],
+        created_at=_dt(r["created_at"]),
+        source=r["source"],
+        has_text=r["text"] is not None,
+    )
 
 
 class SessionRepository:
@@ -398,6 +434,11 @@ class SessionRepository:
             mark_rows = self._conn.execute(
                 "SELECT * FROM bookmarks WHERE session_id=?", (session_id,)
             ).fetchall()
+            asset_rows = self._conn.execute(
+                "SELECT a.* FROM assets a JOIN session_assets sa ON sa.asset_id = a.id"
+                " WHERE sa.session_id=? ORDER BY sa.added_at",
+                (session_id,),
+            ).fetchall()
         part_starts: dict[int, float] = {}
         for r in rec_rows:
             part_starts.setdefault(r["part"], r["part_offset"])
@@ -426,6 +467,7 @@ class SessionRepository:
             speakers_reviewed=bool(row["speakers_reviewed"]),
             agenda=[AgendaItem.model_validate(a) for a in json.loads(row["agenda"] or "[]")],
             meeting_type=row["meeting_type"],
+            assets=[_asset(r) for r in asset_rows],
             transcript=[
                 TranscriptSegment(
                     text=r["text"],
@@ -599,6 +641,109 @@ class SessionRepository:
                 return False
             self._conn.execute("DELETE FROM recordings WHERE session_id=?", (session_id,))
         return True
+
+    # ---- assets (resources) --------------------------------------------
+
+    def add_asset(self, asset: Asset, path: str | None = None, text: str | None = None) -> Asset:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO assets (id, kind, title, url, filename, size, path, text, source,"
+                " created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    asset.id,
+                    asset.kind,
+                    asset.title,
+                    asset.url,
+                    asset.filename,
+                    asset.size,
+                    path,
+                    text,
+                    asset.source,
+                    asset.created_at.isoformat(),
+                ),
+            )
+        return self.get_asset(asset.id)
+
+    def get_asset(self, asset_id: str) -> Asset | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM assets WHERE id=?", (asset_id,)).fetchone()
+        return _asset(row) if row else None
+
+    def asset_file(self, asset_id: str) -> tuple[str | None, str | None]:
+        """A file asset's stored path (relative to the assets folder) and its text."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT path, text FROM assets WHERE id=?", (asset_id,)
+            ).fetchone()
+        return (row["path"], row["text"]) if row else (None, None)
+
+    def find_link(self, url: str) -> Asset | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM assets WHERE kind='link' AND url=?", (url,)
+            ).fetchone()
+        return _asset(row) if row else None
+
+    def list_assets(self, query: str = "", limit: int = 100) -> list[tuple[Asset, int]]:
+        """The library, newest first, with how many meetings use each asset."""
+        like = f"%{query.strip()}%"
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT a.*, (SELECT count(*) FROM session_assets sa WHERE sa.asset_id = a.id)"
+                " AS used FROM assets a WHERE a.title LIKE ? OR ifnull(a.url, '') LIKE ?"
+                " OR ifnull(a.filename, '') LIKE ? ORDER BY a.created_at DESC LIMIT ?",
+                (like, like, like, limit),
+            ).fetchall()
+        return [(_asset(r), r["used"]) for r in rows]
+
+    def asset_texts(self, session_id: str) -> list[tuple[Asset, str]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT a.* FROM assets a JOIN session_assets sa ON sa.asset_id = a.id"
+                " WHERE sa.session_id=? AND a.text IS NOT NULL ORDER BY sa.added_at",
+                (session_id,),
+            ).fetchall()
+        return [(_asset(r), r["text"]) for r in rows]
+
+    def attach_asset(self, session_id: str, asset_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO session_assets (session_id, asset_id, added_at)"
+                " VALUES (?,?,?)",
+                (session_id, asset_id, datetime.now().isoformat()),
+            )
+
+    def detach_asset(self, session_id: str, asset_id: str) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "DELETE FROM session_assets WHERE session_id=? AND asset_id=?",
+                (session_id, asset_id),
+            )
+        return cur.rowcount > 0
+
+    def update_asset(self, asset_id: str, **fields) -> Asset | None:
+        allowed = {"title", "path"}
+        if set(fields) - allowed:
+            raise ValueError(f"Cannot update: {sorted(set(fields) - allowed)}")
+        with self._lock, self._conn:
+            for key, value in fields.items():
+                self._conn.execute(f"UPDATE assets SET {key}=? WHERE id=?", (value, asset_id))
+        return self.get_asset(asset_id)
+
+    def delete_asset(self, asset_id: str) -> str | None:
+        """Remove an asset from the library (and every meeting). Returns its file's path."""
+        path, _ = self.asset_file(asset_id)
+        with self._lock, self._conn:
+            cur = self._conn.execute("DELETE FROM assets WHERE id=?", (asset_id,))
+        return path if cur.rowcount else None
+
+    def asset_paths(self) -> list[tuple[str, str]]:
+        """(id, path) of every file asset: for encryption on and off."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, path FROM assets WHERE path IS NOT NULL"
+            ).fetchall()
+        return [(r["id"], r["path"]) for r in rows]
 
     # ---- bookmarks -----------------------------------------------------
 

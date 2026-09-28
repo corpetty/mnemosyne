@@ -30,6 +30,7 @@ def render_meeting_note(
     attendees: list[str] | None = None,
     bookmarks: list[tuple[float, str, str]] | None = None,  # (seconds, line said, note)
     agenda: list[tuple[str, bool]] | None = None,  # (point, covered)
+    resources: list[str] | None = None,  # markdown links, one per resource
 ) -> str:
     """Render a complete Obsidian-compatible note with YAML frontmatter.
 
@@ -102,6 +103,11 @@ def render_meeting_note(
     if agenda:
         sections.append("## Agenda\n")
         sections.extend(f"- [{'x' if covered else ' '}] {text}" for text, covered in agenda)
+        sections.append("")
+
+    if resources:
+        sections.append("## Resources\n")
+        sections.extend(f"- {r}" for r in resources)
         sections.append("")
 
     if bookmarks:

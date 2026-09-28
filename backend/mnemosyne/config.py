@@ -319,6 +319,11 @@ class Settings(BaseSettings):
         return self.data_dir / "recordings"
 
     @property
+    def assets_dir(self) -> Path:
+        """Files attached to meetings as resources (services/assets.py)."""
+        return self.data_dir / "assets"
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "mnemosyne.db"
 

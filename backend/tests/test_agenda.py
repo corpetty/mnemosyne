@@ -74,7 +74,8 @@ def test_recording_during_an_event_takes_its_agenda(client, ctx, fake_pipewire, 
     ics.write_text(
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nBEGIN:VEVENT\r\nUID:p-1\r\n"
         "SUMMARY:Planning\r\nDTSTART:20260923T100000Z\r\nDTEND:20260923T110000Z\r\n"
-        "DESCRIPTION:Agenda\\n- Beta date\\n- Pricing\\n\\nThanks\r\n"
+        "DESCRIPTION:Agenda\\n- Beta date\\n- Pricing\\n\\nDoc https://docs.example.com/d/1"
+        "\\nJoin https://meet.google.com/abc\r\n"
         "END:VEVENT\r\nEND:VCALENDAR\r\n"
     )
     ctx.settings.live_transcription = False
@@ -83,4 +84,5 @@ def test_recording_during_an_event_takes_its_agenda(client, ctx, fake_pipewire, 
     session = client.get(f"/api/sessions/{sid}").json()
     assert session["name"] == "Planning"
     assert [a["text"] for a in session["agenda"]] == ["Beta date", "Pricing"]
+    assert [a["url"] for a in session["assets"]] == ["https://docs.example.com/d/1"]  # not the call
     client.post(f"/api/audio/stop/{sid}", json={"transcribe": False})

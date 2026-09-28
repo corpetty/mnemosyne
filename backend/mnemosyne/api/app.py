@@ -8,6 +8,7 @@ from .app_watch import watch_app
 from .auth import LockedMiddleware, TokenAuthMiddleware
 from .context import AppContext
 from .routes.ask import router as ask_router
+from .routes.assets import router as assets_router
 from .routes.audio import router as audio_router
 from .routes.backup import router as backup_router
 from .routes.bookmarks import router as bookmarks_router
@@ -72,6 +73,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(speakers_router)
     app.include_router(segments_router)
     app.include_router(bookmarks_router)
+    app.include_router(assets_router)
     app.include_router(glossary_router)
     app.include_router(search_router)
     app.include_router(ask_router)

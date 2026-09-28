@@ -99,6 +99,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library
+         * @description Every resource, newest first (to attach one from an earlier meeting).
+         */
+        get: operations["library_api_assets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assets/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add File */
+        post: operations["add_file_api_assets_file_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assets/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add Link */
+        post: operations["add_link_api_assets_link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assets/{asset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete
+         * @description Remove a resource from the library and from every meeting (its file too).
+         */
+        delete: operations["delete_api_assets__asset_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename */
+        patch: operations["rename_api_assets__asset_id__patch"];
+        trace?: never;
+    };
+    "/api/assets/{asset_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download */
+        get: operations["download_api_assets__asset_id__file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audio/active": {
         parameters: {
             query?: never;
@@ -1025,6 +1117,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach
+         * @description Attach a resource from the library (e.g. one from an earlier meeting).
+         */
+        post: operations["attach_api_sessions__session_id__assets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/assets/{asset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Detach
+         * @description Take a resource off a meeting (it stays in the library).
+         */
+        delete: operations["detach_api_sessions__session_id__assets__asset_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/attendees": {
         parameters: {
             query?: never;
@@ -1921,10 +2053,44 @@ export interface components {
             /** Question */
             question: string;
         };
-        /** AttachRequest */
-        AttachRequest: {
-            /** Pid */
-            pid: number;
+        /**
+         * Asset
+         * @description A resource for meetings: a link, or a file kept by Mnemosyne. Assets live in a library;
+         *     a meeting lists the ones attached to it, and one can be attached to several meetings.
+         */
+        Asset: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Filename */
+            filename: string | null;
+            /**
+             * Has Text
+             * @default false
+             */
+            has_text: boolean;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Size */
+            size: number | null;
+            /**
+             * Source
+             * @default manual
+             */
+            source: string;
+            /** Title */
+            title: string;
+            /** Url */
+            url: string | null;
+        };
+        /** AssetUpdate */
+        AssetUpdate: {
+            /** Title */
+            title: string;
         };
         /** AttachResponse */
         AttachResponse: {
@@ -1963,6 +2129,21 @@ export interface components {
             last_restore: components["schemas"]["RestoreResult"] | null;
             /** Restore Pending */
             restore_pending: string | null;
+        };
+        /** Body_add_file_api_assets_file_post */
+        Body_add_file_api_assets_file_post: {
+            /**
+             * File
+             * Format: binary
+             */
+            file: string;
+            /** Session Id */
+            session_id?: string | null;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
         };
         /** Body_import_audio_api_audio_import_post */
         Body_import_audio_api_audio_import_post: {
@@ -2460,6 +2641,24 @@ export interface components {
             peak_db: number;
             /** Rms Db */
             rms_db: number;
+        };
+        /** LibraryAsset */
+        LibraryAsset: {
+            asset: components["schemas"]["Asset"];
+            /** Used */
+            used: number;
+        };
+        /** LinkCreate */
+        LinkCreate: {
+            /** Session Id */
+            session_id?: string | null;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /** Url */
+            url: string;
         };
         /** LiveSegment */
         LiveSegment: {
@@ -2974,6 +3173,8 @@ export interface components {
         Session: {
             /** Agenda */
             agenda: components["schemas"]["AgendaItem-Output"][];
+            /** Assets */
+            assets: components["schemas"]["Asset"][];
             /** Attendees */
             attendees: string[];
             /** Audio File */
@@ -3868,6 +4069,16 @@ export interface components {
             /** Word */
             word: string;
         };
+        /** AttachRequest */
+        mnemosyne__api__routes__assets__AttachRequest: {
+            /** Asset Id */
+            asset_id: string;
+        };
+        /** AttachRequest */
+        mnemosyne__api__routes__system__AttachRequest: {
+            /** Pid */
+            pid: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -4012,6 +4223,201 @@ export interface operations {
             header?: never;
             path: {
                 ask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    library_api_assets_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryAsset"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_file_api_assets_file_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_add_file_api_assets_file_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_link_api_assets_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_assets__asset_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_api_assets__asset_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_api_assets__asset_id__file_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_id: string;
             };
             cookie?: never;
         };
@@ -5598,6 +6004,73 @@ export interface operations {
             };
         };
     };
+    attach_api_sessions__session_id__assets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["mnemosyne__api__routes__assets__AttachRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    detach_api_sessions__session_id__assets__asset_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     set_attendees_api_sessions__session_id__attendees_put: {
         parameters: {
             query?: never;
@@ -6782,7 +7255,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AttachRequest"];
+                "application/json": components["schemas"]["mnemosyne__api__routes__system__AttachRequest"];
             };
         };
         responses: {

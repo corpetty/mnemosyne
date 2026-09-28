@@ -7,6 +7,7 @@
 	import { uiState, type Tab } from '$lib/stores/ui.svelte.js';
 	import AudioControls from './AudioControls.svelte';
 	import AgendaCard from './AgendaCard.svelte';
+	import ResourcesCard from './ResourcesCard.svelte';
 	import CalendarCard from './CalendarCard.svelte';
 	import CopilotPanel from './CopilotPanel.svelte';
 	import MeetingActions from './MeetingActions.svelte';
@@ -117,7 +118,7 @@
 					</div>
 					<!-- Side by side when wide; stacked (copilot, then the live transcript) when narrow. -->
 					<div class="grid gap-4 lg:grid-cols-5">
-						<div class="lg:col-span-2 lg:order-2"><CopilotPanel /></div>
+						<div class="lg:col-span-2 lg:order-2 space-y-4"><CopilotPanel /><ResourcesCard compact /></div>
 						<div class="lg:col-span-3 lg:order-1"><LiveTranscript tall /></div>
 					</div>
 				</div>
@@ -126,6 +127,7 @@
 					<CopilotPanel />
 					<CalendarCard />
 					<AgendaCard />
+					<ResourcesCard />
 					{#if sessionState.activeSession.name !== 'Untitled Session' || sessionState.activeSession.attendees.length}
 						<MeetingBrief
 							title={sessionState.activeSession.name}
@@ -157,6 +159,7 @@
 			<SummaryView />
 		{:else if uiState.activeTab === 'notes'}
 			<NotesEditor />
+			<div class="mt-4"><ResourcesCard /></div>
 		{:else if uiState.activeTab === 'export'}
 			<ObsidianExport />
 		{/if}

@@ -47,7 +47,7 @@ class ObsidianExporter:
         self.link_people = link_people
         self.include_transcript = include_transcript
 
-    def render(self, session: Session) -> str:
+    def render(self, session: Session, resources: list[str] | None = None) -> str:
         transcript = session.transcript
         duration = max((s.end for s in transcript), default=None)
         return render_meeting_note(
@@ -65,9 +65,10 @@ class ObsidianExporter:
             attendees=session.attendees,
             bookmarks=[_bookmark(session, b) for b in session.bookmarks],
             agenda=[(a.text, a.covered) for a in session.agenda],
+            resources=resources,
         )
 
-    def export(self, session: Session) -> Path:
+    def export(self, session: Session, resources: list[str] | None = None) -> Path:
         """Export a session to the Obsidian vault.
 
         Returns the path to the created markdown file.
@@ -81,6 +82,6 @@ class ObsidianExporter:
 
         output_path = output_dir / f"{note_stem(session)}.md"
 
-        output_path.write_text(self.render(session), encoding="utf-8")
+        output_path.write_text(self.render(session, resources), encoding="utf-8")
         logger.info("Exported session %s to %s", session.id, output_path)
         return output_path

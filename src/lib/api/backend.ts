@@ -1,5 +1,7 @@
 import type {
   ActiveRecording,
+  Asset,
+  LibraryAsset,
   AgendaItem,
   Bookmark,
   AddCorrectionResult,
@@ -173,6 +175,44 @@ export async function transcribeSession(sessionId: string): Promise<Job> {
 // Jobs
 export async function listJobs(activeOnly = false): Promise<Job[]> {
   return request(`/api/jobs?active_only=${activeOnly}`);
+}
+
+// Resources (links and files) for meetings, from a shared library
+export async function listAssets(q = ''): Promise<LibraryAsset[]> {
+  return request(`/api/assets?q=${encodeURIComponent(q)}`);
+}
+
+export async function addLink(url: string, title = '', sessionId?: string): Promise<Asset> {
+  return request('/api/assets/link', { method: 'POST', body: JSON.stringify({ url, title, session_id: sessionId ?? null }) });
+}
+
+export async function uploadAsset(file: File, sessionId?: string): Promise<Asset> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  if (sessionId) form.append('session_id', sessionId);
+  const res = await fetch(`${base()}/api/assets/file`, { method: 'POST', body: form, headers: connectionState.headers() });
+  if (!res.ok) {
+    let detail = await res.text();
+    try {
+      detail = JSON.parse(detail).detail ?? detail;
+    } catch {
+      /* plain text */
+    }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+export async function attachAsset(sessionId: string, assetId: string): Promise<Asset[]> {
+  return request(`/api/sessions/${sessionId}/assets`, { method: 'POST', body: JSON.stringify({ asset_id: assetId }) });
+}
+
+export async function detachAsset(sessionId: string, assetId: string): Promise<Asset[]> {
+  return request(`/api/sessions/${sessionId}/assets/${assetId}`, { method: 'DELETE' });
+}
+
+export function assetFileUrl(assetId: string): string {
+  return connectionState.withToken(`${base()}/api/assets/${assetId}/file`);
 }
 
 /** Choose a meeting's type (a name from settings.meeting_types, or "none"). */

@@ -48,6 +48,9 @@ def test_back_up_and_restore(settings, keystore):
     ctx = app.state.ctx
     sid = _meeting(ctx)
     audio = Path(ctx.sessions.get_session(sid).audio_file).read_bytes()
+    resource = settings.data_dir / "assets" / "a1" / "deck.pdf"  # a meeting's file
+    resource.parent.mkdir(parents=True)
+    resource.write_bytes(b"%PDF deck")
     ctx.settings.summary_style = "brief"
     with TestClient(app) as client:
         info = _back_up(client)
@@ -61,7 +64,8 @@ def test_back_up_and_restore(settings, keystore):
         status = client.get("/api/backup").json()
         assert [b["name"] for b in status["backups"]] == [info["name"]]
 
-        # Life goes on: the meeting is renamed, a setting and a secret change.
+        # Life goes on: the meeting is renamed, a setting and a secret change, a file goes.
+        resource.unlink()
         client.patch(f"/api/sessions/{sid}", json={"name": "Renamed"})
         ctx.settings.summary_style = "detailed"
         ctx.settings.openai_api_key = "sk-new"
@@ -75,6 +79,7 @@ def test_back_up_and_restore(settings, keystore):
         session = client.get(f"/api/sessions/{sid}").json()
         assert session["name"] == "Budget review"
         assert Path(session["audio_file"]).read_bytes() == audio
+        assert resource.read_bytes() == b"%PDF deck"  # resources come back too
         status = client.get("/api/backup").json()
         assert status["restore_pending"] is None
         result = status["last_restore"]

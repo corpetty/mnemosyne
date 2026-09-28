@@ -532,7 +532,7 @@ function onConnected(): () => void {
       announceCaptureHealth(msg);
       return;
     }
-    if (msg.type === 'bookmarks') {
+    if (msg.type === 'bookmarks' || msg.type === 'assets') {
       if (sessionState.activeSession?.id === msg.session_id) sessionState.refreshActive();
       return;
     }

@@ -104,6 +104,21 @@ class SummaryData(ApiModel):
     followup: str = ""  # last drafted follow-up message (email or chat)
 
 
+class Asset(ApiModel):
+    """A resource for meetings: a link, or a file kept by Mnemosyne. Assets live in a library;
+    a meeting lists the ones attached to it, and one can be attached to several meetings."""
+
+    id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    kind: str  # "link" | "file"
+    title: str
+    url: str | None = None  # a link's address
+    filename: str | None = None  # a file's name
+    size: int | None = None  # a file's size in bytes
+    created_at: datetime = Field(default_factory=datetime.now)
+    source: str = "manual"  # "manual" | "calendar" (a link in the calendar event)
+    has_text: bool = False  # text was read from the file (it goes to the summary)
+
+
 class AgendaItem(ApiModel):
     """A point to get through in a meeting; the copilot marks it covered once it came up."""
 
@@ -141,6 +156,7 @@ class Session(ApiModel):
     speakers_reviewed: bool = False  # the "who is who" card was completed or dismissed
     bookmarks: list[Bookmark] = Field(default_factory=list)  # in time order
     agenda: list[AgendaItem] = Field(default_factory=list)
+    assets: list[Asset] = Field(default_factory=list)  # resources attached, in order added
     # Its kind (settings.meeting_types, by name); "" = none yet, "none" = chosen none.
     meeting_type: str = ""
 

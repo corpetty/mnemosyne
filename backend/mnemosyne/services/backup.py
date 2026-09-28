@@ -7,6 +7,7 @@ A backup is one uncompressed tar (the audio is compressed already):
     mnemosyne.db            the meetings, speakers and voice profiles: a consistent copy, as
                             stored (encrypted when encryption at rest is on)
     recordings/<id>/...     audio (.ogg, or .enc) and clips
+    assets/<id>/...         files attached to meetings as resources
 
 With encryption on, a backup is as encrypted as the data, and the key is not in it: on a new
 machine the recovery code unlocks it (the same locked screen as a missing key). Without
@@ -115,7 +116,8 @@ def create_backup(app: AppContext, progress: Callable[[float], None] | None = No
     partial = dest / f".{name}.partial"
     snapshot = dest / f".{name}.db"
     files = _files(settings.recordings_dir)
-    total = sum(f.stat().st_size for f in files) or 1
+    resources = _files(settings.assets_dir)
+    total = sum(f.stat().st_size for f in files + resources) or 1
     manifest = {
         "format": FORMAT,
         "app_version": _app_version(),
@@ -132,12 +134,15 @@ def create_backup(app: AppContext, progress: Callable[[float], None] | None = No
             _add_bytes(tar, "settings.json", json.dumps(public, indent=1).encode())
             tar.add(snapshot, arcname="mnemosyne.db")
             done = 0
-            for f in files:
-                rel = f.relative_to(settings.recordings_dir)
-                tar.add(f, arcname=f"recordings/{rel.as_posix()}")
-                done += f.stat().st_size
-                if progress:
-                    progress(done / total)
+            for folder, top, group in (
+                (settings.recordings_dir, "recordings", files),
+                (settings.assets_dir, "assets", resources),
+            ):
+                for f in group:
+                    tar.add(f, arcname=f"{top}/{f.relative_to(folder).as_posix()}")
+                    done += f.stat().st_size
+                    if progress:
+                        progress(done / total)
         partial.chmod(0o600)
         final = dest / name
         partial.rename(final)
@@ -234,7 +239,7 @@ def last_restore(settings: Settings) -> RestoreResult | None:
 
 def _data_members(tar: tarfile.TarFile):
     for m in tar:
-        if m.name == "mnemosyne.db" or m.name.startswith("recordings/"):
+        if m.name == "mnemosyne.db" or m.name.startswith(("recordings/", "assets/")):
             yield m
 
 
@@ -252,7 +257,7 @@ def apply_pending_restore(settings: Settings) -> RestoreResult | None:
     aside = data / f"pre-restore-{at:%Y%m%d-%H%M%S}"
     aside.mkdir()
     moved = []
-    names = ["mnemosyne.db", "mnemosyne.db-wal", "mnemosyne.db-shm", "recordings"]
+    names = ["mnemosyne.db", "mnemosyne.db-wal", "mnemosyne.db-shm", "recordings", "assets"]
     extracting = False
     try:
         manifest = read_manifest(path)
