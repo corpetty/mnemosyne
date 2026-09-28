@@ -49,6 +49,29 @@ class AudioState {
 
   private durationInterval: ReturnType<typeof setInterval> | null = null;
 
+  /** The clock counts from the start time, not by ticks: a hidden window's timers are
+   *  throttled, and a tick count falls behind the real length of the recording. */
+  private startClock(startedAtMs: number) {
+    this.stopClock();
+    const tick = () => (this.recordingDuration = Math.max(0, Math.round((Date.now() - startedAtMs) / 1000)));
+    tick();
+    this.durationInterval = setInterval(tick, 1000);
+  }
+
+  private stopClock() {
+    if (this.durationInterval) clearInterval(this.durationInterval);
+    this.durationInterval = null;
+  }
+
+  /** The recording ended without a Stop from here (the backend restarted or stopped it). */
+  ended() {
+    this.isRecording = false;
+    this.stopClock();
+    this.activeSessionId = null;
+    this.levels = {};
+    this.problems = {};
+  }
+
   get inputDevices(): AudioDevice[] {
     return this.devices.filter((d) => d.is_input);
   }
@@ -124,10 +147,7 @@ class AudioState {
       this.isRecording = true;
       this.problems = {};
       this.marks = 0;
-      this.recordingDuration = 0;
-      this.durationInterval = setInterval(() => {
-        this.recordingDuration++;
-      }, 1000);
+      this.startClock(Date.now());
       return res;
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Failed to start recording";
@@ -143,11 +163,7 @@ class AudioState {
     this.isRecording = true;
     this.selectedDeviceIds = new Set(deviceIds);
     this.problems = problems;
-    this.recordingDuration = Math.max(0, Math.round(Date.now() / 1000 - startedAt));
-    if (this.durationInterval) clearInterval(this.durationInterval);
-    this.durationInterval = setInterval(() => {
-      this.recordingDuration++;
-    }, 1000);
+    this.startClock(startedAt * 1000);
   }
 
   /** A source failed: save what was recorded and carry on into the same meeting. The timer
@@ -176,14 +192,7 @@ class AudioState {
     this.pending = 'stopping';
     try {
       const res = await api.stopRecording(this.activeSessionId, transcribe);
-      this.isRecording = false;
-      if (this.durationInterval) {
-        clearInterval(this.durationInterval);
-        this.durationInterval = null;
-      }
-      this.activeSessionId = null;
-      this.levels = {};
-      this.problems = {};
+      this.ended();
       return res;
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Failed to stop recording";

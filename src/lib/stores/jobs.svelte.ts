@@ -1,5 +1,9 @@
 import type { BackendEvent, Job } from '$lib/types/index.js';
+import { getJob } from '$lib/api/backend.js';
 import { wsState } from './websocket.svelte.js';
+
+const KEEP_FINISHED = 200;
+const running = (j: Job) => j.status === 'queued' || j.status === 'running';
 
 type CompleteHandler = (job: Job) => void;
 
@@ -42,14 +46,41 @@ class JobsState {
 
   private handle(msg: BackendEvent) {
     if (msg.type === 'hello') {
+      // (Re)connected. hello lists the jobs still running; one we thought was running and
+      // is not listed ended while we were away, or with a backend that restarted.
+      const listed = new Set(msg.jobs.map((j) => j.id));
+      const missed = Object.values(this.jobs).filter((j) => running(j) && !listed.has(j.id));
       for (const j of msg.jobs) this.jobs[j.id] = j;
+      for (const j of missed) void this.catchUp(j);
     } else if (msg.type === 'job') {
-      const prev = this.jobs[msg.job.id];
-      this.jobs[msg.job.id] = msg.job;
-      if (msg.job.status === 'completed' && prev?.status !== 'completed') {
-        for (const h of this.completeHandlers) h(msg.job);
-      }
+      this.apply(msg.job);
     }
+  }
+
+  private apply(job: Job) {
+    const prev = this.jobs[job.id];
+    if (!prev) this.prune();
+    this.jobs[job.id] = job;
+    if (job.status === 'completed' && prev?.status !== 'completed') {
+      for (const h of this.completeHandlers) h(job);
+    }
+  }
+
+  private async catchUp(job: Job) {
+    try {
+      this.apply(await getJob(job.id));
+    } catch {
+      // Unknown to the backend: it restarted, and the job went with it.
+      this.jobs[job.id] = { ...job, status: 'failed', error: 'Interrupted: the backend restarted' };
+    }
+  }
+
+  /** Forget the oldest finished jobs: a window left open for weeks sees thousands. */
+  private prune() {
+    const finished = Object.values(this.jobs).filter((j) => !running(j));
+    if (finished.length <= KEEP_FINISHED) return;
+    finished.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    for (const j of finished.slice(0, finished.length - KEEP_FINISHED)) delete this.jobs[j.id];
   }
 
   private forSession(sessionId: string, kind?: string): Job[] {
@@ -60,10 +91,7 @@ class JobsState {
 
   /** The queued or running job for a session (optionally of one kind), if any. */
   active(sessionId: string, kind?: string): Job | null {
-    return (
-      this.forSession(sessionId, kind).find((j) => j.status === 'queued' || j.status === 'running') ??
-      null
-    );
+    return this.forSession(sessionId, kind).find(running) ?? null;
   }
 
   /** The most recent job for a session of a given kind. */

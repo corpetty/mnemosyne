@@ -17,7 +17,7 @@
 		if (!session) return;
 		const name = (e.currentTarget as HTMLSelectElement).value;
 		try {
-			sessionState.activeSession = await setMeetingType(session.id, name);
+			sessionState.update(await setMeetingType(session.id, name));
 			await sessionState.loadSessions();
 		} catch (err) {
 			toastState.error(err instanceof Error ? err.message : 'Could not set the type');

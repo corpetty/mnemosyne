@@ -53,7 +53,7 @@
 		busy = true;
 		try {
 			const res = await importAudio(file, { sessionId: session.id });
-			sessionState.activeSession = res.session;
+			sessionState.update(res.session);
 			if (res.job_id) {
 				transcriptState.expectJob(session.id, 'Transcribing the added part…');
 				uiState.activeTab = 'transcript';

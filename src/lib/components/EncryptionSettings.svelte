@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { copyText } from '$lib/app/clipboard.js';
 	import { disableEncryption, enableEncryption, getEncryption } from '$lib/api/backend.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import type { EncryptionEnabled, EncryptionStatus } from '$lib/types/index.js';
@@ -43,8 +44,7 @@
 
 	async function copyCode() {
 		if (!result) return;
-		await navigator.clipboard.writeText(result.recovery_code);
-		toastState.success('Recovery code copied');
+		await copyText(result.recovery_code, 'Recovery code copied');
 	}
 </script>
 

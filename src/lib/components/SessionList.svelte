@@ -31,9 +31,28 @@
 		await sessionState.selectSession(session.id);
 	}
 
-	async function handleDelete(e: Event, sessionId: string) {
+	const statusLabel: Record<string, string> = {
+		created: 'new',
+		recording: 'recording',
+		encoding: 'saving',
+		transcribing: 'transcribing',
+		completed: 'done',
+		error: 'error'
+	};
+
+	// Deleting takes two clicks: the first arms the button for a few seconds.
+	let confirming = $state<string | null>(null);
+	let confirmTimer: ReturnType<typeof setTimeout> | undefined;
+	async function handleDelete(e: Event, session: SessionSummary) {
 		e.stopPropagation();
-		await sessionState.deleteSession(sessionId);
+		if (confirming !== session.id) {
+			confirming = session.id;
+			clearTimeout(confirmTimer);
+			confirmTimer = setTimeout(() => (confirming = null), 4000);
+			return;
+		}
+		confirming = null;
+		if (await sessionState.deleteSession(session.id)) toastState.info(`Deleted “${session.name}”`);
 	}
 
 	let fileInput = $state<HTMLInputElement>();
@@ -85,9 +104,10 @@
 	<div class="flex gap-2">
 		<button
 			onclick={handleNew}
-			class="flex-1 px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+			disabled={sessionState.creating}
+			class="flex-1 px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors disabled:opacity-60"
 		>
-			New Session
+			New meeting
 		</button>
 		<button
 			onclick={() => fileInput?.click()}
@@ -127,16 +147,20 @@
 				<div class="flex items-center justify-between">
 					<span class="text-sm font-medium text-gray-200 truncate">{#if session.local_only}<span title="Local only" class="mr-1">🔒</span>{/if}{session.name}</span>
 					<button
-						onclick={(e) => handleDelete(e, session.id)}
-						class="text-gray-600 hover:text-red-400 text-xs px-1 transition-colors"
-						title="Delete session"
+						onclick={(e) => handleDelete(e, session)}
+						onkeydown={(e) => e.stopPropagation()}
+						class="shrink-0 text-xs px-1 rounded transition-colors {confirming === session.id
+							? 'bg-red-900/60 text-red-200'
+							: 'text-gray-600 hover:text-red-400'}"
+						title={confirming === session.id ? 'Click again to delete for good' : 'Delete meeting'}
+						aria-label={confirming === session.id ? `Confirm deleting ${session.name}` : `Delete ${session.name}`}
 					>
-						x
+						{confirming === session.id ? 'Delete?' : '✕'}
 					</button>
 				</div>
 				<div class="flex items-center gap-2 mt-1">
 					<span class="text-xs px-1.5 py-0.5 rounded {statusBadge[session.status] ?? statusBadge.created}">
-						{session.status}
+						{statusLabel[session.status] ?? session.status}
 					</span>
 					<span class="text-xs text-gray-500">{formatDate(session.created_at)}</span>
 				</div>
@@ -148,7 +172,7 @@
 		{/each}
 
 		{#if sessionState.sessions.length === 0 && !sessionState.loading}
-			<p class="text-gray-500 text-sm text-center py-4">No sessions yet</p>
+			<p class="text-gray-500 text-sm text-center py-4">No meetings yet</p>
 		{/if}
 	</div>
 </div>

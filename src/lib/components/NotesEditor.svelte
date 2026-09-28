@@ -7,15 +7,26 @@
 	let localNotes = $state('');
 	let lastSavedSessionId = $state<string | null>(null);
 	let mode = $state<'edit' | 'preview'>('edit');
+	let saveState = $state<'saved' | 'typing' | 'saving' | 'failed'>('saved');
+	let failed: { sessionId: string; notes: string } | null = null;
 
-	function flush() {
+	async function flush() {
 		if (saveTimer) clearTimeout(saveTimer);
 		saveTimer = null;
-		if (pending) {
-			const { sessionId, notes } = pending;
-			pending = null;
-			sessionState.updateNotes(sessionId, notes);
-		}
+		if (!pending) return;
+		const edit = pending;
+		pending = null;
+		const current = () => edit.sessionId === sessionState.activeSession?.id;
+		if (current()) saveState = 'saving';
+		const ok = await sessionState.updateNotes(edit.sessionId, edit.notes);
+		failed = ok ? null : edit;
+		// A newer edit may be waiting (typed while this one was saving); leave its state alone.
+		if (current() && !pending) saveState = ok ? 'saved' : 'failed';
+	}
+
+	function retry() {
+		if (failed && !pending) pending = failed;
+		flush();
 	}
 
 	// Sync local notes when the active session changes, saving any pending edit
@@ -26,6 +37,7 @@
 			flush();
 			localNotes = session.notes;
 			lastSavedSessionId = session.id;
+			saveState = 'saved';
 			mode = session.notes ? 'preview' : 'edit';
 		}
 	});
@@ -37,6 +49,7 @@
 		if (!session) return;
 		localNotes = (e.target as HTMLTextAreaElement).value;
 		pending = { sessionId: session.id, notes: localNotes };
+		saveState = 'typing';
 		// Auto-save after 1 second of inactivity
 		if (saveTimer) clearTimeout(saveTimer);
 		saveTimer = setTimeout(flush, 1000);
@@ -59,7 +72,18 @@
 				Preview
 			</button>
 		</div>
-		<span class="text-[11px] text-gray-600">Markdown supported · saves automatically</span>
+		<span class="text-[11px] text-gray-600" aria-live="polite">
+			{#if saveState === 'failed'}
+				<span class="text-red-400">Not saved</span>
+				<button onclick={retry} class="ml-1 underline text-red-300 hover:text-red-200">Try again</button>
+			{:else if saveState === 'saving'}
+				Saving…
+			{:else if saveState === 'typing'}
+				Markdown supported · saves as you pause
+			{:else}
+				Markdown supported · saved
+			{/if}
+		</span>
 	</div>
 
 	{#if mode === 'edit'}

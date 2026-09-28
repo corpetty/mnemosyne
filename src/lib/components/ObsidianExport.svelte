@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { copyText } from '$lib/app/clipboard.js';
 	import { exportToObsidian, getExportMarkdown, getSettings, updateSettings } from '$lib/api/backend.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -28,9 +29,11 @@
 	async function copyMarkdown() {
 		const session = sessionState.activeSession;
 		if (!session) return;
-		const md = (await getExportMarkdown(session.id)).markdown;
-		await navigator.clipboard.writeText(md);
-		toastState.info('Note copied as markdown');
+		try {
+			await copyText((await getExportMarkdown(session.id)).markdown, 'Note copied as markdown');
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not make the note');
+		}
 	}
 
 	async function loadConfig() {

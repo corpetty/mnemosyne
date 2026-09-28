@@ -61,9 +61,7 @@
 		editing = null;
 		if (!name || name === label) return;
 		try {
-			const updated = await renameSessionSpeaker(session.id, label, name, remember);
-			sessionState.activeSession = updated;
-			transcriptState.showSession(updated.id, updated.transcript);
+			sessionState.update(await renameSessionSpeaker(session.id, label, name, remember));
 			toastState.success(remember ? `${name} saved; will be recognized next time` : `Renamed to ${name}`);
 		} catch (e) {
 			toastState.error(e instanceof Error ? e.message : 'Rename failed');

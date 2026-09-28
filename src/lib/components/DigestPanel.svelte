@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { copyText } from '$lib/app/clipboard.js';
 	import { digestState } from '$lib/stores/digest.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -68,8 +69,7 @@
 	}
 
 	async function copy(d: Digest) {
-		await navigator.clipboard.writeText(d.markdown);
-		toastState.info('Digest copied');
+		await copyText(d.markdown, 'Digest copied');
 	}
 
 	function fmtRange(d: Digest): string {

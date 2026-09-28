@@ -56,6 +56,7 @@
 
 	// Show the active session's transcript when switching sessions; honour search/citation jumps.
 	let lastLoadedSessionId: string | null = null;
+	let lastTranscript: unknown = null;
 	$effect(() => {
 		const session = sessionState.activeSession;
 		if (!session) {
@@ -66,7 +67,12 @@
 			lastLoadedSessionId = session.id;
 			transcriptState.showSession(session.id, session.transcript);
 			uiState.closePanels();
+		} else if (session.transcript !== lastTranscript) {
+			// The same meeting, reloaded with a changed transcript (glossary applied, meetings
+			// combined, speakers renamed elsewhere): show it, unless a transcription is running.
+			transcriptState.showSession(session.id, session.transcript);
 		}
+		lastTranscript = session.transcript;
 		const pending = sessionState.pendingOpen;
 		if (pending && pending.sessionId === session.id) {
 			sessionState.pendingOpen = null;

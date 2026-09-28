@@ -7,48 +7,65 @@ class WebSocketState {
 	private ws: WebSocket | null = null;
 	private handlers: MessageHandler[] = [];
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	private wanted = false;
+	private retries = 0;
 
 	connect() {
-		if (this.ws?.readyState === WebSocket.OPEN) return;
-
-		this.ws = new WebSocket(connectionState.wsUrl);
-
-		this.ws.onopen = () => {
+		const state = this.ws?.readyState;
+		if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) return;
+		this.wanted = true;
+		const ws = new WebSocket(connectionState.wsUrl);
+		this.ws = ws;
+		// Every handler checks it is still the current socket: a replaced or closed one's late
+		// events must not flip `connected` or schedule a second reconnect.
+		ws.onopen = () => {
+			if (ws !== this.ws) return;
 			this.connected = true;
+			this.retries = 0;
 			if (this.reconnectTimer) {
 				clearTimeout(this.reconnectTimer);
 				this.reconnectTimer = null;
 			}
 		};
 
-		this.ws.onclose = () => {
+		ws.onclose = () => {
+			if (ws !== this.ws) return;
 			this.connected = false;
-			this.scheduleReconnect();
+			this.ws = null;
+			if (this.wanted) this.scheduleReconnect();
 		};
 
-		this.ws.onerror = () => {
-			this.ws?.close();
-		};
+		ws.onerror = () => ws.close();
 
-		this.ws.onmessage = (event) => {
+		ws.onmessage = (event) => {
+			if (ws !== this.ws) return;
+			let msg: Record<string, unknown>;
 			try {
-				const msg = JSON.parse(event.data);
-				for (const handler of this.handlers) {
-					handler(msg);
-				}
+				msg = JSON.parse(event.data);
 			} catch {
-				// ignore malformed messages
+				return; // ignore malformed messages
+			}
+			for (const handler of this.handlers) {
+				try {
+					handler(msg);
+				} catch (e) {
+					// One failing handler must not keep the others from the event.
+					console.error('WebSocket handler failed', e);
+				}
 			}
 		};
 	}
 
+	/** Close and stay closed (until connect() is called again). */
 	disconnect() {
+		this.wanted = false;
 		if (this.reconnectTimer) {
 			clearTimeout(this.reconnectTimer);
 			this.reconnectTimer = null;
 		}
-		this.ws?.close();
+		const ws = this.ws;
 		this.ws = null;
+		ws?.close();
 		this.connected = false;
 	}
 
@@ -67,10 +84,14 @@ class WebSocketState {
 
 	private scheduleReconnect() {
 		if (this.reconnectTimer) return;
+		// 1 s, 2 s, 4 s, then every 5 s: back quickly after a blip, not hammering a backend
+		// that is still starting.
+		const delay = Math.min(1000 * 2 ** this.retries, 5000);
+		this.retries++;
 		this.reconnectTimer = setTimeout(() => {
 			this.reconnectTimer = null;
-			this.connect();
-		}, 3000);
+			if (this.wanted) this.connect();
+		}, delay);
 	}
 }
 

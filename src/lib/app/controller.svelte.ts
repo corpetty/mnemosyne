@@ -33,7 +33,7 @@ import type { BackendEvent, RecoveredRecording } from '$lib/types/index.js';
 /** Show a view in the main area (closing any open meeting). */
 export function openView(view: View) {
   uiState.view = view;
-  if (view !== 'home') sessionState.activeSession = null;
+  if (view !== 'home') sessionState.show(null);
 }
 
 /** Header buttons: open a view, or go back home when it is already open. */
@@ -70,7 +70,7 @@ export async function stopAndTranscribe() {
   const sessionId = audioState.activeSessionId;
   const result = await audioState.stopRecording();
   if (!result || !sessionId) return;
-  sessionState.activeSession = result.session;
+  sessionState.show(result.session);
   // The backend answers as soon as capture stops; encoding and mixing follow as a job.
   if (result.will_transcribe) {
     transcriptState.expectJob(sessionId, 'Saving the recording…');
@@ -98,6 +98,18 @@ async function resumeActiveRecording() {
   uiState.view = 'home';
   uiState.activeTab = 'recording';
   toastState.info('Still recording: picked up the recording in progress');
+}
+
+/** After a reconnect: a recording shown here that the backend no longer has (it restarted,
+ *  and recovers what was recorded) is shown as stopped, not as recording on forever. */
+async function checkRecordingStillRunning() {
+  const sessionId = audioState.activeSessionId;
+  if (!audioState.isRecording || !sessionId || audioState.pending) return;
+  const active = await getActiveRecordings().catch(() => null);
+  if (!active || active.some((a) => a.session_id === sessionId)) return;
+  if (audioState.activeSessionId !== sessionId || audioState.pending) return;
+  audioState.ended();
+  toastState.show('The recording stopped when the backend restarted. What was recorded is kept.', 'error', 20_000);
 }
 
 /** A source stopped being captured: save what was recorded and carry on recording into the
@@ -153,6 +165,10 @@ export async function exportActive() {
     toastState.error(e instanceof Error ? e.message : 'Export failed');
   }
 }
+
+sessionState.onError = (message) => toastState.error(message);
+transcriptState.isRecordingLive = () =>
+  audioState.isRecording && audioState.activeSessionId === transcriptState.liveSessionId;
 
 // ---- first run -------------------------------------------------------------------
 
@@ -555,9 +571,12 @@ function onConnected(): () => void {
       return;
     }
     if (msg.type === 'hello') {
-      // Every (re)connect, e.g. after the backend restarted to pick up GPU support.
+      // Every (re)connect, e.g. after the backend restarted to pick up GPU support. What
+      // changed while we were away is fetched again.
       sessionState.loadSessions();
+      sessionState.refreshActive();
       for (const r of msg.recovered ?? []) announceRecovered(r);
+      void checkRecordingStillRunning();
       void resumeActiveRecording();
       return;
     }

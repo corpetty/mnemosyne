@@ -6,6 +6,7 @@
 </script>
 
 <script lang="ts">
+	import { copyText } from '$lib/app/clipboard.js';
 	import { listModels, listSummaryStyles, summarizeSession, getSettings } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -71,8 +72,7 @@
 	}
 
 	async function copyFollowup() {
-		await navigator.clipboard.writeText(followupText);
-		toastState.info('Follow-up copied');
+		await copyText(followupText, 'Follow-up copied');
 	}
 
 	async function toggleDone(i: number, done: boolean) {
@@ -179,8 +179,12 @@
 	let selectedStyle = $state('');
 	let error = $state('');
 	let loaded = $state(false);
+	let loadFailed = $state(false);
+	let submitting = $state(false);
 
 	async function load() {
+		loadFailed = false;
+		optionsLoading = cachedProviders === null;
 		try {
 			const [p, s, settings] = await Promise.all([listModels(), listSummaryStyles(), getSettings()]);
 			providers = cachedProviders = p;
@@ -196,6 +200,8 @@
 			loaded = true;
 		} catch (e) {
 			console.error('Failed to load summary options:', e);
+			optionsLoading = false; // not "Loading models…" forever
+			loadFailed = true;
 		}
 	}
 
@@ -210,13 +216,16 @@
 
 	async function handleSummarize() {
 		const session = sessionState.activeSession;
-		if (!session) return;
+		if (!session || submitting) return;
 		error = '';
+		submitting = true; // until the job is tracked: a double click queues one summary
 		try {
 			const job = await summarizeSession(session.id, selectedProvider, selectedModel, selectedStyle);
 			jobsState.track(job);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Summarization failed';
+		} finally {
+			submitting = false;
 		}
 	}
 
@@ -231,8 +240,7 @@
 				text += '\n\n## Action Items\n' + d.action_items.map((a) => `- [ ] ${a.text}${a.owner ? ` (${a.owner})` : ''}`).join('\n');
 			if (d.open_questions.length) text += '\n\n## Open Questions\n' + d.open_questions.map((x) => `- ${x}`).join('\n');
 		}
-		await navigator.clipboard.writeText(text);
-		toastState.info('Summary copied');
+		await copyText(text, 'Summary copied');
 	}
 
 	$effect(() => {
@@ -406,12 +414,15 @@
 				<option value={model}>{model}</option>
 			{/each}
 			{#if availableModels().length === 0}
-				<option value="">{optionsLoading ? 'Loading models…' : 'No models available'}</option>
+				<option value="">{optionsLoading ? 'Loading models…' : loadFailed ? 'Could not load the models' : 'No models available'}</option>
 			{/if}
 		</select>
+		{#if loadFailed}
+			<button onclick={load} class="px-2 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Retry</button>
+		{/if}
 		<button
 			onclick={handleSummarize}
-			disabled={!!activeJob || (!sessionState.activeSession?.transcript?.length && !sessionState.activeSession?.external_notes?.length)}
+			disabled={!!activeJob || submitting || (!sessionState.activeSession?.transcript?.length && !sessionState.activeSession?.external_notes?.length)}
 			class="px-4 py-1.5 text-sm rounded bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium transition-colors"
 		>
 			{activeJob ? 'Summarizing...' : sessionState.activeSession?.summary ? 'Re-summarize' : 'Summarize'}

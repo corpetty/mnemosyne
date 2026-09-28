@@ -38,6 +38,11 @@ class TranscriptState {
   sessionId = $state<string | null>(null);
   activeJob = $state<Job | null>(null);
 
+  /** The meeting the live transcript belongs to: the one being recorded, which need not be
+   *  the one on screen (opening another meeting while recording keeps it going). */
+  liveSessionId = $state<string | null>(null);
+  /** Set by the controller: is the live meeting still being recorded? */
+  isRecordingLive: () => boolean = () => false;
   /** Provisional segments streamed while recording; replaced by the final job. */
   liveSegments = $state<TranscriptSegment[]>([]);
   /** Added to live times after a restarted capture (continueLive). */
@@ -83,8 +88,10 @@ class TranscriptState {
   private handle(msg: BackendEvent) {
     switch (msg.type) {
       case 'hello': {
-        const job = msg.jobs.find((j) => j.kind === 'transcribe' && j.session_id === this.sessionId);
+        const mine = (kind: string) => msg.jobs.find((j) => j.kind === kind && j.session_id === this.sessionId);
+        const job = mine('transcribe');
         if (job) this.applyJob(job);
+        else if (this.isProcessing && !mine('finish')) void this.catchUp();
         break;
       }
       case 'job':
@@ -116,28 +123,33 @@ class TranscriptState {
         }
         break;
       case 'live_segment':
-        if (msg.session_id === this.sessionId) {
+        if (msg.session_id === this.liveSessionId) {
           const off = this.liveOffset;
           const seg = off ? { ...msg.segment, start: msg.segment.start + off, end: msg.segment.end + off } : msg.segment;
-          this.liveSegments = [...this.liveSegments, seg].sort((a, b) => a.start - b.start);
+          const last = this.liveSegments.at(-1);
+          // Lines come in order per source; the sources interleave, so sort only when needed.
+          this.liveSegments =
+            !last || last.start <= seg.start
+              ? [...this.liveSegments, seg]
+              : [...this.liveSegments, seg].sort((a, b) => a.start - b.start);
           this.getSpeakerColor(msg.segment.speaker);
         }
         break;
       case 'live_partial':
-        if (msg.session_id === this.sessionId) {
+        if (msg.session_id === this.liveSessionId) {
           this.livePartials = { ...this.livePartials, [msg.source]: { speaker: msg.speaker, text: msg.text } };
           this.getSpeakerColor(msg.speaker);
         }
         break;
       case 'mention':
-        if (msg.session_id === this.sessionId) this.mentionStarts = [...this.mentionStarts, msg.start + this.liveOffset];
+        if (msg.session_id === this.liveSessionId) this.mentionStarts = [...this.mentionStarts, msg.start + this.liveOffset];
         break;
       case 'live_status':
-        if (msg.session_id === this.sessionId) this.liveStatus = msg.message;
+        if (msg.session_id === this.liveSessionId) this.liveStatus = msg.message;
         break;
       case 'live_labels':
         // The recording so far was re-diarized: these lines have a better speaker now.
-        if (msg.session_id === this.sessionId) {
+        if (msg.session_id === this.liveSessionId) {
           const changed = new Map(msg.labels.map((l) => [`${l.start + this.liveOffset}|${l.old}`, l.new]));
           this.liveSegments = this.liveSegments.map((s) => {
             const next = changed.get(`${s.start}|${s.speaker}`);
@@ -148,7 +160,7 @@ class TranscriptState {
         break;
       case 'live_relabel':
         // A live speaker was recognised or two speakers turned out to be one.
-        if (msg.session_id === this.sessionId) {
+        if (msg.session_id === this.liveSessionId) {
           this.liveSegments = this.liveSegments.map((s) =>
             s.speaker === msg.old ? { ...s, speaker: msg.new } : s
           );
@@ -166,6 +178,7 @@ class TranscriptState {
   /** Recording started for `sessionId`: reset live state and follow its events. */
   startLive(sessionId: string) {
     this.sessionId = sessionId;
+    this.liveSessionId = sessionId;
     this.liveOffset = 0;
     this.liveSegments = [];
     this.livePartials = {};
@@ -189,6 +202,7 @@ class TranscriptState {
   }
 
   clearLive() {
+    this.liveSessionId = null;
     this.mentionStarts = [];
     this.liveSegments = [];
     this.livePartials = {};
@@ -225,18 +239,49 @@ class TranscriptState {
     }
   }
 
+  /** Reconnected while "transcribing", and nothing is running for this meeting any more:
+   *  it ended while we were away (or the backend restarted). Show how it ended. */
+  private async catchUp() {
+    const job = this.activeJob;
+    const sessionId = this.sessionId;
+    try {
+      if (job) {
+        this.applyJob(await api.getJob(job.id));
+        return;
+      }
+      // Still saving when we lost touch, so no job id: the meeting says whether it finished.
+      if (sessionId && (await api.getSession(sessionId)).transcript.length) {
+        this.isProcessing = false;
+        this.status = 'Transcription complete';
+        this._onCompleteCallback?.(sessionId);
+        return;
+      }
+    } catch {
+      /* unknown to a restarted backend */
+    }
+    if (sessionId !== this.sessionId) return;
+    this.isProcessing = false;
+    this.status = '';
+    this.error = 'The transcription was interrupted; transcribe again to finish it';
+  }
+
   /** Switch the view to a session, loading its stored transcript. */
   showSession(sessionId: string, segments: TranscriptSegment[]) {
     if (sessionId === this.sessionId && this.isProcessing) return;
-    if (sessionId !== this.sessionId) this.clearLive();
+    const switching = sessionId !== this.sessionId;
+    // A recording's live lines survive a look at another meeting; a finished one's go.
+    if (switching && sessionId !== this.liveSessionId && !this.isRecordingLive()) this.clearLive();
     this.sessionId = sessionId;
-    this.speakerColorMap.clear();
     this.segments = segments;
+    if (switching) {
+      // The same meeting again (a refresh) keeps its speaker colours and any message shown.
+      this.speakerColorMap.clear();
+      this.status = '';
+      this.error = null;
+      this.isProcessing = false;
+      this.activeJob = null;
+    }
     for (const seg of segments) this.getSpeakerColor(seg.speaker);
-    this.status = '';
-    this.error = null;
-    this.isProcessing = false;
-    this.activeJob = null;
   }
 
   clear() {

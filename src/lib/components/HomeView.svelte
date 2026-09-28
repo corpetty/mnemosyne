@@ -35,11 +35,12 @@
 		{:else}
 			<button
 				onclick={async () => { await sessionState.createSession(); }}
-				class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors"
+				disabled={sessionState.creating}
+				class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors disabled:opacity-60"
 			>
-				New Session
+				New meeting
 			</button>
-			<p class="text-xs text-gray-600">or select an existing session from the sidebar</p>
+			<p class="text-xs text-gray-600">or open one from the sidebar</p>
 		{/if}
 		<div class="text-xs text-gray-700 space-y-1 mt-4">
 			<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">Ctrl+R</kbd> Start recording</p>

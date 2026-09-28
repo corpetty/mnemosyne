@@ -3,7 +3,6 @@
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
-	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 
 	// After transcription: one row per speaker still called SPEAKER_nn / Speaker n, with how
 	// long they talked, a short sample to listen to (never plays by itself) and a name field.
@@ -68,12 +67,10 @@
 			for (const row of rows) {
 				const name = (names[row.label] ?? '').trim();
 				if (!name || name === row.label) continue;
-				sessionState.activeSession = await renameSessionSpeaker(id, row.label, name, saveVoice);
+				sessionState.update(await renameSessionSpeaker(id, row.label, name, saveVoice));
 				named++;
 			}
-			const updated = await setSpeakersReviewed(id);
-			sessionState.activeSession = updated;
-			transcriptState.showSession(updated.id, updated.transcript);
+			sessionState.update(await setSpeakersReviewed(id));
 			if (named) toastState.success(saveVoice ? `Named ${named}; their voices will be recognized next time` : `Named ${named}`);
 		} catch (e) {
 			toastState.error(e instanceof Error ? e.message : 'Could not rename the speakers');
@@ -85,7 +82,7 @@
 	async function skip() {
 		if (!session) return;
 		try {
-			sessionState.activeSession = await setSpeakersReviewed(session.id);
+			sessionState.update(await setSpeakersReviewed(session.id));
 		} catch {
 			/* it simply shows again next time */
 		}

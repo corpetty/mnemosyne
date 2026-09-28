@@ -85,17 +85,17 @@
 		}
 		return map;
 	});
-	const canEdit = $derived(!!sessionState.activeSession && !transcriptState.isProcessing);
+	// Not while an edit is being saved: a merge or split renumbers the lines, and an edit
+	// started meanwhile would land on the wrong one.
+	const canEdit = $derived(!!sessionState.activeSession && !transcriptState.isProcessing && !busy);
 
 	async function handleTranscribe() {
 		const session = sessionState.activeSession;
 		if (session) await transcriptState.transcribe(session.id);
 	}
 
-	function applyUpdated(updated: SessionDetail) {
-		sessionState.activeSession = updated;
-		transcriptState.showSession(updated.id, updated.transcript);
-	}
+	// The page shows the new transcript (+page.svelte); a reply after the user moved on is dropped.
+	const applyUpdated = (updated: SessionDetail) => sessionState.update(updated);
 
 	async function run(op: () => Promise<SessionDetail>, okMessage?: string) {
 		busy = true;

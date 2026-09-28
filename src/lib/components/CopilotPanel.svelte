@@ -31,9 +31,11 @@
 		});
 	});
 
+	let asking = $state(false);
 	async function ask() {
 		const q = question.trim();
-		if (!q || !sessionId) return;
+		if (!q || !sessionId || asking) return;
+		asking = true;
 		try {
 			const job = await askCopilot(sessionId, q);
 			jobsState.track(job);
@@ -41,6 +43,8 @@
 			question = '';
 		} catch (e) {
 			toastState.error(e instanceof Error ? e.message : 'Could not ask');
+		} finally {
+			asking = false;
 		}
 	}
 
@@ -107,7 +111,7 @@
 				aria-label="Ask about this meeting"
 				class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 placeholder-gray-600"
 			/>
-			<button type="submit" disabled={!question.trim()} class="shrink-0 px-3 py-1.5 text-sm rounded bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 text-white">Ask</button>
+			<button type="submit" disabled={!question.trim() || asking} class="shrink-0 px-3 py-1.5 text-sm rounded bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 text-white">Ask</button>
 		</form>
 		{#each asks as a (a.jobId)}
 			{@const ans = answerOf(a.jobId)}
