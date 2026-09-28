@@ -84,7 +84,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - Fedora's uv RPM ships `/etc/uv/uv.toml` (python-downloads = "manual", python-preference =
   "system"), which the bundled uv also reads; lib.rs overrides both via `UV_PYTHON_*` env vars.
   Smoke tests with a fake HOME do not avoid /etc, so they catch this.
-- AppImage: build with `NO_STRIP=true` (linuxdeploy's strip chokes on `.relr.dyn`). The
+- AppImage: build with `NO_STRIP=true` (linuxdeploy's strip chokes on `.relr.dyn`). Tauri's
+  bundler makes `.DirIcon` an absolute symlink into the CI build dir; the Release workflow runs
+  `scripts/fix-appimage.sh`, which makes it relative, repacks and signs the AppImage again. The
   AppRun exports `PYTHONHOME`, `LD_LIBRARY_PATH` etc. for the GUI; `lib.rs` scrubs them
   before spawning uv/Python or the backend dies with "No module named encodings".
 - Capturing a sink: `pw-record -P '{ stream.capture.sink=true }' --target <sink node.name>`.

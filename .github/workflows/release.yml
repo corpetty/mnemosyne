@@ -48,6 +48,17 @@ jobs:
           cp src-tauri/target/release/bundle/rpm/*.rpm* dist/
           cp src-tauri/target/release/bundle/appimage/*.AppImage* dist/
           ls -la dist
+      - name: appimagetool (for the two repacks below)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
+      - name: Fix the AppImage's icon link (Tauri makes it absolute) and sign it again
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash scripts/fix-appimage.sh "$(ls dist/*.AppImage | grep -v -- -offline)"
       - name: Offline AppImage (base install bundled; no download on first launch)
         run: |
           bash scripts/build-offline-appimage.sh "$(ls dist/*.AppImage | grep -v -- -offline)" dist

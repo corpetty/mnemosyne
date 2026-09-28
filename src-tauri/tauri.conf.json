@@ -25,6 +25,7 @@
   },
   "bundle": {
     "active": true,
+    "category": "Productivity",
     "targets": [
       "appimage",
       "deb",
