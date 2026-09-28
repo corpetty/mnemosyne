@@ -381,6 +381,50 @@ Deletes the session, its transcript, and its recordings directory. → `{ "messa
 
 `{ "notes": "..." }` → `SessionDetail`.
 
+### Bookmarks: `POST /api/sessions/{session_id}/bookmarks` · `PATCH|DELETE …/bookmarks/{id}`
+`{at?, note}` → `{id, at, note, created_at}`. Without `at`, while recording, it marks now (the Mark
+button, Ctrl+M, the tray's "Mark this moment", `mnemosyne --mark`). Kept as (part, seconds), so
+`at` is always on the meeting's timeline, also after meetings are combined. A session lists its
+`bookmarks`; the summary is told to cover those moments; the Obsidian note lists them.
+Changes publish `{type: "bookmarks", session_id}`.
+
+### Agenda: `PUT /api/sessions/{session_id}/agenda`
+`{items: [{text, covered}]}` → the items. Also taken from the calendar event's description at
+recording start (the list under "Agenda", else its list items) when the meeting has none. While
+recording, the copilot's notes carry `agenda_covered` (1-based) and the session's items are marked
+covered. The summary lists points not discussed under open questions; the note has a checklist.
+
+### Meeting types: `PUT /api/sessions/{session_id}/meeting-type`
+`settings.meeting_types`: `[{name, match, summary_style, instructions, obsidian_folder,
+local_only, auto_record}]`, `match` being comma-separated words found in a title. A session gets
+`meeting_type` when it is named (created with a name, renamed, from the calendar or its summary)
+unless one was chosen; `{name}` chooses one (`"none"` for none). The type sets the summary style
+and adds its instructions, chooses the Obsidian folder, makes the meeting local-only, and
+`auto_record` makes the UI record such a calendar meeting when it starts.
+
+### Glossary from corrections: `POST /api/glossary/suggest` · `POST /api/glossary/corrections`
+`suggest {before, after}` → `[{heard, correct}]`: short phrases a transcript edit replaced with one
+that has a capital letter. `corrections {heard, correct, session_id?}` adds `heard -> correct` to
+the glossary and fixes that meeting's other lines → `{glossary, fixed_lines}`.
+
+### Resources: `/api/assets` · `/api/sessions/{session_id}/assets`
+A library of links and files shared by meetings (`services/assets.py`). `GET /api/assets?q=` →
+`[{asset, used}]`; `POST /api/assets/link {url, title?, session_id?}` (one entry per address);
+`POST /api/assets/file` (multipart `file`, `title?`, `session_id?`; text read from text, Markdown,
+HTML, Word and PDF); `GET /api/assets/{id}/file`; `PATCH /api/assets/{id} {title}`;
+`DELETE /api/assets/{id}` (from every meeting). `POST /api/sessions/{id}/assets {asset_id}`
+attaches, `DELETE …/assets/{asset_id}` detaches. A session lists its `assets`. Links in the
+calendar invite are attached at recording start (not the call's join link). The summary gets
+titles and text excerpts; the note links them and copies files to `attachments/`. Files are under
+`<data_dir>/assets`, encrypted with encryption at rest, and in backups. Changes publish
+`{type: "assets", session_id}`.
+
+### Other assistants' notes: `POST /api/sessions/{session_id}/external-notes` (+ `/file`, `DELETE …/{id}`)
+`{text, source?}` or a file → `{id, source, text, filename, added_at}`; `source` is recognized when
+blank (Gemini, Zoom, Otter, Teams Copilot, Fireflies, Fathom...). The summary uses them as context
+(the transcript wins); a meeting with notes and no transcript is summarized from the notes
+(no item times).
+
 ### `POST /api/sessions/{session_id}/combine`
 `{other_id}` → a `combine` job (`services/combine.py`): every part of both meetings in the order
 it was recorded, one joined audio and transcript; the other meeting's speakers matched to this

@@ -223,6 +223,15 @@ Nemotron diarizer (2026-09-25, transcription/diarizers/nemotron.py): NVIDIA Nemo
 99.6% of words with the right speaker vs pyannote's 98.4%, ~10x faster (4 s vs 43 s per 38-min meeting).
 Its DER is higher (22% vs 15%) only from missed speech, which the transcriber's words make moot.
 
+For 0.10.0 (2026-09-28, unreleased): speech models unloaded when idle
+(`unload_models_after_minutes`, ModelService.unload_if_idle); glossary entries from transcript
+corrections (routes/glossary.py); Obsidian daily note (export/daily_note.py); bookmarks
+(routes/bookmarks.py, `--mark`, stored as part + seconds); agenda followed by the copilot
+(`agenda_covered`, calendar descriptions); meeting types (services/meeting_types.py,
+`settings.meeting_types`); resources library (services/assets.py, `assets` tables,
+<data_dir>/assets); other assistants' notes (services/external_notes.py; notes-only meetings are
+summarized from them). Extra context reaches the summary as instructions (pipeline.py).
+
 Candidates next: offline installer (pre-seeded uv cache); live diarization with Nemotron's
 streaming mode (replacing online clustering); publishing the Flatpak to Flathub (needs a license).
 
