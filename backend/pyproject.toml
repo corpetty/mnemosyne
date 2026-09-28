@@ -1,6 +1,6 @@
 [project]
 name = "mnemosyne-backend"
-version = "0.9.3"
+version = "0.9.4"
 description = "Mnemosyne backend: audio transcription, diarization, and summarization"
 license = "MIT"
 requires-python = ">=3.11, <3.14"

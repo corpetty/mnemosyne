@@ -46,7 +46,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
             watching[1].cancel()
         await ctx.shutdown()
 
-    app = FastAPI(title="Mnemosyne Backend", version="0.9.3", lifespan=lifespan)
+    app = FastAPI(title="Mnemosyne Backend", version="0.9.4", lifespan=lifespan)
     app.state.ctx = ctx
     app.add_middleware(
         CORSMiddleware,
