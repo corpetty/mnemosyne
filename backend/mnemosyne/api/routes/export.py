@@ -52,6 +52,22 @@ def export_session(ctx: AppContext, session, vault_path: str):
             )
         except Exception:
             logger.warning("Person notes failed for session %s", session.id, exc_info=True)
+    if st.obsidian_daily_notes:
+        from pathlib import Path
+
+        from ...export.daily_note import write_daily_entry
+        from ...export.obsidian import note_stem
+
+        try:
+            write_daily_entry(
+                Path(vault_path).expanduser(),
+                session,
+                note_stem(session),
+                st.local_speaker_name,
+                st.obsidian_daily_folder,
+            )
+        except Exception:
+            logger.warning("Daily note failed for session %s", session.id, exc_info=True)
     return path
 
 

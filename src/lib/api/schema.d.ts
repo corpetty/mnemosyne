@@ -3050,6 +3050,10 @@ export interface components {
             min_speakers?: number | null;
             /** Obsidian Auto Export */
             obsidian_auto_export?: boolean | null;
+            /** Obsidian Daily Folder */
+            obsidian_daily_folder?: string | null;
+            /** Obsidian Daily Notes */
+            obsidian_daily_notes?: boolean | null;
             /** Obsidian Include Transcript */
             obsidian_include_transcript?: boolean | null;
             /** Obsidian Link People */
@@ -3253,6 +3257,10 @@ export interface components {
             min_speakers: number | null;
             /** Obsidian Auto Export */
             obsidian_auto_export: boolean;
+            /** Obsidian Daily Folder */
+            obsidian_daily_folder: string;
+            /** Obsidian Daily Notes */
+            obsidian_daily_notes: boolean;
             /** Obsidian Include Transcript */
             obsidian_include_transcript: boolean;
             /** Obsidian Link People */

@@ -164,6 +164,8 @@
 				obsidian_include_transcript: v.obsidian_include_transcript,
 				obsidian_auto_export: v.obsidian_auto_export,
 				obsidian_people_notes: v.obsidian_people_notes,
+				obsidian_daily_notes: v.obsidian_daily_notes,
+				obsidian_daily_folder: v.obsidian_daily_folder,
 				digest_weekday: v.digest_weekday,
 				digest_hour: v.digest_hour
 			};
@@ -965,6 +967,16 @@
 						<input type="checkbox" bind:checked={form.obsidian_people_notes} disabled={locked('obsidian_people_notes')} class="rounded border-gray-600 bg-gray-800" />
 						<span class="text-sm text-gray-300">Keep a note per person (meetings and tasks) in the people/ folder, unless you already have a note for them</span>
 					</label>
+					<label class="flex items-center gap-2 col-span-2">
+						<input type="checkbox" bind:checked={form.obsidian_daily_notes} disabled={locked('obsidian_daily_notes')} class="rounded border-gray-600 bg-gray-800" />
+						<span class="text-sm text-gray-300">Add each meeting and your open tasks from it to that day's daily note</span>
+					</label>
+					{#if form.obsidian_daily_notes}
+						<label class="col-span-2">
+							<span class={labelClass}>Daily notes folder (blank: as set in Obsidian's Daily Notes)</span>
+							<input type="text" bind:value={form.obsidian_daily_folder} disabled={locked('obsidian_daily_folder')} placeholder="e.g. Journal" class={inputClass} />
+						</label>
+					{/if}
 					<label class="flex items-center gap-2 col-span-2">
 						<input type="checkbox" bind:checked={form.obsidian_auto_export} disabled={locked('obsidian_auto_export')} class="rounded border-gray-600 bg-gray-800" />
 						<span class="text-sm text-gray-300">Export to Obsidian automatically after each summary (overwrites that session's note)</span>

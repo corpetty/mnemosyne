@@ -272,6 +272,11 @@ class Settings(BaseSettings):
     # Also keep a note per person (meetings, tasks) in <subfolder>/people/, unless the vault
     # already has a note with that person's name.
     obsidian_people_notes: bool = False
+    # Also add each exported meeting (a line, and your open tasks from it) to that day's daily
+    # note; its folder and date format come from the vault's Daily Notes settings unless
+    # obsidian_daily_folder is set.
+    obsidian_daily_notes: bool = False
+    obsidian_daily_folder: str = ""
 
     @classmethod
     def settings_customise_sources(
