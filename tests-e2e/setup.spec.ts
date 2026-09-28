@@ -1,6 +1,21 @@
 import { expect, test } from '@playwright/test';
 import { openApp } from './fixtures';
 
+const BACKEND = 'http://127.0.0.1:8018';
+// What the wizard changes, put back afterwards: the specs after this one need the demo
+// transcriber (a Parakeet the CI backend does not have fails every import).
+const TOUCHED = ['transcriber', 'diarizer', 'obsidian_vault_path', 'calendar_source', 'setup_complete'];
+let before: Record<string, unknown> = {};
+
+test.beforeEach(async ({ request }) => {
+  const { values } = await (await request.get(`${BACKEND}/api/settings`)).json();
+  before = Object.fromEntries(TOUCHED.map((k) => [k, values[k]]));
+});
+
+test.afterEach(async ({ request }) => {
+  await request.put(`${BACKEND}/api/settings`, { data: before });
+});
+
 test('the setup wizard walks through every step and saves choices', async ({ page }) => {
   await openApp(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -29,7 +44,7 @@ test('the setup wizard walks through every step and saves choices', async ({ pag
   await setup.getByRole('button', { name: 'Go to the app' }).click();
   await expect(setup).toHaveCount(0);
 
-  const settings = await (await page.request.get('http://127.0.0.1:8018/api/settings')).json();
+  const settings = await (await page.request.get(`${BACKEND}/api/settings`)).json();
   expect(settings.values.transcriber).toBe('parakeet');
   expect(settings.values.obsidian_vault_path).toBe('/tmp/some-vault');
   expect(settings.values.setup_complete).toBe(true);
