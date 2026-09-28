@@ -8,7 +8,9 @@
 	import PhoneLink from './PhoneLink.svelte';
 	import StorageSettings from './StorageSettings.svelte';
 	import { calendarState } from '$lib/stores/calendar.svelte.js';
-	import { checkGitHub, checkIntegration, getDiagnostics, getIndexStatus, rebuildIndex } from '$lib/api/backend.js';
+	import { checkGitHub, checkIntegration, getIndexStatus, rebuildIndex } from '$lib/api/backend.js';
+	import { collectDiagnostics } from '$lib/app/diagnostics.js';
+	import ReportProblem from './ReportProblem.svelte';
 	import type { IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	let settings = $state<SettingsResponse | null>(null);
@@ -204,16 +206,9 @@
 	async function copyDiagnostics() {
 		copyingDiagnostics = true;
 		try {
-			const d = await getDiagnostics();
-			logFile = d.log_file;
-			let app = '';
-			try {
-				const { getVersion } = await import('@tauri-apps/api/app');
-				app = `app ${await getVersion()}\n`;
-			} catch {
-				app = `browser ${navigator.userAgent}\n`;
-			}
-			await navigator.clipboard.writeText(app + d.text);
+			const d = await collectDiagnostics();
+			logFile = d.logFile;
+			await navigator.clipboard.writeText(d.text);
 			toastState.success('Diagnostics copied; read them before posting publicly');
 		} catch (e) {
 			toastState.error(e instanceof Error ? e.message : 'Could not collect diagnostics');
@@ -221,6 +216,7 @@
 			copyingDiagnostics = false;
 		}
 	}
+	let reporting = $state(false);
 
 	let calTest = $state<string | null>(null);
 	async function testCalendar() {
@@ -350,11 +346,18 @@
 					disabled={copyingDiagnostics}
 					class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 disabled:opacity-50"
 				>{copyingDiagnostics ? 'Collecting…' : 'Copy diagnostics'}</button>
+				<button
+					onclick={() => (reporting = true)}
+					class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300"
+				>Report a problem…</button>
 				{#if logFile}
 					<span class="text-xs text-gray-500">Backend log: <code class="text-gray-400 select-all">{logFile}</code></span>
 				{/if}
 			</div>
 		</section>
+		{#if reporting}
+			<ReportProblem onclose={() => (reporting = false)} />
+		{/if}
 	{/if}
 
 	{#if loading && !settings}

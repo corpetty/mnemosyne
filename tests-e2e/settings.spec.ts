@@ -56,3 +56,27 @@ test('copy diagnostics puts a report without secrets on the clipboard', async ({
   expect(text).toContain("transcriber = 'demo'");
   expect(text).toMatch(/obsidian_vault_path = <set>/); // a path with the user's name in it
 });
+
+test('report a problem copies the report and opens a GitHub issue with only the title', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await context.route('https://github.com/**', (route) => route.fulfill({ body: 'stub' })); // never GitHub
+  await openApp(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'General', exact: true }).click();
+  await page.getByRole('button', { name: 'Report a problem…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Report a problem' });
+  await expect(dialog.getByLabel('Diagnostics (editable)')).toHaveValue(/## Mnemosyne diagnostics/);
+  await dialog.getByLabel('Title').fill('Echo canceller picks the wrong mic');
+  await dialog.getByLabel('What happened?').fill('It used the webcam mic.');
+
+  const popup = context.waitForEvent('page');
+  await dialog.getByRole('button', { name: 'Copy and open GitHub' }).click();
+  const url = new URL((await popup).url());
+  expect(url.origin + url.pathname).toBe('https://github.com/corpetty/mnemosyne/issues/new');
+  expect(url.searchParams.get('title')).toBe('Echo canceller picks the wrong mic');
+  expect(url.searchParams.get('body')).not.toContain('Mnemosyne diagnostics'); // not in the link
+  const report = await page.evaluate(() => navigator.clipboard.readText());
+  expect(report).toContain('It used the webcam mic.');
+  expect(report).toContain('## Mnemosyne diagnostics');
+  await expect(dialog).toBeHidden();
+});
