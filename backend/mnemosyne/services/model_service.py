@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from ..config import Settings
@@ -24,9 +25,40 @@ class ModelService:
         self._live_embedder_built = False
         self._live_rediarizer = None
         self._live_rediarizer_built = False
+        self.last_used = time.monotonic()  # for unloading idle models (unload_if_idle)
+
+    @property
+    def loaded(self) -> bool:
+        """Whether any model may be holding memory (GPU memory, on NVIDIA)."""
+        return (
+            (self._engine is not None and self._engine.is_loaded())
+            or self._live is not None
+            or self._live_embedder is not None
+            or self._live_rediarizer is not None
+        )
+
+    def touch(self) -> None:
+        self.last_used = time.monotonic()
+
+    async def unload_if_idle(self, busy: bool, now: float | None = None) -> bool:
+        """Unload every model after `unload_models_after_minutes` without use, so games and
+        other GPU work get the memory back; the next transcription loads them again. Never
+        while `busy` (recording, or jobs running). Returns whether it unloaded."""
+        minutes = self.settings.unload_models_after_minutes
+        if busy:
+            self.touch()
+            return False
+        if minutes <= 0 or not self.loaded:
+            return False
+        if (now if now is not None else time.monotonic()) - self.last_used < minutes * 60:
+            return False
+        await self.unload()
+        logger.info("Unloaded the speech models after %d idle minutes", minutes)
+        return True
 
     @property
     def engine(self) -> TranscriptionEngine:
+        self.touch()
         if self._engine is None:
             # Imported lazily so the API starts without torch.
             from ..transcription.registry import build_engine
@@ -37,6 +69,7 @@ class ModelService:
 
     @property
     def live_transcriber(self) -> Transcriber:
+        self.touch()
         if self._live is None:
             from ..transcription.registry import build_live_transcriber
 

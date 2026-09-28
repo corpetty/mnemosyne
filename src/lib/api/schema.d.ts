@@ -3041,6 +3041,8 @@ export interface components {
             summary_style?: string | null;
             /** Transcriber */
             transcriber?: string | null;
+            /** Unload Models After Minutes */
+            unload_models_after_minutes?: number | null;
             /** Vllm Url */
             vllm_url?: string | null;
             /** Whisper Batch Size */
@@ -3242,6 +3244,8 @@ export interface components {
             summary_style: string;
             /** Transcriber */
             transcriber: string;
+            /** Unload Models After Minutes */
+            unload_models_after_minutes: number;
             /** Vllm Url */
             vllm_url: string;
             /** Whisper Batch Size */

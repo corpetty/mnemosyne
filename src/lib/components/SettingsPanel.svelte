@@ -101,6 +101,7 @@
 				live_transcription: v.live_transcription,
 				live_transcriber: v.live_transcriber,
 				live_interval_seconds: v.live_interval_seconds,
+				unload_models_after_minutes: v.unload_models_after_minutes,
 				live_diarization: v.live_diarization,
 				live_rediarize: v.live_rediarize,
 				live_speaker_threshold: v.live_speaker_threshold,
@@ -734,6 +735,10 @@
 					<label class="flex items-center gap-2 col-span-2">
 						<input type="checkbox" bind:checked={form.auto_transcribe} disabled={locked('auto_transcribe')} class="rounded border-gray-600 bg-gray-800" />
 						<span class="text-sm text-gray-300">Transcribe automatically after recording</span>
+					</label>
+					<label>
+						<span class={labelClass}>Free the speech models after (idle minutes, 0 = never)</span>
+						<input type="number" min="0" step="5" bind:value={form.unload_models_after_minutes} disabled={locked('unload_models_after_minutes')} class={inputClass} />
 					</label>
 				</div>
 			</section>

@@ -205,6 +205,10 @@ class Settings(BaseSettings):
     # this many days. 0 keeps audio forever.
     audio_retention_days: int = 0
 
+    # Unload the speech models after this many minutes without use, freeing GPU memory for
+    # other programs; they load again for the next transcription. 0 keeps them loaded.
+    unload_models_after_minutes: int = 15
+
     # Backups (services/backup.py): where they go ("" = ~/Documents/Mnemosyne backups), how
     # often one is made on its own (days; 0 = only when asked) and how many are kept.
     backup_dir: str = ""

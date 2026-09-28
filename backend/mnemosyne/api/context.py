@@ -52,6 +52,7 @@ class AppContext:
     _digest_task: asyncio.Task | None = None
     _apps_task: asyncio.Task | None = None
     _backup_task: asyncio.Task | None = None
+    _idle_task: asyncio.Task | None = None
     _intervals: tuple[float, float] = (6 * 3600, 900)
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     live: dict = field(default_factory=dict)  # session id -> running LiveTranscriber
@@ -249,6 +250,18 @@ class AppContext:
             except Exception:
                 logger.exception("Digest schedule check failed")
 
+    async def _idle_loop(self, interval_seconds: float) -> None:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                await self.models.unload_if_idle(busy=self.busy())
+            except Exception:
+                logger.exception("Unloading idle models failed")
+
+    def busy(self) -> bool:
+        """Recording, or any job running: models may be in use."""
+        return bool(self.active_recordings) or bool(self.jobs.list(active_only=True))
+
     async def _backup_loop(self, interval_seconds: float) -> None:
         while True:
             await asyncio.sleep(interval_seconds)
@@ -312,11 +325,18 @@ class AppContext:
         self.index.start(self.bus)
         self._apps_task = asyncio.create_task(self._apps_loop(5.0))
         self._backup_task = asyncio.create_task(self._backup_loop(3600.0))
+        self._idle_task = asyncio.create_task(self._idle_loop(60.0))
 
     async def shutdown(self) -> None:
         await self.link.stop()
         await self.index.stop()
-        for task in (self._retention_task, self._digest_task, self._apps_task, self._backup_task):
+        for task in (
+            self._retention_task,
+            self._digest_task,
+            self._apps_task,
+            self._backup_task,
+            self._idle_task,
+        ):
             if task is not None:
                 task.cancel()
         await self.echo.stop()
