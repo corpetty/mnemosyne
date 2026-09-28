@@ -1,0 +1,38 @@
+name: GPU extra
+
+# The desktop app installs the backend's `gpu` extra (torch, WhisperX, pyannote, NeMo) on
+# machines with an NVIDIA driver, at first launch. Install it here from a cold cache, without a
+# GPU, and import everything (scripts/check-gpu-extra.py). Called by the Release workflow too.
+on:
+  push:
+    branches: [main]
+    paths: ["backend/pyproject.toml", "backend/uv.lock", "scripts/check-gpu-extra.py"]
+  schedule:
+    - cron: "17 6 * * 1" # weekly: upstream wheels and the NeMo tarball can disappear
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: Install and import the gpu extra
+    runs-on: ubuntu-22.04 # the oldest system we ship for
+    timeout-minutes: 45
+    steps:
+      - name: Free disk space (torch and the CUDA libraries take ~6 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0 # no cache on purpose: a cold install like a user's
+      - name: Sync like the app does (base + onnx + gpu)
+        working-directory: backend
+        run: uv sync --locked --extra gpu --extra onnx
+      - name: Import and build every engine
+        working-directory: backend
+        env:
+          MNEMOSYNE_DATA_DIR: ${{ runner.temp }}/data
+          MNEMOSYNE_CONFIG_FILE: ${{ runner.temp }}/config.toml
+        run: uv run --no-sync python ../scripts/check-gpu-extra.py
