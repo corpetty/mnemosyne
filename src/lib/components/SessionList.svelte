@@ -36,10 +36,6 @@
 		await sessionState.deleteSession(sessionId);
 	}
 
-	$effect(() => {
-		sessionState.loadSessions();
-	});
-
 	let fileInput = $state<HTMLInputElement>();
 	// "Import…" from the command palette.
 	let importsSeen = uiState.importRequest;

@@ -340,6 +340,9 @@ export async function notifyDesktop(title: string, body: string) {
 
 function onConnected(): () => void {
   uiState.backendStatus = 'connected';
+  // The sidebar mounts before the backend is up in the desktop app (it is still starting or
+  // installing), so the meeting list is loaded here, once there is a backend to ask.
+  sessionState.loadSessions();
   wsState.connect();
   transcriptState.init();
   jobsState.init();
@@ -369,6 +372,8 @@ function onConnected(): () => void {
       return;
     }
     if (msg.type === 'hello') {
+      // Every (re)connect, e.g. after the backend restarted to pick up GPU support.
+      sessionState.loadSessions();
       for (const r of msg.recovered ?? []) announceRecovered(r);
       return;
     }
