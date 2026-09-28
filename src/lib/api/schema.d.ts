@@ -714,6 +714,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/clip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make Quote */
+        post: operations["make_quote_api_sessions__session_id__clip_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/clips/{clip_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Clip */
+        get: operations["get_clip_api_sessions__session_id__clips__clip_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/clips/{clip_id}/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save Clip
+         * @description Copy a clip to a path the desktop app's save dialog chose. Only for a client on this
+         *     computer: in server mode the path would be on the server.
+         */
+        post: operations["save_clip_api_sessions__session_id__clips__clip_id__save_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/copilot": {
         parameters: {
             query?: never;
@@ -1456,6 +1511,27 @@ export interface components {
             /** Sessions */
             sessions: components["schemas"]["SessionUsage"][];
         };
+        /** Clip */
+        Clip: {
+            /** Filename */
+            filename: string;
+            /** Id */
+            id: string;
+            /** Seconds */
+            seconds: number;
+        };
+        /** ClipRequest */
+        ClipRequest: {
+            /**
+             * Audio
+             * @default true
+             */
+            audio: boolean;
+            /** First Idx */
+            first_idx: number;
+            /** Last Idx */
+            last_idx: number;
+        };
         /** Configured */
         Configured: {
             /** Destinations */
@@ -1900,6 +1976,12 @@ export interface components {
             /** Provider */
             provider: string;
         };
+        /** Quote */
+        Quote: {
+            clip: components["schemas"]["Clip"] | null;
+            /** Text */
+            text: string;
+        };
         /**
          * Recording
          * @description One captured audio source. Sources are kept separate on disk so a later
@@ -1993,6 +2075,11 @@ export interface components {
              * @default true
              */
             reviewed: boolean;
+        };
+        /** SaveClipRequest */
+        SaveClipRequest: {
+            /** Path */
+            path: string;
         };
         /** SearchHit */
         SearchHit: {
@@ -4188,6 +4275,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    make_quote_api_sessions__session_id__clip_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClipRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Quote"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_clip_api_sessions__session_id__clips__clip_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                clip_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_clip_api_sessions__session_id__clips__clip_id__save_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                clip_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveClipRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

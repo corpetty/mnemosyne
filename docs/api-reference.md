@@ -299,6 +299,17 @@ tab's "Who is who?" card (one row per `SPEAKER_nn` / `Speaker n` label with a sa
 field). A new transcription of the session resets it; meetings from before the flag existed count as
 reviewed. **Response:** `SessionDetail`.
 
+### `POST /api/sessions/{session_id}/clip` · `GET …/clips/{clip_id}` · `POST …/clips/{clip_id}/save`
+
+Share a quote. `POST …/clip` `{ "first_idx": 1, "last_idx": 3, "audio": true }` returns
+`{ text, clip }`: `text` is a markdown blockquote (`> **Ana** [12:31]: …` per line, then the meeting
+name and date); with `audio` and a mixed recording, `clip` is `{id, filename, seconds}` for an Opus
+cut of those lines (0.3 s padding, at most 10 minutes) saved in `recordings/<id>/clips/`, so it
+counts in the storage report and goes with the session's audio. `GET …/clips/{id}` downloads it
+(named after the meeting and where the quote starts); `POST …/clips/{id}/save` `{ "path": … }`
+copies it to a path chosen in the desktop app's save dialog (loopback clients only, `403`
+otherwise). `400` for lines outside the transcript.
+
 ### Transcript editing
 
 All return the updated `SessionDetail`, recompute `participants`, and emit a `session` event.

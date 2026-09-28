@@ -10,6 +10,7 @@
 	import JobProgress from './JobProgress.svelte';
 	import AudioPlayer from './AudioPlayer.svelte';
 	import SpeakerNamingCard from './SpeakerNamingCard.svelte';
+	import QuoteBar from './QuoteBar.svelte';
 	import { playerState } from '$lib/stores/player.svelte.js';
 
 	function formatTime(seconds: number): string {
@@ -23,6 +24,25 @@
 	let draft = $state('');
 	let textarea = $state<HTMLTextAreaElement>();
 	let busy = $state(false);
+
+	// Share a quote: click ❝ on a line, shift-click ❝ on another to extend the range.
+	let quote = $state<{ from: number; to: number } | null>(null);
+	let quoteAnchor = 0;
+	function quoteClick(idx: number, e: MouseEvent) {
+		if (e.shiftKey && quote) {
+			quote = { from: Math.min(quoteAnchor, idx), to: Math.max(quoteAnchor, idx) };
+		} else if (quote && quote.from === idx && quote.to === idx) {
+			quote = null;
+		} else {
+			quote = { from: idx, to: idx };
+			quoteAnchor = idx;
+		}
+	}
+	// Line numbers change when the transcript does: start over.
+	$effect(() => {
+		void transcriptState.segments;
+		quote = null;
+	});
 
 	$effect(() => {
 		// Auto-scroll to bottom when new segments arrive during processing
@@ -190,6 +210,9 @@
 	{/if}
 
 	<div bind:this={container} class="max-h-[500px] overflow-y-auto space-y-1 pr-2">
+		{#if quote}
+			<QuoteBar from={quote.from} to={quote.to} onclose={() => (quote = null)} />
+		{/if}
 		{#each transcriptState.segments as segment, idx (idx)}
 			{#if chapterAt.has(idx)}
 				<div class="flex items-center gap-2 pt-3 pb-1 first:pt-0">
@@ -198,7 +221,8 @@
 				</div>
 			{/if}
 			{@const playingHere = playerState.playing && playerState.currentTime >= segment.start && playerState.currentTime < segment.end}
-			<div data-idx={idx} class="group flex gap-3 text-sm rounded px-1 py-1 transition-colors {editingIdx === idx ? 'bg-gray-900' : playingHere ? 'bg-blue-950/40' : 'hover:bg-gray-900/50'}">
+			{@const quoted = quote !== null && idx >= quote.from && idx <= quote.to}
+			<div data-idx={idx} class="group flex gap-3 text-sm rounded px-1 py-1 transition-colors {editingIdx === idx ? 'bg-gray-900' : quoted ? 'bg-amber-950/40' : playingHere ? 'bg-blue-950/40' : 'hover:bg-gray-900/50'}">
 				<div class="flex-shrink-0 w-14 text-right pt-0.5">
 					<button
 						onclick={() => playerState.seek(segment.start)}
@@ -256,12 +280,20 @@
 						{/if}
 					{/if}
 				</div>
-				{#if canEdit && editingIdx !== idx}
-					<div class="flex-shrink-0 flex items-start gap-1 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500">
-						{#if idx > 0}
-							<button onclick={() => mergeUp(idx)} disabled={busy} title="Merge into previous segment" class="px-1 hover:text-gray-200">⤒</button>
+				{#if editingIdx !== idx}
+					<div class="flex-shrink-0 flex items-start gap-1 {quoted ? '' : 'opacity-0'} group-hover:opacity-100 transition-opacity text-xs text-gray-500">
+						<button
+							onclick={(e) => quoteClick(idx, e)}
+							title="Quote this line (shift-click another line's ❝ to quote a range)"
+							aria-label="Quote from line {idx + 1}"
+							class="px-1 {quoted ? 'text-amber-300' : 'hover:text-amber-300'}"
+						>❝</button>
+						{#if canEdit}
+							{#if idx > 0}
+								<button onclick={() => mergeUp(idx)} disabled={busy} title="Merge into previous segment" class="px-1 hover:text-gray-200">⤒</button>
+							{/if}
+							<button onclick={() => remove(idx)} disabled={busy} title="Delete segment" class="px-1 hover:text-red-400">✕</button>
 						{/if}
-						<button onclick={() => remove(idx)} disabled={busy} title="Delete segment" class="px-1 hover:text-red-400">✕</button>
 					</div>
 				{/if}
 			</div>

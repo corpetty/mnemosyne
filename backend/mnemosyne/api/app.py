@@ -9,6 +9,7 @@ from .context import AppContext
 from .routes.ask import router as ask_router
 from .routes.audio import router as audio_router
 from .routes.calendar import router as calendar_router
+from .routes.clips import router as clips_router
 from .routes.devices import router as devices_router
 from .routes.digests import router as digests_router
 from .routes.export import router as export_router
@@ -52,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(devices_router)
     app.include_router(audio_router)
     app.include_router(sessions_router)
+    app.include_router(clips_router)
     app.include_router(models_router)
     app.include_router(export_router)
     app.include_router(settings_router)

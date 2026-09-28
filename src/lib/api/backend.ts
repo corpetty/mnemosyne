@@ -1,5 +1,6 @@
 import type {
   Ask,
+  Quote,
   EchoCancelStatus,
   Digest,
   MeetingStats,
@@ -202,6 +203,29 @@ export async function renameSessionSpeaker(
   return request(`/api/sessions/${sessionId}/speakers/rename`, {
     method: 'POST',
     body: JSON.stringify({ label, name, enroll })
+  });
+}
+
+export async function makeQuote(
+  sessionId: string,
+  firstIdx: number,
+  lastIdx: number,
+  audio: boolean
+): Promise<Quote> {
+  return request(`/api/sessions/${sessionId}/clip`, {
+    method: 'POST',
+    body: JSON.stringify({ first_idx: firstIdx, last_idx: lastIdx, audio })
+  });
+}
+
+export function clipUrl(sessionId: string, clipId: string): string {
+  return connectionState.withToken(`${base()}/api/sessions/${sessionId}/clips/${clipId}`);
+}
+
+export async function saveClip(sessionId: string, clipId: string, path: string): Promise<{ path: string }> {
+  return request(`/api/sessions/${sessionId}/clips/${clipId}/save`, {
+    method: 'POST',
+    body: JSON.stringify({ path })
   });
 }
 
