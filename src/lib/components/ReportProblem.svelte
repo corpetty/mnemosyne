@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { focusOnMount } from '$lib/app/focus.js';
 	import { collectDiagnostics, ISSUES_URL, openExternal } from '$lib/app/diagnostics.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 
@@ -42,6 +43,7 @@
 		aria-modal="true"
 		aria-label="Report a problem"
 		tabindex="-1"
+		use:focusOnMount
 		onclick={(e) => e.stopPropagation()}
 		onkeydown={(e) => e.key === 'Escape' && onclose()}
 	>

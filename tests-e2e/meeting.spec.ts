@@ -47,8 +47,7 @@ test('rename a speaker', async () => {
   await expect(page.getByRole('button', { name: 'Alice', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'SPEAKER_01', exact: true })).toHaveCount(0);
   // Every line of that speaker follows.
-  const aliceLines = page.locator('select').filter({ has: page.locator('option:checked', { hasText: 'Alice' }) });
-  await expect(aliceLines).toHaveCount(3);
+  await expect(page.getByRole('button', { name: /^Line \d+: Alice\./ })).toHaveCount(3);
 });
 
 test('edit a transcript line', async () => {

@@ -89,9 +89,23 @@ class JobsState {
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
   }
 
+  /** Queued and running jobs by session, oldest first: worked out once per change, since
+   *  the sidebar asks for every meeting it lists. */
+  #running = $derived.by(() => {
+    const bySession = new Map<string, Job[]>();
+    for (const j of Object.values(this.jobs)) {
+      if (!running(j) || !j.session_id) continue;
+      const list = bySession.get(j.session_id);
+      if (list) list.push(j);
+      else bySession.set(j.session_id, [j]);
+    }
+    for (const list of bySession.values()) list.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    return bySession;
+  });
+
   /** The queued or running job for a session (optionally of one kind), if any. */
   active(sessionId: string, kind?: string): Job | null {
-    return this.forSession(sessionId, kind).find(running) ?? null;
+    return this.#running.get(sessionId)?.find((j) => !kind || j.kind === kind) ?? null;
   }
 
   /** The most recent job for a session of a given kind. */

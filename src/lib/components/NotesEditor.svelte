@@ -91,7 +91,7 @@
 			value={localNotes}
 			oninput={handleInput}
 			onblur={flush}
-			placeholder="Add notes about this session... (markdown: # headings, - lists, **bold**, [links](https://...))"
+			placeholder="Notes about this meeting… (markdown: # headings, - lists, **bold**, [links](https://...))"
 			class="w-full h-64 px-3 py-2 text-sm font-mono bg-gray-900 border border-gray-700 rounded-lg text-gray-200 placeholder-gray-600 resize-y focus:outline-none focus:border-gray-500"
 		></textarea>
 	{:else}

@@ -17,8 +17,17 @@ class ToastState {
   private nextId = 0;
 
   show(message: string, type: ToastType = 'info', duration = 4000, action?: ToastAction) {
+    // The same message again (a retry loop, a burst of events) is shown once.
+    const same = this.toasts.find((t) => t.message === message && t.type === type && !t.action);
+    if (same && !action) this.dismiss(same.id);
     const id = this.nextId++;
-    this.toasts = [...this.toasts, { id, message, type, action }];
+    // At most five: the oldest without an action goes first.
+    let kept = this.toasts;
+    while (kept.length >= 5) {
+      const drop = kept.find((t) => !t.action) ?? kept[0];
+      kept = kept.filter((t) => t !== drop);
+    }
+    this.toasts = [...kept, { id, message, type, action }];
     setTimeout(() => this.dismiss(id), duration);
   }
 

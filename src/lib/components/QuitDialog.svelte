@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { focusOnMount } from '$lib/app/focus.js';
 	import { keepRecordingInBackground, stopSaveAndQuit } from '$lib/app/controller.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
 
@@ -16,6 +17,7 @@
 		aria-modal="true"
 		aria-label="Quit while recording"
 		tabindex="-1"
+		use:focusOnMount
 		onclick={(e) => e.stopPropagation()}
 		onkeydown={(e) => e.key === 'Escape' && cancel()}
 	>

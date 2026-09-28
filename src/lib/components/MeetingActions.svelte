@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { focusOnMount } from '$lib/app/focus.js';
 	import { combineSessions, getJob, importAudio } from '$lib/api/backend.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -90,9 +91,19 @@
 			busy = false;
 		}
 	}
+	let menuRoot = $state<HTMLElement>();
 </script>
 
-<span class="relative">
+<svelte:window
+	onclick={(e) => {
+		if (open && menuRoot && !menuRoot.contains(e.target as Node)) open = false;
+	}}
+	onkeydown={(e) => {
+		if (open && e.key === 'Escape') open = false;
+	}}
+/>
+
+<span class="relative" bind:this={menuRoot}>
 	<button
 		onclick={() => (open = !open)}
 		disabled={busy || recordingHere}
@@ -147,7 +158,9 @@
 		>
 			<h3 class="text-lg font-semibold text-gray-100">Combine with “{session?.name}”</h3>
 			<input
+				use:focusOnMount
 				bind:value={filter}
+				aria-label="Find a meeting"
 				placeholder="Find a meeting"
 				class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200"
 			/>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { focusOnMount } from '$lib/app/focus.js';
 	import { addLink, assetFileUrl, attachAsset, detachAsset, listAssets, uploadAsset } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -130,7 +131,7 @@
 			onkeydown={() => {}}
 		>
 			<h3 class="text-lg font-semibold text-gray-100">Resources from earlier meetings</h3>
-			<input bind:value={query} oninput={search} placeholder="Find a resource" class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200" />
+			<input use:focusOnMount bind:value={query} oninput={search} aria-label="Find a resource" placeholder="Find a resource" class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200" />
 			<ul class="max-h-80 overflow-y-auto divide-y divide-gray-800" aria-label="Library">
 				{#each library as item (item.asset.id)}
 					<li class="flex items-center gap-2 px-1 py-2 text-sm">

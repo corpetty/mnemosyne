@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -59,17 +60,38 @@
 		}
 	});
 
+	// A long meeting renders in steps: its first lines at once, the rest over the next few
+	// frames, so opening it does not freeze the window.
+	const FIRST = 200;
+	const STEP = 600;
+	let reveal = $state<{ id: string | null; n: number }>({ id: null, n: FIRST });
+	const shownCount = $derived(reveal.id === transcriptState.sessionId ? reveal.n : FIRST);
+	const visibleSegments = $derived(
+		transcriptState.isProcessing || shownCount >= transcriptState.segments.length
+			? transcriptState.segments
+			: transcriptState.segments.slice(0, shownCount)
+	);
+	$effect(() => {
+		const id = transcriptState.sessionId;
+		const n = shownCount;
+		if (n >= transcriptState.segments.length) return;
+		const timer = setTimeout(() => (reveal = { id, n: n + STEP }), 0);
+		return () => clearTimeout(timer);
+	});
+
 	$effect(() => {
 		// Scroll to and flash a highlighted segment (from search)
 		const idx = transcriptState.highlightIndex;
 		if (idx === null || !container) return;
-		const el = container.querySelector<HTMLElement>(`[data-idx="${idx}"]`);
-		if (el) {
+		transcriptState.highlightIndex = null;
+		if (idx >= shownCount) reveal = { id: transcriptState.sessionId, n: idx + STEP };
+		void tick().then(() => {
+			const el = container?.querySelector<HTMLElement>(`[data-idx="${idx}"]`);
+			if (!el) return;
 			el.scrollIntoView({ block: 'center' });
 			el.classList.add('bg-yellow-900/40');
 			setTimeout(() => el.classList.remove('bg-yellow-900/40'), 2500);
-		}
-		transcriptState.highlightIndex = null;
+		});
 	});
 
 	const canTranscribe = $derived(
@@ -85,9 +107,21 @@
 		}
 		return map;
 	});
-	// Not while an edit is being saved: a merge or split renumbers the lines, and an edit
-	// started meanwhile would land on the wrong one.
-	const canEdit = $derived(!!sessionState.activeSession && !transcriptState.isProcessing && !busy);
+	const canEdit = $derived(!!sessionState.activeSession && !transcriptState.isProcessing);
+	/** The line being played, found once per time update (not tested on every line). */
+	const playingIdx = $derived.by(() => {
+		if (!playerState.playing) return -1;
+		const t = playerState.currentTime;
+		const segs = transcriptState.segments;
+		let lo = 0;
+		let hi = segs.length - 1;
+		while (lo <= hi) {
+			const mid = (lo + hi) >> 1;
+			if (segs[mid].start <= t) lo = mid + 1;
+			else hi = mid - 1;
+		}
+		return hi >= 0 && t < segs[hi].end ? hi : -1;
+	});
 
 	async function handleTranscribe() {
 		const session = sessionState.activeSession;
@@ -110,7 +144,9 @@
 	}
 
 	function startEdit(idx: number) {
-		if (!canEdit) return;
+		// Not while an edit is being saved: a merge or split renumbers the lines, and an edit
+		// started meanwhile would land on the wrong one.
+		if (!canEdit || busy) return;
 		editingIdx = idx;
 		draft = transcriptState.segments[idx].text;
 		queueMicrotask(() => textarea?.focus());
@@ -170,6 +206,21 @@
 		}
 	}
 
+	let speakerIdx = $state<number | null>(null);
+	let speakerSelect = $state<HTMLSelectElement>();
+	function openSpeaker(idx: number) {
+		if (busy) return;
+		speakerIdx = idx;
+		queueMicrotask(() => {
+			speakerSelect?.focus();
+			try {
+				speakerSelect?.showPicker(); // open the list at once where the engine can
+			} catch {
+				/* not supported: the focused menu opens on the next click or key */
+			}
+		});
+	}
+
 	async function changeSpeaker(idx: number, value: string) {
 		const session = sessionState.activeSession;
 		if (!session) return;
@@ -211,7 +262,7 @@
 			<button
 				onclick={handleTranscribe}
 				class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 transition-colors"
-				title="Run transcription on this session's audio"
+				title="Transcribe this meeting's audio"
 			>
 				{transcriptState.segments.length > 0 ? 'Re-transcribe' : 'Transcribe'}
 			</button>
@@ -239,20 +290,20 @@
 		{/if}
 	{/if}
 
-	<div bind:this={container} class="max-h-[500px] overflow-y-auto space-y-1 pr-2">
+	<div bind:this={container} class="max-h-[max(500px,70vh)] overflow-y-auto space-y-1 pr-2">
 		{#if quote}
 			<QuoteBar from={quote.from} to={quote.to} onclose={() => (quote = null)} />
 		{/if}
-		{#each transcriptState.segments as segment, idx (idx)}
+		{#each visibleSegments as segment, idx (idx)}
 			{#if chapterAt.has(idx)}
 				<div class="flex items-center gap-2 pt-3 pb-1 first:pt-0">
 					<span class="text-xs font-semibold uppercase tracking-wide text-gray-400">{chapterAt.get(idx)}</span>
 					<span class="flex-1 border-t border-gray-800"></span>
 				</div>
 			{/if}
-			{@const playingHere = playerState.playing && playerState.currentTime >= segment.start && playerState.currentTime < segment.end}
+			{@const playingHere = idx === playingIdx}
 			{@const quoted = quote !== null && idx >= quote.from && idx <= quote.to}
-			<div data-idx={idx} class="group flex gap-3 text-sm rounded px-1 py-1 transition-colors {editingIdx === idx ? 'bg-gray-900' : quoted ? 'bg-amber-950/40' : playingHere ? 'bg-blue-950/40' : 'hover:bg-gray-900/50'}">
+			<div data-idx={idx} style="content-visibility: auto; contain-intrinsic-size: auto 28px" class="group flex gap-3 text-sm rounded px-1 py-1 transition-colors {editingIdx === idx ? 'bg-gray-900' : quoted ? 'bg-amber-950/40' : playingHere ? 'bg-blue-950/40' : 'hover:bg-gray-900/50'}">
 				<div class="flex-shrink-0 w-14 text-right pt-0.5">
 					<button
 						onclick={() => playerState.seek(segment.start)}
@@ -262,12 +313,16 @@
 					>{formatTime(segment.start)}</button>
 				</div>
 				<div class="flex-shrink-0 w-28">
-					{#if canEdit}
+					{#if canEdit && speakerIdx === idx}
+						<!-- One menu at a time: a menu on every line was most of a long meeting's page. -->
 						<select
+							bind:this={speakerSelect}
 							value={segment.speaker}
-							onchange={(e) => changeSpeaker(idx, (e.currentTarget as HTMLSelectElement).value)}
-							disabled={busy}
-							class="bg-transparent border border-transparent hover:border-gray-700 rounded px-1 py-0.5 text-xs font-medium max-w-full {transcriptState.getSpeakerColor(segment.speaker)}"
+							onchange={(e) => { speakerIdx = null; changeSpeaker(idx, (e.currentTarget as HTMLSelectElement).value); }}
+							onblur={() => (speakerIdx = null)}
+							onkeydown={(e) => { if (e.key === 'Escape') speakerIdx = null; }}
+							aria-label="Speaker of line {idx + 1}"
+							class="bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-xs font-medium max-w-full {transcriptState.getSpeakerColor(segment.speaker)}"
 						>
 							{#each sessionState.activeSession?.participants ?? [] as p}
 								<option value={p}>{p}</option>
@@ -277,6 +332,14 @@
 							{/if}
 							<option value="__new__">New speaker…</option>
 						</select>
+					{:else if canEdit}
+						<button
+							onclick={() => openSpeaker(idx)}
+							disabled={busy}
+							title="Change who said this"
+							aria-label="Line {idx + 1}: {segment.speaker}. Change who said this"
+							class="border border-transparent hover:border-gray-700 rounded px-1 py-0.5 text-xs font-medium max-w-full truncate text-left {transcriptState.getSpeakerColor(segment.speaker)}"
+						>{segment.speaker}</button>
 					{:else}
 						<span class="font-medium {transcriptState.getSpeakerColor(segment.speaker)}">{segment.speaker}</span>
 					{/if}

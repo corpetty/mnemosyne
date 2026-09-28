@@ -7,22 +7,27 @@
 	let hits = $state<SearchHit[]>([]);
 	let searching = $state(false);
 	let timer: ReturnType<typeof setTimeout> | null = null;
+	// Only the latest search shows: an earlier, slower one must not replace its results.
+	let seq = 0;
 
 	function onInput() {
 		if (timer) clearTimeout(timer);
 		const q = query.trim();
+		const mine = ++seq;
 		if (!q) {
 			hits = [];
+			searching = false;
 			return;
 		}
 		timer = setTimeout(async () => {
 			searching = true;
 			try {
-				hits = await search(q);
+				const found = await search(q);
+				if (mine === seq) hits = found;
 			} catch {
-				hits = [];
+				if (mine === seq) hits = [];
 			} finally {
-				searching = false;
+				if (mine === seq) searching = false;
 			}
 		}, 200);
 	}
@@ -55,7 +60,7 @@
 
 	function clear() {
 		query = '';
-		hits = [];
+		onInput(); // also drops a search still on its way
 	}
 </script>
 
@@ -66,10 +71,11 @@
 			bind:value={query}
 			oninput={onInput}
 			placeholder="Search transcripts…"
+			aria-label="Search transcripts"
 			class="w-full bg-gray-900 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-gray-500"
 		/>
 		{#if query}
-			<button onclick={clear} class="absolute right-2 top-1.5 text-gray-500 hover:text-gray-300 text-xs">✕</button>
+			<button onclick={clear} aria-label="Clear the search" class="absolute right-2 top-1.5 text-gray-500 hover:text-gray-300 text-xs">✕</button>
 		{/if}
 	</div>
 
