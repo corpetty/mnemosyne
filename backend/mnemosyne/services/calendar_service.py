@@ -1,8 +1,9 @@
-"""Calendar awareness from an iCalendar (ICS) feed.
+"""Calendar awareness from an iCalendar (ICS) feed or the desktop's calendars.
 
 Works with any provider's private/secret ICS address (Google, Fastmail, Proton,
-Outlook, Nextcloud) or a local .ics file, so there is no OAuth in the app.
-Recurring events are expanded with recurring-ical-events.
+Outlook, Nextcloud), a local .ics file, or the calendars signed in to GNOME Online Accounts
+(desktop_calendar.py, for work calendars that cannot publish an ICS address), so there is no
+OAuth in the app. Recurring events are expanded with recurring-ical-events.
 """
 
 from __future__ import annotations
@@ -22,6 +23,16 @@ logger = logging.getLogger(__name__)
 
 # Events longer than this are treated as blocks (OOO, "focus time"), not meetings.
 MAX_MEETING = timedelta(hours=8)
+DESKTOP = "desktop:"  # source prefix: the desktop's calendars (desktop_calendar.py)
+
+
+def calendar_source(settings) -> str:
+    """The CalendarService source for these settings ("" = no calendar)."""
+    if settings.calendar_source == "desktop":
+        return DESKTOP + settings.calendar_desktop_calendars.replace(" ", "")
+    if settings.calendar_source == "ics":
+        return settings.calendar_ics_url
+    return ""
 
 
 class CalendarEvent(ApiModel):
@@ -135,6 +146,13 @@ class CalendarService:
                 return self._text
             try:
                 src = self.source
+                if src.startswith(DESKTOP):
+                    from .desktop_calendar import read_events, window
+
+                    uids = [u for u in src[len(DESKTOP) :].split(",") if u]
+                    text = await asyncio.to_thread(read_events, uids, *window())
+                    self._text, self._fetched_at, self.last_error = text, time.monotonic(), None
+                    return self._text
                 if src.startswith("webcal://"):
                     src = "https://" + src[len("webcal://") :]
                 if src.startswith(("http://", "https://")):

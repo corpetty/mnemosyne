@@ -8,11 +8,11 @@
 	import PhoneLink from './PhoneLink.svelte';
 	import StorageSettings from './StorageSettings.svelte';
 	import { calendarState } from '$lib/stores/calendar.svelte.js';
-	import { checkGitHub, checkIntegration, getIndexStatus, rebuildIndex } from '$lib/api/backend.js';
+	import { checkGitHub, checkIntegration, getIndexStatus, listDesktopCalendars, rebuildIndex } from '$lib/api/backend.js';
 	import { collectDiagnostics } from '$lib/app/diagnostics.js';
 	import ReportProblem from './ReportProblem.svelte';
 	import EncryptionSettings from './EncryptionSettings.svelte';
-	import type { IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
+	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	let settings = $state<SettingsResponse | null>(null);
 	let providers = $state<ProviderModels[]>([]);
@@ -122,6 +122,8 @@
 				auto_summarize: v.auto_summarize,
 				auto_name_sessions: v.auto_name_sessions,
 				calendar_auto_name: v.calendar_auto_name,
+				calendar_source: v.calendar_source,
+				calendar_desktop_calendars: v.calendar_desktop_calendars,
 				github_repo: v.github_repo,
 				github_labels: v.github_labels,
 				linear_team: v.linear_team,
@@ -137,6 +139,7 @@
 				default_model: v.default_model,
 				cloud_redaction: v.cloud_redaction,
 				auto_record: v.auto_record,
+				auto_record_calendar: v.auto_record_calendar,
 				auto_stop_silence_minutes: v.auto_stop_silence_minutes,
 				auto_record_ignore_apps: v.auto_record_ignore_apps,
 				summary_style: v.summary_style,
@@ -190,6 +193,7 @@
 			}
 			settings = await updateSettings(update);
 			loadAutoRecordSettings();
+			calendarState.start(); // the calendar may have been turned on, off or changed
 			secrets = emptySecrets();
 			providers = await listModels();
 			toastState.success('Settings saved');
@@ -218,6 +222,22 @@
 		}
 	}
 	let reporting = $state(false);
+
+	let desktopCalendars = $state<DesktopCalendar[] | null>(null);
+	const chosenCalendars = $derived(
+		(form.calendar_desktop_calendars ?? '').split(',').map((x) => x.trim()).filter(Boolean)
+	);
+	async function loadDesktopCalendars() {
+		desktopCalendars = null;
+		desktopCalendars = await listDesktopCalendars().catch(() => []);
+	}
+	function toggleCalendar(uid: string) {
+		const next = chosenCalendars.includes(uid) ? chosenCalendars.filter((u) => u !== uid) : [...chosenCalendars, uid];
+		form.calendar_desktop_calendars = next.join(',');
+	}
+	$effect(() => {
+		if (form.calendar_source === 'desktop' && desktopCalendars === null) loadDesktopCalendars();
+	});
 
 	let calTest = $state<string | null>(null);
 	async function testCalendar() {
@@ -382,6 +402,10 @@
 							<option value="auto">Start recording</option>
 						</select>
 					</label>
+					<label class="flex items-center gap-2 col-span-2">
+						<input type="checkbox" bind:checked={form.auto_record_calendar} disabled={locked('auto_record_calendar') || form.auto_record === 'off' || form.calendar_source === 'off'} class="rounded border-gray-600 bg-gray-800" />
+						<span class="text-sm text-gray-300">Also when a calendar meeting starts (otherwise only when a meeting app opens the microphone)</span>
+					</label>
 					<label>
 						<span class={labelClass}>Stop after this many silent minutes (0 = never)</span>
 						<input type="number" min="0" max="120" bind:value={form.auto_stop_silence_minutes} disabled={locked('auto_stop_silence_minutes')} class={inputClass} />
@@ -465,12 +489,47 @@
 			<section>
 				<h3 class="text-lg font-semibold text-gray-200 mb-1">Calendar</h3>
 				<p class="text-xs text-gray-500 mb-3">
-					Paste your calendar's private ICS address (Google: Settings → your calendar → "Secret address in iCal format"; Fastmail, Proton, Outlook and Nextcloud have the same). Recordings started during a meeting are named after it, and its invitees are offered when you name speakers. A local .ics path also works.
+					Recordings started during a meeting are named after it, its invitees are offered when you name speakers, and
+					auto-record can start with it.
 				</p>
+				<div class="flex flex-wrap gap-2 mb-3" role="radiogroup" aria-label="Calendar source">
+					{#each [['off', 'No calendar'], ['desktop', "This computer's calendars"], ['ics', 'Private ICS address']] as [value, label] (value)}
+						<label class="flex items-center gap-2 rounded border px-3 py-1.5 text-sm cursor-pointer {form.calendar_source === value ? 'border-blue-600 bg-blue-950/30 text-gray-100' : 'border-gray-700 text-gray-400'}">
+							<input type="radio" name="calendar-source" value={value} bind:group={form.calendar_source} disabled={locked('calendar_source')} class="sr-only" />
+							{label}
+						</label>
+					{/each}
+				</div>
 				<div class="grid grid-cols-2 gap-3">
+					{#if form.calendar_source === 'desktop'}
+						<div class="col-span-2 space-y-2">
+							<p class="text-xs text-gray-500">
+								Work calendars that cannot share an ICS address (Google Workspace, Microsoft 365): add the account in
+								<strong class="text-gray-400">GNOME Settings → Online Accounts</strong> with Calendar turned on, and it shows up
+								here. Nothing is signed in to from Mnemosyne itself. Leave all unticked to use every calendar.
+							</p>
+							{#if desktopCalendars === null}
+								<p class="text-xs text-gray-500">Looking for calendars…</p>
+							{:else if desktopCalendars.length === 0}
+								<p class="text-xs text-amber-300">No calendars found on this computer yet.</p>
+							{:else}
+								<ul class="space-y-1">
+									{#each desktopCalendars as c (c.uid)}
+										<li>
+											<label class="flex items-center gap-2 text-sm text-gray-300">
+												<input type="checkbox" checked={chosenCalendars.includes(c.uid)} onchange={() => toggleCalendar(c.uid)} class="rounded border-gray-600 bg-gray-800" />
+												{c.name} <span class="text-xs text-gray-500">· {c.account}</span>
+											</label>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+							<button onclick={loadDesktopCalendars} class="text-xs text-gray-500 hover:text-gray-300">Look again</button>
+						</div>
+					{:else if form.calendar_source === 'ics'}
 					<label class="col-span-2">
 						<span class={labelClass}>
-							ICS address
+							ICS address (Google: Settings → your calendar → "Secret address in iCal format"; Fastmail, Proton, Outlook and Nextcloud have the same; a local .ics path also works)
 							{#if settings.secrets_set.calendar_ics_url}<span class="text-green-500 ml-1">set</span>{/if}
 						</span>
 						<div class="flex gap-2">
@@ -480,6 +539,8 @@
 							{/if}
 						</div>
 					</label>
+					{/if}
+					{#if form.calendar_source !== 'off'}
 					<label class="flex items-center gap-2">
 						<input type="checkbox" bind:checked={form.calendar_auto_name} disabled={locked('calendar_auto_name')} class="rounded border-gray-600 bg-gray-800" />
 						<span class="text-sm text-gray-300">Name new recordings after the current meeting</span>
@@ -488,6 +549,7 @@
 						<button onclick={testCalendar} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Test</button>
 						{#if calTest}<span class="text-xs text-gray-400">{calTest}</span>{/if}
 					</div>
+					{/if}
 				</div>
 			</section>
 

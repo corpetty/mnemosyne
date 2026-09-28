@@ -24,6 +24,8 @@ finish-args:
   - --talk-name=org.freedesktop.Notifications
   # The encryption key in the desktop keyring (Secret Service).
   - --talk-name=org.freedesktop.secrets
+  # Calendars from GNOME Online Accounts (evolution-data-server).
+  - --talk-name=org.gnome.evolution.dataserver.*
   # Tray icon.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --filesystem=xdg-run/tray-icon:create

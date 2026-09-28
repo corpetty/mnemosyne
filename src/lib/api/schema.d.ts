@@ -316,6 +316,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/calendar/desktop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Desktop Calendars
+         * @description The calendars GNOME Online Accounts and evolution-data-server know about (empty when
+         *     the desktop has none).
+         */
+        get: operations["desktop_calendars_api_calendar_desktop_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/devices": {
         parameters: {
             query?: never;
@@ -1680,6 +1701,15 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** DesktopCalendar */
+        DesktopCalendar: {
+            /** Account */
+            account: string;
+            /** Name */
+            name: string;
+            /** Uid */
+            uid: string;
+        };
         /** DeviceResponse */
         DeviceResponse: {
             /** Description */
@@ -2425,6 +2455,8 @@ export interface components {
             auto_name_sessions?: boolean | null;
             /** Auto Record */
             auto_record?: string | null;
+            /** Auto Record Calendar */
+            auto_record_calendar?: boolean | null;
             /** Auto Record Ignore Apps */
             auto_record_ignore_apps?: string | null;
             /** Auto Stop Silence Minutes */
@@ -2435,8 +2467,12 @@ export interface components {
             auto_transcribe?: boolean | null;
             /** Calendar Auto Name */
             calendar_auto_name?: boolean | null;
+            /** Calendar Desktop Calendars */
+            calendar_desktop_calendars?: string | null;
             /** Calendar Ics Url */
             calendar_ics_url?: string | null;
+            /** Calendar Source */
+            calendar_source?: string | null;
             /** Cloud Redaction */
             cloud_redaction?: boolean | null;
             /** Config Version */
@@ -2604,6 +2640,8 @@ export interface components {
             auto_name_sessions: boolean;
             /** Auto Record */
             auto_record: string;
+            /** Auto Record Calendar */
+            auto_record_calendar: boolean;
             /** Auto Record Ignore Apps */
             auto_record_ignore_apps: string;
             /** Auto Stop Silence Minutes */
@@ -2614,8 +2652,12 @@ export interface components {
             auto_transcribe: boolean;
             /** Calendar Auto Name */
             calendar_auto_name: boolean;
+            /** Calendar Desktop Calendars */
+            calendar_desktop_calendars: string;
             /** Calendar Ics Url */
             calendar_ics_url: string;
+            /** Calendar Source */
+            calendar_source: string;
             /** Cloud Redaction */
             cloud_redaction: boolean;
             /** Config Version */
@@ -3637,6 +3679,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    desktop_calendars_api_calendar_desktop_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DesktopCalendar"][];
                 };
             };
         };

@@ -480,6 +480,15 @@ resources are skipped.
 `current` is the meeting in progress (the most recently started one wins when meetings overlap),
 otherwise one starting within 10 minutes. `refresh=true` refetches the feed.
 
+Where meetings come from is `calendar_source`: `off` (no calendar: `configured` is false and the UI
+stops polling), `ics` (`calendar_ics_url`, the default) or `desktop`: the calendars of GNOME Online
+Accounts and evolution-data-server, read over D-Bus (for work calendars that cannot publish an ICS
+address; the account is added in GNOME Settings -> Online Accounts). `calendar_desktop_calendars`
+is a comma-separated list of their ids, blank for all; `GET /api/calendar/desktop` lists them as
+`[{uid, name, account}]` (empty without evolution-data-server). A refresh reads yesterday to two
+weeks ahead. `auto_record_calendar` (default on) lets auto-record start when a calendar meeting
+begins; off, only meeting apps opening the microphone start it.
+
 With `calendar_auto_name` (default on), a session that is still untitled when it is created or when
 recording starts is renamed to `current.title` and gets its `attendees`. Attendees are passed to the
 summary prompt as context (without mapping them to speaker labels) and exported as `attendees:`

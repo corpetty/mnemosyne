@@ -23,6 +23,8 @@ dependencies = [
     "cryptography>=43",
     "sqlcipher3-binary>=0.5.4",
     "keyring>=25",
+    # Reading the desktop's calendars (GNOME Online Accounts) over D-Bus.
+    "jeepney>=0.8",
 ]
 
 [project.optional-dependencies]

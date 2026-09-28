@@ -39,6 +39,8 @@ class CalendarState {
     try {
       const r = await api.getCalendar(12, force);
       this.configured = r.configured;
+      // No calendar in use: stop asking every minute (start() runs again when settings change).
+      if (!r.configured) this.stop();
       this.error = r.error;
       this.current = r.current;
       this.upcoming = r.upcoming;

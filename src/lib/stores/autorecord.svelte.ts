@@ -12,6 +12,8 @@ export interface AutoStarted {
 class AutoRecordState {
   mode = $state<AutoMode>('off');
   silenceMinutes = $state(10);
+  /** Also start when a calendar meeting begins (not only when a meeting app opens the mic). */
+  calendar = $state(true);
   /** "Zoom is using the microphone. Record?" (ask mode) */
   offer = $state<string | null>(null);
   /** Set when the current recording was started automatically. */

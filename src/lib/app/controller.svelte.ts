@@ -108,6 +108,7 @@ export async function loadAutoRecordSettings() {
     const s = await getSettings();
     autoRecordState.mode = (s.values.auto_record as AutoMode) || 'off';
     autoRecordState.silenceMinutes = s.values.auto_stop_silence_minutes ?? 10;
+    autoRecordState.calendar = s.values.auto_record_calendar ?? true;
   } catch {
     /* keep previous */
   }
@@ -165,7 +166,7 @@ function autoRecordTick() {
   if (!audioState.isRecording) {
     autoRecordState.started = null;
     const ev = calendarState.starting;
-    if (autoRecordState.mode === 'auto' && ev && !calendarHandled.has(ev.uid)) {
+    if (autoRecordState.mode === 'auto' && autoRecordState.calendar && ev && !calendarHandled.has(ev.uid)) {
       calendarHandled.add(ev.uid);
       autoStart({ by: 'calendar', uid: ev.uid, end: ev.end }, `${ev.title} is starting`);
     }

@@ -44,6 +44,7 @@ export type TopicCount = S['TopicCount'];
 export type Thread = S['Thread'];
 export type PhoneLink = S['PhoneLink'];
 export type SystemInfo = S['SystemInfo'];
+export type DesktopCalendar = S['DesktopCalendar'];
 export type EncryptionStatus = S['EncryptionStatus'];
 export type EncryptionEnabled = S['EncryptionEnabled'];
 export type Quote = S['Quote'];

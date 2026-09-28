@@ -28,6 +28,7 @@
 	// Notes
 	let vaultPath = $state('');
 	let calendarUrl = $state('');
+	let calendarSource = $state<'off' | 'desktop' | 'ics'>('off');
 
 	$effect(() => {
 		// Start from the current configuration; the system probe only adds hints.
@@ -105,8 +106,8 @@
 		if (STEPS[step] === 'Transcription') ok = await save(transcriptionUpdate());
 		if (STEPS[step] === 'Summaries') ok = await save(providerUpdate());
 		if (STEPS[step] === 'Notes & calendar') {
-			const u: SettingsUpdate = { obsidian_vault_path: vaultPath.trim() };
-			if (calendarUrl.trim()) u.calendar_ics_url = calendarUrl.trim();
+			const u: SettingsUpdate = { obsidian_vault_path: vaultPath.trim(), calendar_source: calendarSource };
+			if (calendarSource === 'ics' && calendarUrl.trim()) u.calendar_ics_url = calendarUrl.trim();
 			ok = await save(u);
 		}
 		if (ok) step = Math.min(step + 1, STEPS.length - 1);
@@ -250,11 +251,20 @@
 					<button onclick={browseVault} class="px-3 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Browse</button>
 				</span>
 			</label>
-			<label class="block space-y-1">
-				<span class="text-sm text-gray-300">Calendar (private ICS address)</span>
+			<div class="space-y-1">
+				<span class="text-sm text-gray-300">Calendar</span>
 				<span class="block text-xs text-gray-500">Recordings are named after the meeting in progress, and you get a brief of what's open from last time.</span>
-				<input type="password" bind:value={calendarUrl} placeholder="https://calendar.google.com/…/basic.ics" class={input} aria-label="Calendar ICS address" />
-			</label>
+				<select bind:value={calendarSource} class={input} aria-label="Calendar source">
+					<option value="off">No calendar</option>
+					<option value="desktop">This computer's calendars (GNOME Online Accounts)</option>
+					<option value="ics">A private ICS address</option>
+				</select>
+				{#if calendarSource === 'desktop'}
+					<span class="block text-xs text-gray-500">For work calendars that cannot share an ICS address: add the account in GNOME Settings → Online Accounts with Calendar on. Pick calendars later in Settings → Recording.</span>
+				{:else if calendarSource === 'ics'}
+					<input type="password" bind:value={calendarUrl} placeholder="https://calendar.google.com/…/basic.ics" class={input} aria-label="Calendar ICS address" />
+				{/if}
+			</div>
 		</section>
 	{:else}
 		<section class="space-y-3">

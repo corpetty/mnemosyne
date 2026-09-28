@@ -1,5 +1,6 @@
 import type {
   Ask,
+  DesktopCalendar,
   EncryptionEnabled,
   EncryptionStatus,
   Quote,
@@ -471,6 +472,10 @@ export async function runCleanup(days: number, dryRun: boolean): Promise<Cleanup
 }
 
 // Calendar
+export async function listDesktopCalendars(): Promise<DesktopCalendar[]> {
+  return request('/api/calendar/desktop');
+}
+
 export async function getCalendar(hours = 12, refresh = false): Promise<CalendarResponse> {
   return request(`/api/calendar?hours=${hours}&refresh=${refresh}`);
 }

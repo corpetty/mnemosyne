@@ -187,7 +187,12 @@ class Settings(BaseSettings):
 
     # Calendar: private ICS address (or a local .ics path). Recordings started during
     # a meeting are named after it and remember its attendees.
+    # Where meetings come from: "off", "ics" (calendar_ics_url) or "desktop" (the calendars of
+    # GNOME Online Accounts / evolution-data-server; calendar_desktop_calendars is a
+    # comma-separated list of their ids, blank = all).
+    calendar_source: str = "ics"
     calendar_ics_url: str = ""
+    calendar_desktop_calendars: str = ""
     calendar_auto_name: bool = True
 
     # Storage: delete audio (never transcripts) of transcribed sessions older than
@@ -232,6 +237,7 @@ class Settings(BaseSettings):
     # app stops (60 s grace), 5 minutes after the calendar meeting ends, or after
     # auto_stop_silence_minutes of silence on every source (0 = never).
     auto_record: str = "off"
+    auto_record_calendar: bool = True  # also when a calendar meeting starts (not just apps)
     auto_stop_silence_minutes: int = 10
     auto_record_ignore_apps: str = "easyeffects, jamesdsp, pavucontrol, obs, audacity"
 

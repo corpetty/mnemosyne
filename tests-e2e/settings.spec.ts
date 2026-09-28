@@ -80,3 +80,24 @@ test('report a problem copies the report and opens a GitHub issue with only the 
   expect(report).toContain('## Mnemosyne diagnostics');
   await expect(dialog).toBeHidden();
 });
+
+test('the calendar can be turned off, or read from the desktop', async ({ page }) => {
+  await openApp(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Recording', exact: true }).click();
+  const source = page.getByRole('radiogroup', { name: 'Calendar source' });
+  await source.getByText("This computer's calendars").click();
+  await expect(page.getByText('GNOME Settings → Online Accounts')).toBeVisible();
+  await source.getByText('No calendar').click();
+  await expect(page.getByRole('button', { name: 'Test', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.getByText('Settings saved')).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Recording', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'No calendar' })).toBeChecked();
+  // Put it back for the specs that follow.
+  await page.getByRole('radiogroup', { name: 'Calendar source' }).getByText('Private ICS address').click();
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.getByText('Settings saved')).toBeVisible();
+});

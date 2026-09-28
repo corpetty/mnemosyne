@@ -17,7 +17,7 @@ from ..config import Settings
 from ..events import EventBus
 from ..jobs import JobManager
 from ..search.index import VectorIndex
-from ..services.calendar_service import CalendarService
+from ..services.calendar_service import CalendarService, calendar_source
 from ..services.model_service import ModelService
 from ..services.session_service import SessionService
 from ..services.speaker_service import SpeakerService
@@ -115,7 +115,7 @@ class AppContext:
             summarizer=SummarizationService(settings),
             speakers=SpeakerService(repo, settings.speaker_match_threshold),
             storage=StorageService(repo, settings.data_dir, settings.recordings_dir),
-            calendar=CalendarService(settings.calendar_ics_url),
+            calendar=CalendarService(calendar_source(settings)),
             bus=bus,
             index=VectorIndex(repo, settings),
             jobs=JobManager(
@@ -144,8 +144,8 @@ class AppContext:
             await self.index.stop()
             self.index = VectorIndex(self.repo, settings)
             self.index.start(self.bus)
-        if settings.calendar_ics_url != self.calendar.source:
-            self.calendar = CalendarService(settings.calendar_ics_url)
+        if calendar_source(settings) != self.calendar.source:
+            self.calendar = CalendarService(calendar_source(settings))
         await self.models.apply_settings(settings)
 
     def busy_sessions(self) -> set[str]:
