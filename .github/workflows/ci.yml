@@ -97,3 +97,19 @@ jobs:
           bash scripts/stage-backend.sh
           bash scripts/fetch-uv.sh
       - run: cargo check --manifest-path src-tauri/Cargo.toml
+
+  link:
+    name: Remote-access link (iroh tunnel)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: link
+      - run: cargo fmt --check --manifest-path link/Cargo.toml
+      - run: cargo clippy --all-targets --manifest-path link/Cargo.toml -- -D warnings
+      # Home and a device on one machine with relays off: pairing, tunnelling, removal.
+      - run: cargo test --manifest-path link/Cargo.toml

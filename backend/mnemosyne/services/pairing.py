@@ -1,8 +1,11 @@
-"""Devices paired with this backend in server mode (for now: phones using the /m page).
+"""Devices paired with this backend: phones using the /m page, and computers reaching it
+through remote access (services/link.py).
 
-A device gets its own token by redeeming a one-time pairing code, shown as a QR code in
-Settings, so the shared API token never leaves this computer and each device can be removed
-on its own. A device token only opens the few paths a phone needs (see api/auth.py).
+A device gets its own token by redeeming a one-time pairing code shown in Settings, so the
+shared API token never leaves this computer and each device can be removed on its own. A
+phone's token only opens the few paths the phone page needs (see api/auth.py). A computer
+pairs through the link sidecar, which vouches for its iroh endpoint id; its token opens the
+whole API, and the sidecar only lets that endpoint in while the device is listed.
 
 Tokens are kept as SHA-256 hashes in <data_dir>/paired_devices.json (mode 0600), outside the
 database, so they can still be checked while encrypted meetings are locked.
@@ -25,6 +28,9 @@ CODE_TTL_SECONDS = 600
 SEEN_WRITE_INTERVAL = 300.0
 
 
+PHONE, DESKTOP = "phone", "desktop"
+
+
 class InvalidPairingCode(Exception):
     pass
 
@@ -36,6 +42,8 @@ class PairedDevice:
     token_hash: str
     created_at: str  # ISO 8601, UTC
     last_seen_at: str | None = None
+    kind: str = PHONE  # PHONE: the phone page's paths only; DESKTOP: the whole API
+    endpoint_id: str | None = None  # a desktop device's iroh endpoint (services/link.py)
 
 
 def _hash(token: str) -> str:
@@ -50,7 +58,7 @@ class PairingService:
     def __init__(self, path: Path, clock: Callable[[], float] = time.time):
         self.path = path
         self.clock = clock
-        self._codes: dict[str, float] = {}  # code -> expiry (clock time)
+        self._codes: dict[str, tuple[float, str]] = {}  # code -> (expiry, device kind)
         self._devices: dict[str, PairedDevice] = {}  # by token hash
         self._seen_written: dict[str, float] = {}
         self._load()
@@ -72,25 +80,38 @@ class PairingService:
         os.chmod(tmp, 0o600)
         tmp.replace(self.path)
 
-    def new_code(self) -> tuple[str, float]:
+    def new_code(self, kind: str = PHONE) -> tuple[str, float]:
         now = self.clock()
-        self._codes = {c: exp for c, exp in self._codes.items() if exp > now}
+        self._codes = {c: v for c, v in self._codes.items() if v[0] > now}
         code = secrets.token_urlsafe(16)
         expires = now + CODE_TTL_SECONDS
-        self._codes[code] = expires
+        self._codes[code] = (expires, kind)
         return code, expires
 
-    def redeem(self, code: str, name: str) -> tuple[PairedDevice, str]:
-        """Trade a pairing code (once, before it expires) for a device and its token."""
-        expires = self._codes.pop(code, None)
-        if expires is None or expires <= self.clock():
+    def redeem(
+        self, code: str, name: str, endpoint_id: str | None = None
+    ) -> tuple[PairedDevice, str]:
+        """Trade a pairing code (once, before it expires) for a device and its token. A
+        desktop code needs the endpoint id the link sidecar vouches for; a phone code none."""
+        expires, kind = self._codes.get(code, (0.0, PHONE))
+        if expires <= self.clock():
+            self._codes.pop(code, None)
             raise InvalidPairingCode("This pairing code is invalid or has expired")
+        if (kind == DESKTOP) != bool(endpoint_id):
+            raise InvalidPairingCode(
+                "This code pairs a computer through remote access"
+                if kind == DESKTOP
+                else "This code pairs a phone: open it on the phone"
+            )
+        del self._codes[code]
         token = secrets.token_urlsafe(32)
         device = PairedDevice(
             id=secrets.token_hex(8),
-            name=(name.strip() or "Phone")[:80],
+            name=(name.strip() or ("Computer" if kind == DESKTOP else "Phone"))[:80],
             token_hash=_hash(token),
             created_at=_iso(self.clock()),
+            kind=kind,
+            endpoint_id=endpoint_id if kind == DESKTOP else None,
         )
         self._devices[device.token_hash] = device
         self._save()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ from ..events import EventBus
 from ..jobs import JobManager
 from ..search.index import VectorIndex
 from ..services.calendar_service import CalendarService, calendar_source
+from ..services.link import LinkService
 from ..services.model_service import ModelService
 from ..services.pairing import PairingService
 from ..services.session_service import SessionService
@@ -43,6 +45,7 @@ class AppContext:
     jobs: JobManager
     index: VectorIndex
     pairing: PairingService
+    link: LinkService
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
     echo: EchoCancelManager = field(default_factory=EchoCancelManager)
     _retention_task: asyncio.Task | None = None
@@ -127,6 +130,7 @@ class AppContext:
             bus=bus,
             index=VectorIndex(repo, settings),
             pairing=PairingService(settings.data_dir / "paired_devices.json"),
+            link=LinkService(settings.data_dir, int(os.environ.get("MNEMOSYNE_BIND_PORT", "8008"))),
             jobs=JobManager(
                 bus,
                 concurrency={
@@ -156,6 +160,13 @@ class AppContext:
         if calendar_source(settings) != self.calendar.source:
             self.calendar = CalendarService(calendar_source(settings))
         await self.models.apply_settings(settings)
+        await self.apply_remote_access()
+
+    async def apply_remote_access(self) -> None:
+        if self.settings.remote_access and not self.link.active:
+            self.link.start()
+        elif not self.settings.remote_access and self.link.active:
+            await self.link.stop()
 
     def busy_sessions(self) -> set[str]:
         """Sessions whose audio must not be touched right now."""
@@ -265,6 +276,7 @@ class AppContext:
 
         self._intervals = (retention_interval, digest_interval)
         clean_scratch()
+        await self.apply_remote_access()  # also while locked: a paired computer can unlock
         if self.locked:
             logger.warning("Waiting for the recovery code before starting")
             return
@@ -302,6 +314,7 @@ class AppContext:
         self._backup_task = asyncio.create_task(self._backup_loop(3600.0))
 
     async def shutdown(self) -> None:
+        await self.link.stop()
         await self.index.stop()
         for task in (self._retention_task, self._digest_task, self._apps_task, self._backup_task):
             if task is not None:

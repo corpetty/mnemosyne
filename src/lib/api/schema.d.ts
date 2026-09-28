@@ -763,6 +763,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pairing/remote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Remote Access */
+        get: operations["remote_access_api_pairing_remote_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/people": {
         parameters: {
             query?: never;
@@ -1917,6 +1934,15 @@ export interface components {
             /** Last Idx */
             last_idx: number;
         };
+        /** CodeRequest */
+        CodeRequest: {
+            /**
+             * Kind
+             * @default phone
+             * @enum {string}
+             */
+            kind: "phone" | "desktop";
+        };
         /** CombineRequest */
         CombineRequest: {
             /** Other Id */
@@ -2276,6 +2302,8 @@ export interface components {
             created_at: string;
             /** Id */
             id: string;
+            /** Kind */
+            kind: string;
             /** Last Seen At */
             last_seen_at: string | null;
             /** Name */
@@ -2290,6 +2318,10 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
+            /** Invite */
+            invite: string | null;
+            /** Kind */
+            kind: string;
             /** Urls */
             urls: string[];
         };
@@ -2486,6 +2518,8 @@ export interface components {
         RedeemRequest: {
             /** Code */
             code: string;
+            /** Endpoint Id */
+            endpoint_id?: string | null;
             /**
              * Name
              * @default
@@ -2514,6 +2548,17 @@ export interface components {
             match: "title" | "people" | "both";
             /** Name */
             name: string;
+        };
+        /** RemoteAccess */
+        RemoteAccess: {
+            /** Enabled */
+            enabled: boolean;
+            /** Endpoint Id */
+            endpoint_id: string | null;
+            /** Error */
+            error: string | null;
+            /** Running */
+            running: boolean;
         };
         /** RenameProfileRequest */
         RenameProfileRequest: {
@@ -2970,6 +3015,8 @@ export interface components {
             per_source_transcription?: boolean | null;
             /** Phone Url */
             phone_url?: string | null;
+            /** Remote Access */
+            remote_access?: boolean | null;
             /** Remote Speaker Name */
             remote_speaker_name?: string | null;
             /** Remote Stt Api Key */
@@ -3169,6 +3216,8 @@ export interface components {
             per_source_transcription: boolean;
             /** Phone Url */
             phone_url: string;
+            /** Remote Access */
+            remote_access: boolean;
             /** Remote Speaker Name */
             remote_speaker_name: string;
             /** Remote Stt Api Key */
@@ -4645,7 +4694,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CodeRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -4654,6 +4707,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PairingCode"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4758,6 +4820,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remote_access_api_pairing_remote_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoteAccess"];
                 };
             };
         };

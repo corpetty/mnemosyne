@@ -4,7 +4,8 @@ How to reach Mnemosyne on your home machine from a laptop or phone elsewhere. Th
 today is [Tailscale](https://tailscale.com): the backend stays on `127.0.0.1`, nothing is opened to
 the internet, and phones get an HTTPS address, which lets the phone page record inside the browser.
 
-Mnemosyne has no relay of its own yet; that is planned. This page is the no-code route until then.
+Mnemosyne's own remote access (below, experimental) needs no Tailscale: an end-to-end encrypted
+iroh connection that only paired computers can open. It has no Settings UI yet.
 
 ## What you need
 
@@ -52,6 +53,30 @@ Run the backend with `--host 0.0.0.0` and an API token (see [development.md](dev
 then pair phones the same way; they use `http://<lan address>:8008`. Plain http means the phone
 records with its own recorder app rather than inside the page, and anyone on the network can see the
 traffic, so keep this to networks you trust.
+
+## Built-in remote access (experimental)
+
+The `link/` crate builds `mnemosyne-link`. With the `remote_access` setting on (Settings UI to come;
+for now `REMOTE_ACCESS=true` or `remote_access = true` in config.toml, plus an API token), the
+backend runs `mnemosyne-link home`. It dials out to n0's public relays, so nothing listens on the
+internet, and accepts connections only from computers paired with it. Relays forward encrypted
+packets they cannot read; when both machines can reach each other directly, iroh switches to a
+direct path.
+
+Pairing and connecting from another computer, for now from a terminal:
+
+```bash
+cargo build --release --manifest-path link/Cargo.toml
+# On the home machine: an invite for a computer (valid 10 minutes, once).
+curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"kind":"desktop"}' http://127.0.0.1:8008/api/pairing/codes
+# On the other computer: pair (prints this computer's own API token and the home ticket) ...
+mnemosyne-link pair '<invite>' --key-file ~/.config/mnemosyne/link.key --name Laptop
+# ... then serve home on a local port and point Settings → Connection at it, with that token.
+mnemosyne-link connect '<ticket>' --key-file ~/.config/mnemosyne/link.key --listen 127.0.0.1:8009
+```
+
+Paired computers are listed with the phones and removed the same way.
 
 ## Troubleshooting
 

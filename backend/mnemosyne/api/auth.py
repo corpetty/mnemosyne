@@ -3,8 +3,8 @@
 Off unless `api_token` is set. Then every /api path and /ws needs the token in
 `Authorization: Bearer <token>` or `?token=` (for <audio> elements and the
 WebSocket, which cannot set headers). /health, /docs, /openapi.json, the phone page and
-redeeming a pairing code stay open. A paired device's own token (services/pairing.py) opens
-only DEVICE_PATHS: what the phone page needs.
+redeeming a pairing code stay open. A paired phone's own token (services/pairing.py) opens
+only DEVICE_PATHS, what the phone page needs; a paired computer's opens everything.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from urllib.parse import parse_qs
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from ..services.pairing import DESKTOP
 from .context import AppContext
 
 OPEN_PATHS = {
@@ -52,11 +53,10 @@ class TokenAuthMiddleware:
 
         if hmac.compare_digest(presented.encode(), token.encode()):
             return await self.app(scope, receive, send)
-        if path in DEVICE_PATHS:
-            device = self.ctx.pairing.verify(presented)
-            if device is not None:
-                scope.setdefault("state", {})["device_id"] = device.id
-                return await self.app(scope, receive, send)
+        device = self.ctx.pairing.verify(presented)
+        if device is not None and (device.kind == DESKTOP or path in DEVICE_PATHS):
+            scope.setdefault("state", {})["device_id"] = device.id
+            return await self.app(scope, receive, send)
 
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 4401})

@@ -1,4 +1,5 @@
-"""Pairing phones in server mode: one-time codes, per-device tokens, removal."""
+"""Pairing devices: phones in server mode, computers through remote access. One-time codes,
+per-device tokens, removal."""
 
 import stat
 
@@ -107,3 +108,34 @@ def test_devices_persist_as_hashes(tmp_path):
     again = PairingService(path)
     assert again.verify(token).id == device.id
     assert again.verify("not-a-token") is None and again.verify("") is None
+
+
+def test_computer_codes_need_remote_access(server):
+    r = server.post("/api/pairing/codes", json={"kind": "desktop"}, headers=ADMIN)
+    assert r.status_code == 409 and "remote access" in r.json()["detail"]
+
+
+def test_computer_pairs_through_the_link(server, ctx):
+    ctx.link.status.running, ctx.link.status.ticket = True, "endpointabc"
+    body = server.post("/api/pairing/codes", json={"kind": "desktop"}, headers=ADMIN).json()
+    assert body["invite"] == f"endpointabc#{body['code']}" and body["urls"] == []
+    # Only the link, which knows the computer's endpoint, can redeem it.
+    bare = server.post("/api/pairing/redeem", json={"code": body["code"]})
+    assert bare.status_code == 403 and "remote access" in bare.json()["detail"]
+    r = server.post(
+        "/api/pairing/redeem",
+        json={"code": body["code"], "name": "Laptop", "endpoint_id": "ab" * 32},
+    )
+    assert r.status_code == 200 and r.json()["device"]["kind"] == "desktop"
+    laptop = {"Authorization": f"Bearer {r.json()['token']}"}
+    # A computer's token opens the whole API, unlike a phone's.
+    assert server.get("/api/sessions", headers=laptop).status_code == 200
+    assert ctx.pairing.devices()[0].endpoint_id == "ab" * 32
+
+
+def test_phone_codes_are_not_for_the_link(server):
+    code = server.post("/api/pairing/codes", headers=ADMIN).json()["code"]
+    r = server.post("/api/pairing/redeem", json={"code": code, "endpoint_id": "ab" * 32})
+    assert r.status_code == 403 and "phone" in r.json()["detail"]
+    # The failed attempt does not use the code up.
+    assert server.post("/api/pairing/redeem", json={"code": code}).status_code == 200

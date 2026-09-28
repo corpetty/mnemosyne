@@ -37,13 +37,24 @@ QR code.
 Paired devices live in `<data_dir>/paired_devices.json` (0600) as SHA-256 hashes of their tokens,
 outside the database, so they are checked even while encrypted meetings are locked.
 
-- `POST /api/pairing/codes` → `{code, expires_at, urls}`: a one-time code, valid for 10 minutes, and
-  the phone page addresses carrying it (`…/m?pair=<code>`). `409` when no API token is set.
-- `POST /api/pairing/redeem` `{code, name}` → `{device, token}`. No token needed; the code works once.
-  `403` when it is unknown, used or expired.
-- `GET /api/pairing/devices` → `[{id, name, created_at, last_seen_at}]`.
+- `POST /api/pairing/codes` `{kind: "phone" | "desktop"}` (body optional, default phone) →
+  `{code, kind, expires_at, urls, invite}`: a one-time code, valid for 10 minutes. For a phone, `urls`
+  are the phone page addresses carrying it (`…/m?pair=<code>`); for a computer, `invite` is
+  `<iroh ticket>#<code>`, to paste on the other machine (`409` unless remote access is running).
+  `409` when no API token is set.
+- `POST /api/pairing/redeem` `{code, name, endpoint_id?}` → `{device, token}`. No token needed; the
+  code works once. A desktop code needs `endpoint_id`, which the link sidecar sets from the
+  connection's verified iroh key; a phone code must not have one. `403` when the code is unknown,
+  used, expired or of the other kind (a refusal of the wrong kind does not use it up).
+- `GET /api/pairing/devices` → `[{id, name, kind, created_at, last_seen_at}]`. A phone's token opens
+  only the phone page's paths; a computer's opens the whole API.
 - `DELETE /api/pairing/devices/{id}`: the device's token stops working at once.
 - `GET /api/pairing/me` → the device making the request (with its own token), else `404`.
+- `GET /api/pairing/remote` → `{enabled, running, endpoint_id, error}`: remote access. With the
+  `remote_access` setting on, the backend runs `mnemosyne-link home` (the `link/` crate, found via
+  `MNEMOSYNE_LINK_BIN`, `PATH`, or a build in `link/target`), restarting it if it dies. It accepts
+  iroh connections from paired computers only (re-reading `paired_devices.json`, so removal takes
+  effect at once) and forwards each stream to this backend on `127.0.0.1`.
 
 ## Health
 

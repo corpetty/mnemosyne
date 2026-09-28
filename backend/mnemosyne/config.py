@@ -187,6 +187,9 @@ class Settings(BaseSettings):
     # The address phones open to reach this backend when it is not the LAN address, e.g.
     # https://desk.tail1234.ts.net from `tailscale serve` (docs/remote-access.md). Blank: LAN.
     phone_url: str = ""
+    # Remote access: run the mnemosyne-link sidecar (services/link.py) so paired computers
+    # can reach this backend from anywhere over an end-to-end encrypted iroh connection.
+    remote_access: bool = False
 
     # Calendar: private ICS address (or a local .ics path). Recordings started during
     # a meeting are named after it and remember its attendees.
