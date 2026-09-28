@@ -167,12 +167,12 @@ class AudioState {
     }
   }
 
-  async stopRecording() {
+  async stopRecording(transcribe?: boolean) {
     if (!this.activeSessionId) return;
     this.error = null;
     this.pending = 'stopping';
     try {
-      const res = await api.stopRecording(this.activeSessionId);
+      const res = await api.stopRecording(this.activeSessionId, transcribe);
       this.isRecording = false;
       if (this.durationInterval) {
         clearInterval(this.durationInterval);

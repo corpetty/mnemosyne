@@ -14,6 +14,9 @@ class UiState {
   sidebarCollapsed = $state(false);
   /** The Ctrl+K command palette, and what it asked other views to open. */
   paletteOpen = $state(false);
+  /** Quit was asked for while recording (window closed, tray Quit): the quit dialog. */
+  quitAsk = $state(false);
+  quitSaving = $state(false);
   personRequest = $state<string | null>(null);
   topicRequest = $state<string | null>(null);
   importRequest = $state(0); // bumped to open the sidebar's file picker

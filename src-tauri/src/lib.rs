@@ -10,6 +10,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as StdCommand, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use log::{error, info, warn};
@@ -649,8 +650,44 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// Whether the UI is recording (set_recording_state): closing the window or quitting from the
+/// tray then asks first (the UI's quit dialog) instead of cutting the recording off.
+struct Recording(AtomicBool);
+
+fn is_recording(app: &AppHandle) -> bool {
+    app.try_state::<Recording>()
+        .map(|r| r.0.load(Ordering::Relaxed))
+        .unwrap_or(false)
+}
+
+/// Quit, unless a recording is running: then show the window and let the UI ask.
+fn quit_or_ask(app: &AppHandle) {
+    if is_recording(app) {
+        show_main_window(app);
+        let _ = app.emit(ACTION_EVENT, "quit-requested");
+    } else {
+        app.exit(0);
+    }
+}
+
+/// The quit dialog's answers.
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+fn hide_window(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+}
+
 #[tauri::command]
 fn set_recording_state(app: AppHandle, recording: bool) -> Result<(), String> {
+    if let Some(flag) = app.try_state::<Recording>() {
+        flag.0.store(recording, Ordering::Relaxed);
+    }
     if let Some(state) = app.try_state::<TrayState>() {
         state
             .toggle
@@ -794,7 +831,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let _ = app.emit(ACTION_EVENT, "toggle-record");
             }
             "show" => show_main_window(app),
-            "quit" => app.exit(0),
+            "quit" => quit_or_ask(app),
             _ => {}
         });
     if let Some(icon) = app.default_window_icon() {
@@ -827,11 +864,22 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(BackendState { child: Mutex::new(None), adopted: Mutex::new(None) })
+        .manage(Recording(AtomicBool::new(false)))
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if is_recording(window.app_handle()) {
+                    api.prevent_close();
+                    quit_or_ask(window.app_handle());
+                }
+            }
+        })
         .manage(LaunchAction(Mutex::new(
             action_from_args(std::env::args().skip(1)).map(str::to_string),
         )))
         .invoke_handler(tauri::generate_handler![
             set_recording_state,
+            quit_app,
+            hide_window,
             take_launch_action,
             show_window,
             restart_app,

@@ -158,6 +158,10 @@ export async function listJobs(activeOnly = false): Promise<Job[]> {
   return request(`/api/jobs?active_only=${activeOnly}`);
 }
 
+export async function getJob(jobId: string): Promise<Job> {
+  return request(`/api/jobs/${jobId}`);
+}
+
 export async function cancelJob(jobId: string): Promise<Job> {
   return request(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
 }

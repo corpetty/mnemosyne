@@ -15,6 +15,7 @@
 	import DigestPanel from '$lib/components/DigestPanel.svelte';
 	import HomeView from '$lib/components/HomeView.svelte';
 	import PeoplePanel from '$lib/components/PeoplePanel.svelte';
+	import QuitDialog from '$lib/components/QuitDialog.svelte';
 	import SessionList from '$lib/components/SessionList.svelte';
 	import SessionView from '$lib/components/SessionView.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
@@ -119,5 +120,8 @@
 
 {#if uiState.paletteOpen}
 	<CommandPalette />
+{/if}
+{#if uiState.quitAsk}
+	<QuitDialog />
 {/if}
 <ToastContainer />

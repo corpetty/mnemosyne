@@ -7,6 +7,7 @@ import {
   getActiveRecordings,
   getEncryption,
   getHealth,
+  getJob,
   getSettings,
   listSessions
 } from '$lib/api/backend.js';
@@ -258,8 +259,72 @@ export async function invokeShell<T>(cmd: string, args?: Record<string, unknown>
   }
 }
 
-/** start-record | stop-record | toggle-record, from the tray, CLI, or calendar banner. */
+// ---- restore ---------------------------------------------------------------------
+
+/** After a restore was staged: restart the backend (it restores on start) and reload the page
+ *  so every store starts afresh. False outside the desktop app: restart the backend by hand. */
+export async function restartBackendForRestore(): Promise<boolean> {
+  let desktop = false;
+  try {
+    desktop = (await import('@tauri-apps/api/core')).isTauri();
+  } catch {
+    /* plain browser */
+  }
+  if (!desktop) return false;
+  await invokeShell('restart_backend');
+  await new Promise((r) => setTimeout(r, 1500)); // the old backend is gone by now
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    if (await getHealth().then(() => true).catch(() => false)) break;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  location.reload();
+  return true;
+}
+
+// ---- quitting while recording ------------------------------------------------------
+
+/** The quit dialog: stop, wait until the recording is saved (not transcribed: quitting would
+ *  cut that off), then quit. */
+export async function stopSaveAndQuit() {
+  uiState.quitSaving = true;
+  try {
+    const res = await audioState.stopRecording(false);
+    if (!res) {
+      toastState.error(audioState.error ?? 'Could not stop the recording');
+      return;
+    }
+    if (res.job_id) await waitForJob(res.job_id);
+    await invokeShell('quit_app');
+  } finally {
+    uiState.quitSaving = false;
+    uiState.quitAsk = false;
+  }
+}
+
+/** The quit dialog: hide the window; the recording goes on (tray, or launch again, to return). */
+export async function keepRecordingInBackground() {
+  uiState.quitAsk = false;
+  await invokeShell('hide_window');
+  notifyDesktop('Still recording', 'Mnemosyne records on in the background. Open it again, or use the tray, to stop.');
+}
+
+async function waitForJob(jobId: string) {
+  for (;;) {
+    const job = await getJob(jobId).catch(() => null);
+    if (!job || job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') return job;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
+/** start-record | stop-record | toggle-record, from the tray, CLI, or calendar banner;
+ *  quit-requested when the window is closed or Quit chosen during a recording. */
 export async function handleRemoteAction(action: string) {
+  if (action === 'quit-requested') {
+    if (audioState.isRecording) uiState.quitAsk = true;
+    else await invokeShell('quit_app'); // it stopped meanwhile
+    return;
+  }
   const wantStart = action === 'start-record' || (action === 'toggle-record' && !audioState.isRecording);
   const wantStop = action === 'stop-record' || (action === 'toggle-record' && audioState.isRecording);
   if (wantStop && audioState.isRecording) {
