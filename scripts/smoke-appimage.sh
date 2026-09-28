@@ -41,7 +41,15 @@ with wave.open(sys.argv[1], "wb") as w:
     ))
 PY
 export MNEMOSYNE_SMOKE=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1
-xvfb-run -a "$appimage" >"$work/app.log" 2>&1 &
+proxy=()
+if [ -n "${OFFLINE_CHECK:-}" ]; then
+  # Every download the app tries fails (a dead proxy); only loopback works.
+  dead=http://127.0.0.1:9
+  proxy=(env HTTP_PROXY=$dead HTTPS_PROXY=$dead ALL_PROXY=$dead http_proxy=$dead
+    https_proxy=$dead all_proxy=$dead NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost)
+  echo "Offline check: downloads are blocked"
+fi
+"${proxy[@]}" xvfb-run -a "$appimage" >"$work/app.log" 2>&1 &
 app=$!
 
 cleanup() {
@@ -83,4 +91,7 @@ set -e
 grep -o 'SMOKE .*' "$work/app.log" || true
 [ "$code" -eq 0 ] || fail "the app exited with $code"
 grep -q 'SMOKE OK' "$work/app.log" || fail "no SMOKE OK line"
+if [ -n "${OFFLINE_CHECK:-}" ]; then
+  grep -q 'Installing from the bundled packages' "$work/app.log" || fail "did not install offline"
+fi
 echo "Smoke test passed"

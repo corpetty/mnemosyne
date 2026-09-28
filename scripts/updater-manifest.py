@@ -23,7 +23,8 @@ def main() -> int:
     notes = Path(sys.argv[3]).read_text() if len(sys.argv) > 3 and Path(sys.argv[3]).is_file() else ""
     platforms = {}
     for kind, pattern in KINDS.items():
-        files = sorted(dist.glob(pattern))
+        # The offline AppImage is a download, not an update: the updater installs the normal one.
+        files = sorted(f for f in dist.glob(pattern) if "-offline" not in f.name)
         if not files:
             continue
         bundle = files[0]

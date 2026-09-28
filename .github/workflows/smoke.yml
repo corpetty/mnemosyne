@@ -16,9 +16,13 @@ permissions:
 
 jobs:
   appimage:
-    name: Smoke test (AppImage)
+    name: Smoke test (${{ matrix.flavour }} AppImage)
     runs-on: ubuntu-22.04 # the oldest system we ship for, like the bundle
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        flavour: [normal, offline]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -36,4 +40,13 @@ jobs:
             libfuse2 xvfb xauth pulseaudio pulseaudio-utils psmisc curl ffmpeg \
             libegl1 libgl1 libgles2 libgl1-mesa-dri
       - name: Bundled media stack, first launch, playback
-        run: bash scripts/smoke-appimage.sh dist/*.AppImage
+        env:
+          # The offline AppImage must install with no network at all.
+          OFFLINE_CHECK: ${{ matrix.flavour == 'offline' && '1' || '' }}
+        run: |
+          if [ "${{ matrix.flavour }}" = offline ]; then
+            app="$(ls dist/*-offline.AppImage)"
+          else
+            app="$(ls dist/*.AppImage | grep -v -- -offline)"
+          fi
+          bash scripts/smoke-appimage.sh "$app"

@@ -48,6 +48,9 @@ jobs:
           cp src-tauri/target/release/bundle/rpm/*.rpm* dist/
           cp src-tauri/target/release/bundle/appimage/*.AppImage* dist/
           ls -la dist
+      - name: Offline AppImage (base install bundled; no download on first launch)
+        run: |
+          bash scripts/build-offline-appimage.sh "$(ls dist/*.AppImage | grep -v -- -offline)" dist
       - name: Updater manifest (latest.json)
         run: |
           tag="${GITHUB_REF_NAME}"

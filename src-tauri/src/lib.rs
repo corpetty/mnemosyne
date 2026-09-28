@@ -163,6 +163,10 @@ struct ReleaseLayout {
     uv: PathBuf,
     venv: PathBuf,
     data_dir: PathBuf,
+    /// Where uv keeps the managed Python the venv runs on (per app, like the venv).
+    python_dir: PathBuf,
+    /// The offline AppImage's bundled uv cache and Python (build-offline-appimage.sh).
+    offline: Option<PathBuf>,
 }
 
 impl ReleaseLayout {
@@ -190,7 +194,9 @@ impl ReleaseLayout {
         let venv = local.join("venv");
         let data_dir = local.join("data");
         fs::create_dir_all(&data_dir).map_err(|e| format!("create {:?}: {e}", data_dir))?;
-        Ok(Self { backend_dir, uv, venv, data_dir })
+        let offline = Some(resource_dir.join("offline")).filter(|d| d.join("uv-cache").is_dir());
+        let python_dir = local.join("python");
+        Ok(Self { backend_dir, uv, venv, data_dir, python_dir, offline })
     }
 
     fn python(&self) -> PathBuf {
@@ -229,6 +235,7 @@ fn uv_sync(
     layout: &ReleaseLayout,
     gpu: bool,
     inexact: bool,
+    offline_cache: Option<&Path>,
     mut on_line: impl FnMut(&str),
 ) -> Result<bool, String> {
     let mut cmd = StdCommand::new(&layout.uv);
@@ -249,9 +256,16 @@ fn uv_sync(
         // Environment variables take precedence over config files.
         .env("UV_PYTHON_DOWNLOADS", "automatic")
         .env("UV_PYTHON_PREFERENCE", "managed")
+        .env("UV_PYTHON_INSTALL_DIR", &layout.python_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+
+    if let Some(cache) = offline_cache {
+        cmd.env("UV_CACHE_DIR", cache)
+            .env("UV_OFFLINE", "1")
+            .env("UV_PYTHON_DOWNLOADS", "never");
+    }
 
     let mut child = cmd.spawn().map_err(|e| format!("failed to run uv: {e}"))?;
     let stderr = child.stderr.take().ok_or("no stderr from uv")?;
@@ -286,9 +300,39 @@ fn install_base(app: &AppHandle, layout: &ReleaseLayout) -> Result<(), String> {
         "installing",
         "Installing Python runtime and dependencies. First run only.",
     );
-    uv_sync(layout, false, true, |line| emit_status(app, "installing", line))?;
+    match &layout.offline {
+        Some(offline) => install_offline(app, layout, offline)?,
+        None => {
+            uv_sync(layout, false, true, None, |line| emit_status(app, "installing", line))?;
+        }
+    }
     fs::write(layout.stamp(), layout.lock()).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// The offline AppImage: install from its bundled uv cache and Python. They are copied out
+/// first: the AppImage is read-only and mounted at a new path each launch, while uv writes to
+/// its cache and the venv must keep pointing at its Python. The cache copy is removed after
+/// (the venv's files are hardlinks into it, so they stay).
+fn install_offline(app: &AppHandle, layout: &ReleaseLayout, offline: &Path) -> Result<(), String> {
+    emit_status(app, "installing", "Installing from the bundled packages (no download needed).");
+    let cache = layout.venv.with_file_name("uv-offline-cache");
+    let copy = |from: PathBuf, to: &Path| -> Result<(), String> {
+        fs::create_dir_all(to).map_err(|e| format!("create {to:?}: {e}"))?;
+        let status = StdCommand::new("cp")
+            .arg("-a")
+            .arg(from.join("."))
+            .arg(to)
+            .status()
+            .map_err(|e| format!("cp: {e}"))?;
+        if status.success() { Ok(()) } else { Err(format!("copying {from:?} failed")) }
+    };
+    copy(offline.join("python"), &layout.python_dir)?;
+    copy(offline.join("uv-cache"), &cache)?;
+    let result =
+        uv_sync(layout, false, true, Some(&cache), |line| emit_status(app, "installing", line));
+    let _ = fs::remove_dir_all(&cache);
+    result.map(|_| ())
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -311,7 +355,7 @@ fn emit_gpu(app: &AppHandle, state: &str, message: impl Into<String>, restart: b
 /// extra. The UI restarts the backend once nothing is recording or running.
 fn install_gpu(app: &AppHandle, layout: &ReleaseLayout) {
     emit_gpu(app, "installing", "Installing GPU support (NVIDIA)…", false);
-    match uv_sync(layout, true, false, |line| emit_gpu(app, "installing", line, false)) {
+    match uv_sync(layout, true, false, None, |line| emit_gpu(app, "installing", line, false)) {
         Ok(changed) => {
             if let Err(e) = fs::write(layout.gpu_stamp(), layout.lock()) {
                 warn!("could not write the GPU stamp: {e}");
