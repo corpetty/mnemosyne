@@ -345,6 +345,13 @@ v3 (2026-09): background jobs and event stream, SQLite sessions, in-app settings
 transcription engines (WhisperX, Parakeet ONNX, remote), pyannote community-1, live transcript while
 recording, and torch-free packaging (the app installs its backend with uv on first launch).
 
+## Support the project
+
+Mnemosyne is free and MIT-licensed, and it stays that way: no telemetry, no accounts, no cloud
+by default, and privacy features (encryption at rest, local-only mode, redaction, export) are never
+paywalled. If it saves you time, you can support development through
+[GitHub Sponsors](https://github.com/sponsors/corpetty).
+
 ## License
 
 MIT
