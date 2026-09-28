@@ -42,7 +42,7 @@ test('the audio player is created on first use, then seeks', async () => {
 
 test('rename a speaker', async () => {
   await page.getByRole('button', { name: 'SPEAKER_01', exact: true }).click();
-  await page.getByPlaceholder('Name').fill('Alice');
+  await page.getByPlaceholder('Name', { exact: true }).fill('Alice');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Alice', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'SPEAKER_01', exact: true })).toHaveCount(0);

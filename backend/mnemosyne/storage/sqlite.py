@@ -31,7 +31,7 @@ from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     participants TEXT NOT NULL DEFAULT '[]',
     attendees TEXT NOT NULL DEFAULT '[]',
     local_only INTEGER NOT NULL DEFAULT 0,
-    copilot_notes TEXT
+    copilot_notes TEXT,
+    speakers_reviewed INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC);
 CREATE TABLE IF NOT EXISTS segments (
@@ -224,6 +225,12 @@ class SessionRepository:
             )
         if "copilot_notes" not in cols:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN copilot_notes TEXT")
+        if "speakers_reviewed" not in cols:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN speakers_reviewed INTEGER NOT NULL DEFAULT 0"
+            )
+            # Only meetings transcribed from now on ask "who is who".
+            self._conn.execute("UPDATE sessions SET speakers_reviewed = 1")
         self._conn.commit()
 
     def _backfill_fts(self) -> None:
@@ -313,6 +320,7 @@ class SessionRepository:
                 if row["copilot_notes"]
                 else None
             ),
+            speakers_reviewed=bool(row["speakers_reviewed"]),
             transcript=[
                 TranscriptSegment(
                     text=r["text"],
@@ -345,15 +353,17 @@ class SessionRepository:
             self._conn.execute(
                 """INSERT INTO sessions(id, name, status, created_at, updated_at, audio_file,
                                         summary, summary_data, notes, participants,
-                                        attendees, local_only, copilot_notes)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                        attendees, local_only, copilot_notes,
+                                        speakers_reviewed)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      name=excluded.name, status=excluded.status, updated_at=excluded.updated_at,
                      audio_file=excluded.audio_file, summary=excluded.summary,
                      summary_data=excluded.summary_data,
                      notes=excluded.notes, participants=excluded.participants,
                      attendees=excluded.attendees, local_only=excluded.local_only,
-                     copilot_notes=excluded.copilot_notes""",
+                     copilot_notes=excluded.copilot_notes,
+                     speakers_reviewed=excluded.speakers_reviewed""",
                 (
                     session.id,
                     session.name,
@@ -368,6 +378,7 @@ class SessionRepository:
                     json.dumps(session.attendees),
                     int(session.local_only),
                     session.copilot_notes.model_dump_json() if session.copilot_notes else None,
+                    int(session.speakers_reviewed),
                 ),
             )
             self._write_segments(session.id, session.transcript)
@@ -388,6 +399,7 @@ class SessionRepository:
             "attendees",
             "local_only",
             "copilot_notes",
+            "speakers_reviewed",
         }
         bad = set(fields) - allowed
         if bad:
@@ -401,7 +413,7 @@ class SessionRepository:
                 value = value.value
             if key in ("participants", "attendees"):
                 value = json.dumps(value)
-            if key == "local_only":
+            if key in ("local_only", "speakers_reviewed"):
                 value = int(bool(value))
             if key in ("summary_data", "copilot_notes") and value is not None:
                 value = value if isinstance(value, str) else value.model_dump_json()

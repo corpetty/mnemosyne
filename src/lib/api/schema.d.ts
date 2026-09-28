@@ -965,6 +965,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/speakers/reviewed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Speakers Reviewed
+         * @description Remember that the "who is who" card was completed or dismissed for this meeting.
+         */
+        post: operations["speakers_reviewed_api_sessions__session_id__speakers_reviewed_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/stats": {
         parameters: {
             query?: never;
@@ -1966,6 +1986,14 @@ export interface components {
             /** Repo */
             repo: string;
         };
+        /** ReviewedRequest */
+        ReviewedRequest: {
+            /**
+             * Reviewed
+             * @default true
+             */
+            reviewed: boolean;
+        };
         /** SearchHit */
         SearchHit: {
             /**
@@ -2087,6 +2115,11 @@ export interface components {
             participants: string[];
             /** Recordings */
             recordings: components["schemas"]["Recording"][];
+            /**
+             * Speakers Reviewed
+             * @default false
+             */
+            speakers_reviewed: boolean;
             /** @default created */
             status: components["schemas"]["SessionStatus"];
             /**
@@ -4615,6 +4648,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["RenameSpeakerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    speakers_reviewed_api_sessions__session_id__speakers_reviewed_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewedRequest"];
             };
         };
         responses: {

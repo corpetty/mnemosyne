@@ -162,3 +162,25 @@ async def test_composed_engine_collects_embeddings_and_drops_echo():
     engine.echo_dedup = False
     out = [s async for s in engine.transcribe_sources(sources)]
     assert "Me" in {s.speaker for s in out} and engine.last_dropped_echo == 0
+
+
+def test_speakers_reviewed_is_remembered(client, ctx):
+    sid = client.post("/api/sessions", json={"name": "m"}).json()["id"]
+    assert client.get(f"/api/sessions/{sid}").json()["speakers_reviewed"] is False
+    body = client.post(f"/api/sessions/{sid}/speakers/reviewed", json={}).json()
+    assert body["speakers_reviewed"] is True
+    assert ctx.repo.get(sid).speakers_reviewed is True
+    assert client.post("/api/sessions/nope/speakers/reviewed", json={}).status_code == 404
+
+
+def test_a_new_transcript_asks_again(client, ctx, transcribed_session):
+    from tests.conftest import drain_until_job
+
+    sid = transcribed_session["id"]
+    assert transcribed_session["speakers_reviewed"] is False
+    client.post(f"/api/sessions/{sid}/speakers/reviewed", json={})
+    with client.websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        job = client.post(f"/api/sessions/{sid}/transcribe").json()
+        drain_until_job(ws, job["id"])
+    assert ctx.repo.get(sid).speakers_reviewed is False  # new labels to name

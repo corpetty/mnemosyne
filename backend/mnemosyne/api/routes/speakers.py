@@ -45,6 +45,21 @@ async def rename_session_speaker(
     return session
 
 
+class ReviewedRequest(ApiModel):
+    reviewed: bool = True
+
+
+@router.post("/sessions/{session_id}/speakers/reviewed", response_model=Session)
+async def speakers_reviewed(
+    session_id: str, request: ReviewedRequest, ctx: AppContext = Depends(get_ctx)
+):
+    """Remember that the "who is who" card was completed or dismissed for this meeting."""
+    session = ctx.repo.update_fields(session_id, speakers_reviewed=request.reviewed)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
 class SessionSpeaker(ApiModel):
     label: str
     has_voice: bool

@@ -205,6 +205,13 @@ export async function renameSessionSpeaker(
   });
 }
 
+export async function setSpeakersReviewed(sessionId: string, reviewed = true): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/speakers/reviewed`, {
+    method: 'POST',
+    body: JSON.stringify({ reviewed })
+  });
+}
+
 export async function listSpeakers(): Promise<SpeakerProfile[]> {
   return request('/api/speakers');
 }

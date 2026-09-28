@@ -60,7 +60,7 @@
 				preload="metadata"
 				onplay={() => (playerState.playing = true)}
 				onpause={() => (playerState.playing = false)}
-				ontimeupdate={() => (playerState.currentTime = el?.currentTime ?? 0)}
+				ontimeupdate={() => playerState.timeUpdate(el?.currentTime ?? 0)}
 				onloadedmetadata={() => {
 					playerState.duration = el?.duration ?? 0;
 					playerState.ready();

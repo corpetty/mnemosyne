@@ -15,6 +15,9 @@ class PlayerState {
    */
   wanted = $state(false);
 
+  /** Pause when playback reaches this time (a speaker sample); null = play on. */
+  stopAt: number | null = null;
+
   private el: HTMLAudioElement | null = null;
   private pending: { seek: number | null; play: boolean } | null = null;
 
@@ -31,7 +34,23 @@ class PlayerState {
     if (p.play) void this.el.play().catch(() => {});
   }
 
+  /** Play [start, end] and pause (a speaker's sample). */
+  playRange(start: number, end: number) {
+    this.seek(start, true);
+    this.stopAt = end;
+  }
+
+  /** Called on every timeupdate. */
+  timeUpdate(t: number) {
+    this.currentTime = t;
+    if (this.stopAt !== null && t >= this.stopAt) {
+      this.stopAt = null;
+      this.el?.pause();
+    }
+  }
+
   seek(seconds: number, play = true) {
+    this.stopAt = null;
     if (!this.el) {
       this.pending = { seek: seconds, play };
       this.wanted = true;
@@ -42,6 +61,7 @@ class PlayerState {
   }
 
   toggle() {
+    this.stopAt = null;
     if (!this.el) {
       this.pending = { seek: null, play: true };
       this.wanted = true;

@@ -115,6 +115,7 @@ class Session(ApiModel):
     attendees: list[str] = Field(default_factory=list)
     local_only: bool = False  # never sent to a cloud LLM provider
     copilot_notes: CopilotNotes | None = None  # last notes taken live while recording
+    speakers_reviewed: bool = False  # the "who is who" card was completed or dismissed
 
     @computed_field  # type: ignore[prop-decorator]
     @property

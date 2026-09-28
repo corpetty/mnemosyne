@@ -9,6 +9,7 @@
 	import TalkTime from './TalkTime.svelte';
 	import JobProgress from './JobProgress.svelte';
 	import AudioPlayer from './AudioPlayer.svelte';
+	import SpeakerNamingCard from './SpeakerNamingCard.svelte';
 	import { playerState } from '$lib/stores/player.svelte.js';
 
 	function formatTime(seconds: number): string {
@@ -180,6 +181,7 @@
 		<LiveTranscript />
 	{:else}
 		<AudioPlayer />
+		<SpeakerNamingCard />
 		<TalkTime />
 		<SpeakerBar />
 		{#if canEdit}

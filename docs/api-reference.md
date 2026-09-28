@@ -292,6 +292,13 @@ Renames the label everywhere in this session (segments, participants). With `enr
 stored embedding, the voice is added to the `Alice` profile (running mean), so future sessions label
 her automatically. Renaming to an existing participant's name merges them. **Response:** `SessionDetail`.
 
+### `POST /api/sessions/{session_id}/speakers/reviewed`
+
+`{ "reviewed": true }` (the default). Sets `Session.speakers_reviewed`, which hides the Transcript
+tab's "Who is who?" card (one row per `SPEAKER_nn` / `Speaker n` label with a sample and a name
+field). A new transcription of the session resets it; meetings from before the flag existed count as
+reviewed. **Response:** `SessionDetail`.
+
 ### Transcript editing
 
 All return the updated `SessionDetail`, recompute `participants`, and emit a `session` event.

@@ -150,6 +150,7 @@ def transcribe_session(app: AppContext, session_id: str):
                 fixed += llm_fixed
 
             app.sessions.set_transcript(session_id, segments)
+            app.repo.update_fields(session_id, speakers_reviewed=False)  # new labels to name
             if settings.auto_summarize and segments:
                 app.jobs.submit(
                     "summarize", summarize_session(app, session_id), session_id=session_id
