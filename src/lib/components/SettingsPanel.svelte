@@ -86,6 +86,7 @@
 			settings = await getSettings();
 			const v = settings.values;
 			form = {
+				phone_url: v.phone_url,
 				transcriber: v.transcriber,
 				diarizer: v.diarizer,
 				language: v.language,
@@ -193,6 +194,11 @@
 				if (secrets[key] !== '') update[key] = secrets[key];
 			}
 			settings = await updateSettings(update);
+			// A new API token on the backend this window talks to: carry it, or the next request is refused.
+			if (secrets.api_token !== '') {
+				connectionState.save(connectionState.url, secrets.api_token);
+				connToken = connectionState.token;
+			}
 			loadAutoRecordSettings();
 			calendarState.start(); // the calendar may have been turned on, off or changed
 			secrets = emptySecrets();
@@ -1108,7 +1114,12 @@
 						{/if}
 					</div>
 				</label>
-				<PhoneLink />
+				<label class="block max-w-md mt-3">
+					<span class={labelClass}>Phone address</span>
+					<input type="text" bind:value={form.phone_url} disabled={locked('phone_url')} placeholder="blank: this computer's network address" class={inputClass} />
+					<span class="text-xs text-gray-600">An HTTPS name phones can reach from anywhere, such as <code>https://desk.tail1234.ts.net</code> from <code>tailscale serve</code>. See docs/remote-access.md.</span>
+				</label>
+				<PhoneLink phoneUrl={settings.values.phone_url} tokenSet={settings.secrets_set.api_token} />
 			</section>
 
 			{#if updateState.supported}

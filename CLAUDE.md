@@ -208,6 +208,9 @@ key in the keyring, locked mode answers 423); MIT metadata and docs/flathub.md (
 Released as 0.9.0. After it (unreleased): recording screen (Stop pill in the header, live transcript
 beside the copilot), calendar source off/ics/desktop (services/desktop_calendar.py reads GNOME
 Online Accounts via evolution-data-server over D-Bus with jeepney), multi-part meetings.
+Phone pairing (services/pairing.py, routes/pairing.py): one-time QR codes traded for per-device
+tokens that only open the phone upload path; `phone_url` setting; Tailscale guide in
+docs/remote-access.md. Remote-access relay (iroh, later Logos Messaging) is designed, not built.
 
 Nemotron diarizer (2026-09-25, transcription/diarizers/nemotron.py): NVIDIA Nemotron-3-Diarization
 (Streaming Sortformer, max 8 speakers) via NeMo, default on NVIDIA through `diarizer = "auto"`;

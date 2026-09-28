@@ -36,6 +36,7 @@
   <div>
     <h1>Record a meeting</h1>
     <p>The recording is sent to Mnemosyne on your computer and transcribed there.</p>
+    <p id="who"></p>
   </div>
   <div>
     <label for="name">Name</label>
@@ -57,13 +58,58 @@
 </main>
 <script>
 (() => {
-  const token = new URLSearchParams(location.search).get('token') || '';
   const $ = (id) => document.getElementById(id);
+  // In server mode this phone pairs once: /m?pair=<one-time code> gets it its own token, kept
+  // here. ?token=<API token> (links from before pairing) still works.
+  const KEY = 'mnemosyne.deviceToken';
+  const params = new URLSearchParams(location.search);
+  const legacy = params.get('token') || '';
+  const code = params.get('pair');
+  let token = legacy || stored();
+  let blocked = false;
+  function stored() { try { return localStorage.getItem(KEY) || ''; } catch (_) { return ''; } }
+  function store(t) { try { t ? localStorage.setItem(KEY, t) : localStorage.removeItem(KEY); } catch (_) {} }
+  const NOT_PAIRED = 'This phone is not paired. In Mnemosyne, open Settings → Server mode and scan the pairing code.';
   const name = $('name');
   const now = new Date();
   name.value = `Phone recording ${now.toLocaleDateString()} ${now.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`;
 
   function status(text, cls = '') { $('status').textContent = text; $('status').className = cls; }
+
+  function block(text) {
+    blocked = true;
+    $('live').hidden = true; $('fileLabel').hidden = true; $('insecure').hidden = true;
+    status(text, 'err');
+  }
+
+  function deviceName() {
+    const ua = navigator.userAgent;
+    return /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android phone' : 'Phone';
+  }
+
+  async function init() {
+    if (code) {
+      history.replaceState(null, '', location.pathname); // the code works once: keep it out of history
+      const r = await fetch('/api/pairing/redeem', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, name: deviceName() }),
+      });
+      let body = {};
+      try { body = await r.json(); } catch (_) {}
+      if (!r.ok) return block(`Pairing failed: ${body.detail || r.statusText}`);
+      token = body.token; store(token);
+      $('who').textContent = `Paired as “${body.device.name}”.`;
+      return status('Paired with Mnemosyne.', 'ok');
+    }
+    const health = await fetch('/health').then((r) => r.json()).catch(() => null);
+    if (!health || !health.auth_required) return; // no token needed (local use)
+    if (!token) return block(NOT_PAIRED);
+    if (legacy) return;
+    const r = await fetch('/api/pairing/me', { headers: { Authorization: 'Bearer ' + token } });
+    if (r.status === 401) { store(''); token = ''; return block(NOT_PAIRED); }
+    if (r.ok) $('who').textContent = `Paired as “${(await r.json()).name}”.`;
+  }
+  init().catch((e) => status(`Cannot reach Mnemosyne: ${e.message || e}`, 'err'));
 
   function upload(blob, filename) {
     const form = new FormData();
@@ -78,6 +124,7 @@
     xhr.onload = () => {
       bar.hidden = true;
       if (xhr.status < 300) status('Uploaded. Transcribing on your computer.', 'ok');
+      else if (xhr.status === 401 && !legacy) { store(''); token = ''; block(NOT_PAIRED); }
       else {
         let msg = xhr.statusText;
         try { msg = JSON.parse(xhr.responseText).detail || msg; } catch (_) {}
@@ -96,8 +143,8 @@
   });
 
   const canRecord = window.isSecureContext && navigator.mediaDevices && window.MediaRecorder;
-  if (!canRecord) { $('insecure').hidden = false; return; }
-  $('live').hidden = false;
+  if (!canRecord) { if (!blocked) $('insecure').hidden = false; return; }
+  if (!blocked) $('live').hidden = false;
   $('fileText').textContent = "Or use the phone's recorder";
 
   let rec = null, chunks = [], started = 0, tick = null, stream = null, wake = null, ctx = null, raf = 0;

@@ -11,19 +11,39 @@ Long-running work (transcription) never runs inside a request. Endpoints that st
 Off by default. When the `api_token` setting is set, every `/api/*` request and the WebSocket must
 carry it as `Authorization: Bearer <token>`, or `?token=<token>` for `<audio>` elements and `/ws`.
 Missing or wrong tokens get `401` (`WWW-Authenticate: Bearer`); the WebSocket is closed with code
-4401. `/health`, `/docs` and `/openapi.json` stay open. Run the backend with `--host 0.0.0.0` to
-serve a LAN; there is no TLS, so keep it on trusted networks or behind a reverse proxy.
+4401. `/health`, `/docs`, `/openapi.json`, the phone page `/m` and `POST /api/pairing/redeem` stay
+open. Run the backend with `--host 0.0.0.0` to serve a LAN; there is no TLS, so keep it on trusted
+networks, or reach it through Tailscale ([remote-access.md](remote-access.md)).
+
+A paired phone has its own token (below), which opens only `POST /api/audio/import` and
+`GET /api/pairing/me`; every other path answers it with `401`.
 
 
 ### Recording from a phone
-`GET /m` (not under `/api`; needs `?token=` in server mode like the rest) is a small mobile page. In a
-secure context (HTTPS or localhost) it records in the page with MediaRecorder; otherwise, and always
-as a second option, it uses the phone's own recorder through a file input with `capture`. Either way
-it uploads to `/api/audio/import`, so the meeting is transcribed like any import.
+`GET /m` (not under `/api`, always open) is a small mobile page. In a secure context (HTTPS or
+localhost) it records in the page with MediaRecorder; otherwise, and always as a second option, it
+uses the phone's own recorder through a file input with `capture`. Either way it uploads to
+`/api/audio/import`, so the meeting is transcribed like any import. In server mode the page is opened
+once as `/m?pair=<code>`: it redeems the code, keeps the device token in `localStorage` and removes the
+code from the address. `/m?token=<api token>` from older links still works.
 
-`GET /api/server/phone` → `{reachable, host, port, urls, note}`: whether the backend listens on a
-non-loopback address (from `mnemosyne-backend --host`), and candidate LAN addresses of the page with
-the token included. Settings → Server mode shows them with a QR code.
+`GET /api/server/phone` → `{reachable, pairing, host, port, urls, note}`: whether a phone can reach
+the page (the backend listens on a non-loopback address, from `mnemosyne-backend --host`, or the
+`phone_url` setting is set), whether phones pair (an API token is set), and candidate addresses of the
+page, `phone_url` first. The addresses never carry a token. Settings → Server mode shows them with a
+QR code.
+
+### Pairing phones
+Paired devices live in `<data_dir>/paired_devices.json` (0600) as SHA-256 hashes of their tokens,
+outside the database, so they are checked even while encrypted meetings are locked.
+
+- `POST /api/pairing/codes` → `{code, expires_at, urls}`: a one-time code, valid for 10 minutes, and
+  the phone page addresses carrying it (`…/m?pair=<code>`). `409` when no API token is set.
+- `POST /api/pairing/redeem` `{code, name}` → `{device, token}`. No token needed; the code works once.
+  `403` when it is unknown, used or expired.
+- `GET /api/pairing/devices` → `[{id, name, created_at, last_seen_at}]`.
+- `DELETE /api/pairing/devices/{id}`: the device's token stops working at once.
+- `GET /api/pairing/me` → the device making the request (with its own token), else `404`.
 
 ## Health
 

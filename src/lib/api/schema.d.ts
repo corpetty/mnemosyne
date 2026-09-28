@@ -675,6 +675,94 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pairing/codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Code */
+        post: operations["create_code_api_pairing_codes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pairing/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Devices */
+        get: operations["list_devices_api_pairing_devices_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pairing/devices/{device_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Device */
+        delete: operations["remove_device_api_pairing_devices__device_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pairing/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Me
+         * @description The paired device making the request (the phone page checks it is still paired).
+         */
+        get: operations["me_api_pairing_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pairing/redeem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Redeem */
+        post: operations["redeem_api_pairing_redeem_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/people": {
         parameters: {
             query?: never;
@@ -2179,6 +2267,32 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** PairedDeviceInfo */
+        PairedDeviceInfo: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Name */
+            name: string;
+        };
+        /** PairingCode */
+        PairingCode: {
+            /** Code */
+            code: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Urls */
+            urls: string[];
+        };
         /**
          * Passage
          * @description A contiguous run of transcript lines (or a session summary) retrieved for a question.
@@ -2295,6 +2409,8 @@ export interface components {
             host: string;
             /** Note */
             note: string;
+            /** Pairing */
+            pairing: boolean;
             /** Port */
             port: number;
             /** Reachable */
@@ -2365,6 +2481,22 @@ export interface components {
         RecoveryRequest: {
             /** Recovery Code */
             recovery_code: string;
+        };
+        /** RedeemRequest */
+        RedeemRequest: {
+            /** Code */
+            code: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+        };
+        /** RedeemResponse */
+        RedeemResponse: {
+            device: components["schemas"]["PairedDeviceInfo"];
+            /** Token */
+            token: string;
         };
         /** RelatedMeeting */
         RelatedMeeting: {
@@ -2836,6 +2968,8 @@ export interface components {
             parakeet_quantization?: string | null;
             /** Per Source Transcription */
             per_source_transcription?: boolean | null;
+            /** Phone Url */
+            phone_url?: string | null;
             /** Remote Speaker Name */
             remote_speaker_name?: string | null;
             /** Remote Stt Api Key */
@@ -3033,6 +3167,8 @@ export interface components {
             parakeet_quantization: string;
             /** Per Source Transcription */
             per_source_transcription: boolean;
+            /** Phone Url */
+            phone_url: string;
             /** Remote Speaker Name */
             remote_speaker_name: string;
             /** Remote Stt Api Key */
@@ -4498,6 +4634,130 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderModels"][];
+                };
+            };
+        };
+    };
+    create_code_api_pairing_codes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PairingCode"];
+                };
+            };
+        };
+    };
+    list_devices_api_pairing_devices_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PairedDeviceInfo"][];
+                };
+            };
+        };
+    };
+    remove_device_api_pairing_devices__device_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    me_api_pairing_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PairedDeviceInfo"];
+                };
+            };
+        };
+    };
+    redeem_api_pairing_redeem_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedeemRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedeemResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

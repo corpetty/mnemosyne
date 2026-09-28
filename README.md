@@ -338,6 +338,7 @@ Followed by sections for Summary, Participants, Notes, and the full Transcript w
 - [API Reference](docs/api-reference.md) — Complete REST and WebSocket API documentation
 - [Development Guide](docs/development.md) — Setup, project structure, adding providers, building
 - [Troubleshooting](docs/troubleshooting.md) — Common issues and solutions
+- [Remote access](docs/remote-access.md) — Reach your meetings and pair phones from anywhere with Tailscale
 
 ## Status
 

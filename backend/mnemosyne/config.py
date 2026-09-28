@@ -184,6 +184,9 @@ class Settings(BaseSettings):
     # Server mode: when set, every /api request and the WebSocket must carry it
     # (Authorization: Bearer <token>, or ?token=). /health stays open.
     api_token: str = ""
+    # The address phones open to reach this backend when it is not the LAN address, e.g.
+    # https://desk.tail1234.ts.net from `tailscale serve` (docs/remote-access.md). Blank: LAN.
+    phone_url: str = ""
 
     # Calendar: private ICS address (or a local .ics path). Recordings started during
     # a meeting are named after it and remember its attendees.

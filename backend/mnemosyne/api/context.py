@@ -19,6 +19,7 @@ from ..jobs import JobManager
 from ..search.index import VectorIndex
 from ..services.calendar_service import CalendarService, calendar_source
 from ..services.model_service import ModelService
+from ..services.pairing import PairingService
 from ..services.session_service import SessionService
 from ..services.speaker_service import SpeakerService
 from ..services.storage_service import StorageService
@@ -41,6 +42,7 @@ class AppContext:
     bus: EventBus
     jobs: JobManager
     index: VectorIndex
+    pairing: PairingService
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
     echo: EchoCancelManager = field(default_factory=EchoCancelManager)
     _retention_task: asyncio.Task | None = None
@@ -124,6 +126,7 @@ class AppContext:
             calendar=CalendarService(calendar_source(settings)),
             bus=bus,
             index=VectorIndex(repo, settings),
+            pairing=PairingService(settings.data_dir / "paired_devices.json"),
             jobs=JobManager(
                 bus,
                 concurrency={

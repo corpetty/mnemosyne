@@ -266,7 +266,10 @@ child process, stopping the backend removes it; the `echo_cancel` setting re-ena
 
 The frontend keeps its backend URL and token in `localStorage` (`stores/connection.svelte.ts`) and
 sends `Authorization: Bearer` on every request, `?token=` on the WebSocket and audio URLs. The backend
-enforces the token in `api/auth.py` only when `api_token` is set. Recording, devices and echo
+enforces the token in `api/auth.py` only when `api_token` is set. Phones pair instead of carrying
+that token: a one-time code (`POST /api/pairing/codes`, shown as a QR code) is traded for a
+per-device token (`services/pairing.py`, hashed in `<data_dir>/paired_devices.json`) that only opens
+the phone page's upload path, and can be revoked on its own. Recording, devices and echo
 cancellation act on the machine running the backend; a remote backend is for working with its
 sessions, imports and summaries from elsewhere. The Tauri shell still starts a local backend, which is
 simply unused while a remote URL is configured.

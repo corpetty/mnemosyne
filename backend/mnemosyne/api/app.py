@@ -20,6 +20,7 @@ from .routes.integrations import router as integrations_router
 from .routes.jobs import router as jobs_router
 from .routes.mobile import router as mobile_router
 from .routes.models import router as models_router
+from .routes.pairing import router as pairing_router
 from .routes.people import router as people_router
 from .routes.search import router as search_router
 from .routes.segments import router as segments_router
@@ -75,6 +76,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(people_router)
     app.include_router(topics_router)
     app.include_router(mobile_router)
+    app.include_router(pairing_router)
     app.include_router(system_router)
     app.include_router(storage_router)
     app.include_router(backup_router)

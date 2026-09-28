@@ -18,6 +18,8 @@ import type {
   TopicCount,
   Thread,
   PhoneLink,
+  PairingCode,
+  PairedDevice,
   SystemInfo,
   Diagnostics,
   CopilotNotes,
@@ -441,6 +443,19 @@ export async function setLocalOnly(sessionId: string, localOnly: boolean): Promi
 
 export async function getPhoneLink(): Promise<PhoneLink> {
   return request('/api/server/phone');
+}
+
+/** A one-time code (and phone page addresses carrying it) for pairing a phone. */
+export async function createPairingCode(): Promise<PairingCode> {
+  return request('/api/pairing/codes', { method: 'POST' });
+}
+
+export async function listPairedDevices(): Promise<PairedDevice[]> {
+  return request('/api/pairing/devices');
+}
+
+export async function removePairedDevice(id: string): Promise<void> {
+  await request(`/api/pairing/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export async function getSystemInfo(): Promise<SystemInfo> {
