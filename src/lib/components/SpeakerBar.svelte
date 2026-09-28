@@ -9,7 +9,9 @@
 	let editing = $state<string | null>(null);
 	let draft = $state('');
 	let remember = $state(true);
-	let loadedFor = $state<string | null>(null);
+	// What was last asked for (meeting + participants). Plain, not $state: the effect below
+	// reads it, and a reactive value it also writes would make it run again forever.
+	let loadedFor: string | null = null;
 	let knownVoices = $state<string[]>([]);
 
 	// Names to offer: invitees of this meeting first, then everyone with a saved voice.
@@ -21,10 +23,10 @@
 
 	async function load(sessionId: string) {
 		try {
-			speakers = await getSessionSpeakers(sessionId);
-			loadedFor = sessionId;
+			const got = await getSessionSpeakers(sessionId);
+			if (sessionState.activeSession?.id === sessionId) speakers = got; // not a meeting left since
 		} catch {
-			speakers = [];
+			if (sessionState.activeSession?.id === sessionId) speakers = [];
 		}
 	}
 
