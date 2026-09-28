@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from ..jobs import JobContext
 from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus, transcript_hash
+from ..models.transcript import TranscriptSegment
 from ..storage.crypto import plaintext
 from ..summarization.privacy import LOCAL_ONLY_ERROR, is_cloud
 from ..summarization.prompts import meeting_date_instructions
@@ -63,18 +64,49 @@ def sources_for_session(
     return []
 
 
-def transcribe_session(app: AppContext, session_id: str):
-    """Build the transcription job runner for a session."""
+def _part_sources(session, part: int, starts: dict[int, float], settings, stack) -> list:
+    """What to transcribe for one part of a meeting. A single-part meeting is transcribed as
+    before; for a part of a longer one, its own per-source files, else its stretch of the
+    meeting's audio cut to a private temporary file."""
+    from ..storage.crypto import _scratch_dir
+    from .parts import cut
+
+    if len(starts) == 1:
+        return sources_for_session(
+            session, settings.per_source_transcription, settings.local_speaker_name
+        )
+    own = session.model_copy(
+        update={"recordings": [r for r in session.recordings if r.part == part], "audio_file": None}
+    )
+    sources = sources_for_session(
+        own, settings.per_source_transcription, settings.local_speaker_name
+    )
+    if sources or not session.audio_file:
+        return sources
+    later = sorted(o for o in starts.values() if o > starts[part])
+    out = _scratch_dir() / f"{session.id}-part{part}.ogg"
+    stack.callback(out.unlink, missing_ok=True)
+    cut(Path(session.audio_file), starts[part], later[0] if later else None, out, None)
+    return [AudioSource(path=str(out), kind="mixed")]
+
+
+def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None = None):
+    """Build the transcription job runner for a session: every part of it, or only `parts`
+    (a part recorded after the rest was transcribed), keeping the other parts' lines."""
 
     async def run(ctx: JobContext) -> dict:
+        from .parts import match_speakers, offsets, part_of, shift
+
         session = app.sessions.get_session(session_id)
         if session is None:
             raise ValueError(f"Session {session_id} not found")
         settings = app.settings
-        sources = sources_for_session(
-            session, settings.per_source_transcription, settings.local_speaker_name
-        )
-        if not sources:
+        starts = offsets(session)
+        todo = sorted(starts) if parts is None else [p for p in sorted(starts) if p in parts]
+        kept = [s for s in session.transcript if part_of(s.start, starts) not in todo]
+        if not kept:
+            todo = sorted(starts)  # nothing to keep: do the whole meeting
+        if not session.audio_file and not session.recordings:
             raise ValueError(f"Session {session_id} has no audio to transcribe")
 
         app.sessions.set_status(session_id, SessionStatus.TRANSCRIBING)
@@ -85,12 +117,10 @@ def transcribe_session(app: AppContext, session_id: str):
 
             ctx.update("Transcribing...")
             ctx.emit({"type": "status", "session_id": session_id, "message": "Transcribing..."})
-            logger.info(
-                "Transcribing session %s from %d source(s): %s",
-                session_id,
-                len(sources),
-                [(s.kind, s.speaker_label) for s in sources],
-            )
+            for seg in kept:  # the parts not transcribed again, so the view shows the meeting
+                ctx.emit(
+                    {"type": "transcription", "session_id": session_id, "segment": seg.model_dump()}
+                )
 
             last = {"stage": "", "frac": -1.0, "t": 0.0}
 
@@ -102,17 +132,55 @@ def transcribe_session(app: AppContext, session_id: str):
                 last.update(stage=stage, frac=frac, t=now)
                 ctx.update(stage + "...", progress=round(min(max(frac, 0.0), 0.99), 3))
 
-            segments = []
-            with contextlib.ExitStack() as stack:
-                # Encrypted audio: the engine reads private plaintext copies, removed after.
-                plain = [
-                    dataclasses.replace(
-                        s, path=str(stack.enter_context(plaintext(s.path, app.file_key)))
+            segments = list(kept)
+            embeddings = app.repo.get_session_embeddings(session_id) if kept else {}
+            n_sources = 0
+            for part in todo:
+                with contextlib.ExitStack() as stack:
+                    if len(starts) > 1 and session.audio_file:
+                        # A multi-part meeting's audio may be encrypted; cut from a plain copy.
+                        plain_meeting = stack.enter_context(
+                            plaintext(session.audio_file, app.file_key)
+                        )
+                        view = session.model_copy(update={"audio_file": str(plain_meeting)})
+                    else:
+                        view = session
+                    sources = _part_sources(view, part, starts, settings, stack)
+                    if not sources:
+                        continue
+                    n_sources += len(sources)
+                    logger.info(
+                        "Transcribing session %s part %d from %d source(s): %s",
+                        session_id,
+                        part,
+                        len(sources),
+                        [(s.kind, s.speaker_label) for s in sources],
                     )
-                    for s in sources
-                ]
-                async for segment in engine.transcribe_sources(plain, on_progress=on_progress):
-                    segments.append(segment)
+                    # Encrypted audio: the engine reads private plaintext copies, removed after.
+                    plain = [
+                        dataclasses.replace(
+                            s, path=str(stack.enter_context(plaintext(s.path, app.file_key)))
+                        )
+                        for s in sources
+                    ]
+                    new: list[TranscriptSegment] = []
+                    async for segment in engine.transcribe_sources(plain, on_progress=on_progress):
+                        new.append(segment)
+                part_embeddings = dict(getattr(engine, "last_speaker_embeddings", {}) or {})
+                if embeddings or segments:  # a later part: same voices, same labels
+                    taken = {s.speaker for s in segments}
+                    relabel = match_speakers(
+                        part_embeddings, embeddings, taken, settings.speaker_match_threshold
+                    )
+                    new = [
+                        s.model_copy(update={"speaker": relabel.get(s.speaker, s.speaker)})
+                        for s in new
+                    ]
+                    part_embeddings = {relabel[k]: v for k, v in part_embeddings.items()}
+                for k, v in part_embeddings.items():
+                    embeddings.setdefault(k, v)
+                new = shift(new, starts.get(part, 0.0))
+                for segment in new:
                     ctx.emit(
                         {
                             "type": "transcription",
@@ -120,8 +188,11 @@ def transcribe_session(app: AppContext, session_id: str):
                             "segment": segment.model_dump(),
                         }
                     )
+                segments += new
+            if not n_sources:
+                raise ValueError(f"Session {session_id} has no audio to transcribe")
+            segments.sort(key=lambda s: (s.start, s.end))
 
-            embeddings = dict(getattr(engine, "last_speaker_embeddings", {}) or {})
             mapping = app.speakers.match(embeddings) if settings.auto_label_speakers else {}
             if embeddings:
                 # Store under the final labels so a later rename can still enroll.
@@ -173,7 +244,8 @@ def transcribe_session(app: AppContext, session_id: str):
             )
             return {
                 "segments": len(segments),
-                "sources": len(sources),
+                "sources": n_sources,
+                "parts": todo,
                 "echo_dropped": dropped,
                 "glossary_fixes": fixed,
             }

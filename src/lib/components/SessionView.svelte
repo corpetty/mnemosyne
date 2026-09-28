@@ -17,6 +17,10 @@
 	import SummaryView from './SummaryView.svelte';
 	import TranscriptView from './TranscriptView.svelte';
 
+	const nextPart = $derived(
+		Math.max(0, ...(sessionState.activeSession?.recordings ?? []).map((r) => r.part)) + 2
+	);
+
 	// This meeting is being recorded right now.
 	const recordingHere = $derived(
 		audioState.isRecording && audioState.activeSessionId === sessionState.activeSession?.id
@@ -121,6 +125,12 @@
 						onStartOverride={() => startRecording()}
 						onStopOverride={stopAndTranscribe}
 					/>
+					{#if sessionState.activeSession.audio_file}
+						<p class="text-xs text-gray-500">
+							Recording again adds to this meeting (part {nextPart}); what is already recorded, transcribed and summarized
+							is kept.
+						</p>
+					{/if}
 					<p class="text-xs text-gray-600">
 						Shortcuts: <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+R</kbd> Record
 						&middot; <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+S</kbd> Stop

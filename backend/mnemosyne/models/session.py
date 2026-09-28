@@ -36,6 +36,10 @@ class Recording(ApiModel):
     device_name: str
     path: str
     created_at: datetime = Field(default_factory=datetime.now)
+    # Recording again into a meeting adds a part (services/parts.py): which one, and where it
+    # starts on the meeting's timeline (seconds).
+    part: int = 0
+    offset: float = 0.0
 
 
 def transcript_hash(segments: list[TranscriptSegment]) -> str:

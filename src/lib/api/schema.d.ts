@@ -2128,6 +2128,16 @@ export interface components {
             device_name: string;
             /** Id */
             id: string;
+            /**
+             * Offset
+             * @default 0
+             */
+            offset: number;
+            /**
+             * Part
+             * @default 0
+             */
+            part: number;
             /** Path */
             path: string;
             /**

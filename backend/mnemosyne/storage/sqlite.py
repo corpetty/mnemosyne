@@ -31,7 +31,7 @@ from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -72,7 +72,9 @@ CREATE TABLE IF NOT EXISTS recordings (
     device_id INTEGER NOT NULL,
     device_name TEXT NOT NULL,
     path TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    part INTEGER NOT NULL DEFAULT 0,
+    part_offset REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_recordings_session ON recordings(session_id);
 CREATE TABLE IF NOT EXISTS speakers (
@@ -268,6 +270,12 @@ class SessionRepository:
             )
         if "copilot_notes" not in cols:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN copilot_notes TEXT")
+        rec_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(recordings)")}
+        if "part" not in rec_cols:
+            self._conn.execute("ALTER TABLE recordings ADD COLUMN part INTEGER NOT NULL DEFAULT 0")
+            self._conn.execute(
+                "ALTER TABLE recordings ADD COLUMN part_offset REAL NOT NULL DEFAULT 0"
+            )
         if "speakers_reviewed" not in cols:
             self._conn.execute(
                 "ALTER TABLE sessions ADD COLUMN speakers_reviewed INTEGER NOT NULL DEFAULT 0"
@@ -382,6 +390,8 @@ class SessionRepository:
                     device_name=r["device_name"],
                     path=r["path"],
                     created_at=_dt(r["created_at"]),
+                    part=r["part"],
+                    offset=r["part_offset"],
                 )
                 for r in rec_rows
             ],
@@ -485,8 +495,9 @@ class SessionRepository:
         with self._lock, self._conn:
             self._conn.executemany(
                 """INSERT OR REPLACE INTO recordings
-                   (id, session_id, source, device_id, device_name, path, created_at)
-                   VALUES (?,?,?,?,?,?,?)""",
+                   (id, session_id, source, device_id, device_name, path, created_at, part,
+                    part_offset)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
                 [
                     (
                         r.id,
@@ -496,6 +507,8 @@ class SessionRepository:
                         r.device_name,
                         r.path,
                         r.created_at.isoformat(),
+                        r.part,
+                        r.offset,
                     )
                     for r in recordings
                 ],

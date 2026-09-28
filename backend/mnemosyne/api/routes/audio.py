@@ -17,6 +17,7 @@ from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, Recording, Session, SessionStatus
 from ...services.copilot import copilot_runner
 from ...services.encryption import seal_session_audio
+from ...services.parts import add_part, next_part
 from ...services.pipeline import live_transcribe, transcribe_session
 from ...services.recovery import write_manifest
 from ...storage.crypto import EncryptedFile, is_encrypted
@@ -114,6 +115,8 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
     recording = await start_recording(device_ids, output_dir)
     if not recording.processes:
         raise HTTPException(status_code=400, detail="None of the selected devices could be opened")
+    # Recording again into a meeting that has audio adds a part; nothing is replaced.
+    recording.part = next_part(session)
     try:
         write_manifest(recording, {d.id: d for d in list_devices()})
     except Exception:  # recovery then falls back to one "mic" track per file
@@ -210,15 +213,20 @@ def _finish_recording(ctx: AppContext, session_id: str, recording, want_transcri
             individual_files,
             recording.output_dir / f"{recording.session_id}_mixed.ogg",
         )
-        ctx.sessions.set_audio(session_id, str(mixed_path), recordings)
+        had_transcript = bool(ctx.sessions.get_session(session_id).transcript)
+        if recording.part:
+            job.update("Adding it to the meeting", progress=0.75)
+        await add_part(ctx, session_id, recording.part, recordings, mixed_path)
         job.update("Saving", progress=0.9)
         await asyncio.to_thread(seal_session_audio, ctx, session_id)
         ctx.sessions.set_status(session_id, SessionStatus.CREATED)
 
         transcribe_job = None
         if want_transcribe:
+            # A later part of a transcribed meeting: transcribe only the new part.
+            parts = [recording.part] if recording.part and had_transcript else None
             transcribe_job = ctx.jobs.submit(
-                "transcribe", transcribe_session(ctx, session_id), session_id
+                "transcribe", transcribe_session(ctx, session_id, parts), session_id
             ).id
         return {"sources": len(individual_files), "transcribe_job_id": transcribe_job}
 

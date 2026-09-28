@@ -39,6 +39,7 @@ class RecordingSession:
     output_dir: Path
     processes: list[RecordingProcess] = field(default_factory=list)
     is_recording: bool = False
+    part: int = 0  # which part of its meeting this recording is (services/parts.py)
 
 
 def list_devices() -> list[AudioDevice]:

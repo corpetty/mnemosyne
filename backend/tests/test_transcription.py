@@ -65,6 +65,7 @@ def test_transcribe_job_streams_and_persists(client, ctx, fake_engine):
         "sources": 1,
         "echo_dropped": 0,
         "glossary_fixes": 0,
+        "parts": [0],
     }
 
 

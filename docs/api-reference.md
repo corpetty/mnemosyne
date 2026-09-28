@@ -103,6 +103,15 @@ leaves the session in `error`.
 }
 ```
 
+Recording again into a session that already has audio (a pause, a crash, a restart) adds a
+**part** instead of replacing anything: each `Recording` carries its `part` and `offset` (where that
+part starts on the meeting's timeline), the session's `audio_file` becomes all parts joined end to
+end, and only the new part is transcribed (when the earlier ones already are). Its lines are shifted
+by the offset and appended, and its speakers are matched to the earlier parts' by voice
+(`speaker_match_threshold`), so labels and names carry over; the summary is then redone over the
+whole meeting. Crash recovery adds a recovered recording the same way. `POST
+/api/sessions/{id}/transcribe` transcribes every part.
+
 `POST /api/audio/start` looks up the calendar meeting to name the session from the cached feed
 (refreshed in the background when stale), so starting never waits for a download.
 

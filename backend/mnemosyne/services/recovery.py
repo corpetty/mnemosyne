@@ -55,7 +55,9 @@ def write_manifest(recording: RecordingSession, devices: dict[int, AudioDevice])
             }
         )
     path = recording.output_dir / MANIFEST
-    path.write_text(json.dumps({"recording_id": recording.session_id, "tracks": tracks}))
+    path.write_text(
+        json.dumps({"recording_id": recording.session_id, "part": recording.part, "tracks": tracks})
+    )
 
 
 def repair_wav(path: Path) -> float:
@@ -142,18 +144,23 @@ def interrupted_sessions(app: AppContext) -> list[str]:
     ]
 
 
-def _tracks(folder: Path) -> tuple[str | None, list[dict]]:
-    """The recording's tracks: from the manifest, or every WAV (recordings before 0.8)."""
+def _tracks(folder: Path) -> tuple[str | None, int | None, list[dict]]:
+    """The recording's id, part and tracks: from the manifest, or every WAV (recordings before
+    0.8; their part is unknown)."""
     try:
         manifest = json.loads((folder / MANIFEST).read_text())
-        return manifest.get("recording_id"), manifest.get("tracks", [])
+        return manifest.get("recording_id"), manifest.get("part"), manifest.get("tracks", [])
     except (OSError, ValueError):
         pass
     wavs = sorted(folder.glob("*.wav"))
-    return None, [
-        {"device_id": 0, "device_name": f"Recovered track {i}", "source": "mic", "wav": w.name}
-        for i, w in enumerate(wavs, 1)
-    ]
+    return (
+        None,
+        None,
+        [
+            {"device_id": 0, "device_name": f"Recovered track {i}", "source": "mic", "wav": w.name}
+            for i, w in enumerate(wavs, 1)
+        ],
+    )
 
 
 def recover_session(app: AppContext, session_id: str):
@@ -164,7 +171,11 @@ def recover_session(app: AppContext, session_id: str):
         if session is None:
             raise ValueError(f"Session {session_id} not found")
         folder = app.settings.recordings_dir / session_id
-        recording_id, tracks = _tracks(folder)
+        recording_id, part, tracks = _tracks(folder)
+        if part is None:  # no manifest: after whatever the meeting already has
+            from .parts import next_part
+
+            part = next_part(session)
         ctx.update(message="Recovering an interrupted recording", progress=0.0)
 
         wavs = [folder / t["wav"] for t in tracks]
@@ -203,7 +214,10 @@ def recover_session(app: AppContext, session_id: str):
 
         mixed = folder / f"{recording_id or session_id}_mixed.ogg"
         mixed = await asyncio.to_thread(mix_audio_files, [Path(r.path) for r in recordings], mixed)
-        app.sessions.set_audio(session_id, str(mixed), recordings)
+        from .parts import add_part
+
+        had_transcript = bool(session.transcript)
+        await add_part(app, session_id, part, recordings, mixed)
         from .encryption import seal_session_audio
 
         seal_session_audio(app, session_id)
@@ -213,7 +227,8 @@ def recover_session(app: AppContext, session_id: str):
         if app.settings.auto_transcribe:
             from .pipeline import transcribe_session
 
-            app.jobs.submit("transcribe", transcribe_session(app, session_id), session_id)
+            parts = [part] if part and had_transcript else None
+            app.jobs.submit("transcribe", transcribe_session(app, session_id, parts), session_id)
             transcribing = True
 
         done = RecoveredRecording(
