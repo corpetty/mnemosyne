@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Mnemosyne">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8f7dff"/>
+      <stop offset="1" stop-color="#f3c969"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#0d0c16"/>
+  <rect x="1" y="1" width="62" height="62" rx="15" fill="none" stroke="url(#g)" stroke-opacity=".55" stroke-width="2"/>
+  <!-- a sound wave whose outline is an M -->
+  <g fill="url(#g)">
+    <rect x="7" y="14" width="5" height="36" rx="2.5"/>
+    <rect x="14.5" y="19" width="5" height="26" rx="2.5"/>
+    <rect x="22" y="25" width="5" height="14" rx="2.5"/>
+    <rect x="29.5" y="21" width="5" height="22" rx="2.5"/>
+    <rect x="37" y="25" width="5" height="14" rx="2.5"/>
+    <rect x="44.5" y="19" width="5" height="26" rx="2.5"/>
+    <rect x="52" y="14" width="5" height="36" rx="2.5"/>
+  </g>
+</svg>
