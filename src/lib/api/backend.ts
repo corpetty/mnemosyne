@@ -20,6 +20,7 @@ import type {
   PhoneLink,
   PairingCode,
   PairedDevice,
+  RemoteAccess,
   SystemInfo,
   Diagnostics,
   CopilotNotes,
@@ -445,9 +446,14 @@ export async function getPhoneLink(): Promise<PhoneLink> {
   return request('/api/server/phone');
 }
 
-/** A one-time code (and phone page addresses carrying it) for pairing a phone. */
-export async function createPairingCode(): Promise<PairingCode> {
-  return request('/api/pairing/codes', { method: 'POST' });
+/** A one-time pairing code: for a phone, the phone page addresses carrying it; for a computer,
+ * the invite to paste on it (needs remote access running). */
+export async function createPairingCode(kind: 'phone' | 'desktop' = 'phone'): Promise<PairingCode> {
+  return request('/api/pairing/codes', { method: 'POST', body: JSON.stringify({ kind }) });
+}
+
+export async function getRemoteAccess(): Promise<RemoteAccess> {
+  return request('/api/pairing/remote');
 }
 
 export async function listPairedDevices(): Promise<PairedDevice[]> {

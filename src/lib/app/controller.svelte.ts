@@ -551,6 +551,20 @@ function restartBackendWhenIdle() {
  * launch installs dependencies and can take minutes; the shell reports progress.
  * Returns a cleanup function.
  */
+/** A connection through remote access needs this app's tunnel up, and its current port (the
+ * preferred one may have been taken since the last launch). */
+async function syncRemoteTunnel() {
+  if (!connectionState.remote) return;
+  try {
+    const { invoke, isTauri } = await import('@tauri-apps/api/core');
+    if (!isTauri()) return;
+    const url = await invoke<string | null>('remote_start');
+    if (url && url !== connectionState.url) connectionState.save(url, connectionState.token, true);
+  } catch (e) {
+    console.warn('Remote access tunnel:', e);
+  }
+}
+
 export function connectApp(): () => void {
   let unsubscribeSessions: (() => void) | null = null;
   let unlistenShell: (() => void) | null = null;
@@ -558,6 +572,7 @@ export function connectApp(): () => void {
   let attempts = 0;
 
   async function connect() {
+    await syncRemoteTunnel();
     while (!cancelled) {
       try {
         const h = await getHealth();

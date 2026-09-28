@@ -18,6 +18,8 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
+mod remote;
+
 const BACKEND_PORT: u16 = 8008;
 
 struct BackendState {
@@ -499,6 +501,8 @@ fn release_command(layout: &ReleaseLayout) -> StdCommand {
         .env("MNEMOSYNE_DATA_DIR", &layout.data_dir)
         // The backend ends when this app does (after saving a recording it was making).
         .env("MNEMOSYNE_APP_PID", std::process::id().to_string())
+        // Remote access: the link sidecar ships next to the app binary, like uv.
+        .env("MNEMOSYNE_LINK_BIN", layout.uv.with_file_name("mnemosyne-link"))
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("PYTHONUNBUFFERED", "1");
     cmd
@@ -865,6 +869,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(BackendState { child: Mutex::new(None), adopted: Mutex::new(None) })
         .manage(Recording(AtomicBool::new(false)))
+        .manage(remote::RemoteState::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if is_recording(window.app_handle()) {
@@ -886,7 +891,11 @@ pub fn run() {
             can_self_update,
             restart_backend,
             is_smoke_test,
-            smoke_result
+            smoke_result,
+            remote::remote_status,
+            remote::remote_start,
+            remote::remote_pair,
+            remote::remote_forget
         ])
         .setup(|app| {
             app.handle().plugin(
@@ -903,6 +912,7 @@ pub fn run() {
             }
 
             reload_after_webview_crash(app.handle());
+            remote::start_at_launch(app.handle());
 
             // A missing tray host (e.g. GNOME without the AppIndicator extension) must
             // not stop the app. Without the appindicator library the tray crate panics,

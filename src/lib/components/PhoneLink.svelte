@@ -122,10 +122,12 @@
 			</div>
 		{/if}
 		{#if link.pairing && devices.length}
-			<ul class="space-y-1 text-xs max-w-md" aria-label="Paired phones">
+			<h4 class="text-sm font-medium text-gray-300 pt-2">Paired devices</h4>
+			<ul class="space-y-1 text-xs max-w-md" aria-label="Paired devices">
 				{#each devices as d (d.id)}
 					<li class="flex items-center gap-3">
 						<span class="text-gray-300">{d.name}</span>
+						<span class="text-gray-500">{d.kind === 'desktop' ? 'computer' : 'phone'}</span>
 						<span class="text-gray-600">paired {when(d.created_at)}{d.last_seen_at ? `, last used ${when(d.last_seen_at)}` : ''}</span>
 						<button onclick={() => remove(d)} class="ml-auto text-gray-500 hover:text-red-400">Remove</button>
 					</li>

@@ -13,3 +13,6 @@ bash "$SCRIPT_DIR/stage-backend.sh"
 
 echo "--- uv sidecar ---"
 bash "$SCRIPT_DIR/fetch-uv.sh"
+
+echo "--- remote-access sidecar ---"
+bash "$SCRIPT_DIR/build-link.sh"

@@ -8,6 +8,8 @@ export const LOCAL_BACKEND = 'http://127.0.0.1:8008';
 interface Stored {
   url: string;
   token: string;
+  /** Through this computer's remote-access tunnel (desktop app, src-tauri/src/remote.rs). */
+  remote?: boolean;
 }
 
 function load(): Stored {
@@ -15,7 +17,8 @@ function load(): Stored {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const p = JSON.parse(raw);
-      if (typeof p.url === 'string' && p.url) return { url: p.url.replace(/\/+$/, ''), token: p.token ?? '' };
+      if (typeof p.url === 'string' && p.url)
+        return { url: p.url.replace(/\/+$/, ''), token: p.token ?? '', remote: p.remote === true };
     }
   } catch {
     /* no storage */
@@ -26,6 +29,7 @@ function load(): Stored {
 class ConnectionState {
   url = $state(LOCAL_BACKEND);
   token = $state('');
+  remote = $state(false);
   /** From /health: hostname of the backend we reached and whether it wants a token. */
   host = $state<string | null>(null);
   authRequired = $state(false);
@@ -34,9 +38,12 @@ class ConnectionState {
     const s = load();
     this.url = s.url;
     this.token = s.token;
+    this.remote = s.remote ?? false;
   }
 
   get isLocal(): boolean {
+    // The remote-access tunnel listens on 127.0.0.1, but the backend is on another machine.
+    if (this.remote) return false;
     return this.url === LOCAL_BACKEND || /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(this.url);
   }
 
@@ -55,11 +62,12 @@ class ConnectionState {
     return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(this.token);
   }
 
-  save(url: string, token: string) {
+  save(url: string, token: string, remote = false) {
     this.url = url.trim().replace(/\/+$/, '') || LOCAL_BACKEND;
     this.token = token.trim();
+    this.remote = remote;
     try {
-      localStorage.setItem(KEY, JSON.stringify({ url: this.url, token: this.token }));
+      localStorage.setItem(KEY, JSON.stringify({ url: this.url, token: this.token, remote }));
     } catch {
       /* ignore */
     }

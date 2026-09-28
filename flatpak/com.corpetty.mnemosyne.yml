@@ -43,10 +43,11 @@ modules:
     build-commands:
       - ar -x mnemosyne.deb
       - mkdir deb && tar -C deb -xf data.tar.*
-      # Binary and uv sidecar side by side; resources where Tauri looks for them
+      # Binary and the uv and link sidecars side by side; resources where Tauri looks for them
       # (<exe dir>/../lib/<productName>).
       - install -Dm755 deb/usr/bin/mnemosyne /app/bin/mnemosyne
       - install -Dm755 deb/usr/bin/mnemosyne-uv /app/bin/mnemosyne-uv
+      - install -Dm755 deb/usr/bin/mnemosyne-link /app/bin/mnemosyne-link
       - mkdir -p /app/lib && cp -a deb/usr/lib/Mnemosyne /app/lib/Mnemosyne
       - install -Dm644 deb/usr/share/applications/Mnemosyne.desktop /app/share/applications/com.corpetty.mnemosyne.desktop
       - >

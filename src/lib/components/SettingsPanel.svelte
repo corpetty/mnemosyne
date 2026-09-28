@@ -6,6 +6,8 @@
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
 	import PhoneLink from './PhoneLink.svelte';
+	import RemoteAccessHome from './RemoteAccessHome.svelte';
+	import RemoteConnect from './RemoteConnect.svelte';
 	import StorageSettings from './StorageSettings.svelte';
 	import BackupSettings from './BackupSettings.svelte';
 	import { calendarState } from '$lib/stores/calendar.svelte.js';
@@ -66,7 +68,13 @@
 	let connUrl = $state(connectionState.url);
 	let connToken = $state(connectionState.token);
 
-	function applyConnection(url: string, token: string) {
+	async function applyConnection(url: string, token: string) {
+		if (connectionState.remote) {
+			// Leaving remote access: stop this app's tunnel and forget the other machine.
+			await import('@tauri-apps/api/core')
+				.then(({ invoke }) => invoke('remote_forget'))
+				.catch(() => {});
+		}
 		connectionState.save(url, token);
 		location.reload();
 	}
@@ -87,6 +95,7 @@
 			const v = settings.values;
 			form = {
 				phone_url: v.phone_url,
+				remote_access: v.remote_access,
 				transcriber: v.transcriber,
 				diarizer: v.diarizer,
 				language: v.language,
@@ -197,7 +206,7 @@
 			settings = await updateSettings(update);
 			// A new API token on the backend this window talks to: carry it, or the next request is refused.
 			if (secrets.api_token !== '') {
-				connectionState.save(connectionState.url, secrets.api_token);
+				connectionState.save(connectionState.url, secrets.api_token, connectionState.remote);
 				connToken = connectionState.token;
 			}
 			loadAutoRecordSettings();
@@ -361,6 +370,7 @@
 					<button onclick={() => applyConnection(LOCAL_BACKEND, '')} class="text-sm text-gray-400 hover:text-gray-200">Use local backend</button>
 				{/if}
 			</div>
+			<RemoteConnect />
 		</section>
 
 		<section>
@@ -1119,6 +1129,11 @@
 						{/if}
 					</div>
 				</label>
+				<label class="flex items-center gap-2 mt-3 text-sm text-gray-300">
+					<input type="checkbox" bind:checked={form.remote_access} disabled={locked('remote_access')} />
+					Remote access: let computers you pair reach this backend from anywhere
+				</label>
+				<RemoteAccessHome enabled={settings.values.remote_access} tokenSet={settings.secrets_set.api_token} />
 				<label class="block max-w-md mt-3">
 					<span class={labelClass}>Phone address</span>
 					<input type="text" bind:value={form.phone_url} disabled={locked('phone_url')} placeholder="blank: this computer's network address" class={inputClass} />

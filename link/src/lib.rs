@@ -24,13 +24,14 @@ use iroh::{
     endpoint::{presets, Connection, RecvStream, SendStream},
     Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey,
 };
-use iroh_tickets::endpoint::EndpointTicket;
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::Mutex,
 };
+
+pub use iroh_tickets::endpoint::EndpointTicket;
 
 pub const ALPN: &[u8] = b"mnemosyne/link/1";
 /// A stream carrying one TCP connection to the backend.

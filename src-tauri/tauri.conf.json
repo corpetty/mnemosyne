@@ -61,7 +61,8 @@
       }
     },
     "externalBin": [
-      "binaries/mnemosyne-uv"
+      "binaries/mnemosyne-uv",
+      "binaries/mnemosyne-link"
     ]
   },
   "plugins": {

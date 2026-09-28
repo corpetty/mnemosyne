@@ -46,6 +46,7 @@ export type Thread = S['Thread'];
 export type PhoneLink = S['PhoneLink'];
 export type PairingCode = S['PairingCode'];
 export type PairedDevice = S['PairedDeviceInfo'];
+export type RemoteAccess = S['RemoteAccess'];
 export type SystemInfo = S['SystemInfo'];
 export type DesktopCalendar = S['DesktopCalendar'];
 export type EncryptionStatus = S['EncryptionStatus'];
