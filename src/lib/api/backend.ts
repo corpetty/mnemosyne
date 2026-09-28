@@ -105,6 +105,11 @@ export async function getRecordingStatus(sessionId: string): Promise<RecordingSt
   return request(`/api/audio/status/${sessionId}`);
 }
 
+/** Save what was recorded and go on as the next part of the meeting (a source failed). */
+export async function restartRecording(sessionId: string): Promise<StartRecordingResponse> {
+  return request(`/api/audio/restart/${sessionId}`, { method: 'POST' });
+}
+
 /** Recordings in progress: after a restart of the app, the backend may still be recording. */
 export async function getActiveRecordings(): Promise<ActiveRecording[]> {
   return request('/api/audio/active');

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import FileResponse, Response
 
 from ...audio.capture import list_devices, start_recording, stop_capture, stop_recording
+from ...audio.health import CaptureHealth
 from ...audio.levels import Level, SelfTestResult, sample_level, self_test
 from ...audio.mixer import mix_audio_files
 from ...audio.streams import CaptureApp
@@ -60,19 +61,41 @@ async def _stream_levels(ctx: AppContext, session_id: str, recording, interval: 
     from ...transcription.live import WavTail
 
     tails = {p.device_id: WavTail(p.output_path) for p in recording.processes}
+    ids = [p.device_id for p in recording.processes]
+    health = CaptureHealth({d: recording.labels.get(d, str(d)) for d in ids})
     try:
         while True:
             await asyncio.sleep(interval)
             levels = {}
-            for device_id, tail in tails.items():
+            for proc in recording.processes:
                 try:
-                    levels[str(device_id)] = level_of(tail.read_new()).model_dump()
+                    pcm = tails[proc.device_id].read_new()
+                    levels[str(proc.device_id)] = level_of(pcm).model_dump()
                 except Exception:
-                    continue
+                    pcm = None
+                exited = recording.is_recording and proc.process.returncode is not None
+                change = health.update(proc.device_id, 0 if pcm is None else pcm.size, exited)
+                if change is not None:
+                    _report_health(ctx, session_id, recording, health, change)
             if levels:
                 ctx.bus.publish({"type": "levels", "session_id": session_id, "levels": levels})
     except asyncio.CancelledError:
         pass
+
+
+def _report_health(ctx: AppContext, session_id: str, recording, health, change) -> None:
+    recording.problems = health.problems()
+    log = logger.info if change.state == "ok" else logger.warning
+    log("Session %s: %s", session_id, change.message)
+    ctx.bus.publish(
+        {
+            "type": "capture_health",
+            "session_id": session_id,
+            "device_id": change.device_id,
+            "state": change.state,
+            "message": change.message,
+        }
+    )
 
 
 async def _apply_calendar(ctx: AppContext, session: Session) -> Session:
@@ -110,8 +133,13 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
 
     if session.id in ctx.active_recordings:
         raise HTTPException(status_code=409, detail="Session is already recording")
+    return await begin_recording(ctx, session, request.device_ids)
 
-    device_ids = await _apply_echo_mic(ctx, request.device_ids)
+
+async def begin_recording(
+    ctx: AppContext, session: Session, device_ids: list[int], keep_notes: bool = False
+) -> StartRecordingResponse:
+    device_ids = await _apply_echo_mic(ctx, device_ids)
     output_dir = ctx.settings.recordings_dir / session.id
     recording = await start_recording(device_ids, output_dir)
     if not recording.processes:
@@ -119,7 +147,15 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
     # Recording again into a meeting that has audio adds a part; nothing is replaced.
     recording.part = next_part(session)
     try:
-        write_manifest(recording, {d.id: d for d in list_devices()})
+        devices = {d.id: d for d in await asyncio.to_thread(list_devices)}
+    except Exception:
+        devices = {}
+    for proc in recording.processes:
+        if (device := devices.get(proc.device_id)) is not None:
+            recording.node_names[proc.device_id] = device.name
+            recording.labels[proc.device_id] = device.description
+    try:
+        write_manifest(recording, devices)
     except Exception:  # recovery then falls back to one "mic" track per file
         logger.warning("Could not write the recording manifest", exc_info=True)
     ctx.active_recordings[session.id] = recording
@@ -131,8 +167,9 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
         job = ctx.jobs.submit("live", live_transcribe(ctx, session.id, recording), session.id)
         live_job_id = job.id
         if ctx.settings.copilot:
-            ctx.copilot_notes.pop(session.id, None)
-            ctx.repo.update_fields(session.id, copilot_notes=None)  # a new recording
+            if not keep_notes:  # a new recording; a restarted capture carries on
+                ctx.copilot_notes.pop(session.id, None)
+                ctx.repo.update_fields(session.id, copilot_notes=None)
             ctx.jobs.submit("copilot", copilot_runner(ctx, session.id), session.id)
 
     return StartRecordingResponse(
@@ -240,6 +277,39 @@ def _finish_recording(ctx: AppContext, session_id: str, recording, want_transcri
     return run
 
 
+@router.post("/restart/{session_id}", response_model=StartRecordingResponse)
+async def restart(session_id: str, ctx: AppContext = Depends(get_ctx)):
+    """Capture failed partway (a recorder stopped, or a source went quiet: audio/health.py).
+    Save what was recorded and go on recording into the same meeting as its next part, from
+    the same devices, found again by name (a recreated node has a new id)."""
+    recording = ctx.active_recordings.get(session_id)
+    if recording is None or not recording.is_recording:
+        raise HTTPException(status_code=404, detail="No active recording for this session")
+    ids = [p.device_id for p in recording.processes]
+    names = dict(recording.node_names)
+    job, _ = await stop_active(ctx, session_id, transcribe=False)
+    saved = await ctx.jobs.wait(job.id)  # the next part starts where this one ends
+    if saved is not None and saved.status != "completed":
+        logger.warning("Session %s: saving before the restart failed: %s", session_id, saved.error)
+    if ctx.settings.echo_cancel and not ctx.echo.active:  # it may be what went away
+        try:
+            await ctx.echo.start(_wanted_mic(ctx))
+        except Exception as e:
+            logger.warning("Echo canceller not restarted: %s", e)
+    try:
+        present = await asyncio.to_thread(list_devices)
+    except Exception:
+        present = []
+    by_name = {d.name: d.id for d in present}
+    ids = [by_name.get(names.get(i, ""), i) for i in ids]
+    if present:
+        ids = [i for i in ids if i in {d.id for d in present}]
+    if not ids:
+        raise HTTPException(status_code=400, detail="None of the recording's devices is there")
+    session = ctx.sessions.get_session(session_id)
+    return await begin_recording(ctx, session, ids, keep_notes=True)
+
+
 class RecordingStatus(ApiModel):
     session_id: str
     is_recording: bool
@@ -262,6 +332,7 @@ class ActiveRecording(ApiModel):
     part: int
     live: bool  # live transcription is running
     live_segments: list[LiveSegment] = []  # the live transcript so far
+    problems: dict[str, str] = {}  # device id -> "stopped" | "stalled" (audio/health.py)
 
 
 @router.get("/active", response_model=list[ActiveRecording])
@@ -287,6 +358,7 @@ async def active(ctx: AppContext = Depends(get_ctx)):
                 part=recording.part,
                 live=live is not None,
                 live_segments=segments,
+                problems={str(d): state for d, state in recording.problems.items()},
             )
         )
     return out

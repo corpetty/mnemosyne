@@ -42,6 +42,11 @@ class RecordingSession:
     is_recording: bool = False
     part: int = 0  # which part of its meeting this recording is (services/parts.py)
     started_at: float = field(default_factory=time.time)  # wall clock, for a UI that reconnects
+    # Per device id: its PipeWire node name (ids change when a node is recreated, names do
+    # not: a restart finds the device again by name) and its description, for messages.
+    node_names: dict[int, str] = field(default_factory=dict)
+    labels: dict[int, str] = field(default_factory=dict)
+    problems: dict[int, str] = field(default_factory=dict)  # audio/health.py: device -> state
 
 
 def list_devices() -> list[AudioDevice]:

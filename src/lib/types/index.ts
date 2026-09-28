@@ -93,4 +93,12 @@ export type BackendEvent =
   | { type: 'mention'; session_id: string; keyword: string; speaker: string; text: string; start: number }
   | { type: 'meeting_app'; status: 'started' | 'stopped'; app: string }
   | { type: 'copilot_notes'; session_id: string; notes: CopilotNotes }
-  | { type: 'levels'; session_id: string; levels: Record<string, Level> };
+  | { type: 'levels'; session_id: string; levels: Record<string, Level> }
+  | {
+      // A source stopped being captured, or is captured again (backend audio/health.py).
+      type: 'capture_health';
+      session_id: string;
+      device_id: number;
+      state: 'stopped' | 'stalled' | 'ok';
+      message: string;
+    };

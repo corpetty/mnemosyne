@@ -104,6 +104,13 @@ class JobManager:
             jobs = [j for j in jobs if not j.is_terminal]
         return sorted(jobs, key=lambda j: j.created_at)
 
+    async def wait(self, job_id: str) -> Job | None:
+        """The job once it has finished (at once when it already has)."""
+        task = self._tasks.get(job_id)
+        if task is not None:
+            await asyncio.wait({task})
+        return self.jobs.get(job_id)
+
     async def cancel(self, job_id: str) -> bool:
         task = self._tasks.get(job_id)
         job = self.jobs.get(job_id)

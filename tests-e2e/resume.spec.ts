@@ -32,3 +32,28 @@ test('a recording already in progress is picked up', async ({ page, request }) =
   await expect(page.getByText('Said before the crash.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'still-recording' })).toBeVisible();
 });
+
+// A source stops being captured mid-recording: say so, and offer to carry on as a new part.
+test('a stopped source offers to restart the capture', async ({ page, request }) => {
+  const created = await request.post(`${BACKEND}/api/sessions`, { data: { name: 'capture-failed' } });
+  const { id } = await created.json();
+  let problems: Record<string, string> = { '1': 'stopped' };
+  await page.route(/\/api\/audio\/active$/, (route) =>
+    route.fulfill({
+      json: [
+        { session_id: id, started_at: Date.now() / 1000 - 60, device_ids: [1], part: 0, live: false, live_segments: [], problems }
+      ]
+    })
+  );
+  let restarted = false;
+  await page.route(/\/api\/audio\/restart\//, (route) => {
+    restarted = true;
+    problems = {};
+    return route.fulfill({ json: { session_id: id, recording_id: 'r2', live_job_id: null, message: 'ok' } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Restart capture' }).click();
+  await expect(page.getByText('Recording again; what was recorded so far is saved')).toBeVisible();
+  expect(restarted).toBe(true);
+  await expect(page.getByRole('button', { name: 'Restart capture' })).toHaveCount(0);
+});

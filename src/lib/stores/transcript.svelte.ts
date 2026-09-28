@@ -40,6 +40,8 @@ class TranscriptState {
 
   /** Provisional segments streamed while recording; replaced by the final job. */
   liveSegments = $state<TranscriptSegment[]>([]);
+  /** Added to live times after a restarted capture (continueLive). */
+  liveOffset = 0;
   /** Start times of live lines where a mention keyword was heard. */
   mentionStarts = $state<number[]>([]);
   livePartials = $state<Record<string, { speaker: string; text: string }>>({});
@@ -115,7 +117,9 @@ class TranscriptState {
         break;
       case 'live_segment':
         if (msg.session_id === this.sessionId) {
-          this.liveSegments = [...this.liveSegments, msg.segment].sort((a, b) => a.start - b.start);
+          const off = this.liveOffset;
+          const seg = off ? { ...msg.segment, start: msg.segment.start + off, end: msg.segment.end + off } : msg.segment;
+          this.liveSegments = [...this.liveSegments, seg].sort((a, b) => a.start - b.start);
           this.getSpeakerColor(msg.segment.speaker);
         }
         break;
@@ -126,7 +130,7 @@ class TranscriptState {
         }
         break;
       case 'mention':
-        if (msg.session_id === this.sessionId) this.mentionStarts = [...this.mentionStarts, msg.start];
+        if (msg.session_id === this.sessionId) this.mentionStarts = [...this.mentionStarts, msg.start + this.liveOffset];
         break;
       case 'live_status':
         if (msg.session_id === this.sessionId) this.liveStatus = msg.message;
@@ -134,7 +138,7 @@ class TranscriptState {
       case 'live_labels':
         // The recording so far was re-diarized: these lines have a better speaker now.
         if (msg.session_id === this.sessionId) {
-          const changed = new Map(msg.labels.map((l) => [`${l.start}|${l.old}`, l.new]));
+          const changed = new Map(msg.labels.map((l) => [`${l.start + this.liveOffset}|${l.old}`, l.new]));
           this.liveSegments = this.liveSegments.map((s) => {
             const next = changed.get(`${s.start}|${s.speaker}`);
             return next ? { ...s, speaker: next } : s;
@@ -162,6 +166,7 @@ class TranscriptState {
   /** Recording started for `sessionId`: reset live state and follow its events. */
   startLive(sessionId: string) {
     this.sessionId = sessionId;
+    this.liveOffset = 0;
     this.liveSegments = [];
     this.livePartials = {};
     this.mentionStarts = [];
@@ -174,6 +179,13 @@ class TranscriptState {
     this.liveSegments = [...segments].sort((a, b) => a.start - b.start);
     for (const s of segments) this.getSpeakerColor(s.speaker);
     this.liveStatus = running ? 'Live' : '';
+  }
+
+  /** The capture restarted as a new part: its live times start at 0 again, `seconds` into
+   *  the recording. The lines so far stay. */
+  continueLive(seconds: number) {
+    this.liveOffset = seconds;
+    this.livePartials = {};
   }
 
   clearLive() {

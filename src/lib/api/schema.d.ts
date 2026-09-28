@@ -219,6 +219,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audio/restart/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restart
+         * @description Capture failed partway (a recorder stopped, or a source went quiet: audio/health.py).
+         *     Save what was recorded and go on recording into the same meeting as its next part, from
+         *     the same devices, found again by name (a recreated node has a new id).
+         */
+        post: operations["restart_api_audio_restart__session_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audio/self-test": {
         parameters: {
             query?: never;
@@ -1511,6 +1533,13 @@ export interface components {
             live_segments: components["schemas"]["LiveSegment"][];
             /** Part */
             part: number;
+            /**
+             * Problems
+             * @default {}
+             */
+            problems: {
+                [key: string]: string;
+            };
             /** Session Id */
             session_id: string;
             /** Started At */
@@ -3579,6 +3608,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Level"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restart_api_audio_restart__session_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartRecordingResponse"];
                 };
             };
             /** @description Validation Error */

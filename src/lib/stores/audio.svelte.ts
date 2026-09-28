@@ -25,6 +25,8 @@ class AudioState {
   recordingDuration = $state(0);
   error = $state<string | null>(null);
   loading = $state(false);
+  /** Sources not being captured, by device id: 'stopped' or 'stalled' (`capture_health`). */
+  problems = $state<Record<string, string>>({});
   /** Live input levels per device id while recording (from `levels` events). */
   levels = $state<Record<string, Level>>({});
   private unsubscribeLevels: (() => void) | null = null;
@@ -34,6 +36,12 @@ class AudioState {
     this.unsubscribeLevels = wsState.onMessage((raw) => {
       const msg = raw as BackendEvent;
       if (msg.type === 'levels' && msg.session_id === this.activeSessionId) this.levels = msg.levels;
+      if (msg.type === 'capture_health' && msg.session_id === this.activeSessionId) {
+        const next = { ...this.problems };
+        if (msg.state === 'ok') delete next[String(msg.device_id)];
+        else next[String(msg.device_id)] = msg.state;
+        this.problems = next;
+      }
     });
   }
 
@@ -112,6 +120,7 @@ class AudioState {
       );
       this.activeSessionId = res.session_id;
       this.isRecording = true;
+      this.problems = {};
       this.recordingDuration = 0;
       this.durationInterval = setInterval(() => {
         this.recordingDuration++;
@@ -126,15 +135,36 @@ class AudioState {
 
   /** Show a recording that was already running when the page connected: the app was
    *  restarted (or crashed) while the backend kept recording. */
-  resume(sessionId: string, startedAt: number, deviceIds: number[]) {
+  resume(sessionId: string, startedAt: number, deviceIds: number[], problems: Record<string, string> = {}) {
     this.activeSessionId = sessionId;
     this.isRecording = true;
     this.selectedDeviceIds = new Set(deviceIds);
+    this.problems = problems;
     this.recordingDuration = Math.max(0, Math.round(Date.now() / 1000 - startedAt));
     if (this.durationInterval) clearInterval(this.durationInterval);
     this.durationInterval = setInterval(() => {
       this.recordingDuration++;
     }, 1000);
+  }
+
+  /** A source failed: save what was recorded and carry on into the same meeting. The timer
+   *  keeps running; the backend's devices may have new ids (a recreated echo canceller). */
+  async restartCapture() {
+    const sessionId = this.activeSessionId;
+    if (!sessionId || this.pending) return;
+    this.pending = 'starting';
+    this.error = null;
+    try {
+      const res = await api.restartRecording(sessionId);
+      this.problems = {};
+      const active = (await api.getActiveRecordings()).find((a) => a.session_id === sessionId);
+      if (active) this.selectedDeviceIds = new Set(active.device_ids);
+      return res;
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : 'Failed to restart the recording';
+    } finally {
+      this.pending = null;
+    }
   }
 
   async stopRecording() {
@@ -150,6 +180,7 @@ class AudioState {
       }
       this.activeSessionId = null;
       this.levels = {};
+      this.problems = {};
       return res;
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Failed to stop recording";

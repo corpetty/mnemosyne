@@ -220,7 +220,16 @@ out; empty while `auto_record` is `off`. Changes are published as `meeting_app` 
 ### `GET /api/audio/active`
 Recordings in progress, so a UI that (re)connects shows them: `[{session_id, started_at (unix
 time), device_ids, part, live, live_segments: [{source, segment}]}]`. `live_segments` is the live
-transcript so far.
+transcript so far. `problems` names sources no longer being captured (see below).
+
+### Capture health: `capture_health` events · `POST /api/audio/restart/{session_id}`
+While recording, each source is watched (`audio/health.py`): `stopped` when its recorder exits,
+`stalled` after 10 s without new audio (silence is audio: EasyEffects writes digital silence),
+`ok` when a stalled source delivers again. Each change is a
+`{type: "capture_health", session_id, device_id, state, message}` event. `restart` saves what
+was recorded (a `finish` job, not transcribed) and goes on recording into the same meeting as its
+next part, from the same devices found again by PipeWire node name (restarting the echo canceller
+if it went away); it answers like `start`. The copilot's notes carry over.
 
 ### `GET /api/audio/status/{session_id}`
 

@@ -83,7 +83,7 @@ async function resumeActiveRecording() {
   if (audioState.isRecording || audioState.pending) return;
   const [active] = await getActiveRecordings().catch(() => []);
   if (!active || audioState.isRecording) return;
-  audioState.resume(active.session_id, active.started_at, active.device_ids);
+  audioState.resume(active.session_id, active.started_at, active.device_ids, active.problems);
   transcriptState.resumeLive(
     active.session_id,
     active.live_segments.map((s) => s.segment),
@@ -93,6 +93,32 @@ async function resumeActiveRecording() {
   uiState.view = 'home';
   uiState.activeTab = 'recording';
   toastState.info('Still recording: picked up the recording in progress');
+}
+
+/** A source stopped being captured: save what was recorded and carry on recording into the
+ *  same meeting (its next part). The live transcript so far stays. */
+export async function restartCapture() {
+  const elapsed = audioState.recordingDuration;
+  const res = await audioState.restartCapture();
+  if (!res) {
+    if (audioState.error) toastState.error(audioState.error);
+    return;
+  }
+  transcriptState.continueLive(elapsed);
+  toastState.success('Recording again; what was recorded so far is saved');
+}
+
+function announceCaptureHealth(msg: Extract<BackendEvent, { type: 'capture_health' }>) {
+  if (msg.session_id !== audioState.activeSessionId) return;
+  if (msg.state === 'ok') {
+    toastState.success(msg.message);
+    return;
+  }
+  toastState.show(`${msg.message}. What was recorded is safe.`, 'error', 60_000, {
+    label: 'Restart capture',
+    run: restartCapture
+  });
+  notifyDesktop('Recording problem', `${msg.message}. Open Mnemosyne to restart the capture.`);
 }
 
 export async function exportActive() {
@@ -403,6 +429,10 @@ function onConnected(): () => void {
     const msg = raw as BackendEvent;
     if (msg.type === 'mention') {
       announceMention(msg.keyword, msg.speaker, msg.text);
+      return;
+    }
+    if (msg.type === 'capture_health') {
+      announceCaptureHealth(msg);
       return;
     }
     if (msg.type === 'hello') {

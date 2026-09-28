@@ -144,7 +144,19 @@ def transcribed_session(client, ctx, fake_engine) -> dict:
 
 
 class _FakeProc:
-    returncode = 0
+    """A recorder that runs until it is stopped, like pw-record."""
+
+    def __init__(self):
+        self.returncode = None
+
+    def terminate(self):
+        self.returncode = 0
+
+    def kill(self):
+        self.returncode = -9
+
+    async def wait(self):
+        return self.returncode
 
 
 @pytest.fixture

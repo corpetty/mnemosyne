@@ -189,19 +189,9 @@ class AppWatch:
     async def _save(self, session_ids: list[str]) -> None:
         from .routes.audio import stop_active
 
-        jobs = []
         for session_id in session_ids:
             job, _ = await stop_active(self.ctx, session_id, transcribe=False)
-            jobs.append(job.id)
-        await wait_for(self.ctx, jobs)
-
-
-async def wait_for(ctx: AppContext, job_ids: list[str], poll: float = 0.2) -> None:
-    def pending():
-        return [j for j in job_ids if (job := ctx.jobs.get(j)) is not None and not job.is_terminal]
-
-    while pending():
-        await asyncio.sleep(poll)
+            await self.ctx.jobs.wait(job.id)
 
 
 def watch_app(ctx: AppContext) -> tuple[AppWatch, asyncio.Task] | None:
