@@ -107,6 +107,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - The Release workflow runs the AppImage smoke test (reusable `smoke.yml`) before publishing. To
   re-test an existing build without rebuilding: `gh workflow run "Smoke test" -f run_id=<Release
   run id>`. The script refuses to run outside CI (it starts PulseAudio with a null sink).
+- Encryption at rest: code that reads audio must go through `storage.crypto.plaintext()` (files
+  may be `<name>.enc`), and new audio must be sealed with `seal_session_audio()`. Tests and demo
+  mode never use the real keyring (MemoryKeyStore / FileKeyStore); keep it that way.
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.
@@ -179,6 +182,16 @@ file `<data_dir>/logs/backend.log` (mnemosyne/logs.py) and Copy diagnostics
 (services/diagnostics.py); copilot notes saved with the session and fed to the summary; summary
 items with transcript times (`decision_at`, `question_at`, `ActionItem.at`); Ctrl+K palette
 (components/CommandPalette.svelte).
+After 0.8.0 (docs/plans/2026-09-28-after-0.8.md, unreleased): GPU-extra install check in CI
+(gpu-extra.yml, scripts/check-gpu-extra.py, a Release prerequisite); live labels corrected by
+re-running Nemotron every 30 s (transcription/live_rediarize.py, `live_labels` events); per-word
+speaker labels (transcription/assign.py); echo canceller pinned to the chosen mic
+(`echo_cancel_mic`); "Who is who?" card (components/SpeakerNamingCard.svelte,
+`speakers_reviewed`); quotes with audio clips (services/clips.py, `recordings/<id>/clips/`); due
+dates on action items; Report a problem (clipboard + GitHub new-issue link); offline AppImage
+(scripts/build-offline-appimage.sh, `offline/` in the bundle, `install_offline` in lib.rs);
+encryption at rest (storage/crypto.py, services/encryption.py: SQLCipher + AES-GCM `.enc` audio,
+key in the keyring, locked mode answers 423); MIT metadata and docs/flathub.md (not submitted).
 
 Nemotron diarizer (2026-09-25, transcription/diarizers/nemotron.py): NVIDIA Nemotron-3-Diarization
 (Streaming Sortformer, max 8 speakers) via NeMo, default on NVIDIA through `diarizer = "auto"`;
