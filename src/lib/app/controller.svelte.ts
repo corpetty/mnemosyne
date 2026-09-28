@@ -85,6 +85,8 @@ async function resumeActiveRecording() {
   const [active] = await getActiveRecordings().catch(() => []);
   if (!active || audioState.isRecording) return;
   audioState.resume(active.session_id, active.started_at, active.device_ids, active.problems);
+  // The sources line names the devices: a fresh window has not loaded them yet.
+  if (!audioState.devices.length) void audioState.loadDevices();
   transcriptState.resumeLive(
     active.session_id,
     active.live_segments.map((s) => s.segment),
