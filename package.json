@@ -2,6 +2,7 @@
   "name": "mnemosyne",
   "private": true,
   "version": "0.8.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
