@@ -87,3 +87,86 @@ def test_shutdown_stops_recordings_still_running(app, fake_pipewire):
         procs = [p.process for p in app.state.ctx.active_recordings[sid].processes]
         assert all(p.returncode is None for p in procs)
     assert all(p.returncode is not None for p in procs)  # pw-record does not outlive us
+
+
+# ---- startup that survives what it finds ----------------------------------------------
+
+
+@pytest.fixture
+def config_file(tmp_path, monkeypatch):
+    from mnemosyne import config
+
+    path = tmp_path / "config.toml"
+    monkeypatch.setenv("MNEMOSYNE_CONFIG_FILE", str(path))
+    monkeypatch.setenv("MNEMOSYNE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(config, "STARTUP_PROBLEMS", [])
+    return path
+
+
+def test_a_settings_file_that_is_not_toml_is_set_aside(config_file):
+    from mnemosyne import config
+
+    config_file.write_text('auto_transcribe = false\nobsidian_vault_path = "unterminated\n')
+    settings = config.load_settings()
+    assert settings.auto_transcribe is True  # defaults
+    assert config_file.with_name("config.toml.broken").read_text().startswith("auto_transcribe")
+    assert "could not be read" in config.STARTUP_PROBLEMS[0]
+
+
+def test_only_the_settings_that_no_longer_validate_are_reset(config_file):
+    from mnemosyne import config
+
+    config_file.write_text('auto_transcribe = false\nsetup_complete = "maybe"\n')
+    settings = config.load_settings()
+    assert settings.auto_transcribe is False  # kept
+    assert settings.setup_complete is False  # reset
+    assert "setup_complete" in config.STARTUP_PROBLEMS[0]
+    assert '"maybe"' not in config_file.read_text()
+
+
+def test_a_failing_startup_step_is_reported_not_fatal(app, monkeypatch):
+    from mnemosyne.services import recovery
+
+    def boom(_app):
+        raise OSError("disk on fire")
+
+    monkeypatch.setattr(recovery, "recover_interrupted", boom)
+    with TestClient(app) as c:
+        assert c.get("/health").status_code == 200
+        problems = c.get("/api/system").json()["problems"]
+    assert problems == ["Recovering interrupted recordings failed at startup: disk on fire"]
+
+
+@pytest.mark.anyio
+async def test_finished_jobs_are_forgotten_beyond_a_limit(monkeypatch):
+    from mnemosyne.events import EventBus
+    from mnemosyne.jobs import JobManager
+
+    jobs = JobManager(EventBus())
+    monkeypatch.setattr(JobManager, "KEEP_FINISHED", 3)
+
+    async def quick(ctx):
+        return {}
+
+    async def forever(ctx):
+        await asyncio.Event().wait()
+
+    running = jobs.submit("live", forever)
+    done = [jobs.submit("x", quick) for _ in range(6)]
+    for j in done:
+        await jobs.wait(j.id)
+    jobs.submit("x", quick)
+    kept = {j.id for j in jobs.list()}
+    assert running.id in kept  # never a job still running
+    assert {j.id for j in done[-3:]} <= kept and not {j.id for j in done[:3]} & kept
+    await jobs.shutdown()
+
+
+def test_a_stuck_subscriber_is_logged_rarely(caplog):
+    from mnemosyne.events import EventBus
+
+    bus = EventBus(maxsize=1)
+    bus.subscribe()
+    for _ in range(500):
+        bus.publish({"type": "level"})
+    assert len([r for r in caplog.records if "dropped" in r.getMessage()]) == 2  # 1st, 100th

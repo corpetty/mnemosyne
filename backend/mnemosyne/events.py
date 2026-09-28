@@ -18,6 +18,7 @@ class EventBus:
     def __init__(self, maxsize: int = 1000):
         self._subscribers: set[asyncio.Queue[Event]] = set()
         self._maxsize = maxsize
+        self._dropped: dict[int, int] = {}  # per subscriber queue: events dropped so far
 
     def subscribe(self) -> asyncio.Queue[Event]:
         q: asyncio.Queue[Event] = asyncio.Queue(maxsize=self._maxsize)
@@ -26,13 +27,20 @@ class EventBus:
 
     def unsubscribe(self, q: asyncio.Queue[Event]) -> None:
         self._subscribers.discard(q)
+        self._dropped.pop(id(q), None)
 
     def publish(self, event: Event) -> None:
         for q in list(self._subscribers):
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                logger.warning("Dropping event for slow subscriber: %s", event.get("type"))
+                # Logged at the 1st, 100th, 10000th drop: a stuck client drops every event,
+                # and a line for each filled the log.
+                n = self._dropped[id(q)] = self._dropped.get(id(q), 0) + 1
+                if n in (1, 100, 10_000):
+                    logger.warning(
+                        "Slow subscriber: %d event(s) dropped (latest: %s)", n, event.get("type")
+                    )
 
     @property
     def subscriber_count(self) -> int:

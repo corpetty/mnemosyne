@@ -4033,6 +4033,8 @@ export interface components {
             pipewire: boolean;
             /** Platform */
             platform: string;
+            /** Problems */
+            problems: string[];
         };
         /** TaskItem */
         TaskItem: {

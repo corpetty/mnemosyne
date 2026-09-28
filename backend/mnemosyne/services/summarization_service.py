@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+from collections import OrderedDict
 from collections.abc import Callable
 
 from ..config import Settings
@@ -36,8 +38,13 @@ class SummarizationService:
     # Names to hide from cloud providers when cloud_redaction is on; set by AppContext.
     name_source: Callable[[], list[str]] | None = None
 
+    PARTS_KEPT = 64
+
     def __init__(self, settings: Settings | None = None):
         self.providers: dict[str, SummarizationProvider] = {}
+        # Replies for parts of long meetings: summarizing again after one part failed (or
+        # with a different style of merge) does not redo the parts that came back.
+        self._parts: OrderedDict[str, str] = OrderedDict()
         self.chunk_chars = settings.summary_chunk_chars if settings is not None else 0
         if settings is not None:
             self._init_providers(settings)
@@ -49,6 +56,10 @@ class SummarizationService:
             self.providers["openai"] = OpenAIProvider(api_key=settings.openai_api_key)
         if settings.anthropic_api_key:
             self.providers["anthropic"] = AnthropicProvider(api_key=settings.anthropic_api_key)
+        from ..summarization.retry import RetryingProvider
+
+        for name in list(self.providers):
+            self.providers[name] = RetryingProvider(self.providers[name])
         if settings.cloud_redaction:
             from ..summarization.privacy import CLOUD_PROVIDERS, RedactingProvider
 
@@ -148,10 +159,23 @@ class SummarizationService:
                 style=style,
                 extra=f"{instructions}\n{partial_instructions(n, total, start, end)}",
             )
-            raw = await provider.summarize("\n".join(lines[a:b]), model, system)
+            raw = await self._summarize_part(provider, model, system, "\n".join(lines[a:b]))
             summary, data = parse_summary_response(raw, style=style)
             parts.append(part_payload(n, start, end, summary, data))
         return await self._merge(provider, model, parts, style, instructions, on_progress)
+
+    async def _summarize_part(self, provider, model: str, system: str, text: str) -> str:
+        key = hashlib.sha256(
+            "\0".join((getattr(provider, "name", ""), model, system, text)).encode()
+        ).hexdigest()
+        if (raw := self._parts.get(key)) is not None:
+            self._parts.move_to_end(key)
+            return raw
+        raw = await provider.summarize(text, model, system)
+        self._parts[key] = raw
+        while len(self._parts) > self.PARTS_KEPT:
+            self._parts.popitem(last=False)
+        return raw
 
     async def _merge(
         self, provider, model, parts, style, instructions, on_progress

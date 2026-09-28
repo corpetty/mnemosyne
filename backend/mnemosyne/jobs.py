@@ -75,6 +75,8 @@ JobRunner = Callable[[JobContext], Awaitable[dict[str, Any] | None]]
 
 
 class JobManager:
+    KEEP_FINISHED = 200
+
     def __init__(self, bus: EventBus, concurrency: dict[str, int] | None = None):
         self.bus = bus
         self.jobs: dict[str, Job] = {}
@@ -87,6 +89,7 @@ class JobManager:
 
     def submit(self, kind: str, runner: JobRunner, session_id: str | None = None) -> Job:
         job = Job(kind=kind, session_id=session_id)
+        self._prune()
         self.jobs[job.id] = job
         self._publish(job)
         task = asyncio.create_task(self._run(job, runner), name=f"job-{kind}-{job.id}")
@@ -128,6 +131,16 @@ class JobManager:
             await self.cancel(job_id)
 
     # ---- internals -----------------------------------------------------
+
+    def _prune(self) -> None:
+        """Forget the oldest finished jobs beyond KEEP_FINISHED: a backend that runs for weeks
+        (every recording, summary, question and backup is a job) must not keep them all."""
+        finished = [j for j in self.jobs.values() if j.is_terminal]
+        if len(finished) <= self.KEEP_FINISHED:
+            return
+        finished.sort(key=lambda j: j.finished_at or j.created_at)
+        for job in finished[: len(finished) - self.KEEP_FINISHED]:
+            del self.jobs[job.id]
 
     def _publish(self, job: Job) -> None:
         self.bus.publish({"type": "job", "job": job.model_dump(mode="json")})

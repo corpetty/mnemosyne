@@ -22,6 +22,7 @@ class SystemInfo(ApiModel):
     ffmpeg: bool
     hf_token: bool  # needed for speaker identification (pyannote)
     platform: str
+    problems: list[str]  # what went wrong when the backend started (config, recovery, ...)
 
 
 def _has(module: str) -> bool:
@@ -51,6 +52,7 @@ async def system_info(ctx: AppContext = Depends(get_ctx)):
         ffmpeg=bool(shutil.which("ffmpeg")),
         hf_token=bool(ctx.settings.hf_token),
         platform=f"{platform.system()} {platform.release()}",
+        problems=ctx.startup_problems,
     )
 
 

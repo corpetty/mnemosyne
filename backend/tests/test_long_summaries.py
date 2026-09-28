@@ -164,3 +164,31 @@ async def test_long_merges_happen_in_rounds():
         assert len(json.loads(c[2])) <= 2
     assert out["summary"] == "merged"
     assert progress[-1] == "Merging 2 parts"
+
+
+class FlakyMapProvider(ScriptedProvider):
+    """The second part fails once, like a provider that dropped the connection."""
+
+    failed = False
+
+    async def summarize(self, transcript, model, system_prompt):
+        if "part 2 of" in system_prompt and not self.failed:
+            self.failed = True
+            raise RuntimeError("connection reset")
+        return await super().summarize(transcript, model, system_prompt)
+
+
+@pytest.mark.anyio
+async def test_summarizing_again_reuses_the_parts_that_came_back():
+    svc = SummarizationService()
+    svc.chunk_chars = 250
+    provider = FlakyMapProvider(json.dumps({"summary": "whole meeting"}))
+    svc.providers = {"p": provider}
+    with pytest.raises(RuntimeError):
+        await svc.summarize(_segments(6), "p")
+    assert [c[1].count("part 1 of") for c in provider.calls] == [1]  # part 2 raised
+    out = await svc.summarize(_segments(6), "p")
+    maps = [c for c in provider.calls if c[0] == "map"]
+    assert len(maps) == 2  # the second run asked only for part 2
+    assert "part 2 of" in maps[1][1]
+    assert out["summary"] == "whole meeting"

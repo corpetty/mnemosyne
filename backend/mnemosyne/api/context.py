@@ -47,6 +47,7 @@ class AppContext:
     pairing: PairingService
     link: LinkService
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
+    startup_problems: list[str] = field(default_factory=list)  # shown by the app
     starting: set[str] = field(default_factory=set)  # sessions whose recording is starting
     echo: EchoCancelManager = field(default_factory=EchoCancelManager)
     _retention_task: asyncio.Task | None = None
@@ -287,14 +288,28 @@ class AppContext:
             return None
         return self.jobs.submit("backup", backup_runner(self, prune_after=True))
 
+    async def _try(self, what: str, step) -> None:
+        """One startup step: a failure is logged and reported (/api/system), never fatal. The
+        app must come up (to record, to show what went wrong) even if a side service cannot."""
+        try:
+            result = step()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as e:
+            logger.exception("Startup: %s failed", what)
+            self.startup_problems.append(f"{what} failed at startup: {e}")
+
     async def startup(
         self, retention_interval: float = 6 * 3600, digest_interval: float = 900
     ) -> None:
+        from ..config import STARTUP_PROBLEMS
         from ..storage.crypto import clean_scratch
 
+        self.startup_problems[:0] = STARTUP_PROBLEMS
         self._intervals = (retention_interval, digest_interval)
-        clean_scratch()
-        await self.apply_remote_access()  # also while locked: a paired computer can unlock
+        await self._try("Cleaning temporary copies", clean_scratch)
+        # Also while locked: a paired computer can unlock.
+        await self._try("Remote access", self.apply_remote_access)
         if self.locked:
             logger.warning("Waiting for the recovery code before starting")
             return
@@ -319,26 +334,32 @@ class AppContext:
         # now, so the meeting goes back to what it was, transcript or not.
         from ..models.session import SessionStatus
 
-        for s in self.sessions.list_sessions():
-            if s.status == SessionStatus.TRANSCRIBING:
-                done = SessionStatus.COMPLETED if s.has_transcript else SessionStatus.CREATED
-                self.sessions.set_status(s.id, done)
+        def reset_transcribing():
+            for s in self.sessions.list_sessions():
+                if s.status == SessionStatus.TRANSCRIBING:
+                    done = SessionStatus.COMPLETED if s.has_transcript else SessionStatus.CREATED
+                    self.sessions.set_status(s.id, done)
+
+        await self._try("Resetting unfinished transcriptions", reset_transcribing)
         # First, so retention and the index never see a half-finished recording.
-        recover_interrupted(self)
+        await self._try("Recovering interrupted recordings", lambda: recover_interrupted(self))
         if self.settings.echo_cancel:
-            try:
-                status = await self.echo.start(self.settings.echo_cancel_mic or None)
-            except ValueError as e:  # a bad saved mic: fall back to the default source
-                logger.warning("%s", e)
-                status = await self.echo.start()
-            if not status.active:
-                logger.warning("Echo cancellation not started: %s", status.reason)
+            await self._try("Echo cancellation", self._start_echo)
         self._retention_task = asyncio.create_task(self._retention_loop(retention_interval))
         self._digest_task = asyncio.create_task(self._digest_loop(digest_interval))
         self.index.start(self.bus)
         self._apps_task = asyncio.create_task(self._apps_loop(5.0))
         self._backup_task = asyncio.create_task(self._backup_loop(3600.0))
         self._idle_task = asyncio.create_task(self._idle_loop(60.0))
+
+    async def _start_echo(self) -> None:
+        try:
+            status = await self.echo.start(self.settings.echo_cancel_mic or None)
+        except ValueError as e:  # a bad saved mic: fall back to the default source
+            logger.warning("%s", e)
+            status = await self.echo.start()
+        if not status.active:
+            logger.warning("Echo cancellation not started: %s", status.reason)
 
     async def shutdown(self) -> None:
         # Recordings still running end here, their files closed properly; the next start

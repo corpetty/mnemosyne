@@ -92,10 +92,22 @@ def _app_version() -> str:
 
 
 def _files(recordings_dir: Path) -> list[Path]:
-    """What a backup holds of the recordings folder: not WAVs (a capture still running)."""
+    """What a backup holds of the recordings folder: not WAVs (a capture still running), nor
+    hidden files (a mix or join being written, replaced when it is done)."""
     if not recordings_dir.is_dir():
         return []
-    return sorted(p for p in recordings_dir.rglob("*") if p.is_file() and p.suffix != ".wav")
+    return sorted(
+        p
+        for p in recordings_dir.rglob("*")
+        if p.is_file() and p.suffix != ".wav" and not p.name.startswith(".")
+    )
+
+
+def _size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:  # gone since it was listed
+        return 0
 
 
 def _add_bytes(tar: tarfile.TarFile, name: str, data: bytes) -> None:
@@ -117,7 +129,7 @@ def create_backup(app: AppContext, progress: Callable[[float], None] | None = No
     snapshot = dest / f".{name}.db"
     files = _files(settings.recordings_dir)
     resources = _files(settings.assets_dir)
-    total = sum(f.stat().st_size for f in files + resources) or 1
+    total = sum(_size(f) for f in files + resources) or 1
     manifest = {
         "format": FORMAT,
         "app_version": _app_version(),
@@ -139,8 +151,12 @@ def create_backup(app: AppContext, progress: Callable[[float], None] | None = No
                 (settings.assets_dir, "assets", resources),
             ):
                 for f in group:
-                    tar.add(f, arcname=f"{top}/{f.relative_to(folder).as_posix()}")
-                    done += f.stat().st_size
+                    try:
+                        tar.add(f, arcname=f"{top}/{f.relative_to(folder).as_posix()}")
+                    except FileNotFoundError:  # deleted since it was listed (a meeting, a clip)
+                        logger.info("Backup: %s is gone, skipped", f)
+                        continue
+                    done += _size(f)
                     if progress:
                         progress(done / total)
         partial.chmod(0o600)

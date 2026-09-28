@@ -155,3 +155,30 @@ def test_schedule_and_pruning(tmp_path):
     (folder / "unrelated.tar").write_bytes(b"")
     assert prune(s) == [f"{PREFIX}20260901-120000.tar"]
     assert sorted(p.name for p in folder.iterdir())[-1] == "unrelated.tar"
+
+
+def test_a_file_that_goes_away_mid_backup_is_skipped(settings, keystore, monkeypatch):
+    from mnemosyne.services import backup
+
+    app = create_app(settings, keystore=keystore)
+    ctx = app.state.ctx
+    sid = _meeting(ctx)
+    folder = ctx.settings.recordings_dir / sid
+    clip = folder / "clips" / "0-3.ogg"
+    clip.parent.mkdir()
+    clip.write_bytes(b"OggS clip")
+    (folder / ".meeting_1.ogg.joining.ogg").write_bytes(b"half written")
+    real = backup._files
+
+    def listed_then_deleted(recordings_dir):
+        files = real(recordings_dir)
+        clip.unlink(missing_ok=True)  # the clip is deleted while the backup runs
+        return files
+
+    monkeypatch.setattr(backup, "_files", listed_then_deleted)
+    with TestClient(app) as client:
+        info = _back_up(client)
+        with tarfile.open(settings.data_dir.parent / "backups" / info["name"]) as tar:
+            names = tar.getnames()
+    assert f"recordings/{sid}/a_mixed.ogg" in names
+    assert not any("clips" in n or "joining" in n for n in names)

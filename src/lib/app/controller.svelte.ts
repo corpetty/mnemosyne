@@ -10,6 +10,7 @@ import {
   getHealth,
   getJob,
   getSettings,
+  getSystemInfo,
   listSessions
 } from '$lib/api/backend.js';
 import { askState } from '$lib/stores/ask.svelte.js';
@@ -164,6 +165,22 @@ async function maybeRunSetup() {
     }
   } catch {
     /* not reachable yet; the next connect tries again */
+  }
+}
+
+/** What went wrong when the backend started (a damaged settings file, a recovery that
+ * failed): said once per backend, not on every reconnect. */
+const shownProblems = new Set<string>();
+async function showStartupProblems() {
+  try {
+    const { problems } = await getSystemInfo();
+    for (const p of problems) {
+      if (shownProblems.has(p)) continue;
+      shownProblems.add(p);
+      toastState.show(p, 'error', 20_000);
+    }
+  } catch {
+    /* an older backend, or not reachable yet */
   }
 }
 
@@ -507,6 +524,7 @@ function onConnected(): () => void {
   digestState.init();
   const stopAutoRecord = listenForAutoRecord();
   maybeRunSetup();
+  void showStartupProblems();
   void import('./smoke.js').then((m) => m.runSmokeTest());
   calendarState.start();
   audioState.listenForLevels();

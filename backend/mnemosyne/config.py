@@ -353,13 +353,57 @@ class Settings(BaseSettings):
 CONFIG_VERSION = 1
 
 
+# What went wrong reading the settings, for the app to tell the user (routes/system.py).
+STARTUP_PROBLEMS: list[str] = []
+
+
 def load_settings() -> Settings:
-    settings = Settings()
+    try:
+        settings = Settings()
+    except Exception as e:  # a damaged file, or values this version no longer accepts
+        settings = _repair_config(e)
     if settings.config_version < CONFIG_VERSION:
         _migrate(settings)
         if config_file_path().exists():
             save_settings(settings)
     return settings
+
+
+def _repair_config(error: Exception) -> Settings:
+    """Start anyway when the config file is the problem: a file that is not TOML is set aside
+    (defaults are used), values that no longer validate are reset one by one. The original is
+    kept next to it as config.toml.broken. A backend that will not start is worse than one
+    that forgot a setting."""
+    import shutil
+    import tomllib
+
+    path = config_file_path()
+    if not path.exists():
+        raise error  # the environment (.env) is at fault; nothing here to repair
+    broken = path.with_name(path.name + ".broken")
+    shutil.copy2(path, broken)
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+        path.unlink()
+        note = (
+            f"The settings file could not be read, so defaults are in use (it was kept as {broken})"
+        )
+    else:
+        errors = error.errors() if hasattr(error, "errors") else []
+        bad = {str(e["loc"][0]) for e in errors if e.get("loc")} & set(data)
+        if not bad:
+            raise error
+        kept = {k: v for k, v in data.items() if k not in bad}
+        tmp = path.with_suffix(".toml.tmp")
+        tmp.write_text(tomli_w.dumps(kept))
+        os.chmod(tmp, 0o600)
+        tmp.replace(path)
+        names = ", ".join(sorted(bad))
+        note = f"Reset settings this version could not use: {names} (the old file is {broken})"
+    logger.error("%s", note)
+    STARTUP_PROBLEMS.append(note)
+    return Settings()
 
 
 def _migrate(settings: Settings) -> None:

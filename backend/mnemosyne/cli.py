@@ -1,6 +1,7 @@
 """Command-line entry point: `mnemosyne-backend --host 127.0.0.1 --port 8008`."""
 
 import argparse
+import logging
 import os
 import warnings
 
@@ -25,7 +26,7 @@ def main() -> None:
     import uvicorn
 
     from .api.app import create_app
-    from .config import load_settings
+    from .config import STARTUP_PROBLEMS, load_settings
     from .logs import setup_logging
 
     parser = argparse.ArgumentParser(description="Mnemosyne backend")
@@ -39,6 +40,8 @@ def main() -> None:
     os.environ["MNEMOSYNE_BIND_PORT"] = str(args.port)
     settings = load_settings()
     setup_logging(settings.data_dir)
+    for note in STARTUP_PROBLEMS:  # found before the log file was set up
+        logging.getLogger("mnemosyne").error("%s", note)
     sock = bind(args.host, args.port)
     config = uvicorn.Config(create_app(settings), host=args.host, port=args.port)
     uvicorn.Server(config).run(sockets=[sock])
