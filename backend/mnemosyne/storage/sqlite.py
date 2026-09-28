@@ -37,6 +37,36 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 11
 
+# The search index follows its tables by rowid: an index row has the rowid of the row it
+# indexes, so removing one is a lookup. (Matching on session_id and idx, UNINDEXED columns,
+# scanned the whole index once per removed line: rewriting a long transcript took minutes.)
+FTS_TRIGGERS = """
+CREATE TRIGGER IF NOT EXISTS segments_ai AFTER INSERT ON segments BEGIN
+    INSERT INTO segments_fts(rowid, text, session_id, idx)
+    VALUES (new.rowid, new.text, new.session_id, new.idx);
+END;
+CREATE TRIGGER IF NOT EXISTS segments_ad AFTER DELETE ON segments BEGIN
+    DELETE FROM segments_fts WHERE rowid = old.rowid;
+END;
+CREATE TRIGGER IF NOT EXISTS segments_au AFTER UPDATE OF text ON segments BEGIN
+    DELETE FROM segments_fts WHERE rowid = old.rowid;
+    INSERT INTO segments_fts(rowid, text, session_id, idx)
+    VALUES (new.rowid, new.text, new.session_id, new.idx);
+END;
+CREATE TRIGGER IF NOT EXISTS sessions_ai AFTER INSERT ON sessions BEGIN
+    INSERT INTO sessions_fts(rowid, name, summary, notes, session_id)
+    VALUES (new.rowid, new.name, new.summary, new.notes, new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE OF name, summary, notes ON sessions BEGIN
+    DELETE FROM sessions_fts WHERE rowid = old.rowid;
+    INSERT INTO sessions_fts(rowid, name, summary, notes, session_id)
+    VALUES (new.rowid, new.name, new.summary, new.notes, new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
+    DELETE FROM sessions_fts WHERE rowid = old.rowid;
+END;
+"""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -97,25 +127,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
     name, summary, notes, session_id UNINDEXED,
     tokenize='unicode61 remove_diacritics 2'
 );
-CREATE TRIGGER IF NOT EXISTS segments_ai AFTER INSERT ON segments BEGIN
-    INSERT INTO segments_fts(text, session_id, idx) VALUES (new.text, new.session_id, new.idx);
-END;
-CREATE TRIGGER IF NOT EXISTS segments_ad AFTER DELETE ON segments BEGIN
-    DELETE FROM segments_fts WHERE session_id = old.session_id AND idx = old.idx;
-END;
-CREATE TRIGGER IF NOT EXISTS sessions_ai AFTER INSERT ON sessions BEGIN
-    INSERT INTO sessions_fts(name, summary, notes, session_id)
-    VALUES (new.name, new.summary, new.notes, new.id);
-END;
-CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE OF name, summary, notes ON sessions BEGIN
-    DELETE FROM sessions_fts WHERE session_id = old.id;
-    INSERT INTO sessions_fts(name, summary, notes, session_id)
-    VALUES (new.name, new.summary, new.notes, new.id);
-END;
-CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
-    DELETE FROM sessions_fts WHERE session_id = old.id;
-END;
-CREATE TABLE IF NOT EXISTS asks (
+{FTS_TRIGGERS}CREATE TABLE IF NOT EXISTS asks (
     id TEXT PRIMARY KEY,
     question TEXT NOT NULL,
     answer TEXT NOT NULL,
@@ -193,6 +205,7 @@ CREATE TABLE IF NOT EXISTS session_assets (
     PRIMARY KEY (session_id, asset_id)
 );
 """
+SCHEMA = SCHEMA.replace("{FTS_TRIGGERS}", FTS_TRIGGERS)
 
 
 def _dt(value: str) -> datetime:
@@ -307,6 +320,7 @@ class SessionRepository:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
         self._migrate_columns()
+        self._migrate_fts_rowids()
         self._conn.execute(
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
@@ -349,18 +363,47 @@ class SessionRepository:
             self._conn.execute("UPDATE sessions SET speakers_reviewed = 1")
         self._conn.commit()
 
+    def _migrate_fts_rowids(self) -> None:
+        """Databases from before the index followed rowids: new triggers, rebuilt index. Once."""
+        done = self._conn.execute("SELECT value FROM meta WHERE key='fts_rowids'").fetchone()
+        if done is not None:
+            return
+        with self._conn:
+            for trigger in (
+                "segments_ai",
+                "segments_ad",
+                "segments_au",
+                "sessions_ai",
+                "sessions_au",
+                "sessions_ad",
+            ):
+                self._conn.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+            self._conn.execute("DELETE FROM segments_fts")
+            self._conn.execute("DELETE FROM sessions_fts")
+        self._conn.executescript(FTS_TRIGGERS)
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO segments_fts(rowid, text, session_id, idx)"
+                " SELECT rowid, text, session_id, idx FROM segments"
+            )
+            self._conn.execute(
+                "INSERT INTO sessions_fts(rowid, name, summary, notes, session_id)"
+                " SELECT rowid, name, summary, notes, id FROM sessions"
+            )
+            self._conn.execute("INSERT INTO meta(key, value) VALUES ('fts_rowids', '1')")
+
     def _backfill_fts(self) -> None:
         """Index rows that predate the FTS tables (databases from schema < 3)."""
         with self._lock, self._conn:
             if self._conn.execute("SELECT count(*) FROM segments_fts").fetchone()[0] == 0:
                 self._conn.execute(
-                    "INSERT INTO segments_fts(text, session_id, idx)"
-                    " SELECT text, session_id, idx FROM segments"
+                    "INSERT INTO segments_fts(rowid, text, session_id, idx)"
+                    " SELECT rowid, text, session_id, idx FROM segments"
                 )
             if self._conn.execute("SELECT count(*) FROM sessions_fts").fetchone()[0] == 0:
                 self._conn.execute(
-                    "INSERT INTO sessions_fts(name, summary, notes, session_id)"
-                    " SELECT name, summary, notes, id FROM sessions"
+                    "INSERT INTO sessions_fts(rowid, name, summary, notes, session_id)"
+                    " SELECT rowid, name, summary, notes, id FROM sessions"
                 )
             self._conn.execute(
                 "UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),)
@@ -854,13 +897,32 @@ class SessionRepository:
         session = self.get(session_id)
         if session is None:
             return None
-        segments = edit(list(session.transcript))
+        before = list(session.transcript)
+        segments = edit(list(before))
         speakers = list(dict.fromkeys(s.speaker for s in segments if s.speaker != "UNKNOWN"))
         # Keep participants that still appear, in their existing order, then new ones.
         participants = [p for p in session.participants if p in speakers]
         participants += [s for s in speakers if s not in participants]
         with self._lock, self._conn:
-            self._write_segments(session_id, segments)
+            if len(segments) == len(before):  # lines changed in place: write only those
+                for i, (old, new) in enumerate(zip(before, segments, strict=True)):
+                    if old != new:
+                        words = [w.model_dump() for w in new.words] if new.words else None
+                        self._conn.execute(
+                            """UPDATE segments SET text=?, speaker=?, start=?, "end"=?, words=?
+                               WHERE session_id=? AND idx=?""",
+                            (
+                                new.text,
+                                new.speaker,
+                                new.start,
+                                new.end,
+                                json.dumps(words) if words else None,
+                                session_id,
+                                i,
+                            ),
+                        )
+            else:
+                self._write_segments(session_id, segments)
             self._conn.execute(
                 "UPDATE sessions SET participants=?, updated_at=? WHERE id=?",
                 (json.dumps(participants), datetime.now().isoformat(), session_id),
