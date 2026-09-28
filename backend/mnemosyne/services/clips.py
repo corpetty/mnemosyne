@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from ..models.session import Session
-from ..storage.crypto import encrypt_file, plaintext
+from ..storage.crypto import encrypt_file, plaintext_async
 from ..summarization.prompts import mmss
 
 PAD = 0.3  # seconds of audio kept before the first and after the last word
@@ -49,7 +49,7 @@ async def cut_clip(
         raise ValueError(f"A clip can be at most {int(MAX_SECONDS // 60)} minutes long")
     clips_dir.mkdir(parents=True, exist_ok=True)
     out = clips_dir / f"{first}-{last}.ogg"
-    with plaintext(session.audio_file, file_key) as source:
+    async with plaintext_async(session.audio_file, file_key) as source:
         await _ffmpeg_cut(Path(source), start, end, out)
     if file_key is not None:
         return await asyncio.to_thread(encrypt_file, out, file_key)

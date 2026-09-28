@@ -1,5 +1,7 @@
 """Audio device listing endpoints."""
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 
 from ...audio.capture import list_devices
@@ -22,7 +24,7 @@ class DeviceResponse(ApiModel):
 @router.get("", response_model=list[DeviceResponse])
 async def get_devices():
     try:
-        devices = list_devices()
+        devices = await asyncio.to_thread(list_devices)
     except (RuntimeError, FileNotFoundError) as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     return [

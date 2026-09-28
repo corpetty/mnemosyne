@@ -51,7 +51,10 @@ class RecordingSession:
 
 def list_devices() -> list[AudioDevice]:
     """List available PipeWire audio devices using pw-dump."""
-    result = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5)
+    try:
+        result = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError("PipeWire is not answering (pw-dump timed out)") from e
     if result.returncode != 0:
         raise RuntimeError(f"pw-dump failed: {result.stderr}")
 
@@ -129,7 +132,7 @@ async def start_recording(
     session_id = str(uuid.uuid4())[:8]
     session = RecordingSession(session_id=session_id, output_dir=output_dir)
 
-    devices = {d.id: d for d in list_devices()}
+    devices = {d.id: d for d in await asyncio.to_thread(list_devices)}
 
     for device_id in device_ids:
         device = devices.get(device_id)
@@ -141,10 +144,12 @@ async def start_recording(
         # Build pw-record command
         cmd = build_record_command(device, output_path, sample_rate, channels, format)
 
+        # Nothing reads pw-record's output: a pipe would fill up with its warnings over a long
+        # meeting and then block it, stopping the recording.
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
 
         session.processes.append(

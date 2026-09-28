@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from ..jobs import JobContext
 from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus, transcript_hash
 from ..models.transcript import TranscriptSegment
-from ..storage.crypto import plaintext
+from ..storage.crypto import plaintext_async
 from ..summarization.privacy import LOCAL_ONLY_ERROR, is_cloud
 from ..summarization.prompts import meeting_date_instructions
 from ..transcription.engine import AudioSource
@@ -137,16 +137,19 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
             embeddings = app.repo.get_session_embeddings(session_id) if kept else {}
             n_sources = 0
             for part in todo:
-                with contextlib.ExitStack() as stack:
+                async with contextlib.AsyncExitStack() as stack:
                     if len(starts) > 1 and session.audio_file:
                         # A multi-part meeting's audio may be encrypted; cut from a plain copy.
-                        plain_meeting = stack.enter_context(
-                            plaintext(session.audio_file, app.file_key)
+                        # Decrypting and cutting hours of audio: in a thread, not on the loop.
+                        plain_meeting = await stack.enter_async_context(
+                            plaintext_async(session.audio_file, app.file_key)
                         )
                         view = session.model_copy(update={"audio_file": str(plain_meeting)})
                     else:
                         view = session
-                    sources = _part_sources(view, part, starts, settings, stack)
+                    sources = await asyncio.to_thread(
+                        _part_sources, view, part, starts, settings, stack
+                    )
                     if not sources:
                         continue
                     n_sources += len(sources)
@@ -160,7 +163,12 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
                     # Encrypted audio: the engine reads private plaintext copies, removed after.
                     plain = [
                         dataclasses.replace(
-                            s, path=str(stack.enter_context(plaintext(s.path, app.file_key)))
+                            s,
+                            path=str(
+                                await stack.enter_async_context(
+                                    plaintext_async(s.path, app.file_key)
+                                )
+                            ),
                         )
                         for s in sources
                     ]
@@ -372,7 +380,7 @@ def summarize_session(
             app.sessions.rename_session(session_id, title)
         exported = None
         if st.obsidian_auto_export and st.obsidian_vault_path:
-            exported = _auto_export(app, session_id)
+            exported = await asyncio.to_thread(_auto_export, app, session_id)
         ctx.update("Summary ready")
         return {
             "provider": result["provider"],
@@ -494,51 +502,61 @@ def live_transcribe(app: AppContext, session_id: str, recording):
     from ..transcription.mentions import MentionSpotter, parse_keywords
 
     settings = app.settings
-    try:
-        devices = {d.id: d for d in list_devices()}
-    except Exception:
-        devices = {}
-
-    sources = []
     multi = len(recording.processes) > 1
-    for proc in recording.processes:
-        device = devices.get(proc.device_id)
-        is_system = device is not None and device.is_output
-        if multi:
-            speaker = settings.remote_speaker_name if is_system else settings.local_speaker_name
-        else:
-            speaker = "Speaker"
-        # With separate channels the mic is the local user; everything else may hold
-        # several voices.
-        diarize = settings.live_diarization and (is_system or not multi)
-        sources.append(
-            LiveSource(
-                path=proc.output_path,
-                speaker=speaker,
-                kind="system" if is_system else "mic",
-                diarize=diarize,
-            )
-        )
 
-    embedder = clusterer = None
-    if any(src.diarize for src in sources):
-        from ..transcription.live_speakers import OnlineClusterer
-
-        embedder = app.models.live_embedder
-        if embedder is not None:
-            clusterer = OnlineClusterer(
-                threshold=settings.live_speaker_threshold,
-                known_threshold=settings.speaker_match_threshold,
-                known={p.name: p.embedding for p in app.repo.list_speakers()},
-            )
-            # Never hand the local user's name to a remote voice.
+    def prepare():
+        """Everything that blocks (pw-dump, importing torch, building models), in a thread:
+        on the event loop it held up every request at the start of a recording."""
+        try:
+            devices = {d.id: d for d in list_devices()}
+        except Exception:
+            devices = {}
+        sources = []
+        for proc in recording.processes:
+            device = devices.get(proc.device_id)
+            is_system = device is not None and device.is_output
             if multi:
-                clusterer.known.pop(settings.local_speaker_name, None)
+                speaker = settings.remote_speaker_name if is_system else settings.local_speaker_name
+            else:
+                speaker = "Speaker"
+            # With separate channels the mic is the local user; everything else may hold
+            # several voices.
+            diarize = settings.live_diarization and (is_system or not multi)
+            sources.append(
+                LiveSource(
+                    path=proc.output_path,
+                    speaker=speaker,
+                    kind="system" if is_system else "mic",
+                    diarize=diarize,
+                )
+            )
+
+        embedder = clusterer = diarizer = None
+        if any(src.diarize for src in sources):
+            from ..transcription.live_speakers import OnlineClusterer
+
+            embedder = app.models.live_embedder
+            if embedder is not None:
+                clusterer = OnlineClusterer(
+                    threshold=settings.live_speaker_threshold,
+                    known_threshold=settings.speaker_match_threshold,
+                    known={p.name: p.embedding for p in app.repo.list_speakers()},
+                )
+                # Never hand the local user's name to a remote voice.
+                if multi:
+                    clusterer.known.pop(settings.local_speaker_name, None)
+            diarizer = app.models.live_rediarizer
+        return app.models.live_transcriber, sources, embedder, clusterer, diarizer
 
     async def run(ctx: JobContext) -> dict:
         ctx.update("Live transcription")
+        try:
+            prepared = await asyncio.to_thread(prepare)
+        except asyncio.CancelledError:  # stopped before it got going
+            return {"segments": 0, "speakers": []}
+        transcriber, sources, embedder, clusterer, diarizer = prepared
         live = LiveTranscriber(
-            transcriber=app.models.live_transcriber,
+            transcriber=transcriber,
             sources=sources,
             emit=ctx.emit,
             session_id=session_id,
@@ -552,7 +570,6 @@ def live_transcribe(app: AppContext, session_id: str, recording):
         )
         app.live[session_id] = live  # read by the copilot
         rediarize = None
-        diarizer = app.models.live_rediarizer if any(s.diarize for s in sources) else None
         if diarizer is not None:
             from ..transcription.live_rediarize import LiveRediarizer
 

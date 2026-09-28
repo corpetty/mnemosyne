@@ -12,6 +12,7 @@ the whole file (playback seeks) and chunks cannot be reordered or truncated unno
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import hashlib
@@ -19,7 +20,7 @@ import os
 import secrets
 import struct
 import tempfile
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Protocol
 
@@ -273,3 +274,22 @@ def plaintext(path: str | Path, file_key: bytes | None) -> Iterator[Path]:
         yield tmp
     finally:
         tmp.unlink(missing_ok=True)
+
+
+@contextlib.asynccontextmanager
+async def plaintext_async(path: str | Path, file_key: bytes | None) -> AsyncIterator[Path]:
+    """plaintext() for async code: the copy (seconds, for hours of audio) is made in a thread,
+    not on the event loop, and removed even when the caller is cancelled while it is made."""
+    cm = plaintext(path, file_key)
+    made = asyncio.ensure_future(asyncio.to_thread(cm.__enter__))
+    try:
+        source = await asyncio.shield(made)
+    except asyncio.CancelledError:
+        made.add_done_callback(
+            lambda t: t.cancelled() or t.exception() or cm.__exit__(None, None, None)
+        )
+        raise
+    try:
+        yield source
+    finally:
+        cm.__exit__(None, None, None)

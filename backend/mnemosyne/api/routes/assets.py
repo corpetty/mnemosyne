@@ -1,5 +1,6 @@
 """Resources: a library of links and files, attached to meetings (services/assets.py)."""
 
+import asyncio
 import shutil
 import tempfile
 from pathlib import Path
@@ -91,7 +92,8 @@ async def add_file(
         Path(tmp.name).unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="The file is empty")
     asset = Asset(kind="file", title=title.strip() or name, filename=name, size=size)
-    stored, text = store_file(ctx, asset, Path(tmp.name))
+    # Reading a PDF's text and encrypting take a while: in a thread, not on the event loop.
+    stored, text = await asyncio.to_thread(store_file, ctx, asset, Path(tmp.name))
     asset = ctx.repo.add_asset(asset, path=stored, text=text)
     if session_id:
         ctx.repo.attach_asset(session_id, asset.id)

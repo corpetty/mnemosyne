@@ -126,7 +126,7 @@ class EchoCancelManager:
         # Give PipeWire a moment to create the nodes, then verify.
         for _ in range(20):
             await asyncio.sleep(0.1)
-            node = find_source_node()
+            node = await asyncio.to_thread(find_source_node)
             if node is not None:
                 return EchoCancelStatus(True, None, True, node, mic)
         await self.stop()
@@ -148,7 +148,7 @@ class EchoCancelManager:
 
     async def status(self) -> EchoCancelStatus:
         ok, reason = self.supported()
-        node = find_source_node() if ok else None
+        node = await asyncio.to_thread(find_source_node) if ok else None
         active = self.active and node is not None
         return EchoCancelStatus(ok, reason, active, node, self.mic if active else None)
 

@@ -180,7 +180,10 @@ async def begin_recording(
 ) -> StartRecordingResponse:
     device_ids = await _apply_echo_mic(ctx, device_ids)
     output_dir = ctx.settings.recordings_dir / session.id
-    recording = await start_recording(device_ids, output_dir)
+    try:
+        recording = await start_recording(device_ids, output_dir)
+    except (RuntimeError, FileNotFoundError) as e:
+        raise HTTPException(status_code=503, detail=f"Could not start recording: {e}") from e
     if not recording.processes:
         raise HTTPException(status_code=400, detail="None of the selected devices could be opened")
     # Recording again into a meeting that has audio adds a part; nothing is replaced. A part
@@ -515,6 +518,12 @@ IMPORT_EXTENSIONS = {
 }
 
 
+def _save_upload(file: UploadFile, dest: Path) -> None:
+    """Copy an upload (maybe hours of audio) to disk; called in a thread."""
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f, length=1024 * 1024)
+
+
 @router.post("/import", response_model=StopRecordingResponse)
 async def import_audio(
     file: UploadFile = File(...),
@@ -535,8 +544,7 @@ async def import_audio(
     out_dir = ctx.settings.recordings_dir / session.id
     out_dir.mkdir(parents=True, exist_ok=True)
     saved = out_dir / ("import_" + (_SAFE.sub("_", original.name) or "file"))
-    with saved.open("wb") as f:
-        shutil.copyfileobj(file.file, f, length=1024 * 1024)
+    await asyncio.to_thread(_save_upload, file, saved)
     if saved.stat().st_size == 0:
         saved.unlink(missing_ok=True)
         ctx.sessions.delete_session(session.id)
@@ -582,8 +590,7 @@ async def _import_part(ctx: AppContext, session_id: str, file, original: Path, t
     out_dir = ctx.settings.recordings_dir / session_id
     out_dir.mkdir(parents=True, exist_ok=True)
     saved = out_dir / (f"import{part}_" + (_SAFE.sub("_", original.name) or "file"))
-    with saved.open("wb") as f:
-        shutil.copyfileobj(file.file, f, length=1024 * 1024)
+    await asyncio.to_thread(_save_upload, file, saved)
     if saved.stat().st_size == 0:
         saved.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
@@ -643,7 +650,8 @@ async def _echo_response(ctx: AppContext) -> EchoCancelResponse:
     description = None
     if st.mic:
         try:
-            description = next((d.description for d in list_devices() if d.name == st.mic), None)
+            devices = await asyncio.to_thread(list_devices)
+            description = next((d.description for d in devices if d.name == st.mic), None)
         except Exception:
             logger.debug("Could not list devices for the echo canceller's mic", exc_info=True)
     pending = _wanted_mic(ctx) if st.active and _wanted_mic(ctx) != st.mic else None
@@ -719,8 +727,12 @@ async def echo_cancel_set(request: EchoCancelRequest, ctx: AppContext = Depends(
 # ---- levels and the capture self-test ------------------------------------------
 
 
-def _device_or_404(device_id: int):
-    device = next((d for d in list_devices() if d.id == device_id), None)
+async def _device_or_404(device_id: int):
+    try:
+        devices = await asyncio.to_thread(list_devices)
+    except (RuntimeError, FileNotFoundError) as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    device = next((d for d in devices if d.id == device_id), None)
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
     return device
@@ -730,7 +742,7 @@ def _device_or_404(device_id: int):
 async def device_level(device_id: int, seconds: float = 1.0, ctx: AppContext = Depends(get_ctx)):
     """Record briefly from a device and report its level (for checking a mic)."""
     seconds = min(max(seconds, 0.2), 5.0)
-    return await sample_level(_device_or_404(device_id), seconds)
+    return await sample_level(await _device_or_404(device_id), seconds)
 
 
 class SelfTestRequest(ApiModel):
@@ -741,7 +753,7 @@ class SelfTestRequest(ApiModel):
 async def capture_self_test(request: SelfTestRequest, ctx: AppContext = Depends(get_ctx)):
     """Check system-audio capture from an output: record it as a real recording would,
     play a short quiet tone through it, and report what was captured and from where."""
-    device = _device_or_404(request.device_id)
+    device = await _device_or_404(request.device_id)
     if not device.is_output:
         raise HTTPException(status_code=400, detail="Choose an output device to test")
     if ctx.active_recordings:

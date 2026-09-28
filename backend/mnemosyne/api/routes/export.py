@@ -1,5 +1,6 @@
 """Export endpoints."""
 
+import asyncio
 import logging
 import shutil
 
@@ -127,7 +128,7 @@ async def export_to_obsidian(session_id: str, ctx: AppContext = Depends(get_ctx)
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        path = export_session(ctx, session, vault_path)
+        path = await asyncio.to_thread(export_session, ctx, session, vault_path)
         return ExportResponse(path=str(path), message="Exported successfully")
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
