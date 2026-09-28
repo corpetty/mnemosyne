@@ -112,6 +112,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - Meetings can have several parts (services/parts.py): `Recording.part`/`offset`, the session's
   `audio_file` is all parts joined, transcript times are on that joined timeline. Never replace a
   session's audio or transcript wholesale when recording into it again; go through `add_part()`.
+- Backups (services/backup.py): restores are staged and applied at the next start in
+  `AppContext.build`, before the database opens; never unpack over a running backend. Tests and
+  the e2e demo backend set `backup_dir` to a temp folder: never let them write ~/Documents.
 - Encryption at rest: code that reads audio must go through `storage.crypto.plaintext()` (files
   may be `<name>.enc`), and new audio must be sealed with `seal_session_audio()`. Tests and demo
   mode never use the real keyring (MemoryKeyStore / FileKeyStore); keep it that way.

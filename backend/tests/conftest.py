@@ -29,7 +29,8 @@ def anyio_backend():
 @pytest.fixture
 def settings(tmp_path, monkeypatch) -> Settings:
     monkeypatch.setenv("MNEMOSYNE_CONFIG_FILE", str(tmp_path / "config.toml"))
-    return Settings(data_dir=tmp_path / "data")
+    # backup_dir: never the real ~/Documents/Mnemosyne backups
+    return Settings(data_dir=tmp_path / "data", backup_dir=str(tmp_path / "backups"))
 
 
 @pytest.fixture

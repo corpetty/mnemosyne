@@ -305,6 +305,32 @@ class SessionRepository:
         with self._lock:
             self._conn.close()
 
+    def rebase_paths(self, old: str, new: str) -> int:
+        """Move stored audio paths from one recordings folder to another (after a restore)."""
+        prefix = old.rstrip("/") + "/"
+        target = new.rstrip("/") + "/"
+        n = len(prefix)
+        with self._lock, self._conn:
+            a = self._conn.execute(
+                "UPDATE sessions SET audio_file = ? || substr(audio_file, ?)"
+                " WHERE substr(audio_file, 1, ?) = ?",
+                (target, n + 1, n, prefix),
+            ).rowcount
+            b = self._conn.execute(
+                "UPDATE recordings SET path = ? || substr(path, ?) WHERE substr(path, 1, ?) = ?",
+                (target, n + 1, n, prefix),
+            ).rowcount
+        return a + b
+
+    def snapshot(self, dest: Path) -> None:
+        """A consistent copy of the database file, as stored (encrypted when it is): the WAL is
+        folded in and nothing writes while the file is copied."""
+        import shutil
+
+        with self._lock:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            shutil.copyfile(self.db_path, dest)
+
     # ---- reads ---------------------------------------------------------
 
     def exists(self, session_id: str) -> bool:

@@ -7,6 +7,7 @@
 	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
 	import PhoneLink from './PhoneLink.svelte';
 	import StorageSettings from './StorageSettings.svelte';
+	import BackupSettings from './BackupSettings.svelte';
 	import { calendarState } from '$lib/stores/calendar.svelte.js';
 	import { checkGitHub, checkIntegration, getIndexStatus, listDesktopCalendars, rebuildIndex } from '$lib/api/backend.js';
 	import { collectDiagnostics } from '$lib/app/diagnostics.js';
@@ -1138,6 +1139,7 @@
 			{/if}
 
 			<StorageSettings locked={locked('audio_retention_days')} />
+			<BackupSettings />
 
 			<div class="flex items-center gap-3">
 				<button

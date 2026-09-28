@@ -239,6 +239,22 @@ if it went away); it answers like `start`. The copilot's notes carry over.
 
 ---
 
+## Backups
+
+### `GET /api/backup` · `POST /api/backup` · `POST /api/backup/restore`
+A backup (`services/backup.py`) is one tar in the backup folder (`backup_dir`, default
+`~/Documents/Mnemosyne backups`): `manifest.json`, `settings.json` (no secrets), a consistent copy
+of the database (encrypted when encryption at rest is on; the key is not in it, so elsewhere the
+recovery code opens it) and `recordings/` (audio and clips; not WAVs of a capture in progress).
+`GET` → `{dir, backups: [{name, created_at, size, sessions, encrypted, app_version}], restore_pending,
+last_restore: {name, at, kept_in, error}}`. `POST` starts a `backup` job (409 while recording).
+`backup_interval_days` (0 = off) makes one on its own when due, keeping `backup_keep`.
+`restore` takes `{name}` (a backup in the folder, never a path) and answers
+`{backup, restart_required: true}`: the backend restores on its next start, before opening the
+database. What was there is moved to `<data_dir>/pre-restore-<time>/`, never deleted; a failed
+restore puts it back. Settings come from the backup except secrets and the backup settings; audio
+paths are moved to this machine's recordings folder once the database is open.
+
 ## Sessions
 
 Session `status` is one of: `created`, `recording`, `encoding`, `transcribing`, `completed`, `error`.

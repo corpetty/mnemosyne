@@ -199,6 +199,12 @@ class Settings(BaseSettings):
     # this many days. 0 keeps audio forever.
     audio_retention_days: int = 0
 
+    # Backups (services/backup.py): where they go ("" = ~/Documents/Mnemosyne backups), how
+    # often one is made on its own (days; 0 = only when asked) and how many are kept.
+    backup_dir: str = ""
+    backup_interval_days: int = 0
+    backup_keep: int = 3
+
     # GitHub issues from action items
     github_repo: str = ""  # owner/name
     github_token: str = ""  # fine-grained token with Issues: read and write on that repo

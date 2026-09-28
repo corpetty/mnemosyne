@@ -9,6 +9,7 @@ from .auth import LockedMiddleware, TokenAuthMiddleware
 from .context import AppContext
 from .routes.ask import router as ask_router
 from .routes.audio import router as audio_router
+from .routes.backup import router as backup_router
 from .routes.calendar import router as calendar_router
 from .routes.clips import router as clips_router
 from .routes.devices import router as devices_router
@@ -76,6 +77,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(mobile_router)
     app.include_router(system_router)
     app.include_router(storage_router)
+    app.include_router(backup_router)
     app.include_router(calendar_router)
     app.include_router(integrations_router)
     app.include_router(ws_router)

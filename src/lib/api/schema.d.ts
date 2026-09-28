@@ -318,6 +318,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["status_api_backup_get"];
+        put?: never;
+        /**
+         * Back Up
+         * @description Write a backup now (a `backup` job; its result is the BackupInfo).
+         */
+        post: operations["back_up_api_backup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/backup/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore
+         * @description Restore a backup at the next start of the backend: the data there now is kept aside
+         *     (pre-restore-<time>/ in the data folder), not deleted.
+         */
+        post: operations["restore_api_backup_restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/brief": {
         parameters: {
             query?: never;
@@ -1609,6 +1651,34 @@ export interface components {
             /** Attendees */
             attendees: string[];
         };
+        /** BackupInfo */
+        BackupInfo: {
+            /** App Version */
+            app_version: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Encrypted */
+            encrypted: boolean;
+            /** Name */
+            name: string;
+            /** Sessions */
+            sessions: number;
+            /** Size */
+            size: number;
+        };
+        /** BackupStatus */
+        BackupStatus: {
+            /** Backups */
+            backups: components["schemas"]["BackupInfo"][];
+            /** Dir */
+            dir: string;
+            last_restore: components["schemas"]["RestoreResult"] | null;
+            /** Restore Pending */
+            restore_pending: string | null;
+        };
         /** Body_import_audio_api_audio_import_post */
         Body_import_audio_api_audio_import_post: {
             /**
@@ -2317,6 +2387,31 @@ export interface components {
             /** Repo */
             repo: string;
         };
+        /** RestoreRequest */
+        RestoreRequest: {
+            /** Name */
+            name: string;
+        };
+        /** RestoreResponse */
+        RestoreResponse: {
+            backup: components["schemas"]["BackupInfo"];
+            /** Restart Required */
+            restart_required: boolean;
+        };
+        /** RestoreResult */
+        RestoreResult: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Error */
+            error: string | null;
+            /** Kept In */
+            kept_in: string;
+            /** Name */
+            name: string;
+        };
         /** ReviewedRequest */
         ReviewedRequest: {
             /**
@@ -2580,6 +2675,12 @@ export interface components {
             auto_summarize?: boolean | null;
             /** Auto Transcribe */
             auto_transcribe?: boolean | null;
+            /** Backup Dir */
+            backup_dir?: string | null;
+            /** Backup Interval Days */
+            backup_interval_days?: number | null;
+            /** Backup Keep */
+            backup_keep?: number | null;
             /** Calendar Auto Name */
             calendar_auto_name?: boolean | null;
             /** Calendar Desktop Calendars */
@@ -2765,6 +2866,12 @@ export interface components {
             auto_summarize: boolean;
             /** Auto Transcribe */
             auto_transcribe: boolean;
+            /** Backup Dir */
+            backup_dir: string;
+            /** Backup Interval Days */
+            backup_interval_days: number;
+            /** Backup Keep */
+            backup_keep: number;
             /** Calendar Auto Name */
             calendar_auto_name: boolean;
             /** Calendar Desktop Calendars */
@@ -3771,6 +3878,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StopRecordingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    status_api_backup_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupStatus"];
+                };
+            };
+        };
+    };
+    back_up_api_backup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+        };
+    };
+    restore_api_backup_restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreResponse"];
                 };
             };
             /** @description Validation Error */

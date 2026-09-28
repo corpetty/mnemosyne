@@ -46,6 +46,7 @@ class AppContext:
     _retention_task: asyncio.Task | None = None
     _digest_task: asyncio.Task | None = None
     _apps_task: asyncio.Task | None = None
+    _backup_task: asyncio.Task | None = None
     _intervals: tuple[float, float] = (6 * 3600, 900)
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     live: dict = field(default_factory=dict)  # session id -> running LiveTranscriber
@@ -84,6 +85,9 @@ class AppContext:
         from ..storage.crypto import SystemKeyStore, derive, key_check
 
         settings.data_dir.mkdir(parents=True, exist_ok=True)
+        from ..services.backup import apply_path_rebase, apply_pending_restore
+
+        apply_pending_restore(settings)  # before the database (and its key check) is opened
         bus = EventBus()
         if keystore is None:
             from ..demo import enabled as demo_mode
@@ -104,6 +108,7 @@ class AppContext:
             repo = SessionRepository(Path(":memory:"))
         else:
             repo = SessionRepository(settings.db_path, derive(master, "db") if master else None)
+            apply_path_rebase(repo, settings)
             import_json_sessions(repo, settings.sessions_dir)
         return cls(
             keystore=keystore,
@@ -230,6 +235,26 @@ class AppContext:
             except Exception:
                 logger.exception("Digest schedule check failed")
 
+    async def _backup_loop(self, interval_seconds: float) -> None:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                self.maybe_back_up()
+            except Exception:
+                logger.exception("Backup schedule check failed")
+
+    def maybe_back_up(self):
+        """Start an automatic backup when one is due, not while recording or backing up."""
+        from ..services.backup import due
+
+        if self.active_recordings or any(
+            j.kind == "backup" for j in self.jobs.list(active_only=True)
+        ):
+            return None
+        if not due(self.settings):
+            return None
+        return self.jobs.submit("backup", backup_runner(self, prune_after=True))
+
     async def startup(
         self, retention_interval: float = 6 * 3600, digest_interval: float = 900
     ) -> None:
@@ -244,9 +269,11 @@ class AppContext:
 
     async def unlock(self, master: bytes) -> None:
         """The recovery code arrived: keep the key, open the real database, start up."""
+        from ..services.backup import apply_path_rebase
         from ..storage.crypto import derive
 
         self.repo.reopen(self.settings.db_path, derive(master, "db"))
+        apply_path_rebase(self.repo, self.settings)  # a restore from another machine
         self.keystore.set(master)
         self.master_key, self.locked = master, False
         await self._start_services()
@@ -269,16 +296,38 @@ class AppContext:
         self._digest_task = asyncio.create_task(self._digest_loop(digest_interval))
         self.index.start(self.bus)
         self._apps_task = asyncio.create_task(self._apps_loop(5.0))
+        self._backup_task = asyncio.create_task(self._backup_loop(3600.0))
 
     async def shutdown(self) -> None:
         await self.index.stop()
-        for task in (self._retention_task, self._digest_task, self._apps_task):
+        for task in (self._retention_task, self._digest_task, self._apps_task, self._backup_task):
             if task is not None:
                 task.cancel()
         await self.echo.stop()
         await self.jobs.shutdown()
         await self.models.unload()
         self.repo.close()
+
+
+def backup_runner(app: AppContext, prune_after: bool = False):
+    """Job runner: write a backup (services/backup.py), then drop the oldest beyond the limit."""
+    from ..services.backup import create_backup, prune
+
+    async def run(ctx) -> dict:
+        ctx.update("Backing up", progress=0.0)
+        loop = asyncio.get_running_loop()
+        last = [-1.0]
+
+        def progress(frac: float) -> None:  # from the backup thread; whole percents only
+            if frac - last[0] >= 0.01:
+                last[0] = frac
+                loop.call_soon_threadsafe(ctx.update, None, round(min(frac, 0.99), 2))
+
+        info = await asyncio.to_thread(create_backup, app, progress)
+        removed = prune(app.settings) if prune_after else []
+        return {**info.model_dump(mode="json"), "removed": removed}
+
+    return run
 
 
 def _pw_dump() -> list:

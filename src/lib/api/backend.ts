@@ -1,5 +1,7 @@
 import type {
   ActiveRecording,
+  BackupStatus,
+  RestoreResponse,
   Ask,
   DesktopCalendar,
   EncryptionEnabled,
@@ -476,6 +478,21 @@ export async function deleteDigest(id: string): Promise<void> {
 // Storage
 export async function getStorage(): Promise<StorageReport> {
   return request('/api/storage');
+}
+
+// Backups
+export async function getBackups(): Promise<BackupStatus> {
+  return request('/api/backup');
+}
+
+export async function backUpNow(): Promise<Job> {
+  return request('/api/backup', { method: 'POST' });
+}
+
+/** Stage a restore (a backup in the backup folder, by name); the backend applies it when it
+ *  next starts. */
+export async function restoreBackup(name: string): Promise<RestoreResponse> {
+  return request('/api/backup/restore', { method: 'POST', body: JSON.stringify({ name }) });
 }
 
 export async function deleteSessionAudio(sessionId: string): Promise<SessionDetail> {
