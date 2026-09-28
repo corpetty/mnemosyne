@@ -285,8 +285,12 @@ def summarize_session(
         session = app.sessions.get_session(session_id)
         if session is None:
             raise ValueError(f"Session {session_id} not found")
-        if not session.transcript:
+        from .external_notes import NOTES_ONLY, notes_as_transcript, notes_hint
+
+        notes_only = not session.transcript and bool(session.external_notes)
+        if not session.transcript and not notes_only:
             raise ValueError("Session has no transcript")
+        segments = notes_as_transcript(session.external_notes) if notes_only else session.transcript
         st = app.settings
         prov = provider or st.default_provider
         mdl = model or st.default_model
@@ -312,6 +316,9 @@ def summarize_session(
         planned = agenda_hint(session.agenda)
         if planned:
             instr = f"{instr}\n{planned}".strip()
+        others = NOTES_ONLY if notes_only else notes_hint(session.external_notes)
+        if others:
+            instr = f"{instr}\n{others}".strip()
         from .assets import resources_hint
 
         shared = resources_hint(app, session_id)
@@ -325,7 +332,7 @@ def summarize_session(
         ctx.emit({"type": "status", "session_id": session_id, "message": "Summarizing..."})
         try:
             result = await app.summarizer.summarize(
-                segments=[s.model_dump() for s in session.transcript],
+                segments=[s.model_dump() for s in segments],
                 provider_name=prov,
                 model=mdl,
                 style=sty,
@@ -336,6 +343,13 @@ def summarize_session(
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})
             raise
         result["data"].source_hash = transcript_hash(session.transcript)
+        if notes_only:  # no timeline to point at
+            data = result["data"]
+            data.decision_at = [None] * len(data.decisions)
+            data.question_at = [None] * len(data.open_questions)
+            data.chapters = []
+            for item in data.action_items:
+                item.at = None
         # To-dos the copilot heard that the summary missed; then keep done flags and issue
         # links of items that survive a re-summarize.
         add_live_todos(session.copilot_notes, result["data"])

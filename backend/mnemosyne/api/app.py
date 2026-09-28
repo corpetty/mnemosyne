@@ -18,6 +18,7 @@ from .routes.devices import router as devices_router
 from .routes.digests import router as digests_router
 from .routes.encryption import router as encryption_router
 from .routes.export import router as export_router
+from .routes.external_notes import router as external_notes_router
 from .routes.glossary import router as glossary_router
 from .routes.integrations import router as integrations_router
 from .routes.jobs import router as jobs_router
@@ -74,6 +75,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(segments_router)
     app.include_router(bookmarks_router)
     app.include_router(assets_router)
+    app.include_router(external_notes_router)
     app.include_router(glossary_router)
     app.include_router(search_router)
     app.include_router(ask_router)

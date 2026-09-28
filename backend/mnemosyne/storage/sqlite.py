@@ -23,6 +23,7 @@ from ..models.session import (
     Asset,
     Bookmark,
     CopilotNotes,
+    ExternalNotes,
     Recording,
     Session,
     SessionStatus,
@@ -176,6 +177,14 @@ CREATE TABLE IF NOT EXISTS assets (
     text TEXT,
     source TEXT NOT NULL DEFAULT 'manual',
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS external_notes (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    text TEXT NOT NULL,
+    filename TEXT,
+    added_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS session_assets (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -434,6 +443,10 @@ class SessionRepository:
             mark_rows = self._conn.execute(
                 "SELECT * FROM bookmarks WHERE session_id=?", (session_id,)
             ).fetchall()
+            note_rows = self._conn.execute(
+                "SELECT * FROM external_notes WHERE session_id=? ORDER BY added_at",
+                (session_id,),
+            ).fetchall()
             asset_rows = self._conn.execute(
                 "SELECT a.* FROM assets a JOIN session_assets sa ON sa.asset_id = a.id"
                 " WHERE sa.session_id=? ORDER BY sa.added_at",
@@ -468,6 +481,16 @@ class SessionRepository:
             agenda=[AgendaItem.model_validate(a) for a in json.loads(row["agenda"] or "[]")],
             meeting_type=row["meeting_type"],
             assets=[_asset(r) for r in asset_rows],
+            external_notes=[
+                ExternalNotes(
+                    id=r["id"],
+                    source=r["source"],
+                    text=r["text"],
+                    filename=r["filename"],
+                    added_at=_dt(r["added_at"]),
+                )
+                for r in note_rows
+            ],
             transcript=[
                 TranscriptSegment(
                     text=r["text"],
@@ -641,6 +664,30 @@ class SessionRepository:
                 return False
             self._conn.execute("DELETE FROM recordings WHERE session_id=?", (session_id,))
         return True
+
+    # ---- other assistants' notes ---------------------------------------
+
+    def add_external_notes(self, session_id: str, notes: ExternalNotes) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO external_notes (id, session_id, source, text, filename, added_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (
+                    notes.id,
+                    session_id,
+                    notes.source,
+                    notes.text,
+                    notes.filename,
+                    notes.added_at.isoformat(),
+                ),
+            )
+
+    def delete_external_notes(self, session_id: str, notes_id: str) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "DELETE FROM external_notes WHERE id=? AND session_id=?", (notes_id, session_id)
+            )
+        return cur.rowcount > 0
 
     # ---- assets (resources) --------------------------------------------
 

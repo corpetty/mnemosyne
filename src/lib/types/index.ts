@@ -14,6 +14,7 @@ export type RecordingStatus = S['RecordingStatus'];
 export type ActiveRecording = S['ActiveRecording'];
 export type Bookmark = S['Bookmark'];
 export type Asset = S['Asset'];
+export type ExternalNotes = S['ExternalNotes'];
 export type LibraryAsset = S['LibraryAsset'];
 export type AgendaItem = S['AgendaItem-Output'];
 export type GlossarySuggestion = S['GlossarySuggestion'];

@@ -12,6 +12,7 @@
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import Markdown from './Markdown.svelte';
+	import ExternalNotesCard from './ExternalNotesCard.svelte';
 	import {
 		createIssues,
 		draftFollowup,
@@ -410,7 +411,7 @@
 		</select>
 		<button
 			onclick={handleSummarize}
-			disabled={!!activeJob || !sessionState.activeSession?.transcript?.length}
+			disabled={!!activeJob || (!sessionState.activeSession?.transcript?.length && !sessionState.activeSession?.external_notes?.length)}
 			class="px-4 py-1.5 text-sm rounded bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium transition-colors"
 		>
 			{activeJob ? 'Summarizing...' : sessionState.activeSession?.summary ? 'Re-summarize' : 'Summarize'}
@@ -435,9 +436,11 @@
 		<p class="text-red-400 text-sm">{error || jobError}</p>
 	{/if}
 
-	{#if !sessionState.activeSession?.transcript?.length}
-		<p class="text-gray-600 text-sm">Record and transcribe audio first to generate a summary.</p>
+	{#if !sessionState.activeSession?.transcript?.length && !sessionState.activeSession?.external_notes?.length}
+		<p class="text-gray-600 text-sm">Record and transcribe audio first to generate a summary, or add notes from another assistant.</p>
 	{/if}
+
+	<ExternalNotesCard />
 
 	{#if liveNotes}
 		<details class="bg-gray-900 border border-gray-800 rounded-lg p-3 text-sm" open={!sessionState.activeSession?.summary}>

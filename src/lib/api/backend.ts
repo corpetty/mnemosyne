@@ -1,5 +1,6 @@
 import type {
   ActiveRecording,
+  ExternalNotes,
   Asset,
   LibraryAsset,
   AgendaItem,
@@ -175,6 +176,36 @@ export async function transcribeSession(sessionId: string): Promise<Job> {
 // Jobs
 export async function listJobs(activeOnly = false): Promise<Job[]> {
   return request(`/api/jobs?active_only=${activeOnly}`);
+}
+
+// Notes from other assistants (Gemini in Google Meet, Zoom, Otter, Teams Copilot...)
+export async function addExternalNotes(sessionId: string, text: string, source = ''): Promise<ExternalNotes> {
+  return request(`/api/sessions/${sessionId}/external-notes`, { method: 'POST', body: JSON.stringify({ text, source }) });
+}
+
+export async function uploadExternalNotes(sessionId: string, file: File, source = ''): Promise<ExternalNotes> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  if (source) form.append('source', source);
+  const res = await fetch(`${base()}/api/sessions/${sessionId}/external-notes/file`, {
+    method: 'POST',
+    body: form,
+    headers: connectionState.headers()
+  });
+  if (!res.ok) {
+    let detail = await res.text();
+    try {
+      detail = JSON.parse(detail).detail ?? detail;
+    } catch {
+      /* plain text */
+    }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+export async function deleteExternalNotes(sessionId: string, notesId: string): Promise<void> {
+  await request(`/api/sessions/${sessionId}/external-notes/${notesId}`, { method: 'DELETE' });
 }
 
 // Resources (links and files) for meetings, from a shared library

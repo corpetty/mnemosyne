@@ -119,6 +119,18 @@ class Asset(ApiModel):
     has_text: bool = False  # text was read from the file (it goes to the summary)
 
 
+class ExternalNotes(ApiModel):
+    """Notes another assistant wrote about the meeting (Gemini in Google Meet, Zoom AI
+    Companion, Otter, Teams Copilot...). The summary uses them to fill gaps; the transcript
+    wins. A meeting with notes and no recording is summarized from the notes."""
+
+    id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    source: str  # "Gemini", "Zoom", "Otter", "Teams Copilot", ... or "Other"
+    text: str
+    filename: str | None = None
+    added_at: datetime = Field(default_factory=datetime.now)
+
+
 class AgendaItem(ApiModel):
     """A point to get through in a meeting; the copilot marks it covered once it came up."""
 
@@ -157,6 +169,7 @@ class Session(ApiModel):
     bookmarks: list[Bookmark] = Field(default_factory=list)  # in time order
     agenda: list[AgendaItem] = Field(default_factory=list)
     assets: list[Asset] = Field(default_factory=list)  # resources attached, in order added
+    external_notes: list[ExternalNotes] = Field(default_factory=list)  # other assistants' notes
     # Its kind (settings.meeting_types, by name); "" = none yet, "none" = chosen none.
     meeting_type: str = ""
 

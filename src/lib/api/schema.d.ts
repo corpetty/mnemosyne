@@ -1383,6 +1383,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/external-notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Paste
+         * @description Notes pasted as text (e.g. copied from the "Notes by Gemini" doc or Zoom's email).
+         */
+        post: operations["paste_api_sessions__session_id__external_notes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/external-notes/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload
+         * @description Notes as a file: Markdown, text, HTML, Word (.docx), PDF (with pdftotext).
+         */
+        post: operations["upload_api_sessions__session_id__external_notes_file_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/external-notes/{notes_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete */
+        delete: operations["delete_api_sessions__session_id__external_notes__notes_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/followup": {
         parameters: {
             query?: never;
@@ -2162,6 +2219,19 @@ export interface components {
              */
             transcribe: boolean;
         };
+        /** Body_upload_api_sessions__session_id__external_notes_file_post */
+        Body_upload_api_sessions__session_id__external_notes_file_post: {
+            /**
+             * File
+             * Format: binary
+             */
+            file: string;
+            /**
+             * Source
+             * @default
+             */
+            source: string;
+        };
         /**
          * Bookmark
          * @description A moment marked as important, while recording (a shortcut, the tray, a button) or later
@@ -2540,6 +2610,27 @@ export interface components {
             /** Path */
             path: string;
         };
+        /**
+         * ExternalNotes
+         * @description Notes another assistant wrote about the meeting (Gemini in Google Meet, Zoom AI
+         *     Companion, Otter, Teams Copilot...). The summary uses them to fill gaps; the transcript
+         *     wins. A meeting with notes and no recording is summarized from the notes.
+         */
+        ExternalNotes: {
+            /**
+             * Added At
+             * Format: date-time
+             */
+            added_at: string;
+            /** Filename */
+            filename: string | null;
+            /** Id */
+            id: string;
+            /** Source */
+            source: string;
+            /** Text */
+            text: string;
+        };
         /** FollowupRequest */
         FollowupRequest: {
             /**
@@ -2728,6 +2819,16 @@ export interface components {
         MeetingTypeChoice: {
             /** Name */
             name: string;
+        };
+        /** NotesCreate */
+        NotesCreate: {
+            /**
+             * Source
+             * @default
+             */
+            source: string;
+            /** Text */
+            text: string;
         };
         /** NotesRequest */
         NotesRequest: {
@@ -3187,6 +3288,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** External Notes */
+            external_notes: components["schemas"]["ExternalNotes"][];
             /** Id */
             id: string;
             /**
@@ -6493,6 +6596,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    paste_api_sessions__session_id__external_notes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotesCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalNotes"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_api_sessions__session_id__external_notes_file_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_api_sessions__session_id__external_notes_file_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalNotes"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_sessions__session_id__external_notes__notes_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                notes_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

@@ -66,6 +66,7 @@ class ObsidianExporter:
             bookmarks=[_bookmark(session, b) for b in session.bookmarks],
             agenda=[(a.text, a.covered) for a in session.agenda],
             resources=resources,
+            external_notes=[(n.source, n.text) for n in session.external_notes],
         )
 
     def export(self, session: Session, resources: list[str] | None = None) -> Path:

@@ -80,7 +80,7 @@ async def summarize_session(
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if not session.transcript:
+    if not session.transcript and not session.external_notes:
         raise HTTPException(status_code=400, detail="Session has no transcript")
     prov = request.provider or ctx.settings.default_provider
     if session.local_only and is_cloud(prov):

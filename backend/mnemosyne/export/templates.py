@@ -31,6 +31,7 @@ def render_meeting_note(
     bookmarks: list[tuple[float, str, str]] | None = None,  # (seconds, line said, note)
     agenda: list[tuple[str, bool]] | None = None,  # (point, covered)
     resources: list[str] | None = None,  # markdown links, one per resource
+    external_notes: list[tuple[str, str]] | None = None,  # (source, text) of other assistants
 ) -> str:
     """Render a complete Obsidian-compatible note with YAML frontmatter.
 
@@ -124,6 +125,12 @@ def render_meeting_note(
     if notes:
         sections.append("## Notes\n")
         sections.append(notes)
+        sections.append("")
+
+    for source, text in external_notes or []:
+        # A folded callout: there when wanted, out of the way otherwise.
+        sections.append(f"> [!note]- Notes by {source}")
+        sections.extend(f"> {line}" if line else ">" for line in text.splitlines())
         sections.append("")
 
     if include_transcript and transcript_segments:
