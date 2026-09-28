@@ -77,10 +77,11 @@
 	{#if sessionState.activeSession.attendees.length}
 		<p class="-mt-2 mb-2 text-xs text-gray-500 truncate">Invited: {sessionState.activeSession.attendees.join(', ')}</p>
 	{/if}
-	<nav class="flex gap-1">
+	<nav class="flex gap-1" aria-label="Meeting">
 		{#each tabs as tab}
 			<button
 				onclick={() => (uiState.activeTab = tab.id)}
+				aria-current={uiState.activeTab === tab.id ? 'page' : undefined}
 				class="px-3 py-1.5 text-sm rounded-t-lg transition-colors border-b-2
 					{uiState.activeTab === tab.id
 					? 'border-blue-500 text-blue-400 bg-gray-900'

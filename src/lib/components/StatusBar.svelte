@@ -39,6 +39,6 @@
 		{/if}
 	</div>
 	<div class="flex items-center gap-3">
-		<span>{sessionState.sessions.length} session{sessionState.sessions.length !== 1 ? 's' : ''}</span>
+		<span>{sessionState.sessions.length} meeting{sessionState.sessions.length !== 1 ? 's' : ''}</span>
 	</div>
 </footer>

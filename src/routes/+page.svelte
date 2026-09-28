@@ -30,7 +30,7 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { uiState, type View } from '$lib/stores/ui.svelte.js';
-	import type { Component } from 'svelte';
+	import { untrack, type Component } from 'svelte';
 
 	// Views shown in the main area when no meeting is open.
 	const PANELS: Partial<Record<View, { component: Component<{ onOpenSession?: () => void }>; width: string }>> = {
@@ -67,6 +67,13 @@
 			lastLoadedSessionId = session.id;
 			transcriptState.showSession(session.id, session.transcript);
 			uiState.closePanels();
+			// A finished meeting opens on what it produced, not on the recording tab left
+			// from the last one (the tab chosen otherwise stays as it was).
+			const recordingIt = untrack(() => audioState.isRecording && audioState.activeSessionId === session.id);
+			if (untrack(() => uiState.activeTab) === 'recording' && !recordingIt) {
+				if (session.summary) uiState.activeTab = 'summary';
+				else if (session.transcript.length) uiState.activeTab = 'transcript';
+			}
 		} else if (session.transcript !== lastTranscript) {
 			// The same meeting, reloaded with a changed transcript (glossary applied, meetings
 			// combined, speakers renamed elsewhere): show it, unless a transcription is running.

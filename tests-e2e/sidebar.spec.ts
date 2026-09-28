@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test';
-import { openApp } from './fixtures';
+import { importMeeting, openApp } from './fixtures';
 
 const BACKEND = 'http://127.0.0.1:8018';
-const NAMES = ['delete-me', 'rec-live', 'other-meeting'];
+const NAMES = ['delete-me', 'rec-live', 'other-meeting', 'finished-one'];
 
 test.afterEach(async ({ request }) => {
   const sessions: { id: string; name: string }[] = await (await request.get(`${BACKEND}/api/sessions`)).json();
@@ -53,4 +53,17 @@ test('the live transcript stays with the meeting being recorded', async ({ page,
   await expect(page.getByRole('heading', { name: 'rec-live' })).toBeVisible();
   await page.getByTitle('Go to the recording').click();
   await expect(page.getByText('Heard while recording.')).toBeVisible();
+});
+
+// A finished meeting opens on its transcript, not on the Recording tab left from before.
+test('a finished meeting does not open on the recording tab', async ({ page, request }, info) => {
+  await request.post(`${BACKEND}/api/sessions`, { data: { name: 'other-meeting' } });
+  await openApp(page);
+  await importMeeting(page, info.outputDir, 'finished-one');
+  await row(page, 'other-meeting').click();
+  const tab = (name: RegExp) => page.getByRole('navigation', { name: 'Meeting' }).getByRole('button', { name });
+  await tab(/^Recording/).click();
+  await expect(tab(/^Recording/)).toHaveAttribute('aria-current', 'page');
+  await row(page, 'finished-one').click();
+  await expect(tab(/^Transcript/)).toHaveAttribute('aria-current', 'page');
 });
