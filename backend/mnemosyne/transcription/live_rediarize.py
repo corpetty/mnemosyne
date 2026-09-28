@@ -57,6 +57,7 @@ class LiveRediarizer:
         session_id: str,
         interval: float = 30.0,
         min_seconds: float = 20.0,
+        window: float = 20 * 60,
         match_names: MatchNames | None = None,
     ):
         self.diarizer = diarizer
@@ -65,6 +66,9 @@ class LiveRediarizer:
         self.session_id = session_id
         self.interval = interval
         self.min_seconds = min_seconds
+        # Each pass re-diarizes the last `window` seconds: the cost of a pass stays flat
+        # however long the meeting runs (the whole recording, every 30 s, grew without bound).
+        self.window = window
         self.match_names = match_names
         self.passes = 0
         self.last_seconds = 0.0  # how long the last pass took
@@ -98,22 +102,28 @@ class LiveRediarizer:
     async def pass_once(self, source: LiveSource) -> int:
         """Re-diarize one source's audio so far. Returns how many lines changed speaker."""
         tail = WavTail(source.path)
-        pcm = await asyncio.to_thread(tail.read_new)
+        pcm, offset = await asyncio.to_thread(tail.read_last, self.window)
         rate = tail.sample_rate or 48000
-        seconds = pcm.size / rate
-        if seconds < self.min_seconds:
+        if pcm.size / rate < self.min_seconds:
             return 0
+        end = offset + pcm.size / rate
         result = await self.diarizer.diarize_pcm(pcm, rate)
         self.passes += 1
         lines = [
             i
             for i, kind in enumerate(self.live.committed_kind)
-            if kind == source.kind and self.live.committed[i].end <= seconds
+            if kind == source.kind
+            and self.live.committed[i].start >= offset
+            and self.live.committed[i].end <= end
         ]
         if not result.turns or not lines:
             return 0
         raw = {
-            i: speaker_of(self.live.committed[i].start, self.live.committed[i].end, result.turns)
+            i: speaker_of(
+                self.live.committed[i].start - offset,
+                self.live.committed[i].end - offset,
+                result.turns,
+            )
             for i in lines
         }
         names = self.match_names(dict(result.embeddings)) if self.match_names else {}
@@ -139,7 +149,7 @@ class LiveRediarizer:
             )
         logger.info(
             "Live re-diarization of %.0f s (%s): %d speakers, %d of %d lines relabelled",
-            seconds,
+            end - offset,
             source.kind,
             len(set(display.values())),
             len(changes),

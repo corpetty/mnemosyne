@@ -155,3 +155,20 @@ def test_only_used_with_nemotron_unless_asked(monkeypatch):
     assert registry.build_live_rediarizer(Settings(diarizer="auto")) is None
     assert registry.build_live_rediarizer(Settings(live_rediarize="off")) is None
     assert registry.build_live_rediarizer(Settings(live_diarization=False)) is None
+
+
+@pytest.mark.anyio
+async def test_a_long_recording_is_re_diarized_by_its_last_window(tmp_path):
+    """Each pass reads only the last `window` seconds: its cost stays flat over hours."""
+    live, source = live_with(
+        tmp_path,
+        [(0, 5, "Speaker 1"), (30, 35, "Speaker 1"), (50, 55, "Speaker 1")],
+        seconds=60.0,
+    )
+    # Turns are relative to the window (the last 20 s start at 40 s).
+    diarizer = FakeDiarizer(turns((0, 12, "SPEAKER_00"), (12, 20, "SPEAKER_01")))
+    r = LiveRediarizer(diarizer, live, lambda e: None, "s1", window=20.0, min_seconds=5)
+    await r.pass_once(source)
+    assert diarizer.calls == [(20 * RATE, RATE)]  # 20 s read, not the whole minute
+    # Only the line inside the window (50-55 s = 10-15 s in it) could change.
+    assert [s.speaker for s in live.committed][:2] == ["Speaker 1", "Speaker 1"]

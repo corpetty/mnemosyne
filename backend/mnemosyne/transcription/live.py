@@ -63,6 +63,19 @@ class WavTail:
         self._pos = self._data_offset
         return True
 
+    def read_last(self, seconds: float) -> tuple[np.ndarray, float]:
+        """The last `seconds` of the file as int16 mono, and where they start (seconds from
+        the beginning). Reads only that stretch, however long the file is."""
+        if self._data_offset is None and not self._parse_header():
+            return np.zeros(0, dtype=np.int16), 0.0
+        frame = self.sample_width * self.channels
+        size = self.path.stat().st_size - self._data_offset
+        size -= size % frame
+        want = int(seconds * self.sample_rate) * frame
+        skip = max(0, size - want)
+        self._pos = self._data_offset + skip
+        return self.read_new(), skip / frame / self.sample_rate
+
     def read_new(self) -> np.ndarray:
         """Return new samples as int16 mono (channels averaged). Empty if none."""
         if self._data_offset is None and not self._parse_header():
@@ -94,6 +107,7 @@ class LiveSource:
     buffer: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int16))
     buffer_start: float = 0.0  # seconds into the recording where `buffer` begins
     partial: str = ""
+    failures: int = 0  # ticks failed in a row
 
     def __post_init__(self):
         self.tail = WavTail(self.path)
@@ -200,8 +214,20 @@ class LiveTranscriber:
         for source in self.sources:
             try:
                 await self._tick_source(source, flush)
+                source.failures = 0
             except Exception:
-                logger.exception("Live tick failed for %s", source.path)
+                source.failures += 1
+                if source.failures in (1, 10, 100, 1000):  # not a traceback every tick
+                    logger.exception(
+                        "Live tick failed for %s (%d in a row)", source.path, source.failures
+                    )
+                # What could not be transcribed is dropped beyond max_buffer: a transcriber
+                # that keeps failing (out of GPU memory) must not grow the buffer forever.
+                rate = source.tail.sample_rate or 48000
+                keep = int(self.max_buffer * rate)
+                if source.buffer.size > keep:
+                    source.buffer_start += (source.buffer.size - keep) / rate
+                    source.buffer = source.buffer[-keep:]
 
     async def _tick_source(self, source: LiveSource, flush: bool) -> None:
         new = source.tail.read_new()

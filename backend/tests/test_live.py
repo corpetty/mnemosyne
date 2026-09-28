@@ -235,3 +235,21 @@ def test_cpu_pressure_reads_psi(tmp_path):
     )
     assert cpu_pressure(psi) == 42.5
     assert cpu_pressure(tmp_path / "missing") is None
+
+
+class FailingTranscriber(DurationTranscriber):
+    async def transcribe(self, audio_path, language=None, progress=None):
+        raise RuntimeError("CUDA out of memory")
+
+
+@pytest.mark.anyio
+async def test_a_failing_transcriber_does_not_grow_the_buffer(growing_wav):
+    """Out of GPU memory for the whole meeting: memory stays at max_buffer."""
+    source = LiveSource(path=growing_wav, speaker="Me")
+    live = LiveTranscriber(FailingTranscriber(), [source], lambda e: None, "s1", max_buffer=30.0)
+    for _ in range(4):
+        _append_seconds(growing_wav, 20.0)
+        await live.tick()
+    rate = source.tail.sample_rate
+    assert source.buffer.size <= 30 * rate and source.failures == 4
+    assert source.buffer_start == pytest.approx(80.5 - 30, abs=0.1)  # 0.5 s + 4 x 20 s

@@ -109,7 +109,7 @@ class NemotronDiarizer:
         recording still being written (the live transcript's re-diarization)."""
         if not self.is_loaded():
             await self.load()
-        pcm = _to_float(pcm)
+        pcm = await asyncio.to_thread(_to_float, pcm)  # large: not on the event loop
         if sample_rate != RATE:
             pcm = await asyncio.to_thread(_resample, pcm, sample_rate, RATE)
 
