@@ -8,7 +8,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use iroh_tickets::endpoint::EndpointTicket;
 use mnemosyne_link::{
-    bind, load_or_create_key, serve_home, serve_local, Home, Invite, Relays, Remote,
+    bind, bind_with, load_or_create_key, serve_home, serve_local, Home, Invite, Lan, Relays, Remote,
 };
 use tokio::net::TcpListener;
 
@@ -86,7 +86,10 @@ async fn main() -> Result<()> {
             } else {
                 Relays::from_urls(&relays)?
             };
-            let endpoint = bind(key, &relays).await?;
+            // Home announces itself on the local network so paired computers there connect
+            // directly, without any relay.
+            let lan = if no_relay { Lan::Off } else { Lan::Advertise };
+            let endpoint = bind_with(key, &relays, lan, |b| b).await?;
             if relays != Relays::Off
                 && tokio::time::timeout(Duration::from_secs(10), endpoint.online())
                     .await

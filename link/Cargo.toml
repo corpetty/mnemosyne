@@ -18,6 +18,7 @@ path = "src/main.rs"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 iroh = { version = "1.3", default-features = false, features = ["tls-ring"] }
+iroh-mdns-address-lookup = "0.6"
 iroh-tickets = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

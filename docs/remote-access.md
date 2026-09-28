@@ -72,10 +72,18 @@ Nothing on the home machine listens on the internet; it dials out to a relay.
 A paired computer's key opens the whole API, as the API token does. Recording still happens on the
 home machine.
 
+### Local first
+
+On the same network the two machines find each other directly: with remote access on, the home
+machine announces itself on the local network (mDNS, under iroh's generic service name, carrying
+only its endpoint ID and addresses), and a paired computer looks for it there before anything
+else. Traffic then goes straight across the network, never through a relay. A paired computer only
+listens; it does not announce itself on networks it visits.
+
 ### Relays
 
-Relays only pass along packets they cannot read, and only until the two machines find a direct
-path. By default Mnemosyne uses n0's free public relays, which are rate-limited and meant for
+Relays are the fallback away from home. They only pass along packets they cannot read, and only
+until the two machines find a direct path. By default Mnemosyne uses n0's free public relays, which are rate-limited and meant for
 testing. To use your own, run the open-source iroh-relay server (a ready config and compose file are
 in [deploy/relay/](../deploy/relay/README.md)), put its address in **Relays** under Remote access on
 the home machine, and pair your computers again. Computers follow the home machine's relays; they

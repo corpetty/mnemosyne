@@ -123,18 +123,34 @@ fn is_n0(url: &RelayUrl) -> bool {
         .is_some_and(|h| h.trim_end_matches('.').ends_with(".iroh.link"))
 }
 
-/// Bind an endpoint using `relays`.
-pub async fn bind(key: SecretKey, relays: &Relays) -> Result<Endpoint> {
-    bind_with(key, relays, |b| b).await
+/// Local first: how an endpoint uses the local network (mDNS) to find the other side without
+/// any relay or lookup service, so machines on the same network connect directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lan {
+    /// Not at all (tests that must stay isolated).
+    Off,
+    /// Look for home on the local network, without announcing this device (a laptop on
+    /// someone else's Wi-Fi need not tell it anything).
+    Discover,
+    /// Announce this endpoint on the local network too (home). The record carries only the
+    /// endpoint ID and its addresses, under iroh's generic service name.
+    Advertise,
 }
 
-/// [`bind`], with a last adjustment to the builder (tests trust a local relay's certificate).
+/// Bind an endpoint using `relays` that looks for others on the local network.
+pub async fn bind(key: SecretKey, relays: &Relays) -> Result<Endpoint> {
+    bind_with(key, relays, Lan::Discover, |b| b).await
+}
+
+/// [`bind`] with a choice of [`Lan`] and a last adjustment to the builder (tests trust a local
+/// relay's certificate).
 pub async fn bind_with(
     key: SecretKey,
     relays: &Relays,
+    lan: Lan,
     adjust: impl FnOnce(iroh::endpoint::Builder) -> iroh::endpoint::Builder,
 ) -> Result<Endpoint> {
-    let builder = match relays {
+    let mut builder = match relays {
         Relays::N0 => Endpoint::builder(presets::N0),
         Relays::Custom(urls) => Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(urls.iter().cloned().collect())),
@@ -142,6 +158,11 @@ pub async fn bind_with(
             .relay_mode(RelayMode::Disabled)
             .bind_addr("127.0.0.1:0")?,
     };
+    if lan != Lan::Off {
+        builder = builder.address_lookup(
+            iroh_mdns_address_lookup::MdnsAddressLookup::builder().advertise(lan == Lan::Advertise),
+        );
+    }
     Ok(adjust(builder.secret_key(key).alpns(vec![ALPN.to_vec()]))
         .bind()
         .await?)

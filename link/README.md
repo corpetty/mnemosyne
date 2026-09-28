@@ -14,3 +14,7 @@ Every iroh stream starts with one byte: `T` tunnels one TCP connection to the ba
 `127.0.0.1`, `P` carries a pairing request that the home side redeems with the backend on the
 device's behalf, vouching for its endpoint id. Home re-reads `<data_dir>/paired_devices.json` for
 each connection and stream, so removing a device in Settings cuts it off at once.
+
+Local first: `Lan::Advertise` (home) announces the endpoint on the local network by mDNS and
+`Lan::Discover` (devices) looks for it there, so machines on the same network connect directly
+without a relay or any lookup service. Relays are the fallback.

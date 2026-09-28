@@ -3,7 +3,7 @@
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
-use mnemosyne_link::{bind, serve_home, serve_local, Home, Relays, Remote};
+use mnemosyne_link::{bind_with, serve_home, serve_local, Home, Lan, Relays, Remote};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -80,7 +80,7 @@ async fn pair_then_tunnel_then_remove() {
     let devices_file = dir.path().join("paired_devices.json");
     let backend = fake_backend(devices_file.clone()).await;
 
-    let home_ep = bind(iroh::SecretKey::generate(), &Relays::Off)
+    let home_ep = bind_with(iroh::SecretKey::generate(), &Relays::Off, Lan::Off, |b| b)
         .await
         .unwrap();
     let home_addr = home_ep.addr();
@@ -92,7 +92,7 @@ async fn pair_then_tunnel_then_remove() {
         },
     ));
 
-    let device_ep = bind(iroh::SecretKey::generate(), &Relays::Off)
+    let device_ep = bind_with(iroh::SecretKey::generate(), &Relays::Off, Lan::Off, |b| b)
         .await
         .unwrap();
     let remote = Arc::new(Remote::new(device_ep.clone(), home_addr));
@@ -134,9 +134,14 @@ async fn through_our_own_relay() {
     let devices_file = dir.path().join("paired_devices.json");
     let backend = fake_backend(devices_file.clone()).await;
 
-    let home_ep = mnemosyne_link::bind_with(iroh::SecretKey::generate(), &relays, trust_test_relay)
-        .await
-        .unwrap();
+    let home_ep = bind_with(
+        iroh::SecretKey::generate(),
+        &relays,
+        Lan::Off,
+        trust_test_relay,
+    )
+    .await
+    .unwrap();
     tokio::time::timeout(Duration::from_secs(10), home_ep.online())
         .await
         .unwrap();
@@ -149,16 +154,64 @@ async fn through_our_own_relay() {
         },
     ));
 
-    let device_ep =
-        mnemosyne_link::bind_with(iroh::SecretKey::generate(), &relays, trust_test_relay)
-            .await
-            .unwrap();
+    let device_ep = bind_with(
+        iroh::SecretKey::generate(),
+        &relays,
+        Lan::Off,
+        trust_test_relay,
+    )
+    .await
+    .unwrap();
     let remote = Arc::new(Remote::new(device_ep.clone(), home_addr));
     assert_eq!(remote.pair("good", "Laptop").await.unwrap(), "device-token");
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local = listener.local_addr().unwrap();
     tokio::spawn(serve_local(remote, listener));
     assert!(get(local).await.ends_with("hi"));
+
+    device_ep.close().await;
+    home_ep.close().await;
+}
+
+#[tokio::test]
+async fn found_on_the_local_network() {
+    // Local first: the device knows only home's endpoint ID (no addresses, no relay, no lookup
+    // service) and still reaches it, because home announces itself on the local network.
+    let dir = tempfile::tempdir().unwrap();
+    let devices_file = dir.path().join("paired_devices.json");
+    let backend = fake_backend(devices_file.clone()).await;
+
+    let home_ep = bind_with(
+        iroh::SecretKey::generate(),
+        &Relays::Off,
+        Lan::Advertise,
+        |b| b,
+    )
+    .await
+    .unwrap();
+    let home_id = home_ep.id();
+    tokio::spawn(serve_home(
+        home_ep.clone(),
+        Home {
+            backend,
+            devices_file,
+        },
+    ));
+
+    let device_ep = bind_with(
+        iroh::SecretKey::generate(),
+        &Relays::Off,
+        Lan::Discover,
+        |b| b,
+    )
+    .await
+    .unwrap();
+    let remote = Remote::new(device_ep.clone(), iroh::EndpointAddr::new(home_id));
+    let token = tokio::time::timeout(Duration::from_secs(20), remote.pair("good", "Laptop"))
+        .await
+        .expect("home was not found on the local network")
+        .unwrap();
+    assert_eq!(token, "device-token");
 
     device_ep.close().await;
     home_ep.close().await;
