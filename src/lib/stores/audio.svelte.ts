@@ -19,6 +19,8 @@ class AudioState {
   devices = $state<AudioDevice[]>([]);
   selectedDeviceIds = $state<Set<number>>(new Set());
   isRecording = $state(false);
+  /** A click on Record / Stop waiting for the backend: shown at once, so the click registers. */
+  pending = $state<'starting' | 'stopping' | null>(null);
   activeSessionId = $state<string | null>(null);
   recordingDuration = $state(0);
   error = $state<string | null>(null);
@@ -102,6 +104,7 @@ class AudioState {
       return;
     }
     this.error = null;
+    this.pending = 'starting';
     try {
       const res = await api.startRecording(
         [...this.selectedDeviceIds],
@@ -116,12 +119,15 @@ class AudioState {
       return res;
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Failed to start recording";
+    } finally {
+      this.pending = null;
     }
   }
 
   async stopRecording() {
     if (!this.activeSessionId) return;
     this.error = null;
+    this.pending = 'stopping';
     try {
       const res = await api.stopRecording(this.activeSessionId);
       this.isRecording = false;
@@ -134,6 +140,8 @@ class AudioState {
       return res;
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Failed to stop recording";
+    } finally {
+      this.pending = null;
     }
   }
 }

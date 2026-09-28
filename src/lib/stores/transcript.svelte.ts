@@ -88,6 +88,14 @@ class TranscriptState {
       case 'job':
         if (msg.job.kind === 'transcribe' && msg.job.session_id === this.sessionId) {
           this.applyJob(msg.job);
+        } else if (msg.job.kind === 'finish' && msg.job.session_id === this.sessionId && this.isProcessing) {
+          // Encoding and mixing before the transcription job exists.
+          if (msg.job.status === 'failed') {
+            this.isProcessing = false;
+            this.error = msg.job.error ?? 'Could not save the recording';
+          } else if (msg.job.message && msg.job.status !== 'completed') {
+            this.status = `${msg.job.message}…`;
+          }
         }
         break;
       case 'transcription':
@@ -223,7 +231,7 @@ class TranscriptState {
   }
 
   /** Called when a transcription job has been queued for `sessionId`. */
-  expectJob(sessionId: string) {
+  expectJob(sessionId: string, status = 'Queued...') {
     this.sessionId = sessionId;
     this.liveStatus = '';
     this.livePartials = {};
@@ -231,7 +239,7 @@ class TranscriptState {
     this.speakerColorMap.clear();
     this.error = null;
     this.isProcessing = true;
-    this.status = 'Queued...';
+    this.status = status;
   }
 
   /** Ask the backend to (re)transcribe the session's stored audio. */

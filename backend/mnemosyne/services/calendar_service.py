@@ -114,15 +114,21 @@ class CalendarService:
         self._text: str | None = None
         self._fetched_at = 0.0
         self._lock = asyncio.Lock()
+        self._refresh: asyncio.Task | None = None  # background refresh behind a stale read
         self.last_error: str | None = None
 
     @property
     def configured(self) -> bool:
         return bool(self.source)
 
-    async def _load(self, force: bool = False) -> str | None:
+    async def _load(self, force: bool = False, stale_ok: bool = False) -> str | None:
         if not self.configured:
             return None
+        if stale_ok and not force and self._text is not None:
+            stale = time.monotonic() - self._fetched_at >= self.refresh_seconds
+            if stale and (self._refresh is None or self._refresh.done()):
+                self._refresh = asyncio.create_task(self._load())  # fresh for next time
+            return self._text
         async with self._lock:
             fresh = time.monotonic() - self._fetched_at < self.refresh_seconds
             if self._text is not None and fresh and not force:
@@ -151,8 +157,10 @@ class CalendarService:
                     return None
             return self._text
 
-    async def events(self, start: datetime, end: datetime, force: bool = False):
-        text = await self._load(force)
+    async def events(
+        self, start: datetime, end: datetime, force: bool = False, stale_ok: bool = False
+    ):
+        text = await self._load(force, stale_ok)
         if text is None:
             return []
         try:
@@ -162,11 +170,16 @@ class CalendarService:
             logger.warning(self.last_error)
             return []
 
-    async def current(self, at: datetime | None = None, lookahead_minutes: int = 10):
+    async def current(
+        self, at: datetime | None = None, lookahead_minutes: int = 10, stale_ok: bool = False
+    ):
         """The meeting in progress (latest-started wins), else the next one starting
-        within `lookahead_minutes`."""
+        within `lookahead_minutes`. `stale_ok`: use the cached feed however old (refreshing it
+        in the background) rather than wait for a download."""
         at = (at or datetime.now()).astimezone()
-        evs = await self.events(at - MAX_MEETING, at + timedelta(minutes=lookahead_minutes))
+        evs = await self.events(
+            at - MAX_MEETING, at + timedelta(minutes=lookahead_minutes), stale_ok=stale_ok
+        )
         running = [e for e in evs if e.start <= at < e.end]
         if running:
             return max(running, key=lambda e: e.start)

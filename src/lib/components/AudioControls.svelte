@@ -36,13 +36,16 @@
 <div class="flex items-center gap-4">
 	<button
 		onclick={handleToggle}
-		disabled={!audioState.isRecording && audioState.selectedDeviceIds.size === 0}
+		disabled={!!audioState.pending || (!audioState.isRecording && audioState.selectedDeviceIds.size === 0)}
 		class="flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed
 			{audioState.isRecording
 			? 'bg-red-600 hover:bg-red-700 text-white'
 			: 'bg-blue-600 hover:bg-blue-700 text-white'}"
 	>
-		{#if audioState.isRecording}
+		{#if audioState.pending}
+			<span class="w-3 h-3 rounded-full border-2 border-white/40 border-t-white animate-spin"></span>
+			{audioState.pending === 'starting' ? 'Starting…' : 'Stopping…'}
+		{:else if audioState.isRecording}
 			<span class="w-3 h-3 rounded-sm bg-white"></span>
 			Stop
 		{:else}

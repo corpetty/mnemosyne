@@ -77,8 +77,10 @@ def fake_live_transcriber(monkeypatch) -> FakeTranscriber:
 
     fake = FakeTranscriber()
     monkeypatch.setattr(ModelService, "live_transcriber", property(lambda self: fake))
-    # ...nor a real speaker embedder (it would download and load pyannote).
+    # ...nor a real speaker embedder (it would download and load pyannote)...
     monkeypatch.setattr(ModelService, "live_embedder", property(lambda self: None))
+    # ...nor the live re-diarizer (it would load Nemotron onto the GPU).
+    monkeypatch.setattr(ModelService, "live_rediarizer", property(lambda self: None))
     return fake
 
 
@@ -105,6 +107,16 @@ def drain_until_job(ws, job_id: str) -> list[dict]:
         if msg["type"] == "job" and msg["job"]["id"] == job_id:
             if msg["job"]["status"] in ("completed", "failed", "cancelled"):
                 return events
+
+
+def stop_and_finish(client, session_id: str, body: dict | None = None) -> tuple[dict, dict]:
+    """Stop a recording and wait for its `finish` job (encode, mix, maybe queue transcription).
+    Returns (the stop response, the finished job record)."""
+    with client.websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        stopped = client.post(f"/api/audio/stop/{session_id}", json=body or {}).json()
+        drain_until_job(ws, stopped["job_id"])
+    return stopped, client.get(f"/api/jobs/{stopped['job_id']}").json()
 
 
 def run_summarize(client, session_id: str, body: dict | None = None) -> dict:

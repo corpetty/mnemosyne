@@ -85,19 +85,26 @@ provisional text (see WebSocket `live_*` events). It is cancelled by stop.
 
 Optional body: `{ "transcribe": true | false }`. Omit to follow the `auto_transcribe` setting.
 
-Terminates capture, encodes each source to OGG/Opus, records each as a `Recording` on the session
-(`source` is `mic` for input devices and `system` for output monitors), mixes all sources into a single
-`audio_file`, and by default queues a transcription job.
+Stops capture at once and answers (the session is `encoding`); the slow part runs as a `finish`
+job so the UI never waits for it (about 18 s for a 30-minute two-source meeting): it lets the live
+transcript make its last pass, encodes each source to OGG/Opus (in parallel), records each as a
+`Recording` on the session (`source` is `mic` for input devices and `system` for output monitors),
+mixes all sources into a single `audio_file` (off the event loop), encrypts them when encryption is
+on, sets the session to `created` and, when `will_transcribe`, queues the transcription job (its id
+is in the finish job's `result.transcribe_job_id`). A recording with no audio fails the job and
+leaves the session in `error`.
 
 ```json
 {
-  "session": { "...full SessionDetail..." },
+  "session": { "...full SessionDetail, status encoding..." },
   "job_id": "j1k2l3m4",
-  "message": "Recording stopped. 2 source(s) captured."
+  "will_transcribe": true,
+  "message": "Recording stopped; saving it"
 }
 ```
 
-`job_id` is `null` when transcription was not queued.
+`POST /api/audio/start` looks up the calendar meeting to name the session from the cached feed
+(refreshed in the background when stale), so starting never waits for a download.
 
 ### `GET /api/audio/file/{session_id}?recording=`
 

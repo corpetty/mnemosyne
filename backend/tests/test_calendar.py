@@ -137,8 +137,8 @@ class FixedCalendar(CalendarService):
         super().__init__(source)
         self.now = now
 
-    async def current(self, at=None, lookahead_minutes=10):
-        return await super().current(self.now, lookahead_minutes)
+    async def current(self, at=None, lookahead_minutes=10, stale_ok=False):
+        return await super().current(self.now, lookahead_minutes, stale_ok)
 
 
 def test_recording_start_names_session_from_calendar(client, ctx, fake_pipewire, ics_file):

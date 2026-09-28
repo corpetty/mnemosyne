@@ -268,7 +268,9 @@ export interface paths {
         put?: never;
         /**
          * Stop
-         * @description Stop recording, encode each source, mix, and (by default) queue transcription.
+         * @description Stop capturing at once and answer; a `finish` job then encodes each source, mixes,
+         *     seals and (by default) queues transcription. Encoding a long meeting takes a while (about
+         *     18 s for 30 minutes), and the UI should not wait for it.
          */
         post: operations["stop_api_audio_stop__session_id__post"];
         delete?: never;
@@ -2847,6 +2849,11 @@ export interface components {
             /** Message */
             message: string;
             session: components["schemas"]["Session"];
+            /**
+             * Will Transcribe
+             * @default false
+             */
+            will_transcribe: boolean;
         };
         /** StorageReport */
         StorageReport: {

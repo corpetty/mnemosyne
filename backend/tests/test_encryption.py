@@ -208,7 +208,10 @@ def test_new_recordings_are_sealed_at_stop(client, ctx, fake_pipewire, monkeypat
     monkeypatch.setattr(audio_routes, "mix_audio_files", lambda i, o: Path(mix_audio_files(i, o)))
     client.post("/api/encryption/enable")
     sid = client.post("/api/audio/start", json={"device_ids": [1]}).json()["session_id"]
-    session = client.post(f"/api/audio/stop/{sid}", json={"transcribe": False}).json()["session"]
+    from tests.conftest import stop_and_finish
+
+    stop_and_finish(client, sid, {"transcribe": False})
+    session = client.get(f"/api/sessions/{sid}").json()
     assert session["audio_file"].endswith(".enc")
     assert [r["path"][-4:] for r in session["recordings"]] == [".enc"]
 

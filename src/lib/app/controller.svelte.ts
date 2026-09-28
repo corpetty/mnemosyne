@@ -36,30 +36,37 @@ export const openSetup = () => openView('setup');
 // ---- recording -----------------------------------------------------------------
 
 export async function startRecording(fresh = false) {
-  if (fresh || !sessionState.activeSession) {
-    await sessionState.createSession();
-  }
-  if (!sessionState.activeSession) return;
-  const sessionId = sessionState.activeSession.id;
-  const res = await audioState.startRecording(sessionId);
-  if (res) {
-    transcriptState.startLive(sessionId);
-    toastState.info(res.live_job_id ? 'Recording started, live transcript on' : 'Recording started');
-    uiState.activeTab = 'recording';
+  if (audioState.pending) return; // a click already on its way
+  audioState.pending = 'starting'; // at once, before the session exists
+  try {
+    if (fresh || !sessionState.activeSession) {
+      await sessionState.createSession();
+    }
+    if (!sessionState.activeSession) return;
+    const sessionId = sessionState.activeSession.id;
+    const res = await audioState.startRecording(sessionId);
+    if (res) {
+      transcriptState.startLive(sessionId);
+      toastState.info(res.live_job_id ? 'Recording started, live transcript on' : 'Recording started');
+      uiState.activeTab = 'recording';
+    }
+  } finally {
+    audioState.pending = null;
   }
 }
 
 export async function stopAndTranscribe() {
+  if (audioState.pending) return;
   const sessionId = audioState.activeSessionId;
   const result = await audioState.stopRecording();
   if (!result || !sessionId) return;
   sessionState.activeSession = result.session;
-  if (result.job_id) {
-    toastState.info('Transcription queued');
-    transcriptState.expectJob(sessionId);
+  // The backend answers as soon as capture stops; encoding and mixing follow as a job.
+  if (result.will_transcribe) {
+    transcriptState.expectJob(sessionId, 'Saving the recording…');
     uiState.activeTab = 'transcript';
   } else {
-    toastState.info('Recording saved');
+    toastState.info('Recording stopped; saving it');
   }
 }
 

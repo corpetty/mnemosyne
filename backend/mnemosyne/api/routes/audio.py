@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 
-from ...audio.capture import list_devices, start_recording, stop_recording
+from ...audio.capture import list_devices, start_recording, stop_capture, stop_recording
 from ...audio.levels import Level, SelfTestResult, sample_level, self_test
 from ...audio.mixer import mix_audio_files
 from ...audio.streams import CaptureApp
@@ -45,7 +45,10 @@ class StopRecordingRequest(ApiModel):
 
 class StopRecordingResponse(ApiModel):
     session: Session
+    # Stop: the `finish` job (encode, mix, then transcribe when will_transcribe).
+    # Import: the transcription job, if any.
     job_id: str | None
+    will_transcribe: bool = False
     message: str
 
 
@@ -78,7 +81,8 @@ async def _apply_calendar(ctx: AppContext, session: Session) -> Session:
     if session.name != DEFAULT_SESSION_NAME:
         return session
     try:
-        event = await asyncio.wait_for(ctx.calendar.current(), timeout=5)
+        # A stale copy of the feed is fine for "what is on now"; never wait for the network.
+        event = await asyncio.wait_for(ctx.calendar.current(stale_ok=True), timeout=5)
     except Exception:
         logger.warning("Calendar lookup failed at recording start", exc_info=True)
         return session
@@ -141,62 +145,84 @@ async def stop(
     request: StopRecordingRequest | None = None,
     ctx: AppContext = Depends(get_ctx),
 ):
-    """Stop recording, encode each source, mix, and (by default) queue transcription."""
+    """Stop capturing at once and answer; a `finish` job then encodes each source, mixes,
+    seals and (by default) queues transcription. Encoding a long meeting takes a while (about
+    18 s for 30 minutes), and the UI should not wait for it."""
     recording = ctx.active_recordings.get(session_id)
     if recording is None or not recording.is_recording:
         raise HTTPException(status_code=404, detail="No active recording for this session")
 
-    # Stop live transcription first so it does not race the encoder for the files.
-    for job in ctx.jobs.list(session_id=session_id, active_only=True):
-        if job.kind in ("live", "copilot"):
-            await ctx.jobs.cancel(job.id)
-
-    ctx.sessions.set_status(session_id, SessionStatus.ENCODING)
-    devices = {d.id: d for d in list_devices()}
-    individual_files = await stop_recording(recording)
+    await stop_capture(recording)
     ctx.active_recordings.pop(session_id, None)
     task = ctx.level_tasks.pop(session_id, None)
     if task is not None:
         task.cancel()
-
-    recordings: list[Recording] = []
-    for proc, path in zip(recording.processes, individual_files, strict=False):
-        device = devices.get(proc.device_id)
-        recordings.append(
-            Recording(
-                source="system" if (device is not None and device.is_output) else "mic",
-                device_id=proc.device_id,
-                device_name=device.description if device else str(proc.device_id),
-                path=str(path),
-            )
-        )
-
-    if not individual_files:
-        ctx.sessions.set_status(session_id, SessionStatus.ERROR)
-        raise HTTPException(status_code=500, detail="Recording produced no audio")
-
-    mixed_path = mix_audio_files(
-        individual_files, recording.output_dir / f"{recording.session_id}_mixed.ogg"
-    )
-    ctx.sessions.set_audio(session_id, str(mixed_path), recordings)
-    seal_session_audio(ctx, session_id)
-    ctx.sessions.set_status(session_id, SessionStatus.CREATED)
+    ctx.sessions.set_status(session_id, SessionStatus.ENCODING)
 
     want_transcribe = ctx.settings.auto_transcribe
     if request is not None and request.transcribe is not None:
         want_transcribe = request.transcribe
-
-    job_id = None
-    if want_transcribe:
-        job = ctx.jobs.submit("transcribe", transcribe_session(ctx, session_id), session_id)
-        job_id = job.id
-
-    session = ctx.sessions.get_session(session_id)
-    return StopRecordingResponse(
-        session=session,
-        job_id=job_id,
-        message=f"Recording stopped. {len(individual_files)} source(s) captured.",
+    job = ctx.jobs.submit(
+        "finish", _finish_recording(ctx, session_id, recording, want_transcribe), session_id
     )
+    return StopRecordingResponse(
+        session=ctx.sessions.get_session(session_id),
+        job_id=job.id,
+        will_transcribe=want_transcribe,
+        message="Recording stopped; saving it",
+    )
+
+
+def _finish_recording(ctx: AppContext, session_id: str, recording, want_transcribe: bool):
+    """Job runner: the slow part of stopping a recording."""
+
+    async def run(job) -> dict:
+        # Live transcription reads the WAVs and makes a last pass: let it finish before the
+        # encoder replaces them.
+        for other in ctx.jobs.list(session_id=session_id, active_only=True):
+            if other.kind in ("live", "copilot"):
+                await ctx.jobs.cancel(other.id)
+
+        job.update("Encoding the recording", progress=0.1)
+        try:
+            devices = {d.id: d for d in await asyncio.to_thread(list_devices)}
+        except Exception:
+            devices = {}
+        individual_files = await stop_recording(recording)
+        if not individual_files:
+            ctx.sessions.set_status(session_id, SessionStatus.ERROR)
+            raise RuntimeError("Recording produced no audio")
+        recordings: list[Recording] = []
+        for proc, path in zip(recording.processes, individual_files, strict=False):
+            device = devices.get(proc.device_id)
+            recordings.append(
+                Recording(
+                    source="system" if (device is not None and device.is_output) else "mic",
+                    device_id=proc.device_id,
+                    device_name=device.description if device else str(proc.device_id),
+                    path=str(path),
+                )
+            )
+
+        job.update("Mixing the sources", progress=0.6)
+        mixed_path = await asyncio.to_thread(
+            mix_audio_files,
+            individual_files,
+            recording.output_dir / f"{recording.session_id}_mixed.ogg",
+        )
+        ctx.sessions.set_audio(session_id, str(mixed_path), recordings)
+        job.update("Saving", progress=0.9)
+        await asyncio.to_thread(seal_session_audio, ctx, session_id)
+        ctx.sessions.set_status(session_id, SessionStatus.CREATED)
+
+        transcribe_job = None
+        if want_transcribe:
+            transcribe_job = ctx.jobs.submit(
+                "transcribe", transcribe_session(ctx, session_id), session_id
+            ).id
+        return {"sources": len(individual_files), "transcribe_job_id": transcribe_job}
+
+    return run
 
 
 class RecordingStatus(ApiModel):
@@ -332,7 +358,7 @@ async def import_audio(
 
     ctx.sessions.set_status(session.id, SessionStatus.ENCODING)
     try:
-        mixed = mix_audio_files([saved], out_dir / "import_mixed.ogg")
+        mixed = await asyncio.to_thread(mix_audio_files, [saved], out_dir / "import_mixed.ogg")
     except Exception as e:
         ctx.sessions.set_status(session.id, SessionStatus.ERROR)
         raise HTTPException(status_code=400, detail=f"Could not decode audio: {e}") from e
@@ -342,7 +368,7 @@ async def import_audio(
         str(mixed),
         [Recording(source="import", device_id=-1, device_name=original.name, path=str(saved))],
     )
-    seal_session_audio(ctx, session.id)
+    await asyncio.to_thread(seal_session_audio, ctx, session.id)
     ctx.sessions.set_status(session.id, SessionStatus.CREATED)
 
     job_id = None
@@ -352,6 +378,7 @@ async def import_audio(
     return StopRecordingResponse(
         session=ctx.sessions.get_session(session.id),
         job_id=job_id,
+        will_transcribe=transcribe,
         message=f"Imported {original.name}",
     )
 

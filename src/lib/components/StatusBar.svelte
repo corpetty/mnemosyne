@@ -8,6 +8,9 @@
 
 <footer class="border-t border-gray-800 px-4 py-1 flex items-center justify-between text-xs text-gray-600 flex-shrink-0">
 	<div class="flex items-center gap-4">
+		{#if audioState.pending}
+			<span class="text-gray-400">{audioState.pending === 'starting' ? 'Starting the recording…' : 'Stopping…'}</span>
+		{/if}
 		{#if audioState.isRecording}
 			<div class="flex items-center gap-1.5 text-red-400">
 				<span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>

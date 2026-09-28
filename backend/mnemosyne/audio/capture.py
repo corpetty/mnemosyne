@@ -174,22 +174,29 @@ async def convert_to_opus(wav_path: Path, bitrate: str = "64k") -> Path:
     return opus_path
 
 
-async def stop_recording(session: RecordingSession) -> list[Path]:
-    """Stop all recording processes, convert to Opus, return output paths."""
-    output_files = []
+async def _terminate(rec: RecordingProcess) -> None:
+    if rec.process.returncode is None:
+        rec.process.terminate()
+        try:
+            await asyncio.wait_for(rec.process.wait(), timeout=5.0)
+        except TimeoutError:
+            rec.process.kill()
+            await rec.process.wait()
 
-    for rec in session.processes:
-        if rec.process.returncode is None:
-            rec.process.terminate()
-            try:
-                await asyncio.wait_for(rec.process.wait(), timeout=5.0)
-            except TimeoutError:
-                rec.process.kill()
-                await rec.process.wait()
 
-        if rec.output_path.exists() and rec.output_path.stat().st_size > 0:
-            opus_path = await convert_to_opus(rec.output_path)
-            output_files.append(opus_path)
-
+async def stop_capture(session: RecordingSession) -> None:
+    """Stop every recorder now (the click is the end of the recording). Idempotent."""
+    await asyncio.gather(*(_terminate(rec) for rec in session.processes))
     session.is_recording = False
-    return output_files
+
+
+async def stop_recording(session: RecordingSession) -> list[Path]:
+    """Stop all recording processes, convert each WAV to Opus (in parallel), return the
+    Opus paths in device order."""
+    await stop_capture(session)
+    recorded = [
+        rec.output_path
+        for rec in session.processes
+        if rec.output_path.exists() and rec.output_path.stat().st_size > 0
+    ]
+    return list(await asyncio.gather(*(convert_to_opus(p) for p in recorded)))
