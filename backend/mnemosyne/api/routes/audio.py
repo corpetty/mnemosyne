@@ -15,6 +15,7 @@ from ...audio.mixer import mix_audio_files
 from ...audio.streams import CaptureApp
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, Recording, Session, SessionStatus
+from ...models.transcript import TranscriptSegment
 from ...services.copilot import copilot_runner
 from ...services.encryption import seal_session_audio
 from ...services.parts import add_part, next_part
@@ -154,7 +155,20 @@ async def stop(
     recording = ctx.active_recordings.get(session_id)
     if recording is None or not recording.is_recording:
         raise HTTPException(status_code=404, detail="No active recording for this session")
+    transcribe = request.transcribe if request is not None else None
+    job, want_transcribe = await stop_active(ctx, session_id, transcribe)
+    return StopRecordingResponse(
+        session=ctx.sessions.get_session(session_id),
+        job_id=job.id,
+        will_transcribe=want_transcribe,
+        message="Recording stopped; saving it",
+    )
 
+
+async def stop_active(ctx: AppContext, session_id: str, transcribe: bool | None = None):
+    """Stop an active recording now and queue its `finish` job. Returns (job, will_transcribe).
+    Also used when the app went away and nobody came back for the recording (api/app_watch.py)."""
+    recording = ctx.active_recordings[session_id]
     await stop_capture(recording)
     ctx.active_recordings.pop(session_id, None)
     task = ctx.level_tasks.pop(session_id, None)
@@ -162,18 +176,11 @@ async def stop(
         task.cancel()
     ctx.sessions.set_status(session_id, SessionStatus.ENCODING)
 
-    want_transcribe = ctx.settings.auto_transcribe
-    if request is not None and request.transcribe is not None:
-        want_transcribe = request.transcribe
+    want_transcribe = ctx.settings.auto_transcribe if transcribe is None else transcribe
     job = ctx.jobs.submit(
         "finish", _finish_recording(ctx, session_id, recording, want_transcribe), session_id
     )
-    return StopRecordingResponse(
-        session=ctx.sessions.get_session(session_id),
-        job_id=job.id,
-        will_transcribe=want_transcribe,
-        message="Recording stopped; saving it",
-    )
+    return job, want_transcribe
 
 
 def _finish_recording(ctx: AppContext, session_id: str, recording, want_transcribe: bool):
@@ -238,6 +245,51 @@ class RecordingStatus(ApiModel):
     is_recording: bool
     exists: bool
     device_count: int | None = None
+
+
+class LiveSegment(ApiModel):
+    source: str
+    segment: TranscriptSegment
+
+
+class ActiveRecording(ApiModel):
+    """A recording in progress, so a UI that (re)connects can show it: after the app was
+    restarted, the backend may still be recording (api/app_watch.py)."""
+
+    session_id: str
+    started_at: float  # unix time
+    device_ids: list[int]
+    part: int
+    live: bool  # live transcription is running
+    live_segments: list[LiveSegment] = []  # the live transcript so far
+
+
+@router.get("/active", response_model=list[ActiveRecording])
+async def active(ctx: AppContext = Depends(get_ctx)):
+    out = []
+    for session_id, recording in ctx.active_recordings.items():
+        if not recording.is_recording:
+            continue
+        live = ctx.live.get(session_id)
+        segments = (
+            [
+                LiveSegment(source=kind, segment=seg)
+                for seg, kind in zip(live.committed, live.committed_kind, strict=False)
+            ]
+            if live is not None
+            else []
+        )
+        out.append(
+            ActiveRecording(
+                session_id=session_id,
+                started_at=recording.started_at,
+                device_ids=[p.device_id for p in recording.processes],
+                part=recording.part,
+                live=live is not None,
+                live_segments=segments,
+            )
+        )
+    return out
 
 
 @router.get("/status/{session_id}", response_model=RecordingStatus)

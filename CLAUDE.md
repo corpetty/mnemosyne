@@ -113,6 +113,11 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - Encryption at rest: code that reads audio must go through `storage.crypto.plaintext()` (files
   may be `<name>.enc`), and new audio must be sealed with `seal_session_audio()`. Tests and demo
   mode never use the real keyring (MemoryKeyStore / FileKeyStore); keep it that way.
+- Backend lifetime: release backends get `MNEMOSYNE_APP_PID` and end with the app, except that a
+  recording outlives a crashed app by 15 minutes so a relaunch can take it over
+  (api/app_watch.py, `/api/system/attach`, `existing_backend` in lib.rs). The CLI binds the port
+  before startup (cli.py `bind`): uvicorn binds after the lifespan, and a second backend's startup
+  used to stop the first one's recorders. Recovery leaves recorders whose parent is a live Python.
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.

@@ -21,6 +21,9 @@ const BACKEND_PORT: u16 = 8008;
 
 struct BackendState {
     child: Mutex<Option<Child>>,
+    /// A backend we found running and took over instead of spawning one (see
+    /// `existing_backend`): stopped by pid on exit, since it is not our child.
+    adopted: Mutex<Option<i32>>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -85,6 +88,122 @@ async fn wait_for_backend(timeout_secs: u64) -> bool {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
     false
+}
+
+fn backend_addr() -> std::net::SocketAddr {
+    std::net::SocketAddr::from(([127, 0, 0, 1], BACKEND_PORT))
+}
+
+fn port_in_use() -> bool {
+    std::net::TcpStream::connect_timeout(&backend_addr(), std::time::Duration::from_secs(1)).is_ok()
+}
+
+/// A small blocking HTTP/1.0 request to the backend port, for the few calls the shell makes
+/// before any window can. Returns the JSON body of a 200 answer.
+fn backend_request(method: &str, path: &str, body: &str) -> Option<serde_json::Value> {
+    use std::io::{Read, Write};
+    let timeout = std::time::Duration::from_secs(5);
+    let mut stream = std::net::TcpStream::connect_timeout(&backend_addr(), timeout).ok()?;
+    stream.set_read_timeout(Some(timeout)).ok()?;
+    stream.set_write_timeout(Some(timeout)).ok()?;
+    write!(
+        stream,
+        "{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .ok()?;
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).ok()?;
+    let text = String::from_utf8_lossy(&raw);
+    let (head, body) = text.split_once("\r\n\r\n")?;
+    if head.split_whitespace().nth(1) != Some("200") {
+        return None;
+    }
+    serde_json::from_str(body).ok()
+}
+
+/// What holds the backend port when the app starts.
+enum Existing {
+    Free,
+    /// A Mnemosyne backend: usually one left by an app that crashed or was killed, which keeps
+    /// recording for a while so we can pick the recording up (backend/mnemosyne/api/app_watch.py).
+    Backend { version: String, pid: Option<i32> },
+    /// Some other program.
+    Other,
+}
+
+fn existing_backend() -> Existing {
+    if !port_in_use() {
+        return Existing::Free;
+    }
+    match backend_request("GET", "/health", "") {
+        Some(h) if h.get("status").and_then(|s| s.as_str()) == Some("ok") => Existing::Backend {
+            version: h.get("version").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            pid: h
+                .get("pid")
+                .and_then(|p| p.as_i64())
+                .map(|p| p as i32)
+                .or_else(find_backend_pid),
+        },
+        _ => Existing::Other,
+    }
+}
+
+/// Backends before 0.9.2 do not report their pid: find the process running our command line.
+fn find_backend_pid() -> Option<i32> {
+    let port = BACKEND_PORT.to_string();
+    let own = std::process::id() as i32;
+    for entry in fs::read_dir("/proc").ok()?.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) else {
+            continue;
+        };
+        let Ok(raw) = fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        let argv: Vec<&[u8]> = raw.split(|b| *b == 0).collect();
+        let has = |arg: &str| argv.iter().any(|a| *a == arg.as_bytes());
+        if pid != own && has("main.py") && has("--port") && has(&port) {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+/// Stop a backend that is not our child and wait for the port to be free. SIGTERM lets it
+/// shut down cleanly; a recording it had is recovered by the next backend on startup.
+fn stop_backend_pid(pid: i32) -> bool {
+    unsafe {
+        libc::kill(pid, libc::SIGTERM);
+    }
+    for i in 0..60 {
+        if !port_in_use() {
+            return true;
+        }
+        if i == 40 {
+            warn!("Backend {pid} did not stop in 20 s; killing it");
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    !port_in_use()
+}
+
+/// Use the backend already running instead of starting one, and tell it that it belongs to
+/// this app now (it then ends with us, and stops waiting for its old app to come back).
+fn adopt_backend(app: &AppHandle, pid: Option<i32>) {
+    let body = format!("{{\"pid\": {}}}", std::process::id());
+    let ours = backend_request("POST", "/api/system/attach", &body)
+        .and_then(|r| r.get("watching").and_then(|w| w.as_bool()))
+        .unwrap_or(false);
+    info!("Using the backend already running (pid {pid:?}; stopped on exit: {ours})");
+    if ours {
+        *app.state::<BackendState>().adopted.lock().unwrap() = pid;
+    }
+    emit_status(app, "ready", format!("Backend ready on port {BACKEND_PORT}"));
+    let _ = app.emit("backend-ready", true);
 }
 
 /// Environment variables the AppImage runtime (AppRun + linuxdeploy hooks) sets for
@@ -377,6 +496,8 @@ fn release_command(layout: &ReleaseLayout) -> StdCommand {
     cmd.args(["main.py", "--host", "127.0.0.1", "--port", &BACKEND_PORT.to_string()])
         .current_dir(&layout.backend_dir)
         .env("MNEMOSYNE_DATA_DIR", &layout.data_dir)
+        // The backend ends when this app does (after saving a recording it was making).
+        .env("MNEMOSYNE_APP_PID", std::process::id().to_string())
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("PYTHONUNBUFFERED", "1");
     cmd
@@ -384,6 +505,37 @@ fn release_command(layout: &ReleaseLayout) -> StdCommand {
 
 /// Prepare (install if needed) and spawn the backend. Runs on a worker thread.
 fn start_backend(app: AppHandle) {
+    match existing_backend() {
+        Existing::Free => {}
+        Existing::Other => {
+            emit_status(
+                &app,
+                "error",
+                format!("Port {BACKEND_PORT} is in use by another program"),
+            );
+            return;
+        }
+        Existing::Backend { version, pid } if version == app.package_info().version.to_string() => {
+            adopt_backend(&app, pid);
+            return;
+        }
+        Existing::Backend { version, pid } => {
+            info!("A backend of version {version} (pid {pid:?}) is still running; stopping it");
+            emit_status(&app, "starting", "Stopping the previous version's backend...");
+            if !pid.map(stop_backend_pid).unwrap_or(false) {
+                emit_status(
+                    &app,
+                    "error",
+                    format!(
+                        "A Mnemosyne backend of version {version} is still running on port \
+                         {BACKEND_PORT} and could not be stopped"
+                    ),
+                );
+                return;
+            }
+        }
+    }
+
     let mut gpu_layout: Option<ReleaseLayout> = None;
     let mut cmd = if cfg!(debug_assertions) {
         dev_command()
@@ -450,10 +602,16 @@ fn restart_backend(app: AppHandle) {
     if let Some(mut child) = app.state::<BackendState>().child.lock().unwrap().take() {
         kill_process_tree(&mut child);
     }
+    let adopted = app.state::<BackendState>().adopted.lock().unwrap().take();
     let handle = app.clone();
     let _ = std::thread::Builder::new()
         .name("backend-supervisor".into())
-        .spawn(move || start_backend(handle));
+        .spawn(move || {
+            if let Some(pid) = adopted {
+                stop_backend_pid(pid); // or start_backend would take it over again
+            }
+            start_backend(handle)
+        });
 }
 
 // ---- tray, single instance, remote control -----------------------------------
@@ -668,7 +826,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
-        .manage(BackendState { child: Mutex::new(None) })
+        .manage(BackendState { child: Mutex::new(None), adopted: Mutex::new(None) })
         .manage(LaunchAction(Mutex::new(
             action_from_args(std::env::args().skip(1)).map(str::to_string),
         )))
@@ -723,10 +881,15 @@ pub fn run() {
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {
             info!("App exiting, shutting down backend...");
-            let child = app_handle.state::<BackendState>().child.lock().unwrap().take();
+            let state = app_handle.state::<BackendState>();
+            let child = state.child.lock().unwrap().take();
+            let adopted = state.adopted.lock().unwrap().take();
             if let Some(mut child) = child {
                 kill_process_tree(&mut child);
                 info!("Backend process tree killed.");
+            } else if let Some(pid) = adopted {
+                stop_backend_pid(pid);
+                info!("Backend {pid} (taken over at start) stopped.");
             } else {
                 warn!("No backend child to kill (install may still be running).");
             }

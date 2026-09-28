@@ -124,6 +124,19 @@ class AudioState {
     }
   }
 
+  /** Show a recording that was already running when the page connected: the app was
+   *  restarted (or crashed) while the backend kept recording. */
+  resume(sessionId: string, startedAt: number, deviceIds: number[]) {
+    this.activeSessionId = sessionId;
+    this.isRecording = true;
+    this.selectedDeviceIds = new Set(deviceIds);
+    this.recordingDuration = Math.max(0, Math.round(Date.now() / 1000 - startedAt));
+    if (this.durationInterval) clearInterval(this.durationInterval);
+    this.durationInterval = setInterval(() => {
+      this.recordingDuration++;
+    }, 1000);
+  }
+
   async stopRecording() {
     if (!this.activeSessionId) return;
     this.error = null;

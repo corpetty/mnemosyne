@@ -114,6 +114,33 @@ def _recorders_writing(paths: set[str]) -> list[int]:
     return pids
 
 
+def _parent(pid: int) -> int | None:
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        return int(stat.rsplit(")", 1)[1].split()[1])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _is_python(pid: int) -> bool:
+    try:
+        argv0 = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[0]
+    except OSError:
+        return False
+    return os.path.basename(argv0.decode(errors="replace")).startswith("python")
+
+
+def recorder_owner(wavs: list[Path]) -> int | None:
+    """The pid of a live backend still recording to `wavs`, if any. Its recorders are its own
+    business: the recording is not interrupted, just not ours. (An orphaned recorder's parent
+    is init or a subreaper such as systemd --user, never Python.)"""
+    for pid in _recorders_writing({str(p) for p in wavs}):
+        parent = _parent(pid)
+        if parent and parent != os.getpid() and _is_python(parent):
+            return parent
+    return None
+
+
 def stop_orphan_recorders(wavs: list[Path], timeout: float = 3.0) -> int:
     """Stop pw-record processes left over from a previous backend that still write to `wavs`.
     SIGTERM lets pw-record finish its header. Returns how many were stopped."""
@@ -243,8 +270,18 @@ def recover_session(app: AppContext, session_id: str):
 
 def recover_interrupted(app: AppContext) -> list[str]:
     """Queue a recovery job for every interrupted recording. Returns the session ids."""
-    ids = interrupted_sessions(app)
-    for session_id in ids:
+    ids = []
+    for session_id in interrupted_sessions(app):
+        folder = app.settings.recordings_dir / session_id
+        owner = recorder_owner([folder / t["wav"] for t in _tracks(folder)[2]])
+        if owner is not None:
+            logger.warning(
+                "Session %s is still being recorded by another backend (pid %d); leaving it",
+                session_id,
+                owner,
+            )
+            continue
         logger.warning("Recording of session %s was interrupted; recovering it", session_id)
         app.jobs.submit("recover", recover_session(app, session_id), session_id)
+        ids.append(session_id)
     return ids

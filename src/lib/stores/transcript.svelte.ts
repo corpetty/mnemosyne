@@ -168,6 +168,14 @@ class TranscriptState {
     this.liveStatus = 'Starting...';
   }
 
+  /** Pick up a live transcript already under way (see audioState.resume). */
+  resumeLive(sessionId: string, segments: TranscriptSegment[], running: boolean) {
+    this.startLive(sessionId);
+    this.liveSegments = [...segments].sort((a, b) => a.start - b.start);
+    for (const s of segments) this.getSpeakerColor(s.speaker);
+    this.liveStatus = running ? 'Live' : '';
+  }
+
   clearLive() {
     this.mentionStarts = [];
     this.liveSegments = [];

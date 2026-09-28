@@ -30,8 +30,27 @@ the token included. Settings → Server mode shows them with a QR code.
 ### `GET /health`
 
 ```json
-{ "status": "ok", "version": "0.4.1", "host": "gpu-box", "auth_required": false }
+{ "status": "ok", "version": "0.9.2", "host": "gpu-box", "auth_required": false, "pid": 4242, "recording": false }
 ```
+
+`pid` and `recording` are for the desktop shell, which may find a backend already running when it
+starts (see below).
+
+### Backend lifetime (desktop app)
+The shell passes its pid in `MNEMOSYNE_APP_PID`; the backend watches it (`api/app_watch.py`). When
+the app is gone the backend shuts down, after finishing running jobs. During a recording it keeps
+recording for 15 minutes and says so in a desktop notification; an app started in that time takes
+the backend over and shows the recording, otherwise the recording is stopped and saved like Stop
+(not transcribed) and the backend shuts down. Without `MNEMOSYNE_APP_PID` (server mode) nothing is
+watched. A backend binds its port before it starts anything and exits with code 3 when the port is
+taken, so a second one never touches the first one's recording.
+
+### `POST /api/system/attach`
+`{pid}` → `{watching}`. A relaunched app takes over the backend its predecessor left running: the
+backend now ends with that app. `watching` is false for a backend not started by the app, which
+stays independent. On start the shell calls `/health`: a backend of its own version is taken over,
+an older one is stopped (SIGTERM; its recording is recovered by the new backend), anything else on
+the port is an error.
 
 ---
 
@@ -197,6 +216,11 @@ Other apps with an open recording stream right now (`Stream/Input/Audio` nodes i
 the last 5-second poll: `[{app, binary, node_id}]`, with friendly names for common meeting apps and
 browsers. Our own recorders (`application.name=Mnemosyne`) and `auto_record_ignore_apps` are left
 out; empty while `auto_record` is `off`. Changes are published as `meeting_app` events.
+
+### `GET /api/audio/active`
+Recordings in progress, so a UI that (re)connects shows them: `[{session_id, started_at (unix
+time), device_ids, part, live, live_segments: [{source, segment}]}]`. `live_segments` is the live
+transcript so far.
 
 ### `GET /api/audio/status/{session_id}`
 

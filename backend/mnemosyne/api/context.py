@@ -58,6 +58,7 @@ class AppContext:
     locked: bool = False
     level_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     http_transport: object | None = None  # tests inject an httpx transport for integrations
+    app_watch: Any = None  # api/app_watch.py: the desktop app this backend belongs to
 
     def __post_init__(self) -> None:
         self.summarizer.name_source = self.known_names

@@ -99,6 +99,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audio/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Active */
+        get: operations["active_api_audio_active_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audio/apps": {
         parameters: {
             query?: never;
@@ -1326,6 +1343,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/attach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach
+         * @description A relaunched desktop app takes over the backend its crashed predecessor left running
+         *     (api/app_watch.py). A backend not started by the app (server mode) stays independent.
+         */
+        post: operations["attach_api_system_attach_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system/diagnostics": {
         parameters: {
             query?: never;
@@ -1456,6 +1494,28 @@ export interface components {
             /** Done */
             done: boolean;
         };
+        /**
+         * ActiveRecording
+         * @description A recording in progress, so a UI that (re)connects can show it: after the app was
+         *     restarted, the backend may still be recording (api/app_watch.py).
+         */
+        ActiveRecording: {
+            /** Device Ids */
+            device_ids: number[];
+            /** Live */
+            live: boolean;
+            /**
+             * Live Segments
+             * @default []
+             */
+            live_segments: components["schemas"]["LiveSegment"][];
+            /** Part */
+            part: number;
+            /** Session Id */
+            session_id: string;
+            /** Started At */
+            started_at: number;
+        };
         /** Ask */
         Ask: {
             /**
@@ -1504,6 +1564,16 @@ export interface components {
             provider: string;
             /** Question */
             question: string;
+        };
+        /** AttachRequest */
+        AttachRequest: {
+            /** Pid */
+            pid: number;
+        };
+        /** AttachResponse */
+        AttachResponse: {
+            /** Watching */
+            watching: boolean;
         };
         /** AttendeesRequest */
         AttendeesRequest: {
@@ -1940,6 +2010,12 @@ export interface components {
             peak_db: number;
             /** Rms Db */
             rms_db: number;
+        };
+        /** LiveSegment */
+        LiveSegment: {
+            segment: components["schemas"]["TranscriptSegment"];
+            /** Source */
+            source: string;
         };
         /** LocalOnlyRequest */
         LocalOnlyRequest: {
@@ -3320,6 +3396,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    active_api_audio_active_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActiveRecording"][];
                 };
             };
         };
@@ -5501,6 +5597,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SystemInfo"];
+                };
+            };
+        };
+    };
+    attach_api_system_attach_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

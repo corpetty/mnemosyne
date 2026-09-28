@@ -3,6 +3,7 @@
 import asyncio
 import json
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +41,7 @@ class RecordingSession:
     processes: list[RecordingProcess] = field(default_factory=list)
     is_recording: bool = False
     part: int = 0  # which part of its meeting this recording is (services/parts.py)
+    started_at: float = field(default_factory=time.time)  # wall clock, for a UI that reconnects
 
 
 def list_devices() -> list[AudioDevice]:

@@ -11,6 +11,7 @@ export type AudioDevice = S['DeviceResponse'];
 export type StartRecordingResponse = S['StartRecordingResponse'];
 export type StopRecordingResponse = Omit<S['StopRecordingResponse'], 'session'> & { session: SessionDetail };
 export type RecordingStatus = S['RecordingStatus'];
+export type ActiveRecording = S['ActiveRecording'];
 export type SessionDetail = S['Session'];
 export type SessionStatus = SessionDetail['status'];
 export type SessionSummary = S['SessionSummary'];

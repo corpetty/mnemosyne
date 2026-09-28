@@ -17,7 +17,7 @@ from tests.fakes import FakeEngine, FakeProvider, FakeTranscriber
 # environment so a developer's keys, vault, or model choices never leak into tests.
 for _name in Settings.model_fields:
     os.environ.pop(_name.upper(), None)
-for _key in ("MNEMOSYNE_DATA_DIR", "MNEMOSYNE_CONFIG_FILE"):
+for _key in ("MNEMOSYNE_DATA_DIR", "MNEMOSYNE_CONFIG_FILE", "MNEMOSYNE_APP_PID"):
     os.environ.pop(_key, None)
 
 

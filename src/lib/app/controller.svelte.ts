@@ -2,7 +2,14 @@
  * App behaviour that spans stores: connecting to the backend, recording actions
  * (buttons, shortcuts, tray, command line, calendar banner) and keyboard shortcuts.
  */
-import { exportToObsidian, getEncryption, getHealth, getSettings, listSessions } from '$lib/api/backend.js';
+import {
+  exportToObsidian,
+  getActiveRecordings,
+  getEncryption,
+  getHealth,
+  getSettings,
+  listSessions
+} from '$lib/api/backend.js';
 import { askState } from '$lib/stores/ask.svelte.js';
 import { digestState } from '$lib/stores/digest.svelte.js';
 import { audioState } from '$lib/stores/audio.svelte.js';
@@ -68,6 +75,24 @@ export async function stopAndTranscribe() {
   } else {
     toastState.info('Recording stopped; saving it');
   }
+}
+
+/** The app was restarted while the backend kept recording (it waits a while for the app
+ *  to come back; backend/mnemosyne/api/app_watch.py): show that recording, Stop and all. */
+async function resumeActiveRecording() {
+  if (audioState.isRecording || audioState.pending) return;
+  const [active] = await getActiveRecordings().catch(() => []);
+  if (!active || audioState.isRecording) return;
+  audioState.resume(active.session_id, active.started_at, active.device_ids);
+  transcriptState.resumeLive(
+    active.session_id,
+    active.live_segments.map((s) => s.segment),
+    active.live
+  );
+  await sessionState.selectSession(active.session_id);
+  uiState.view = 'home';
+  uiState.activeTab = 'recording';
+  toastState.info('Still recording: picked up the recording in progress');
 }
 
 export async function exportActive() {
@@ -353,6 +378,7 @@ function onConnected(): () => void {
   sessionState.loadSessions();
   wsState.connect();
   transcriptState.init();
+  void resumeActiveRecording();
   jobsState.init();
   askState.init();
   digestState.init();
@@ -383,6 +409,7 @@ function onConnected(): () => void {
       // Every (re)connect, e.g. after the backend restarted to pick up GPU support.
       sessionState.loadSessions();
       for (const r of msg.recovered ?? []) announceRecovered(r);
+      void resumeActiveRecording();
       return;
     }
     if (msg.type === 'recovered') {

@@ -39,7 +39,31 @@ def main() -> None:
     os.environ["MNEMOSYNE_BIND_PORT"] = str(args.port)
     settings = load_settings()
     setup_logging(settings.data_dir)
-    uvicorn.run(create_app(settings), host=args.host, port=args.port)
+    sock = bind(args.host, args.port)
+    config = uvicorn.Config(create_app(settings), host=args.host, port=args.port)
+    uvicorn.Server(config).run(sockets=[sock])
+
+
+def bind(host: str, port: int):
+    """Take the port before anything starts. uvicorn binds only after the app's startup, and a
+    second backend's startup is not harmless: it would stop the first one's recorders (to
+    recover their "interrupted" recording) and its echo canceller, then fail to bind."""
+    import logging
+    import socket
+    import sys
+
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    try:
+        return socket.create_server((host, port), family=family)
+    except OSError as e:
+        logging.getLogger("mnemosyne").error(
+            "Cannot listen on %s:%d (%s): another Mnemosyne backend is probably running. "
+            "Not starting a second one.",
+            host,
+            port,
+            e.strerror or e,
+        )
+        sys.exit(3)
 
 
 if __name__ == "__main__":

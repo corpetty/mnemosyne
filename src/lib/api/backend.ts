@@ -1,4 +1,5 @@
 import type {
+  ActiveRecording,
   Ask,
   DesktopCalendar,
   EncryptionEnabled,
@@ -102,6 +103,11 @@ export async function stopRecording(
 
 export async function getRecordingStatus(sessionId: string): Promise<RecordingStatus> {
   return request(`/api/audio/status/${sessionId}`);
+}
+
+/** Recordings in progress: after a restart of the app, the backend may still be recording. */
+export async function getActiveRecordings(): Promise<ActiveRecording[]> {
+  return request('/api/audio/active');
 }
 
 // Sessions

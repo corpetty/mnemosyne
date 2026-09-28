@@ -54,6 +54,22 @@ async def system_info(ctx: AppContext = Depends(get_ctx)):
     )
 
 
+class AttachRequest(ApiModel):
+    pid: int
+
+
+class AttachResponse(ApiModel):
+    watching: bool  # this backend now belongs to that app and ends when it does
+
+
+@router.post("/system/attach", response_model=AttachResponse)
+async def attach(request: AttachRequest, ctx: AppContext = Depends(get_ctx)):
+    """A relaunched desktop app takes over the backend its crashed predecessor left running
+    (api/app_watch.py). A backend not started by the app (server mode) stays independent."""
+    watch = ctx.app_watch
+    return AttachResponse(watching=watch is not None and watch.attach(request.pid))
+
+
 class Diagnostics(ApiModel):
     text: str
     log_file: str  # where the backend log is, on the backend's machine

@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import Settings, load_settings
+from .app_watch import watch_app
 from .auth import LockedMiddleware, TokenAuthMiddleware
 from .context import AppContext
 from .routes.ask import router as ask_router
@@ -37,7 +38,10 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await ctx.startup()
+        watching = watch_app(ctx)
         yield
+        if watching is not None:
+            watching[1].cancel()
         await ctx.shutdown()
 
     app = FastAPI(title="Mnemosyne Backend", version="0.9.1", lifespan=lifespan)
@@ -78,6 +82,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
 
     @app.get("/health")
     async def health():
+        import os
         import socket
 
         return {
@@ -85,6 +90,9 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
             "version": app.version,
             "host": socket.gethostname(),
             "auth_required": bool(ctx.settings.api_token),
+            # For the desktop shell, which finds this backend already running after a crash.
+            "pid": os.getpid(),
+            "recording": any(r.is_recording for r in ctx.active_recordings.values()),
         }
 
     return app
