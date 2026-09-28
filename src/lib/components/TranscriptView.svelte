@@ -2,7 +2,14 @@
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
-	import { deleteSegment, mergeSegmentUp, splitSegment, updateSegment } from '$lib/api/backend.js';
+	import {
+		addGlossaryCorrection,
+		deleteSegment,
+		mergeSegmentUp,
+		splitSegment,
+		suggestGlossary,
+		updateSegment
+	} from '$lib/api/backend.js';
 	import type { SessionDetail } from '$lib/types/index.js';
 	import LiveTranscript from './LiveTranscript.svelte';
 	import SpeakerBar from './SpeakerBar.svelte';
@@ -114,8 +121,29 @@
 		const idx = editingIdx;
 		const text = draft.trim();
 		editingIdx = null;
-		if (!text || text === transcriptState.segments[idx].text) return;
+		const before = transcriptState.segments[idx].text;
+		if (!text || text === before) return;
 		await run(() => updateSegment(session.id, idx, { text }));
+		offerGlossary(session.id, before, text);
+	}
+
+	/** A corrected name or term: offer to teach the glossary, so later meetings get it right. */
+	async function offerGlossary(sessionId: string, before: string, after: string) {
+		const [hint] = await suggestGlossary(before, after).catch(() => []);
+		if (!hint) return;
+		toastState.show(`Always write “${hint.correct}” for “${hint.heard}”?`, 'info', 15_000, {
+			label: 'Add to glossary',
+			run: async () => {
+				try {
+					const res = await addGlossaryCorrection(hint.heard, hint.correct, sessionId);
+					if (sessionState.activeSession?.id === sessionId) await sessionState.refreshActive();
+					const more = res.fixed_lines ? ` and fixed ${res.fixed_lines} more line${res.fixed_lines > 1 ? 's' : ''} here` : '';
+					toastState.success(`Added to the glossary${more}`);
+				} catch (e) {
+					toastState.error(e instanceof Error ? e.message : 'Could not add it');
+				}
+			}
+		});
 	}
 
 	async function splitAtCursor() {

@@ -70,6 +70,43 @@ def apply_corrections(
     return out, changed
 
 
+_EDGE = ".,;:!?\"'()[]"
+
+
+def suggest_corrections(before: str, after: str, glossary: Glossary) -> list[tuple[str, str]]:
+    """Glossary entries a transcript edit suggests: (heard, correct) for each short phrase
+    replaced by one with a capital letter (a name, a product, an acronym). Fixing "okay for"
+    to "Okafor" suggests `okay for -> Okafor`; a typo or a rewrite suggests nothing, and
+    neither does a correction the glossary already makes."""
+    from difflib import SequenceMatcher
+
+    old, new = before.split(), after.split()
+    out: list[tuple[str, str]] = []
+    matcher = SequenceMatcher(a=[w.lower() for w in old], b=[w.lower() for w in new])
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "replace" or i2 - i1 > 4 or j2 - j1 > 4:
+            continue
+        heard = " ".join(old[i1:i2]).strip(_EDGE)
+        correct = " ".join(new[j1:j2]).strip(_EDGE)
+        if not heard or not correct or heard.lower() == correct.lower():
+            continue
+        if not any(c.isupper() for c in correct):
+            continue
+        if any(pattern.fullmatch(heard) for pattern, _ in glossary.corrections):
+            continue
+        out.append((heard, correct))
+    return out[:3]
+
+
+def add_correction(text: str, heard: str, correct: str) -> str:
+    """The glossary text with `heard -> correct` added (once)."""
+    line = f"{heard} -> {correct}"
+    lines = (text or "").rstrip("\n").splitlines()
+    if any(existing.split("#", 1)[0].strip().lower() == line.lower() for existing in lines):
+        return text
+    return "\n".join([*lines, line]) + "\n"
+
+
 def initial_prompt(glossary: Glossary, max_chars: int = 600) -> str | None:
     """Whisper conditioning text: a short sentence naming the terms (Whisper reads it as
     preceding context, which biases spelling)."""

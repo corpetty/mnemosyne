@@ -16,6 +16,7 @@ from .routes.devices import router as devices_router
 from .routes.digests import router as digests_router
 from .routes.encryption import router as encryption_router
 from .routes.export import router as export_router
+from .routes.glossary import router as glossary_router
 from .routes.integrations import router as integrations_router
 from .routes.jobs import router as jobs_router
 from .routes.mobile import router as mobile_router
@@ -69,6 +70,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(jobs_router)
     app.include_router(speakers_router)
     app.include_router(segments_router)
+    app.include_router(glossary_router)
     app.include_router(search_router)
     app.include_router(ask_router)
     app.include_router(digests_router)

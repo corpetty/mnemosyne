@@ -553,6 +553,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/glossary/corrections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add
+         * @description Add `heard -> correct` to the glossary (every later transcript gets it right) and,
+         *     with a session, fix the lines of that meeting that still have it wrong.
+         */
+        post: operations["add_api_glossary_corrections_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/glossary/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Suggest */
+        post: operations["suggest_api_glossary_suggest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/integrations": {
         parameters: {
             query?: never;
@@ -1714,6 +1752,22 @@ export interface components {
             /** Started At */
             started_at: number;
         };
+        /** AddCorrection */
+        AddCorrection: {
+            /** Correct */
+            correct: string;
+            /** Heard */
+            heard: string;
+            /** Session Id */
+            session_id?: string | null;
+        };
+        /** AddCorrectionResult */
+        AddCorrectionResult: {
+            /** Fixed Lines */
+            fixed_lines: number;
+            /** Glossary */
+            glossary: string;
+        };
         /** Ask */
         Ask: {
             /**
@@ -2176,6 +2230,13 @@ export interface components {
              * @enum {string}
              */
             style: "email" | "chat";
+        };
+        /** GlossarySuggestion */
+        GlossarySuggestion: {
+            /** Correct */
+            correct: string;
+            /** Heard */
+            heard: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -3352,6 +3413,13 @@ export interface components {
             /** Sessions With Audio */
             sessions_with_audio: number;
         };
+        /** SuggestRequest */
+        SuggestRequest: {
+            /** After */
+            after: string;
+            /** Before */
+            before: string;
+        };
         /** SummarizeRequest */
         SummarizeRequest: {
             /** Instructions */
@@ -4493,6 +4561,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EncryptionStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_api_glossary_corrections_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddCorrection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddCorrectionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggest_api_glossary_suggest_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlossarySuggestion"][];
                 };
             };
             /** @description Validation Error */

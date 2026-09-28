@@ -1,5 +1,7 @@
 import type {
   ActiveRecording,
+  AddCorrectionResult,
+  GlossarySuggestion,
   BackupStatus,
   RestoreResponse,
   Ask,
@@ -169,6 +171,23 @@ export async function transcribeSession(sessionId: string): Promise<Job> {
 // Jobs
 export async function listJobs(activeOnly = false): Promise<Job[]> {
   return request(`/api/jobs?active_only=${activeOnly}`);
+}
+
+/** Glossary entries a transcript correction suggests (a misheard name, product, acronym). */
+export async function suggestGlossary(before: string, after: string): Promise<GlossarySuggestion[]> {
+  return request('/api/glossary/suggest', { method: 'POST', body: JSON.stringify({ before, after }) });
+}
+
+/** Add `heard -> correct` to the glossary; with a session, also fix the rest of its transcript. */
+export async function addGlossaryCorrection(
+  heard: string,
+  correct: string,
+  sessionId?: string
+): Promise<AddCorrectionResult> {
+  return request('/api/glossary/corrections', {
+    method: 'POST',
+    body: JSON.stringify({ heard, correct, session_id: sessionId ?? null })
+  });
 }
 
 export async function getJob(jobId: string): Promise<Job> {
