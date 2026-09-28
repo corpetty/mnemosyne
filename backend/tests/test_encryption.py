@@ -257,3 +257,34 @@ def test_quotes_from_encrypted_meetings(client, ctx, tmp_path):
     target = tmp_path / "quote.ogg"
     client.post(f"/api/sessions/m1/clips/{body['clip']['id']}/save", json={"path": str(target)})
     assert target.read_bytes() == got.content
+
+
+def test_readers_wait_while_the_database_is_swapped(client, ctx, monkeypatch):
+    """Turning encryption on rewrites the database; a request or the search indexer reading
+    meanwhile waits for it instead of failing on a closed database."""
+    import threading
+
+    from mnemosyne.services import encryption
+
+    session = ctx.sessions.create_session("during the swap")
+    seen: dict = {}
+    real = encryption.convert_database
+
+    def convert(*args):
+        def read():
+            try:
+                seen["stamp"] = ctx.repo.session_stamp(session.id)
+            except Exception as e:  # noqa: BLE001
+                seen["error"] = e
+
+        reader = threading.Thread(target=read)
+        reader.start()
+        reader.join(0.2)
+        seen["waited"] = reader.is_alive()
+        real(*args)
+        seen["reader"] = reader
+
+    monkeypatch.setattr(encryption, "convert_database", convert)
+    assert client.post("/api/encryption/enable").status_code == 200
+    seen["reader"].join(5)
+    assert seen["waited"] and "error" not in seen and seen["stamp"]

@@ -123,24 +123,26 @@ def _all_session_ids(app: AppContext) -> list[str]:
 def _replace_database(app: AppContext, db_key: bytes | None, current_key: bytes | None) -> None:
     """Rewrite the database encrypted with `db_key` (or plain, None) and reopen it in place.
     The new file is checked before it replaces the old one."""
+    from ..storage.sqlite import SessionRepository
+
     db = app.settings.db_path
     tmp = db.with_name(db.name + ".converting")
-    app.repo.close()
-    try:
-        convert_database(db, tmp, current_key, db_key)
-        from ..storage.sqlite import SessionRepository
-
-        check = SessionRepository(tmp, db_key)  # opens, migrates, reads: or raises
-        check.list_summaries()
-        check.close()
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        app.repo.reopen(db, current_key)
-        raise
-    for extra in ("-wal", "-shm"):
-        Path(str(db) + extra).unlink(missing_ok=True)
-    os.replace(tmp, db)
-    app.repo.reopen(db, db_key)
+    # Requests and the search indexer wait meanwhile instead of finding the database closed.
+    with app.repo.exclusive():
+        app.repo.close()
+        try:
+            convert_database(db, tmp, current_key, db_key)
+            check = SessionRepository(tmp, db_key)  # opens, migrates, reads: or raises
+            check.list_summaries()
+            check.close()
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            app.repo.reopen(db, current_key)
+            raise
+        for extra in ("-wal", "-shm"):
+            Path(str(db) + extra).unlink(missing_ok=True)
+        os.replace(tmp, db)
+        app.repo.reopen(db, db_key)
 
 
 def enable(app: AppContext) -> EncryptionEnabled:

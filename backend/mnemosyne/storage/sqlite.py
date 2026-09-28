@@ -413,6 +413,11 @@ class SessionRepository:
         with self._lock:
             self._conn.close()
 
+    def exclusive(self):
+        """Hold every other reader and writer off (the database is being swapped: they would
+        find it closed). Reentrant: close() and reopen() work inside."""
+        return self._lock
+
     def rebase_paths(self, old: str, new: str) -> int:
         """Move stored audio paths from one recordings folder to another (after a restore)."""
         prefix = old.rstrip("/") + "/"
