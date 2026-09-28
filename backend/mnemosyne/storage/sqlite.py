@@ -290,6 +290,10 @@ class SessionRepository:
             self._conn.execute(
                 "ALTER TABLE recordings ADD COLUMN part_offset REAL NOT NULL DEFAULT 0"
             )
+        if "meeting_type" not in cols:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN meeting_type TEXT NOT NULL DEFAULT ''"
+            )
         if "agenda" not in cols:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN agenda TEXT NOT NULL DEFAULT '[]'")
         if "speakers_reviewed" not in cols:
@@ -421,6 +425,7 @@ class SessionRepository:
             ),
             speakers_reviewed=bool(row["speakers_reviewed"]),
             agenda=[AgendaItem.model_validate(a) for a in json.loads(row["agenda"] or "[]")],
+            meeting_type=row["meeting_type"],
             transcript=[
                 TranscriptSegment(
                     text=r["text"],
@@ -468,8 +473,8 @@ class SessionRepository:
                 """INSERT INTO sessions(id, name, status, created_at, updated_at, audio_file,
                                         summary, summary_data, notes, participants,
                                         attendees, local_only, copilot_notes,
-                                        speakers_reviewed, agenda)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                        speakers_reviewed, agenda, meeting_type)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      name=excluded.name, status=excluded.status, updated_at=excluded.updated_at,
                      audio_file=excluded.audio_file, summary=excluded.summary,
@@ -478,7 +483,7 @@ class SessionRepository:
                      attendees=excluded.attendees, local_only=excluded.local_only,
                      copilot_notes=excluded.copilot_notes,
                      speakers_reviewed=excluded.speakers_reviewed,
-                     agenda=excluded.agenda""",
+                     agenda=excluded.agenda, meeting_type=excluded.meeting_type""",
                 (
                     session.id,
                     session.name,
@@ -495,6 +500,7 @@ class SessionRepository:
                     session.copilot_notes.model_dump_json() if session.copilot_notes else None,
                     int(session.speakers_reviewed),
                     json.dumps([a.model_dump() for a in session.agenda]),
+                    session.meeting_type,
                 ),
             )
             self._write_segments(session.id, session.transcript)
@@ -517,6 +523,7 @@ class SessionRepository:
             "copilot_notes",
             "speakers_reviewed",
             "agenda",
+            "meeting_type",
         }
         bad = set(fields) - allowed
         if bad:

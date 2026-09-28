@@ -175,6 +175,11 @@ export async function listJobs(activeOnly = false): Promise<Job[]> {
   return request(`/api/jobs?active_only=${activeOnly}`);
 }
 
+/** Choose a meeting's type (a name from settings.meeting_types, or "none"). */
+export async function setMeetingType(sessionId: string, name: string): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/meeting-type`, { method: 'PUT', body: JSON.stringify({ name }) });
+}
+
 /** A meeting's agenda, in order (the copilot marks points covered as they come up). */
 export async function setAgenda(sessionId: string, items: AgendaItem[]): Promise<AgendaItem[]> {
   return request(`/api/sessions/${sessionId}/agenda`, { method: 'PUT', body: JSON.stringify({ items }) });

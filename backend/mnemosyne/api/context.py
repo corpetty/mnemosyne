@@ -69,6 +69,7 @@ class AppContext:
 
     def __post_init__(self) -> None:
         self.summarizer.name_source = self.known_names
+        self.sessions.type_source = lambda: self.settings.meeting_types
 
     def known_names(self) -> list[str]:
         """People's names, for redaction before cloud calls."""

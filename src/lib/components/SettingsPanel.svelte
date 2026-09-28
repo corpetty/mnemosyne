@@ -10,6 +10,7 @@
 	import RemoteConnect from './RemoteConnect.svelte';
 	import StorageSettings from './StorageSettings.svelte';
 	import BackupSettings from './BackupSettings.svelte';
+	import MeetingTypesSettings from './MeetingTypesSettings.svelte';
 	import { calendarState } from '$lib/stores/calendar.svelte.js';
 	import { checkGitHub, checkIntegration, getIndexStatus, listDesktopCalendars, rebuildIndex } from '$lib/api/backend.js';
 	import { collectDiagnostics } from '$lib/app/diagnostics.js';
@@ -851,6 +852,8 @@
 					<p class="col-span-2 text-[11px] text-gray-600 -mt-1">Meetings marked local-only (lock in the meeting header) are never sent to them at all.</p>
 				</div>
 			</section>
+
+			<MeetingTypesSettings />
 
 			<!-- Search -->
 			<section>

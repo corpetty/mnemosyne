@@ -182,6 +182,9 @@ export async function loadAutoRecordSettings() {
     autoRecordState.mode = (s.values.auto_record as AutoMode) || 'off';
     autoRecordState.silenceMinutes = s.values.auto_stop_silence_minutes ?? 10;
     autoRecordState.calendar = s.values.auto_record_calendar ?? true;
+    autoRecordState.typeWords = (s.values.meeting_types ?? [])
+      .filter((t) => t.auto_record)
+      .map((t) => t.match.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean));
   } catch {
     /* keep previous */
   }
@@ -239,7 +242,10 @@ function autoRecordTick() {
   if (!audioState.isRecording) {
     autoRecordState.started = null;
     const ev = calendarState.starting;
-    if (autoRecordState.mode === 'auto' && autoRecordState.calendar && ev && !calendarHandled.has(ev.uid)) {
+    const byType = (title: string) =>
+      autoRecordState.typeWords.some((words) => words.some((w) => title.toLowerCase().includes(w)));
+    const wanted = ev && ((autoRecordState.mode === 'auto' && autoRecordState.calendar) || byType(ev.title));
+    if (ev && wanted && !calendarHandled.has(ev.uid)) {
       calendarHandled.add(ev.uid);
       autoStart({ by: 'calendar', uid: ev.uid, end: ev.end }, `${ev.title} is starting`);
     }

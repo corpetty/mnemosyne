@@ -1309,6 +1309,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/meeting-type": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Meeting Type */
+        put: operations["set_meeting_type_api_sessions__session_id__meeting_type_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/notes": {
         parameters: {
             query?: never;
@@ -2470,6 +2487,49 @@ export interface components {
             /** Turns */
             turns: number;
         };
+        /**
+         * MeetingType
+         * @description Settings for a kind of meeting, chosen by its title (services/meeting_types.py).
+         */
+        MeetingType: {
+            /**
+             * Auto Record
+             * @default false
+             */
+            auto_record: boolean;
+            /**
+             * Instructions
+             * @default
+             */
+            instructions: string;
+            /**
+             * Local Only
+             * @default false
+             */
+            local_only: boolean;
+            /**
+             * Match
+             * @default
+             */
+            match: string;
+            /** Name */
+            name: string;
+            /**
+             * Obsidian Folder
+             * @default
+             */
+            obsidian_folder: string;
+            /**
+             * Summary Style
+             * @default
+             */
+            summary_style: string;
+        };
+        /** MeetingTypeChoice */
+        MeetingTypeChoice: {
+            /** Name */
+            name: string;
+        };
         /** NotesRequest */
         NotesRequest: {
             /** Notes */
@@ -2934,6 +2994,11 @@ export interface components {
              */
             local_only: boolean;
             /**
+             * Meeting Type
+             * @default
+             */
+            meeting_type: string;
+            /**
              * Name
              * @default Untitled Session
              */
@@ -3178,6 +3243,8 @@ export interface components {
             matrix_room_id?: string | null;
             /** Max Speakers */
             max_speakers?: number | null;
+            /** Meeting Types */
+            meeting_types?: components["schemas"]["MeetingType"][] | null;
             /** Mention Keywords */
             mention_keywords?: string | null;
             /** Min Speakers */
@@ -3387,6 +3454,8 @@ export interface components {
             matrix_room_id: string;
             /** Max Speakers */
             max_speakers: number | null;
+            /** Meeting Types */
+            meeting_types: components["schemas"]["MeetingType"][];
             /** Mention Keywords */
             mention_keywords: string;
             /** Min Speakers */
@@ -6046,6 +6115,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["LocalOnlyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_meeting_type_api_sessions__session_id__meeting_type_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MeetingTypeChoice"];
             };
         };
         responses: {

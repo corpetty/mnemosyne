@@ -19,7 +19,7 @@ from pathlib import Path
 
 import tomli_w
 from dotenv import load_dotenv
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -66,6 +66,18 @@ SECRET_FIELDS = frozenset(
         "matrix_access_token",
     }
 )
+
+
+class MeetingType(BaseModel):
+    """Settings for a kind of meeting, chosen by its title (services/meeting_types.py)."""
+
+    name: str
+    match: str = ""  # comma-separated words or phrases found in the title, any case
+    summary_style: str = ""  # "" = the default style
+    instructions: str = ""  # added to the summary instructions
+    obsidian_folder: str = ""  # "" = obsidian_subfolder
+    local_only: bool = False  # never sent to a cloud model
+    auto_record: bool = False  # start recording when such a calendar meeting begins
 
 
 class Settings(BaseSettings):
@@ -247,6 +259,9 @@ class Settings(BaseSettings):
     # Summaries
     summary_style: str = "meeting"  # see summarization/prompts.py STYLES
     summary_instructions: str = ""  # appended to every summary prompt
+    # Kinds of meeting (standup, 1:1, customer call...) with their own summary style,
+    # instructions, Obsidian folder, local-only and auto-record, matched by title.
+    meeting_types: list[MeetingType] = Field(default_factory=list)
     # Transcripts longer than this (formatted characters, about 4 per token) are summarized
     # in parts and then merged, so small context windows still work. 0 never splits.
     summary_chunk_chars: int = 40000

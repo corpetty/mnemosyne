@@ -129,6 +129,24 @@ async def update_notes(session_id: str, request: NotesRequest, ctx: AppContext =
     return session
 
 
+class MeetingTypeChoice(ApiModel):
+    name: str  # a type's name, or "none"
+
+
+@router.put("/{session_id}/meeting-type", response_model=Session)
+async def set_meeting_type(
+    session_id: str, request: MeetingTypeChoice, ctx: AppContext = Depends(get_ctx)
+):
+    from ...services.meeting_types import NONE
+
+    if request.name != NONE and request.name not in {t.name for t in ctx.settings.meeting_types}:
+        raise HTTPException(status_code=400, detail="No such meeting type")
+    session = ctx.sessions.set_meeting_type(session_id, request.name)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
 class AgendaUpdate(ApiModel):
     items: list[AgendaItem]  # in order; a point keeps `covered` as sent
 

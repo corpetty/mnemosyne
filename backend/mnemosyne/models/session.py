@@ -141,6 +141,8 @@ class Session(ApiModel):
     speakers_reviewed: bool = False  # the "who is who" card was completed or dismissed
     bookmarks: list[Bookmark] = Field(default_factory=list)  # in time order
     agenda: list[AgendaItem] = Field(default_factory=list)
+    # Its kind (settings.meeting_types, by name); "" = none yet, "none" = chosen none.
+    meeting_type: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property

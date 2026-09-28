@@ -290,10 +290,12 @@ def summarize_session(
         st = app.settings
         prov = provider or st.default_provider
         mdl = model or st.default_model
-        sty = style or st.summary_style
+        from .meeting_types import summary_instructions, summary_style
+
+        sty = style or summary_style(st, session)
         if session.local_only and is_cloud(prov):
             raise ValueError(LOCAL_ONLY_ERROR.format(provider=prov))
-        instr = st.summary_instructions if instructions is None else instructions
+        instr = summary_instructions(st, session) if instructions is None else instructions
         spelling = glossary_instructions(parse_glossary(st.glossary))
         if spelling:
             instr = f"{instr}\n{spelling}".strip()

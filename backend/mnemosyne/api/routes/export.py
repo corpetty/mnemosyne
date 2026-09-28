@@ -18,12 +18,15 @@ class ExportResponse(ApiModel):
     message: str
 
 
-def build_exporter(ctx: AppContext, vault_path: str) -> ObsidianExporter:
+def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianExporter:
+    """An exporter with the settings; a session's meeting type may choose the folder."""
+    from ...services.meeting_types import obsidian_folder
+
     st = ctx.settings
     tags = [t.strip() for t in st.obsidian_tags.split(",") if t.strip()]
     return ObsidianExporter(
         vault_path,
-        st.obsidian_subfolder,
+        obsidian_folder(st, session) if session is not None else st.obsidian_subfolder,
         tags=tags or None,
         link_people=st.obsidian_link_people,
         include_transcript=st.obsidian_include_transcript,
@@ -32,7 +35,7 @@ def build_exporter(ctx: AppContext, vault_path: str) -> ObsidianExporter:
 
 def export_session(ctx: AppContext, session, vault_path: str):
     """Write the meeting note and, when enabled, the notes of the people in it."""
-    path = build_exporter(ctx, vault_path).export(session)
+    path = build_exporter(ctx, vault_path, session).export(session)
     st = ctx.settings
     if st.obsidian_people_notes:
         from pathlib import Path

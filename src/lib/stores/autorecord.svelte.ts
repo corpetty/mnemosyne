@@ -14,6 +14,9 @@ class AutoRecordState {
   silenceMinutes = $state(10);
   /** Also start when a calendar meeting begins (not only when a meeting app opens the mic). */
   calendar = $state(true);
+  /** Words of the meeting types set to auto-record (settings.meeting_types): a calendar meeting
+   *  whose title has one is recorded even when calendar auto-record is off. */
+  typeWords = $state<string[][]>([]);
   /** "Zoom is using the microphone. Record?" (ask mode) */
   offer = $state<string | null>(null);
   /** Set when the current recording was started automatically. */

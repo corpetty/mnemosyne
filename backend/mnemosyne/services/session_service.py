@@ -42,13 +42,42 @@ class SessionService:
     def get_session(self, session_id: str) -> Session | None:
         return self.repo.get(session_id)
 
+    # The meeting types (settings.meeting_types), set by AppContext; a named meeting without a
+    # type takes the first whose words its title contains (services/meeting_types.py).
+    type_source = None
+
+    def _typed(self, session: Session | None) -> Session | None:
+        if session is None or session.meeting_type or self.type_source is None:
+            return session
+        from .meeting_types import match_type
+
+        kind = match_type(session.name, self.type_source())
+        if kind is None:
+            return session
+        fields: dict = {"meeting_type": kind.name}
+        if kind.local_only:
+            fields["local_only"] = True
+        return self.repo.update_fields(session.id, **fields)
+
     def create_session(self, name: str = DEFAULT_SESSION_NAME) -> Session:
-        session = self.repo.save(Session(name=name))
+        session = self._typed(self.repo.save(Session(name=name)))
         logger.info("Created session %s: %s", session.id, session.name)
         return self._notify(session)
 
     def rename_session(self, session_id: str, name: str) -> Session | None:
-        return self._notify(self.repo.update_fields(session_id, name=name))
+        return self._notify(self._typed(self.repo.update_fields(session_id, name=name)))
+
+    def set_meeting_type(self, session_id: str, name: str) -> Session | None:
+        """Choose a meeting's type ("none" for none); a local-only type makes it local-only."""
+        from .meeting_types import NONE
+
+        fields: dict = {"meeting_type": name or NONE}
+        kind = next(
+            (t for t in (self.type_source() if self.type_source else []) if t.name == name), None
+        )
+        if kind is not None and kind.local_only:
+            fields["local_only"] = True
+        return self._notify(self.repo.update_fields(session_id, **fields))
 
     def update_notes(self, session_id: str, notes: str) -> Session | None:
         return self.repo.update_fields(session_id, notes=notes)
