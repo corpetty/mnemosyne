@@ -123,6 +123,17 @@ class TranscriptState {
       case 'live_status':
         if (msg.session_id === this.sessionId) this.liveStatus = msg.message;
         break;
+      case 'live_labels':
+        // The recording so far was re-diarized: these lines have a better speaker now.
+        if (msg.session_id === this.sessionId) {
+          const changed = new Map(msg.labels.map((l) => [`${l.start}|${l.old}`, l.new]));
+          this.liveSegments = this.liveSegments.map((s) => {
+            const next = changed.get(`${s.start}|${s.speaker}`);
+            return next ? { ...s, speaker: next } : s;
+          });
+          for (const l of msg.labels) this.getSpeakerColor(l.new);
+        }
+        break;
       case 'live_relabel':
         // A live speaker was recognised or two speakers turned out to be one.
         if (msg.session_id === this.sessionId) {

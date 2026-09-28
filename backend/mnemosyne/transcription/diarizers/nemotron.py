@@ -98,12 +98,19 @@ class NemotronDiarizer:
         max_speakers: int | None = None,
         progress=None,
     ) -> DiarizationResult:
-        if not self.is_loaded():
-            await self.load()
         if max_speakers is not None and max_speakers > MAX_SPEAKERS:
             logger.debug("Nemotron tracks at most %d speakers", MAX_SPEAKERS)
-
         pcm = decode_audio(audio_path, sample_rate=RATE).astype(np.float32)
+        return await self.diarize_pcm(pcm, RATE, progress=progress)
+
+    async def diarize_pcm(self, pcm: np.ndarray, sample_rate: int, progress=None):
+        """Diarize mono audio already in memory (float32 in [-1, 1] or int16), e.g. a
+        recording still being written (the live transcript's re-diarization)."""
+        if not self.is_loaded():
+            await self.load()
+        pcm = _to_float(pcm)
+        if sample_rate != RATE:
+            pcm = await asyncio.to_thread(_resample, pcm, sample_rate, RATE)
 
         def _run():
             import torch
@@ -133,6 +140,19 @@ class NemotronDiarizer:
             if vecs:
                 out[speaker] = np.mean(vecs, axis=0).tolist()
         return out
+
+
+def _to_float(pcm: np.ndarray) -> np.ndarray:
+    if pcm.dtype == np.int16:
+        return pcm.astype(np.float32) / 32768.0
+    return pcm.astype(np.float32, copy=False)
+
+
+def _resample(pcm: np.ndarray, rate: int, target: int) -> np.ndarray:
+    import torch
+    import torchaudio.functional as F
+
+    return F.resample(torch.from_numpy(pcm), rate, target).numpy()
 
 
 def parse_segments(lines: list[str]) -> list[SpeakerTurn]:

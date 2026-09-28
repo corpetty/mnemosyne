@@ -170,6 +170,17 @@ class OnlineClusterer:
             final = self._merged_into[id(cluster)]
         return final.label, renames
 
+    def rename(self, old: str, new: str) -> bool:
+        """Give the cluster labelled `old` the label `new` (the live re-diarization knows
+        better), unless another cluster already has it."""
+        if old == new or any(c.label == new for c in self.clusters):
+            return False
+        for c in self.clusters:
+            if c.label == old:
+                c.name = new
+                return True
+        return False
+
     def _merge(self) -> list[tuple[str, str]]:
         renames = []
         merged = True

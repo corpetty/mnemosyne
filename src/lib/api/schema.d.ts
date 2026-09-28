@@ -2267,6 +2267,10 @@ export interface components {
             live_diarization?: boolean | null;
             /** Live Interval Seconds */
             live_interval_seconds?: number | null;
+            /** Live Rediarize */
+            live_rediarize?: string | null;
+            /** Live Rediarize Seconds */
+            live_rediarize_seconds?: number | null;
             /** Live Silence Db */
             live_silence_db?: number | null;
             /** Live Speaker Threshold */
@@ -2442,6 +2446,10 @@ export interface components {
             live_diarization: boolean;
             /** Live Interval Seconds */
             live_interval_seconds: number;
+            /** Live Rediarize */
+            live_rediarize: string;
+            /** Live Rediarize Seconds */
+            live_rediarize_seconds: number;
             /** Live Silence Db */
             live_silence_db: number;
             /** Live Speaker Threshold */

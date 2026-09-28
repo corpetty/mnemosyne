@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     live_interval_seconds: float = 5.0
     # Label live lines by voice (needs a diarizer and the pyannote embedding model).
     live_diarization: bool = True
+    # Correct live speaker labels by re-diarizing the recording so far every
+    # live_rediarize_seconds with the final diarizer: auto = when that is Nemotron (fast on a
+    # GPU), nemotron = always try, off = voice-embedding clustering only.
+    live_rediarize: str = "auto"  # auto | nemotron | off
+    live_rediarize_seconds: float = 30.0
     # CPU threads for the live transcriber (Parakeet/ONNX). It re-runs every few seconds for
     # the whole recording; all cores would starve the desktop.
     live_threads: int = 2

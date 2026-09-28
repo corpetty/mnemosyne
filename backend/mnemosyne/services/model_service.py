@@ -22,6 +22,8 @@ class ModelService:
         self._live: Transcriber | None = None
         self._live_embedder = None
         self._live_embedder_built = False
+        self._live_rediarizer = None
+        self._live_rediarizer_built = False
 
     @property
     def engine(self) -> TranscriptionEngine:
@@ -51,6 +53,21 @@ class ModelService:
             self._live_embedder = build_live_embedder(self.settings)
             self._live_embedder_built = True
         return self._live_embedder
+
+    @property
+    def live_rediarizer(self):
+        """Diarizer for correcting live speaker labels (None when not wanted or available).
+        Shares the final engine's Nemotron when that is already built."""
+        if not self._live_rediarizer_built:
+            from ..transcription.registry import build_live_rediarizer
+
+            engine_diarizer = getattr(self._engine, "diarizer", None)
+            if getattr(engine_diarizer, "name", None) == "nemotron":
+                self._live_rediarizer = engine_diarizer
+            else:
+                self._live_rediarizer = build_live_rediarizer(self.settings)
+            self._live_rediarizer_built = True
+        return self._live_rediarizer
 
     async def ensure_loaded(self) -> TranscriptionEngine:
         engine = self.engine
@@ -84,6 +101,11 @@ class ModelService:
             await self._live_embedder.unload()
         self._live_embedder = None
         self._live_embedder_built = False
+        engine_diarizer = getattr(self._engine, "diarizer", None)
+        if self._live_rediarizer is not None and self._live_rediarizer is not engine_diarizer:
+            await self._live_rediarizer.unload()
+        self._live_rediarizer = None
+        self._live_rediarizer_built = False
 
     async def apply_settings(self, settings: Settings) -> None:
         """Adopt new settings; drop the engine if anything it was built from changed."""

@@ -78,6 +78,12 @@ export type BackendEvent =
   | { type: 'live_partial'; session_id: string; source: string; speaker: string; text: string }
   | { type: 'live_status'; session_id: string; message: string }
   | { type: 'live_relabel'; session_id: string; old: string; new: string }
+  | {
+      type: 'live_labels';
+      session_id: string;
+      source: string;
+      labels: { start: number; old: string; new: string }[];
+    }
   | { type: 'mention'; session_id: string; keyword: string; speaker: string; text: string; start: number }
   | { type: 'meeting_app'; status: 'started' | 'stopped'; app: string }
   | { type: 'copilot_notes'; session_id: string; notes: CopilotNotes }

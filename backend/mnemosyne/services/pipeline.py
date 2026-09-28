@@ -434,11 +434,33 @@ def live_transcribe(app: AppContext, session_id: str, recording):
             adaptive=settings.live_adaptive,
         )
         app.live[session_id] = live  # read by the copilot
+        rediarize = None
+        diarizer = app.models.live_rediarizer if any(s.diarize for s in sources) else None
+        if diarizer is not None:
+            from ..transcription.live_rediarize import LiveRediarizer
+
+            def match_names(embeddings: dict[str, list[float]]) -> dict[str, str]:
+                names = app.speakers.match(embeddings)
+                if multi:  # the local user is on the mic channel, never a remote voice
+                    names = {k: v for k, v in names.items() if v != settings.local_speaker_name}
+                return names
+
+            rediarizer = LiveRediarizer(
+                diarizer,
+                live,
+                ctx.emit,
+                session_id,
+                interval=settings.live_rediarize_seconds,
+                match_names=match_names,
+            )
+            rediarize = asyncio.create_task(rediarizer.run())
         try:
             await live.run()
         except asyncio.CancelledError:
             return _live_result(live)
         finally:
+            if rediarize is not None:
+                rediarize.cancel()
             app.live.pop(session_id, None)
         return _live_result(live)
 

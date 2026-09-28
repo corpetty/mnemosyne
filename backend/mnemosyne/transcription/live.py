@@ -163,6 +163,7 @@ class LiveTranscriber:
         self._fast_ticks = 0
         self._ready_status = "Live"
         self.committed: list[TranscriptSegment] = []
+        self.committed_kind: list[str] = []  # source kind of each committed segment
 
     async def run(self) -> None:
         """Tick until cancelled. A final tick flushes what is left."""
@@ -250,6 +251,7 @@ class LiveTranscriber:
                 }
             )
             self.committed.append(absolute)
+            self.committed_kind.append(source.kind)
             self.emit(
                 {
                     "type": "live_segment",

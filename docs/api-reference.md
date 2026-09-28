@@ -749,6 +749,7 @@ Then every backend event, in order:
 | `live_status` | `session_id`, `message` | Live transcriber state (`Loading live transcriber...`, `Live`) |
 | `live_segment` | `session_id`, `source` (`mic`/`system`/`mixed`), `segment` | A provisional segment committed by the live transcriber (absolute times, no words); `speaker` is a saved voice's name, `Speaker N`, or the channel label |
 | `live_relabel` | `session_id`, `old`, `new` | A live speaker was recognised as a saved voice, or two live speakers were merged; relabel earlier live lines |
+| `live_labels` | `session_id`, `source`, `labels: [{start, old, new}]` | The recording so far was re-diarized (every `live_rediarize_seconds`, when `live_rediarize` resolves to Nemotron); give the live line of that source starting at `start` and labelled `old` the speaker `new` |
 | `mention` | `session_id`, `keyword`, `speaker`, `text`, `start` | A live line contained one of `mention_keywords` (whole words, any case; not from your own mic when it is recorded separately; each keyword at most once per 20 s of recording) |
 | `meeting_app` | `status` (`started`/`stopped`), `app` | Another app started or stopped recording audio (auto-record) |
 | `copilot_notes` | `session_id`, `notes` | The live copilot's running notes were updated |

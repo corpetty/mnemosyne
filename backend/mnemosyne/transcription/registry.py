@@ -96,6 +96,21 @@ def build_live_embedder(settings: Settings):
     return PyannoteEmbedder(settings.diarization_model, settings.hf_token)
 
 
+def build_live_rediarizer(settings: Settings):
+    """The diarizer that re-diarizes live recordings (live_rediarize.py), or None."""
+    if not settings.live_diarization or settings.live_rediarize == "off":
+        return None
+    if settings.live_rediarize == "auto" and resolve_diarizer(settings) != "nemotron":
+        return None
+    try:
+        import nemo  # noqa: F401
+    except ImportError:
+        return None
+    from .diarizers.nemotron import NemotronDiarizer
+
+    return NemotronDiarizer(embedder=build_live_embedder(settings))
+
+
 def build_diarizer(settings: Settings) -> Diarizer | None:
     kind = resolve_diarizer(settings)
     if kind == "none":
@@ -153,6 +168,7 @@ ENGINE_SETTINGS = (
 
 LIVE_SETTINGS = (
     "live_transcriber",
+    "live_rediarize",
     "diarizer",
     "diarization_model",
     "hf_token",
