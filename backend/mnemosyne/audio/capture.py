@@ -198,13 +198,16 @@ async def stop_capture(session: RecordingSession) -> None:
     session.is_recording = False
 
 
-async def stop_recording(session: RecordingSession) -> list[Path]:
+async def stop_recording(session: RecordingSession) -> list[Path | None]:
     """Stop all recording processes, convert each WAV to Opus (in parallel), return the
-    Opus paths in device order."""
+    Opus paths in process order: None for a device that recorded nothing (so the others keep
+    their own device and label)."""
     await stop_capture(session)
-    recorded = [
-        rec.output_path
-        for rec in session.processes
-        if rec.output_path.exists() and rec.output_path.stat().st_size > 0
-    ]
-    return list(await asyncio.gather(*(convert_to_opus(p) for p in recorded)))
+
+    async def one(rec: RecordingProcess) -> Path | None:
+        path = rec.output_path
+        if not path.exists() or path.stat().st_size == 0:
+            return None
+        return await convert_to_opus(path)
+
+    return list(await asyncio.gather(*(one(rec) for rec in session.processes)))

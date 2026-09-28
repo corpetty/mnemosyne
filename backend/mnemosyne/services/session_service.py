@@ -95,7 +95,20 @@ class SessionService:
 
     # ---- pipeline state ------------------------------------------------
 
+    # Whether a meeting is being recorded right now (set by AppContext): its status stays
+    # "recording" whatever a job finishing meanwhile (a transcription of earlier parts) sets.
+    is_recording = None
+
+    def _keeps_recording(self, session_id: str, status: SessionStatus) -> bool:
+        return (
+            self.is_recording is not None
+            and status not in (SessionStatus.RECORDING, SessionStatus.ENCODING)
+            and self.is_recording(session_id)
+        )
+
     def set_status(self, session_id: str, status: SessionStatus) -> Session | None:
+        if self._keeps_recording(session_id, status):
+            return self.get_session(session_id)
         return self._notify(self.repo.update_fields(session_id, status=status))
 
     def set_audio(self, session_id: str, audio_file: str, recordings: list[Recording]) -> None:
@@ -105,11 +118,10 @@ class SessionService:
     def set_transcript(self, session_id: str, segments: list[TranscriptSegment]) -> Session | None:
         speakers = list(dict.fromkeys(s.speaker for s in segments if s.speaker != "UNKNOWN"))
         self.repo.replace_segments(session_id, segments)
-        return self._notify(
-            self.repo.update_fields(
-                session_id, participants=speakers, status=SessionStatus.COMPLETED
-            )
-        )
+        fields: dict = {"participants": speakers}
+        if not self._keeps_recording(session_id, SessionStatus.COMPLETED):
+            fields["status"] = SessionStatus.COMPLETED
+        return self._notify(self.repo.update_fields(session_id, **fields))
 
     def set_summary(
         self, session_id: str, summary: str, data: SummaryData | None = None

@@ -29,7 +29,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MANIFEST = "recording.json"
+MANIFEST = "recording.json"  # before 0.10.1: one per folder, overwritten by the next recording
+
+
+def manifest_path(recording: RecordingSession) -> Path:
+    """One manifest per recording, so a recording whose save failed is not forgotten when the
+    meeting is recorded into again; removed once the recording is saved."""
+    return recording.output_dir / f"recording-{recording.session_id}.json"
+
+
 INTERRUPTED = (SessionStatus.RECORDING, SessionStatus.ENCODING)
 
 
@@ -54,7 +62,7 @@ def write_manifest(recording: RecordingSession, devices: dict[int, AudioDevice])
                 "wav": proc.output_path.name,
             }
         )
-    path = recording.output_dir / MANIFEST
+    path = manifest_path(recording)
     path.write_text(
         json.dumps({"recording_id": recording.session_id, "part": recording.part, "tracks": tracks})
     )
@@ -171,91 +179,128 @@ def interrupted_sessions(app: AppContext) -> list[str]:
     ]
 
 
-def _tracks(folder: Path) -> tuple[str | None, int | None, list[dict]]:
-    """The recording's id, part and tracks: from the manifest, or every WAV (recordings before
-    0.8; their part is unknown)."""
-    try:
-        manifest = json.loads((folder / MANIFEST).read_text())
-        return manifest.get("recording_id"), manifest.get("part"), manifest.get("tracks", [])
-    except (OSError, ValueError):
-        pass
-    wavs = sorted(folder.glob("*.wav"))
-    return (
-        None,
-        None,
-        [
-            {"device_id": 0, "device_name": f"Recovered track {i}", "source": "mic", "wav": w.name}
-            for i, w in enumerate(wavs, 1)
-        ],
-    )
+def _stems(session) -> set[str]:
+    return {Path(r.path).name.split(".")[0] for r in session.recordings}
+
+
+def pending_recordings(
+    folder: Path, session
+) -> list[tuple[Path | None, str | None, int | None, list[dict]]]:
+    """Recordings in a meeting's folder that are not in the meeting yet: (manifest, recording
+    id, part, tracks), by part. Manifests of recordings already saved are removed. Without a
+    manifest (recordings before 0.8), every WAV is one, part unknown."""
+    known = _stems(session)
+    out = []
+    for manifest in sorted(folder.glob("recording*.json")):
+        try:
+            data = json.loads(manifest.read_text())
+        except (OSError, ValueError):
+            continue
+        tracks = data.get("tracks", [])
+        if tracks and {Path(t["wav"]).stem for t in tracks} <= known:
+            manifest.unlink(missing_ok=True)  # saved already: nothing to recover
+            continue
+        out.append((manifest, data.get("recording_id"), data.get("part"), tracks))
+    if not out:
+        wavs = [w for w in sorted(folder.glob("*.wav")) if w.stem not in known]
+        if wavs:
+            tracks = [
+                {
+                    "device_id": 0,
+                    "device_name": f"Recovered track {i}",
+                    "source": "mic",
+                    "wav": w.name,
+                }
+                for i, w in enumerate(wavs, 1)
+            ]
+            out.append((None, None, None, tracks))
+    return sorted(out, key=lambda m: m[2] if m[2] is not None else 1 << 30)
+
+
+def pending_parts(folder: Path, session) -> set[int]:
+    """Part numbers taken by recordings not saved yet (a new recording must not reuse one)."""
+    if not folder.is_dir():
+        return set()
+    return {part for _, _, part, _ in pending_recordings(folder, session) if part is not None}
 
 
 def recover_session(app: AppContext, session_id: str):
-    """Job runner that finishes an interrupted recording."""
+    """Job runner that finishes the interrupted recordings of a meeting (usually one)."""
 
     async def run(ctx: JobContext) -> dict:
+        from .encryption import seal_session_audio
+        from .parts import add_part, next_part
+
         session = app.sessions.get_session(session_id)
         if session is None:
             raise ValueError(f"Session {session_id} not found")
         folder = app.settings.recordings_dir / session_id
-        recording_id, part, tracks = _tracks(folder)
-        if part is None:  # no manifest: after whatever the meeting already has
-            from .parts import next_part
-
-            part = next_part(session)
+        pending = pending_recordings(folder, session) if folder.is_dir() else []
+        had_transcript = bool(session.transcript)
         ctx.update(message="Recovering an interrupted recording", progress=0.0)
-
-        wavs = [folder / t["wav"] for t in tracks]
-        stopped = await asyncio.to_thread(stop_orphan_recorders, [w for w in wavs if w.exists()])
-        if stopped:
-            logger.info("Stopped %d recorder(s) left running for %s", stopped, session_id)
-
-        recordings: list[Recording] = []
-        seconds = 0.0
-        for i, (track, wav) in enumerate(zip(tracks, wavs, strict=True)):
-            ctx.update(progress=i / max(len(tracks), 1))
-            ogg = wav.with_suffix(".ogg")
-            if wav.exists():
-                length = await asyncio.to_thread(repair_wav, wav)
-                if length <= 0:
-                    continue
-                ogg = await convert_to_opus(wav)
-            elif ogg.exists():  # interrupted after encoding this track
-                length = 0.0
-            else:
-                continue
-            seconds = max(seconds, length)
-            recordings.append(
-                Recording(
-                    source=track.get("source", "mic"),
-                    device_id=track.get("device_id", 0),
-                    device_name=track.get("device_name", "Recovered track"),
-                    path=str(ogg),
-                )
+        seconds, parts = 0.0, []
+        for manifest, recording_id, part, tracks in pending:
+            session = app.sessions.get_session(session_id)
+            if part is None:  # no manifest: after whatever the meeting already has
+                part = next_part(session)
+            wavs = [folder / t["wav"] for t in tracks]
+            stopped = await asyncio.to_thread(
+                stop_orphan_recorders, [w for w in wavs if w.exists()]
             )
+            if stopped:
+                logger.info("Stopped %d recorder(s) left running for %s", stopped, session_id)
 
-        if not recordings:
+            recordings: list[Recording] = []
+            for i, (track, wav) in enumerate(zip(tracks, wavs, strict=True)):
+                ctx.update(progress=i / max(len(tracks), 1))
+                ogg = wav.with_suffix(".ogg")
+                if wav.exists():
+                    length = await asyncio.to_thread(repair_wav, wav)
+                    if length <= 0:
+                        continue
+                    ogg = await convert_to_opus(wav)
+                elif ogg.exists():  # interrupted after encoding this track
+                    length = 0.0
+                else:
+                    continue
+                seconds = max(seconds, length)
+                recordings.append(
+                    Recording(
+                        source=track.get("source", "mic"),
+                        device_id=track.get("device_id", 0),
+                        device_name=track.get("device_name", "Recovered track"),
+                        path=str(ogg),
+                    )
+                )
+            if not recordings:
+                if manifest is not None:
+                    manifest.unlink(missing_ok=True)
+                continue
+            mixed = folder / f"{recording_id or session_id}_mixed.ogg"
+            mixed = await asyncio.to_thread(
+                mix_audio_files, [Path(r.path) for r in recordings], mixed
+            )
+            await add_part(app, session_id, part, recordings, mixed)
+            await asyncio.to_thread(seal_session_audio, app, session_id)
+            if manifest is not None:
+                manifest.unlink(missing_ok=True)
+            parts.append(part)
+
+        session = app.sessions.get_session(session_id)
+        if not parts:
             status = SessionStatus.CREATED if session.audio_file else SessionStatus.ERROR
             app.sessions.set_status(session_id, status)
-            raise ValueError("The interrupted recording has no audio")
-
-        mixed = folder / f"{recording_id or session_id}_mixed.ogg"
-        mixed = await asyncio.to_thread(mix_audio_files, [Path(r.path) for r in recordings], mixed)
-        from .parts import add_part
-
-        had_transcript = bool(session.transcript)
-        await add_part(app, session_id, part, recordings, mixed)
-        from .encryption import seal_session_audio
-
-        seal_session_audio(app, session_id)
+            if status == SessionStatus.ERROR:
+                raise ValueError("The interrupted recording has no audio")
+            return {"recovered": 0}
         app.sessions.set_status(session_id, SessionStatus.CREATED)
 
         transcribing = False
         if app.settings.auto_transcribe:
             from .pipeline import transcribe_session
 
-            parts = [part] if part and had_transcript else None
-            app.jobs.submit("transcribe", transcribe_session(app, session_id, parts), session_id)
+            redo = parts if had_transcript and all(parts) else None
+            app.jobs.submit("transcribe", transcribe_session(app, session_id, redo), session_id)
             transcribing = True
 
         done = RecoveredRecording(
@@ -273,7 +318,9 @@ def recover_interrupted(app: AppContext) -> list[str]:
     ids = []
     for session_id in interrupted_sessions(app):
         folder = app.settings.recordings_dir / session_id
-        owner = recorder_owner([folder / t["wav"] for t in _tracks(folder)[2]])
+        session = app.sessions.get_session(session_id)
+        pending = pending_recordings(folder, session) if folder.is_dir() and session else []
+        owner = recorder_owner([folder / t["wav"] for _, _, _, tracks in pending for t in tracks])
         if owner is not None:
             logger.warning(
                 "Session %s is still being recorded by another backend (pid %d); leaving it",

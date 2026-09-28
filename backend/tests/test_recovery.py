@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from mnemosyne.models.session import SessionStatus
 from mnemosyne.services import recovery
+from tests.conftest import stop_and_finish
 
 RATE = 16000
 
@@ -195,10 +196,12 @@ def test_active_and_finished_sessions_are_left_alone(ctx):
 
 def test_recording_start_writes_the_manifest(client, ctx, fake_pipewire):
     sid = client.post("/api/audio/start", json={"device_ids": [1, 2]}).json()["session_id"]
-    data = json.loads((ctx.settings.recordings_dir / sid / recovery.MANIFEST).read_text())
+    manifest = ctx.settings.recordings_dir / sid / "recording-rec00001.json"  # one per recording
+    data = json.loads(manifest.read_text())
     assert data["recording_id"] == "rec00001"
     assert [(t["wav"], t["source"]) for t in data["tracks"]] == [
         ("dev1.wav", "mic"),
         ("dev2.wav", "system"),
     ]
-    client.post(f"/api/audio/stop/{sid}", json={"transcribe": False})
+    _, finish = stop_and_finish(client, sid, {"transcribe": False})
+    assert finish["status"] == "completed" and not manifest.exists()  # saved: nothing to recover

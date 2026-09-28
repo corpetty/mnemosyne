@@ -116,6 +116,16 @@ async def rename_session(
 
 @router.delete("/{session_id}")
 async def delete_session(session_id: str, ctx: AppContext = Depends(get_ctx)):
+    # Not under a recorder, an encoder or a transcription writing into it.
+    if session_id in ctx.active_recordings or session_id in ctx.starting:
+        raise HTTPException(status_code=409, detail="Stop the recording first")
+    busy = [
+        j for j in ctx.jobs.list(session_id=session_id, active_only=True) if j.kind != "copilot"
+    ]
+    if busy:
+        raise HTTPException(
+            status_code=409, detail="The meeting is busy; try again when it is done"
+        )
     if not ctx.sessions.delete_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"message": "Session deleted"}

@@ -140,9 +140,39 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
 
     session = await _apply_calendar(ctx, session)
 
-    if session.id in ctx.active_recordings:
+    if session.id in ctx.active_recordings or session.id in ctx.starting:
         raise HTTPException(status_code=409, detail="Session is already recording")
-    return await begin_recording(ctx, session, request.device_ids)
+    ctx.starting.add(session.id)  # before any await: a second start is refused
+    try:
+        # The previous recording of this meeting may still be saving: its part must be in
+        # the meeting before the next one is numbered and joined after it.
+        for job in ctx.jobs.list(session_id=session.id, active_only=True):
+            if job.kind in ("finish", "recover", "combine"):
+                await ctx.jobs.wait(job.id)
+        session = ctx.sessions.get_session(session.id) or session
+        await _save_pending(ctx, session)
+        session = ctx.sessions.get_session(session.id) or session
+        return await begin_recording(ctx, session, request.device_ids)
+    finally:
+        ctx.starting.discard(session.id)
+
+
+async def _save_pending(ctx: AppContext, session: Session) -> None:
+    """A recording of this meeting whose save failed is saved now (recovery), before another
+    part is added after it; if it still cannot be, refuse rather than record over its place."""
+    from ...services.recovery import pending_recordings, recover_session
+
+    folder = ctx.settings.recordings_dir / session.id
+    if not folder.is_dir() or not pending_recordings(folder, session):
+        return
+    job = ctx.jobs.submit("recover", recover_session(ctx, session.id), session.id)
+    done = await ctx.jobs.wait(job.id)
+    if done is not None and done.status != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail="The last recording of this meeting could not be saved "
+            f"({done.error}); record into a new meeting",
+        )
 
 
 async def begin_recording(
@@ -153,8 +183,12 @@ async def begin_recording(
     recording = await start_recording(device_ids, output_dir)
     if not recording.processes:
         raise HTTPException(status_code=400, detail="None of the selected devices could be opened")
-    # Recording again into a meeting that has audio adds a part; nothing is replaced.
-    recording.part = next_part(session)
+    # Recording again into a meeting that has audio adds a part; nothing is replaced. A part
+    # whose save failed (waiting for recovery) keeps its number.
+    from ...services.recovery import pending_parts
+
+    taken = pending_parts(ctx.settings.recordings_dir / session.id, session)
+    recording.part = max(next_part(session), max(taken, default=-1) + 1)
     try:
         devices = {d.id: d for d in await asyncio.to_thread(list_devices)}
     except Exception:
@@ -214,9 +248,9 @@ async def stop(
 async def stop_active(ctx: AppContext, session_id: str, transcribe: bool | None = None):
     """Stop an active recording now and queue its `finish` job. Returns (job, will_transcribe).
     Also used when the app went away and nobody came back for the recording (api/app_watch.py)."""
-    recording = ctx.active_recordings[session_id]
+    # Taken before the first await: a second stop (tray and window at once) finds nothing.
+    recording = ctx.active_recordings.pop(session_id)
     await stop_capture(recording)
-    ctx.active_recordings.pop(session_id, None)
     task = ctx.level_tasks.pop(session_id, None)
     if task is not None:
         task.cancel()
@@ -244,12 +278,16 @@ def _finish_recording(ctx: AppContext, session_id: str, recording, want_transcri
             devices = {d.id: d for d in await asyncio.to_thread(list_devices)}
         except Exception:
             devices = {}
-        individual_files = await stop_recording(recording)
+        files = await stop_recording(recording)
+        pairs = [
+            (proc, path) for proc, path in zip(recording.processes, files, strict=False) if path
+        ]
+        individual_files = [path for _, path in pairs]
         if not individual_files:
             ctx.sessions.set_status(session_id, SessionStatus.ERROR)
             raise RuntimeError("Recording produced no audio")
         recordings: list[Recording] = []
-        for proc, path in zip(recording.processes, individual_files, strict=False):
+        for proc, path in pairs:
             device = devices.get(proc.device_id)
             recordings.append(
                 Recording(
@@ -273,6 +311,9 @@ def _finish_recording(ctx: AppContext, session_id: str, recording, want_transcri
         job.update("Saving", progress=0.9)
         await asyncio.to_thread(seal_session_audio, ctx, session_id)
         ctx.sessions.set_status(session_id, SessionStatus.CREATED)
+        from ...services.recovery import manifest_path
+
+        manifest_path(recording).unlink(missing_ok=True)  # saved: nothing left to recover
 
         transcribe_job = None
         if want_transcribe:

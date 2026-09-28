@@ -47,6 +47,7 @@ class AppContext:
     pairing: PairingService
     link: LinkService
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
+    starting: set[str] = field(default_factory=set)  # sessions whose recording is starting
     echo: EchoCancelManager = field(default_factory=EchoCancelManager)
     _retention_task: asyncio.Task | None = None
     _digest_task: asyncio.Task | None = None
@@ -70,6 +71,7 @@ class AppContext:
     def __post_init__(self) -> None:
         self.summarizer.name_source = self.known_names
         self.sessions.type_source = lambda: self.settings.meeting_types
+        self.sessions.is_recording = lambda sid: sid in self.active_recordings
 
     def known_names(self) -> list[str]:
         """People's names, for redaction before cloud calls."""
@@ -313,6 +315,14 @@ class AppContext:
         from ..services.recovery import recover_interrupted
 
         retention_interval, digest_interval = self._intervals
+        # A transcription the last backend never finished (killed, crashed): no job runs it
+        # now, so the meeting goes back to what it was, transcript or not.
+        from ..models.session import SessionStatus
+
+        for s in self.sessions.list_sessions():
+            if s.status == SessionStatus.TRANSCRIBING:
+                done = SessionStatus.COMPLETED if s.has_transcript else SessionStatus.CREATED
+                self.sessions.set_status(s.id, done)
         # First, so retention and the index never see a half-finished recording.
         recover_interrupted(self)
         if self.settings.echo_cancel:

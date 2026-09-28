@@ -109,6 +109,7 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
         if not session.audio_file and not session.recordings:
             raise ValueError(f"Session {session_id} has no audio to transcribe")
 
+        before = session.status
         app.sessions.set_status(session_id, SessionStatus.TRANSCRIBING)
         try:
             ctx.update("Loading models...")
@@ -249,6 +250,9 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
                 "echo_dropped": dropped,
                 "glossary_fixes": fixed,
             }
+        except asyncio.CancelledError:  # cancelled, or the backend shutting down
+            app.sessions.set_status(session_id, before)
+            raise
         except Exception as e:
             app.sessions.set_status(session_id, SessionStatus.ERROR)
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})

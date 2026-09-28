@@ -134,9 +134,11 @@ class JobManager:
 
     async def _run(self, job: Job, runner: JobRunner) -> None:
         sem = self._limits.get(job.kind)
+        acquired = False
         try:
             if sem is not None:
                 await sem.acquire()
+                acquired = True
             job.status = JobStatus.RUNNING
             job.started_at = datetime.now()
             self._publish(job)
@@ -154,7 +156,7 @@ class JobManager:
             job.status = JobStatus.FAILED
             job.error = str(e)
         finally:
-            if sem is not None and job.status != JobStatus.QUEUED:
+            if acquired:  # a job cancelled while waiting for its turn never held it
                 sem.release()
             job.finished_at = datetime.now()
             self._publish(job)

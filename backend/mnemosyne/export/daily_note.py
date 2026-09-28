@@ -123,6 +123,9 @@ def write_daily_entry(vault: Path, session: Session, link: str, me: str, folder:
             except OSError:
                 logger.warning("Daily note template %s not found", tpl)
         path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(upsert_entry(text, link, entry(session, link, me)), encoding="utf-8")
+    # The user's own note: written whole or not at all (a crash mid-write must not truncate it).
+    tmp = path.with_name(f".{path.name}.mnemosyne")
+    tmp.write_text(upsert_entry(text, link, entry(session, link, me)), encoding="utf-8")
+    tmp.replace(path)
     logger.info("Daily note %s: %s", path, session.name)
     return path

@@ -62,6 +62,9 @@ def _convert_audio(app: AppContext, session_id: str, key: bytes | None) -> tuple
     if session is None:
         return 0, []
     converted, errors = 0, []
+    # Originals are removed only once the database points at the new files: a crash between
+    # the two leaves both, never a database pointing at nothing.
+    originals: list[Path] = []
 
     def convert(path_str: str) -> str:
         nonlocal converted
@@ -71,10 +74,14 @@ def _convert_audio(app: AppContext, session_id: str, key: bytes | None) -> tuple
         try:
             if key is not None and not is_encrypted(path):
                 converted += 1
-                return str(encrypt_file(path, key))
+                new = encrypt_file(path, key, remove=False)
+                originals.append(path)
+                return str(new)
             if key is None and is_encrypted(path):
                 converted += 1
-                return str(decrypt_file(path, app.file_key))
+                new = decrypt_file(path, app.file_key, remove=False)
+                originals.append(path)
+                return str(new)
         except Exception as e:  # keep going; this file stays as it was
             logger.warning("Could not convert %s", path, exc_info=True)
             errors.append(f"{path.name}: {e}")
@@ -88,10 +95,15 @@ def _convert_audio(app: AppContext, session_id: str, key: bytes | None) -> tuple
         a.path != b.path for a, b in zip(recordings, session.recordings, strict=True)
     ):
         app.sessions.set_audio(session_id, audio or "", recordings)
-    for clip in _session_files(app, session_id):
+    for original in originals:
+        original.unlink(missing_ok=True)
+    originals.clear()
+    for clip in _session_files(app, session_id):  # clips are found by name, not stored
         if clip.name.endswith(".part"):
             continue
         convert(str(clip))
+    for original in originals:
+        original.unlink(missing_ok=True)
     return converted, errors
 
 

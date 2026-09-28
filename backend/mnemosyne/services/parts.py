@@ -122,9 +122,12 @@ async def add_part(
     for r in recordings:
         r.part, r.offset = part, offset
     combined = part_mix.with_name(f"meeting_{part}.ogg")
-    await asyncio.to_thread(join, existing, part_mix, combined, app.file_key)
+    # Into a new file, then renamed: never read and write the meeting's audio at once.
+    joining = part_mix.with_name(f".joining-{part}.ogg")
+    await asyncio.to_thread(join, existing, part_mix, joining, app.file_key)
+    joining.replace(combined)
     app.sessions.set_audio(session_id, str(combined), session.recordings + recordings)
-    referenced = {r.path for r in session.recordings}
+    referenced = {r.path for r in session.recordings} | {str(combined)}
     for old in (existing, part_mix):
         if str(old) not in referenced:
             old.unlink(missing_ok=True)
