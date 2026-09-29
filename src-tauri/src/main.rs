@@ -8,5 +8,14 @@ fn main() {
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
+    // On NVIDIA, WebKit's GPU compositing can stop presenting frames for good after the
+    // window changes workspace or monitor (seen under XWayland, which the AppImage uses):
+    // the page keeps running but the window never repaints, even when resized, until a
+    // restart. Compositing on the CPU avoids that path and is ample for this UI.
+    if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none()
+        && std::path::Path::new("/proc/driver/nvidia/version").exists()
+    {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
     mnemosyne_lib::run();
 }

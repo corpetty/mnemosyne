@@ -59,6 +59,10 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 ## Gotchas
 
 - Wayland + WebKitGTK needs `WEBKIT_DISABLE_DMABUF_RENDERER=1` (already in `pnpm dev:app`).
+- NVIDIA: WebKit's GPU compositing stops presenting frames for good after a workspace or monitor
+  change (the AppImage runs under XWayland: its GTK hook forces `GDK_BACKEND=x11`). The page's JS
+  keeps running, the window never repaints, even on resize. main.rs sets
+  `WEBKIT_DISABLE_COMPOSITING_MODE=1` when /proc/driver/nvidia exists (2026-09-29).
 - System Python is 3.14; the backend pins 3.13 via `backend/.python-version`. WhisperX
   does not support 3.14 yet.
 - Diarizer `auto` (the default) is Nemotron when NeMo is installed and CUDA works, else pyannote.
