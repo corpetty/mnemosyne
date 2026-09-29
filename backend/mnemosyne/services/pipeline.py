@@ -28,6 +28,7 @@ from ..transcription.glossary import (
     llm_correct,
     parse_glossary,
 )
+from . import history
 from .copilot import agenda_hint, bookmark_hint, copilot_hint
 from .tasks import add_live_todos, carry_over
 
@@ -251,6 +252,14 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
             ctx.emit(
                 {"type": "status", "session_id": session_id, "message": "Transcription complete"}
             )
+            history.log(
+                app,
+                session_id,
+                "transcribed",
+                parts=todo,
+                segments=len(segments),
+                engine=getattr(engine, "name", ""),
+            )
             return {
                 "segments": len(segments),
                 "sources": n_sources,
@@ -264,6 +273,7 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
         except Exception as e:
             app.sessions.set_status(session_id, SessionStatus.ERROR)
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})
+            history.log(app, session_id, "transcribe_failed", error=str(e))
             raise
 
     return run
@@ -353,6 +363,7 @@ def summarize_session(
             )
         except Exception as e:
             ctx.emit({"type": "error", "session_id": session_id, "message": str(e)})
+            history.log(app, session_id, "summarize_failed", provider=prov, error=str(e))
             raise
         result["data"].source_hash = transcript_hash(session.transcript)
         if notes_only:  # no timeline to point at
@@ -382,6 +393,9 @@ def summarize_session(
         if st.obsidian_auto_export and st.obsidian_vault_path:
             exported = await asyncio.to_thread(_auto_export, app, session_id)
         ctx.update("Summary ready")
+        history.log(
+            app, session_id, "summarized", provider=result["provider"], model=result["model"]
+        )
         return {
             "provider": result["provider"],
             "model": result["model"],

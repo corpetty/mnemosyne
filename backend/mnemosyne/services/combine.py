@@ -239,6 +239,20 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
     app.sessions.set_status(
         target.id, SessionStatus.COMPLETED if segments else SessionStatus.CREATED
     )
+    # Its history comes along too, parts numbered as they are now.
+    app.repo.move_events(
+        [(piece.session.id, piece.part, target.id, n) for n, piece in enumerate(all_pieces)]
+    )
+    from . import history
+
+    history.log(
+        app,
+        target.id,
+        "combined",
+        other_id=other.id,
+        other_name=other.name,
+        parts=[n for n, piece in enumerate(all_pieces) if piece.session.id == other.id],
+    )
     app.sessions.delete_session(other.id)
     logger.info("Meeting %s combined into %s (%d parts)", other.id, target.id, len(all_pieces))
     return {"parts": len(all_pieces), "seconds": round(offset, 1), "removed": other.id}

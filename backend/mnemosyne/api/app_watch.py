@@ -190,7 +190,7 @@ class AppWatch:
         from .routes.audio import stop_active
 
         for session_id in session_ids:
-            job, _ = await stop_active(self.ctx, session_id, transcribe=False)
+            job, _ = await stop_active(self.ctx, session_id, transcribe=False, reason="app_gone")
             await self.ctx.jobs.wait(job.id)
 
 

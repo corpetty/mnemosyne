@@ -72,7 +72,7 @@ class StorageService:
             largest=sorted(with_audio, key=lambda u: u.audio_bytes, reverse=True)[:top],
         )
 
-    def delete_audio(self, session_id: str) -> int:
+    def delete_audio(self, session_id: str, reason: str = "manual") -> int:
         """Remove a session's audio files and references. Returns bytes freed."""
         folder = self.recordings_dir / session_id
         freed = dir_size(folder)
@@ -80,6 +80,12 @@ class StorageService:
             raise KeyError(session_id)
         if folder.exists():
             shutil.rmtree(folder, ignore_errors=True)
+        try:  # the meeting's history says where its audio went (services/history.py)
+            self.repo.add_event(
+                session_id, "audio_deleted", None, {"bytes": freed, "reason": reason}
+            )
+        except Exception:
+            logger.warning("Could not log the audio deletion of %s", session_id, exc_info=True)
         logger.info("Deleted audio for session %s (%d bytes)", session_id, freed)
         return freed
 
@@ -106,7 +112,7 @@ class StorageService:
         freed = 0
         if not dry_run:
             for u in candidates:
-                freed += self.delete_audio(u.session_id)
+                freed += self.delete_audio(u.session_id, reason="retention")
         else:
             freed = sum(u.audio_bytes for u in candidates)
         return CleanupResult(dry_run=dry_run, sessions=candidates, freed_bytes=freed)

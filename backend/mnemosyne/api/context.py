@@ -365,13 +365,24 @@ class AppContext:
         # Recordings still running end here, their files closed properly; the next start
         # recovers them into their meetings (services/recovery.py). Left running, pw-record
         # would outlive the backend and record on with nobody to save it.
-        from ..audio.capture import stop_capture
+        import time
 
-        for recording in list(self.active_recordings.values()):
+        from ..audio.capture import stop_capture
+        from ..services import history
+
+        for session_id, recording in list(self.active_recordings.items()):
             try:
                 await stop_capture(recording)
             except Exception:
                 logger.exception("Could not stop a recording at shutdown")
+            history.log(
+                self,
+                session_id,
+                "recording_stopped",
+                recording.part,
+                reason="shutdown",
+                seconds=round(time.time() - recording.started_at, 1),
+            )
         await self.link.stop()
         await self.index.stop()
         for task in (

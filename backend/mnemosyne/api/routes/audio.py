@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 import shutil
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -17,6 +18,7 @@ from ...audio.streams import CaptureApp
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, Recording, Session, SessionStatus
 from ...models.transcript import TranscriptSegment
+from ...services import history
 from ...services.copilot import copilot_runner
 from ...services.encryption import seal_session_audio
 from ...services.parts import add_part, next_part
@@ -87,6 +89,15 @@ def _report_health(ctx: AppContext, session_id: str, recording, health, change) 
     recording.problems = health.problems()
     log = logger.info if change.state == "ok" else logger.warning
     log("Session %s: %s", session_id, change.message)
+    history.log(
+        ctx,
+        session_id,
+        "capture_ok" if change.state == "ok" else "capture_problem",
+        recording.part,
+        device=recording.labels.get(change.device_id, str(change.device_id)),
+        state=change.state,
+        message=change.message,
+    )
     ctx.bus.publish(
         {
             "type": "capture_health",
@@ -206,6 +217,14 @@ async def begin_recording(
         logger.warning("Could not write the recording manifest", exc_info=True)
     ctx.active_recordings[session.id] = recording
     ctx.sessions.set_status(session.id, SessionStatus.RECORDING)
+    history.log(
+        ctx,
+        session.id,
+        "recording_started",
+        recording.part,
+        devices=[recording.labels.get(p.device_id, str(p.device_id)) for p in recording.processes],
+        restart=keep_notes,
+    )
     ctx.level_tasks[session.id] = asyncio.create_task(_stream_levels(ctx, session.id, recording))
 
     live_job_id = None
@@ -248,12 +267,23 @@ async def stop(
     )
 
 
-async def stop_active(ctx: AppContext, session_id: str, transcribe: bool | None = None):
+async def stop_active(
+    ctx: AppContext, session_id: str, transcribe: bool | None = None, reason: str = "stop"
+):
     """Stop an active recording now and queue its `finish` job. Returns (job, will_transcribe).
-    Also used when the app went away and nobody came back for the recording (api/app_watch.py)."""
+    Also used when the app went away and nobody came back for the recording (api/app_watch.py).
+    `reason` goes into the meeting's history: stop, capture_restart, app_gone."""
     # Taken before the first await: a second stop (tray and window at once) finds nothing.
     recording = ctx.active_recordings.pop(session_id)
     await stop_capture(recording)
+    history.log(
+        ctx,
+        session_id,
+        "recording_stopped",
+        recording.part,
+        reason=reason,
+        seconds=round(time.time() - recording.started_at, 1),
+    )
     task = ctx.level_tasks.pop(session_id, None)
     if task is not None:
         task.cancel()
@@ -270,6 +300,13 @@ def _finish_recording(ctx: AppContext, session_id: str, recording, want_transcri
     """Job runner: the slow part of stopping a recording."""
 
     async def run(job) -> dict:
+        try:
+            return await save(job)
+        except Exception as e:
+            history.log(ctx, session_id, "save_failed", recording.part, error=str(e))
+            raise
+
+    async def save(job) -> dict:
         # Live transcription reads the WAVs and makes a last pass: let it finish before the
         # encoder replaces them.
         for other in ctx.jobs.list(session_id=session_id, active_only=True):
@@ -310,7 +347,17 @@ def _finish_recording(ctx: AppContext, session_id: str, recording, want_transcri
         had_transcript = bool(ctx.sessions.get_session(session_id).transcript)
         if recording.part:
             job.update("Adding it to the meeting", progress=0.75)
-        await add_part(ctx, session_id, recording.part, recordings, mixed_path)
+        seconds = await asyncio.to_thread(history.measure, Path(recordings[0].path), None)
+        offset = await add_part(ctx, session_id, recording.part, recordings, mixed_path)
+        history.log(
+            ctx,
+            session_id,
+            "part_saved",
+            recordings[0].part,
+            offset=round(offset, 1),
+            seconds=round(seconds, 1) if seconds is not None else None,
+            sources=[r.device_name for r in recordings],
+        )
         job.update("Saving", progress=0.9)
         await asyncio.to_thread(seal_session_audio, ctx, session_id)
         ctx.sessions.set_status(session_id, SessionStatus.CREATED)
@@ -340,7 +387,7 @@ async def restart(session_id: str, ctx: AppContext = Depends(get_ctx)):
         raise HTTPException(status_code=404, detail="No active recording for this session")
     ids = [p.device_id for p in recording.processes]
     names = dict(recording.node_names)
-    job, _ = await stop_active(ctx, session_id, transcribe=False)
+    job, _ = await stop_active(ctx, session_id, transcribe=False, reason="capture_restart")
     saved = await ctx.jobs.wait(job.id)  # the next part starts where this one ends
     if saved is not None and saved.status != "completed":
         logger.warning("Session %s: saving before the restart failed: %s", session_id, saved.error)
@@ -562,8 +609,18 @@ async def import_audio(
         str(mixed),
         [Recording(source="import", device_id=-1, device_name=original.name, path=str(saved))],
     )
+    seconds = await asyncio.to_thread(history.measure, Path(mixed), None)  # before sealing
     await asyncio.to_thread(seal_session_audio, ctx, session.id)
     ctx.sessions.set_status(session.id, SessionStatus.CREATED)
+    history.log(
+        ctx,
+        session.id,
+        "imported",
+        0,
+        file=original.name,
+        offset=0.0,
+        seconds=round(seconds, 1) if seconds is not None else None,
+    )
 
     job_id = None
     if transcribe:
@@ -603,7 +660,17 @@ async def _import_part(ctx: AppContext, session_id: str, file, original: Path, t
         raise HTTPException(status_code=400, detail=f"Could not decode audio: {e}") from e
     had_transcript = bool(session.transcript)
     recording = Recording(source="import", device_id=-1, device_name=original.name, path=str(saved))
-    await add_part(ctx, session_id, part, [recording], mixed)
+    seconds = await asyncio.to_thread(history.measure, Path(mixed), None)
+    offset = await add_part(ctx, session_id, part, [recording], mixed)
+    history.log(
+        ctx,
+        session_id,
+        "imported",
+        recording.part,
+        file=original.name,
+        offset=round(offset, 1),
+        seconds=round(seconds, 1) if seconds is not None else None,
+    )
     await asyncio.to_thread(seal_session_audio, ctx, session_id)
 
     job_id = None

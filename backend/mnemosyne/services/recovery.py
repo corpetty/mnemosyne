@@ -15,6 +15,7 @@ import os
 import signal
 import struct
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -68,13 +69,14 @@ def write_manifest(recording: RecordingSession, devices: dict[int, AudioDevice])
     )
 
 
-def repair_wav(path: Path) -> float:
-    """Fix the RIFF and data sizes of a WAV whose writer was killed, in place.
+def repair_wav(path: Path, fix: bool = True) -> float:
+    """Fix the RIFF and data sizes of a WAV whose writer was killed, in place (or, with
+    `fix` False, only measure it: a recorder may still be writing).
 
     Returns the seconds of audio in the file (0 when there is none or it is not a WAV)."""
     try:
         size = path.stat().st_size
-        with path.open("r+b") as f:
+        with path.open("r+b" if fix else "rb") as f:
             head = f.read(12)
             if len(head) < 12 or head[:4] != b"RIFF" or head[8:12] != b"WAVE":
                 return 0.0
@@ -92,10 +94,10 @@ def repair_wav(path: Path) -> float:
                     start = pos + 8
                     available = size - start
                     available -= available % max(block_align, 1)
-                    if chunk_size != available:
+                    if fix and chunk_size != available:
                         f.seek(pos + 4)
                         f.write(struct.pack("<I", available))
-                    if struct.unpack("<I", head[4:8])[0] != start + available - 8:
+                    if fix and struct.unpack("<I", head[4:8])[0] != start + available - 8:
                         f.seek(4)
                         f.write(struct.pack("<I", start + available - 8))
                     return available / byte_rate if byte_rate else 0.0
@@ -228,6 +230,16 @@ def recover_session(app: AppContext, session_id: str):
     """Job runner that finishes the interrupted recordings of a meeting (usually one)."""
 
     async def run(ctx: JobContext) -> dict:
+        from . import history
+
+        try:
+            return await recover(ctx)
+        except Exception as e:
+            history.log(app, session_id, "recover_failed", error=str(e))
+            raise
+
+    async def recover(ctx: JobContext) -> dict:
+        from . import history
         from .encryption import seal_session_audio
         from .parts import add_part, next_part
 
@@ -244,6 +256,10 @@ def recover_session(app: AppContext, session_id: str):
             if part is None:  # no manifest: after whatever the meeting already has
                 part = next_part(session)
             wavs = [folder / t["wav"] for t in tracks]
+            # When the recording really stopped: its files' last write (the history shows the
+            # part then, not when it was recovered).
+            written = [w.stat().st_mtime for w in wavs if w.exists()]
+            ended = datetime.fromtimestamp(max(written)).isoformat() if written else None
             stopped = await asyncio.to_thread(
                 stop_orphan_recorders, [w for w in wavs if w.exists()]
             )
@@ -273,6 +289,7 @@ def recover_session(app: AppContext, session_id: str):
                     )
                 )
             if not recordings:
+                history.log(app, session_id, "recover_empty", part)
                 if manifest is not None:
                     manifest.unlink(missing_ok=True)
                 continue
@@ -280,7 +297,21 @@ def recover_session(app: AppContext, session_id: str):
             mixed = await asyncio.to_thread(
                 mix_audio_files, [Path(r.path) for r in recordings], mixed
             )
-            await add_part(app, session_id, part, recordings, mixed)
+            part_seconds = 0.0
+            for r in recordings:
+                measured = await asyncio.to_thread(history.measure, Path(r.path), None)
+                part_seconds = max(part_seconds, measured or 0.0)
+            offset = await add_part(app, session_id, part, recordings, mixed)
+            history.log(
+                app,
+                session_id,
+                "recovered",
+                recordings[0].part,
+                offset=round(offset, 1),
+                seconds=round(part_seconds, 1),
+                sources=[r.device_name for r in recordings],
+                ended=ended,
+            )
             await asyncio.to_thread(seal_session_audio, app, session_id)
             if manifest is not None:
                 manifest.unlink(missing_ok=True)
@@ -329,6 +360,10 @@ def recover_interrupted(app: AppContext) -> list[str]:
             )
             continue
         logger.warning("Recording of session %s was interrupted; recovering it", session_id)
+        from . import history
+
+        for _, _, part, tracks in pending:
+            history.log(app, session_id, "interrupted", part, tracks=len(tracks))
         app.jobs.submit("recover", recover_session(app, session_id), session_id)
         ids.append(session_id)
     return ids

@@ -5,6 +5,7 @@ import type {
   LibraryAsset,
   AgendaItem,
   Bookmark,
+  SessionHistory,
   AddCorrectionResult,
   GlossarySuggestion,
   BackupStatus,
@@ -254,6 +255,16 @@ export async function setMeetingType(sessionId: string, name: string): Promise<S
 /** A meeting's agenda, in order (the copilot marks points covered as they come up). */
 export async function setAgenda(sessionId: string, items: AgendaItem[]): Promise<AgendaItem[]> {
   return request(`/api/sessions/${sessionId}/agenda`, { method: 'PUT', body: JSON.stringify({ items }) });
+}
+
+/** A meeting's parts, files, audio waiting to be saved, and log (services/history.py). */
+export async function getHistory(sessionId: string): Promise<SessionHistory> {
+  return request(`/api/sessions/${sessionId}/history`);
+}
+
+/** Save audio recorded but not in the meeting yet (an interrupted recording) as its next part. */
+export async function recoverSession(sessionId: string): Promise<Job> {
+  return request(`/api/sessions/${sessionId}/recover`, { method: 'POST' });
 }
 
 /** Mark a moment of a meeting: `at` seconds on its timeline, or (while recording) now. */

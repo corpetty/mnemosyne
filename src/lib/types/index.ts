@@ -13,6 +13,10 @@ export type StopRecordingResponse = Omit<S['StopRecordingResponse'], 'session'> 
 export type RecordingStatus = S['RecordingStatus'];
 export type ActiveRecording = S['ActiveRecording'];
 export type Bookmark = S['Bookmark'];
+export type SessionHistory = S['SessionHistory'];
+export type HistoryPart = S['HistoryPart'];
+export type HistoryEvent = S['HistoryEvent'];
+export type HistoryFile = S['HistoryFile'];
 export type Asset = S['Asset'];
 export type ExternalNotes = S['ExternalNotes'];
 export type LibraryAsset = S['LibraryAsset'];
@@ -109,6 +113,7 @@ export type BackendEvent =
   | { type: 'levels'; session_id: string; levels: Record<string, Level> }
   | { type: 'bookmarks'; session_id: string } // a meeting's bookmarks changed
   | { type: 'assets'; session_id: string } // a meeting's resources changed
+  | { type: 'history'; session_id: string } // something was added to a meeting's history
   | {
       // A source stopped being captured, or is captured again (backend audio/health.py).
       type: 'capture_health';

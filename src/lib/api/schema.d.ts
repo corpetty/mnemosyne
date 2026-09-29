@@ -1478,6 +1478,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get History */
+        get: operations["get_history_api_sessions__session_id__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/local-only": {
         parameters: {
             query?: never;
@@ -1526,6 +1543,27 @@ export interface paths {
         put?: never;
         /** Update Notes */
         post: operations["update_notes_api_sessions__session_id__notes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recover
+         * @description Save audio that was recorded but is not in the meeting yet (an interrupted recording,
+         *     or one whose save failed) as its next part.
+         */
+        post: operations["recover_api_sessions__session_id__recover_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2662,6 +2700,68 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HistoryEvent */
+        HistoryEvent: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Detail
+             * @default {}
+             */
+            detail: {
+                [key: string]: unknown;
+            };
+            /** Kind */
+            kind: string;
+            /** Part */
+            part: number | null;
+        };
+        /** HistoryFile */
+        HistoryFile: {
+            /**
+             * Device Name
+             * @default
+             */
+            device_name: string;
+            /** Name */
+            name: string;
+            /** Seconds */
+            seconds: number | null;
+            /** Size */
+            size: number | null;
+            /**
+             * Source
+             * @default
+             */
+            source: string;
+        };
+        /** HistoryPart */
+        HistoryPart: {
+            /** Approximate */
+            approximate: boolean;
+            /** Ended At */
+            ended_at: string | null;
+            /** Files */
+            files: components["schemas"]["HistoryFile"][];
+            /** Gap Before */
+            gap_before: number | null;
+            /**
+             * How
+             * @enum {string}
+             */
+            how: "recorded" | "recovered" | "imported" | "combined" | "recording";
+            /** Offset */
+            offset: number;
+            /** Part */
+            part: number;
+            /** Seconds */
+            seconds: number | null;
+            /** Started At */
+            started_at: string | null;
+        };
         /** IndexStatus */
         IndexStatus: {
             /** Enabled */
@@ -2920,6 +3020,26 @@ export interface components {
             start: number;
             /** Text */
             text: string;
+        };
+        /**
+         * PendingRecording
+         * @description Audio recorded but not in the meeting yet: an interrupted recording, or one whose save
+         *     failed. Recovering it adds it as a part.
+         */
+        PendingRecording: {
+            /** Files */
+            files: components["schemas"]["HistoryFile"][];
+            /** Part */
+            part: number | null;
+            /** Recording Id */
+            recording_id: string | null;
+            /** Seconds */
+            seconds: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "waiting" | "saving";
         };
         /** PersonDecision */
         PersonDecision: {
@@ -3341,6 +3461,27 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** SessionHistory */
+        SessionHistory: {
+            /** Events */
+            events: components["schemas"]["HistoryEvent"][];
+            /** Gap Seconds */
+            gap_seconds: number;
+            /** Missing */
+            missing: string[];
+            /** Orphans */
+            orphans: components["schemas"]["HistoryFile"][];
+            /** Parts */
+            parts: components["schemas"]["HistoryPart"][];
+            /** Pending */
+            pending: components["schemas"]["PendingRecording"][];
+            /** Recorded Seconds */
+            recorded_seconds: number;
+            /** Recording Now */
+            recording_now: boolean;
+            /** Session Id */
+            session_id: string;
         };
         /** SessionSpeaker */
         SessionSpeaker: {
@@ -6783,6 +6924,37 @@ export interface operations {
             };
         };
     };
+    get_history_api_sessions__session_id__history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionHistory"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     set_local_only_api_sessions__session_id__local_only_put: {
         parameters: {
             query?: never;
@@ -6875,6 +7047,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    recover_api_sessions__session_id__recover_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
             /** @description Validation Error */

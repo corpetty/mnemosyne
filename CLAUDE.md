@@ -119,6 +119,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - Backups (services/backup.py): restores are staged and applied at the next start in
   `AppContext.build`, before the database opens; never unpack over a running backend. Tests and
   the e2e demo backend set `backup_dir` to a temp folder: never let them write ~/Documents.
+- Meeting history (services/history.py, `session_events`): code that starts, stops, saves,
+  recovers, imports, combines, transcribes or deletes a meeting's audio logs it with
+  `history.log()`, which never raises. The Recording tab's "Parts & history" card shows it.
 - Encryption at rest: code that reads audio must go through `storage.crypto.plaintext()` (files
   may be `<name>.enc`), and new audio must be sealed with `seal_session_audio()`. Tests and demo
   mode never use the real keyring (MemoryKeyStore / FileKeyStore); keep it that way.

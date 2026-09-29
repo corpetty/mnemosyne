@@ -198,6 +198,17 @@ CREATE TABLE IF NOT EXISTS external_notes (
     filename TEXT,
     added_at TEXT NOT NULL
 );
+-- What happened to a meeting (services/history.py): recordings started and stopped, parts
+-- saved or recovered, capture problems, imports, transcriptions. detail is a JSON object.
+CREATE TABLE IF NOT EXISTS session_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    part INTEGER,
+    detail TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS session_events_session ON session_events(session_id);
 CREATE TABLE IF NOT EXISTS session_assets (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
@@ -886,6 +897,56 @@ class SessionRepository:
                 if (dest := where.get((r["session_id"], r["part"]))) is not None:
                     self._conn.execute(
                         "UPDATE bookmarks SET session_id=?, part=? WHERE id=?", (*dest, r["id"])
+                    )
+
+    # ---- history -------------------------------------------------------
+
+    def add_event(
+        self, session_id: str, kind: str, part: int | None = None, detail: dict | None = None
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO session_events (session_id, at, kind, part, detail)"
+                " VALUES (?,?,?,?,?)",
+                (session_id, datetime.now().isoformat(), kind, part, json.dumps(detail or {})),
+            )
+
+    def events(self, session_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT at, kind, part, detail FROM session_events WHERE session_id=? ORDER BY id",
+                (session_id,),
+            ).fetchall()
+        return [
+            {
+                "at": _dt(r["at"]),
+                "kind": r["kind"],
+                "part": r["part"],
+                "detail": json.loads(r["detail"]),
+            }
+            for r in rows
+        ]
+
+    def move_events(self, moves: list[tuple[str, int, str, int]]) -> None:
+        """Like move_bookmarks: a combined meeting keeps the history of both, parts renumbered.
+        Events of the other meeting that name no part come along too."""
+        where = {(old_s, old_p): (new_s, new_p) for old_s, old_p, new_s, new_p in moves}
+        with self._lock, self._conn:
+            rows = self._conn.execute("SELECT id, session_id, part FROM session_events").fetchall()
+            targets = {new_s for _, _, new_s, _ in moves}
+            sources = {old_s for old_s, _, _, _ in moves}
+            for r in rows:
+                if (dest := where.get((r["session_id"], r["part"]))) is not None:
+                    self._conn.execute(
+                        "UPDATE session_events SET session_id=?, part=? WHERE id=?",
+                        (*dest, r["id"]),
+                    )
+                elif (
+                    r["part"] is None and r["session_id"] in sources - targets and len(targets) == 1
+                ):
+                    self._conn.execute(
+                        "UPDATE session_events SET session_id=? WHERE id=?",
+                        (next(iter(targets)), r["id"]),
                     )
 
     def delete(self, session_id: str) -> bool:

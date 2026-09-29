@@ -8,6 +8,7 @@
 	import AudioControls from './AudioControls.svelte';
 	import AgendaCard from './AgendaCard.svelte';
 	import ResourcesCard from './ResourcesCard.svelte';
+	import HistoryCard from './HistoryCard.svelte';
 	import CalendarCard from './CalendarCard.svelte';
 	import CopilotPanel from './CopilotPanel.svelte';
 	import MeetingActions from './MeetingActions.svelte';
@@ -119,7 +120,7 @@
 					</div>
 					<!-- Side by side when wide; stacked (copilot, then the live transcript) when narrow. -->
 					<div class="grid gap-4 lg:grid-cols-5">
-						<div class="lg:col-span-2 lg:order-2 space-y-4"><CopilotPanel /><ResourcesCard compact /></div>
+						<div class="lg:col-span-2 lg:order-2 space-y-4"><CopilotPanel /><ResourcesCard compact /><HistoryCard /></div>
 						<div class="lg:col-span-3 lg:order-1"><LiveTranscript tall /></div>
 					</div>
 				</div>
@@ -147,6 +148,7 @@
 							is kept.
 						</p>
 					{/if}
+					<HistoryCard />
 					<p class="text-xs text-gray-600">
 						Shortcuts: <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+R</kbd> Record
 						&middot; <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+S</kbd> Stop

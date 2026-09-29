@@ -388,6 +388,20 @@ button, Ctrl+M, the tray's "Mark this moment", `mnemosyne --mark`). Kept as (par
 `bookmarks`; the summary is told to cover those moments; the Obsidian note lists them.
 Changes publish `{type: "bookmarks", session_id}`.
 
+### History: `GET /api/sessions/{session_id}/history` · `POST …/recover`
+What a meeting is made of and what happened to it (services/history.py): `parts` (each with its
+`offset`, `seconds`, wall-clock `started_at`/`ended_at` (`approximate` when worked out from when it
+was saved), `gap_before` (seconds not recorded), `how` (recorded, recovered, imported, combined,
+recording) and `files` with sizes), `recorded_seconds`, `gap_seconds`, `pending` (audio recorded
+but not in the meeting yet: an interrupted recording or a failed save, `waiting` or `saving`),
+`missing` (files it names that are gone), `orphans` (audio in its folder it does not use) and
+`events` (`{at, kind, part, detail}`: created, recording_started, recording_stopped with a
+`reason` of stop/capture_restart/app_gone/shutdown, part_saved, save_failed, interrupted,
+recovered, recover_empty, recover_failed, capture_problem, capture_ok, imported, combined,
+transcribed, transcribe_failed, summarized, summarize_failed, audio_deleted). New events publish
+`{type: "history", session_id}`. `recover` saves the pending audio as the next part (a `recover`
+job); 404 when nothing is waiting, 409 while the meeting is recording or busy.
+
 ### Agenda: `PUT /api/sessions/{session_id}/agenda`
 `{items: [{text, covered}]}` → the items. Also taken from the calendar event's description at
 recording start (the list under "Agenda", else its list items) when the meeting has none. While
