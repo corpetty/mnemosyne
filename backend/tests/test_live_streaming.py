@@ -356,3 +356,139 @@ def test_names_allocate_and_rename():
     assert names.label("system", 0) == "Dana"
     assert not names.rename("Speaker 3", "Dana")  # someone else's name already
     assert not names.rename("nobody", "Eve")
+
+
+# ---- names by voice --------------------------------------------------------------------
+
+
+class ValueEmbedder:
+    """A voice per sample value: 1000 -> e0, 2000 -> e1, 3000 -> e2."""
+
+    def __init__(self, fail=False):
+        self.calls = 0
+        self.fail = fail
+
+    async def embed(self, pcm, rate):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("no GPU memory")
+        v = np.zeros(3)
+        v[int(round(np.median(pcm) / 1000)) - 1] = 1.0
+        return v.tolist()
+
+
+E = [[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
+
+
+def _named_live(path, script, namer, transcriber=None):
+    return _live(path, FakeStream(script, latency=0.5), transcriber, namer=namer)
+
+
+async def test_a_voice_profile_names_a_streamed_speaker(tmp_path):
+    from mnemosyne.transcription.live_streaming import VoiceNamer
+
+    path = _wav(tmp_path)
+    seen = []
+
+    def match(embeddings):
+        seen.append(embeddings)
+        return {label: "Dana" for label, v in embeddings.items() if v == E[0]}
+
+    namer = VoiceNamer(ValueEmbedder(), match_names=match)
+    live, _, events = _named_live(path, [(0, 20, 0)], namer)
+    _append(path, 2.0, value=1000)
+    await live.tick()
+    assert seen == []  # under 3 s of speech: too early
+    _append(path, 4.0, value=1000)
+    await live.tick()
+    assert seen == [{"Speaker 1": E[0]}]
+    assert {"type": "live_relabel", "session_id": "s1", "old": "Speaker 1", "new": "Dana"} in events
+    assert {s.speaker for s in live.committed} == {"Dana"}
+    assert namer.voices == {"Dana": E[0]}
+    _append(path, 70.0, value=1000)
+    await live.tick()
+    assert len(seen) == 1  # named: never asked again
+
+
+async def test_an_unmatched_speaker_is_tried_again_after_a_minute(tmp_path):
+    from mnemosyne.transcription.live_streaming import VoiceNamer
+
+    path = _wav(tmp_path)
+    embedder = ValueEmbedder()
+    namer = VoiceNamer(embedder, match_names=lambda e: {})
+    live, _, _ = _named_live(path, [(0, 200, 0)], namer)
+    _append(path, 6.0, value=1000)
+    await live.tick()
+    first = embedder.calls
+    assert first >= 1
+    _append(path, 30.0, value=1000)
+    await live.tick()
+    assert embedder.calls == first
+    _append(path, 40.0, value=1000)
+    await live.tick()
+    assert embedder.calls > first
+    assert namer.voices == {"Speaker 1": E[0]}
+
+
+async def test_speakers_keep_their_labels_from_an_earlier_part(tmp_path):
+    from mnemosyne.transcription.live_streaming import VoiceNamer
+
+    path = _wav(tmp_path)
+    voices = {"Speaker 1": E[2], "Speaker 2": E[1]}  # from part 1
+    namer = VoiceNamer(ValueEmbedder(), voices=voices)
+    # Part 2: the first voice heard is part 1's "Speaker 2" (value 2000), then a new one.
+    live, _, events = _named_live(path, [(0, 6, 0), (6, 20, 1)], namer)
+    _append(path, 6.0, value=2000)
+    await live.tick()
+    # Its first label avoids part 1's labels, then it takes its own back.
+    assert events[1]["segment"]["speaker"] == "Speaker 3"
+    assert {
+        "type": "live_relabel",
+        "session_id": "s1",
+        "old": "Speaker 3",
+        "new": "Speaker 2",
+    } in events
+    _append(path, 6.0, value=1000)  # a voice part 1 did not have (e0)
+    await live.tick()
+    _append(path, 6.0, value=1000)
+    await live.tick()
+    labels = [s for _, s in _segments(events)]
+    assert labels[-1] == "Speaker 3"  # new person: a new number, not part 1's Speaker 1
+    assert voices["Speaker 2"] == E[1] and voices["Speaker 3"] == E[0]
+
+
+async def test_without_an_embedder_labels_stay_numbered(tmp_path):
+    from mnemosyne.transcription.live_streaming import VoiceNamer
+
+    path = _wav(tmp_path)
+    live, _, events = _named_live(path, [(0, 20, 0)], VoiceNamer(None))
+    _append(path, 6.0)
+    await live.tick()
+    assert {s for _, s in _segments(events)} == {"Speaker 1"}
+
+
+async def test_a_failing_embedder_stops_naming_but_not_the_transcript(tmp_path):
+    from mnemosyne.transcription.live_streaming import VoiceNamer
+
+    path = _wav(tmp_path)
+    namer = VoiceNamer(ValueEmbedder(fail=True), match_names=lambda e: {"Speaker 1": "X"})
+    live, _, events = _named_live(path, [(0, 20, 0)], namer)
+    _append(path, 6.0)
+    await live.tick()
+    _append(path, 6.0)
+    await live.tick()
+    assert namer.failed
+    assert {s for _, s in _segments(events)} == {"Speaker 1"}
+    assert len(_segments(events)) > 5
+
+
+def test_wav_tail_reads_a_span_without_moving(tmp_path):
+    from mnemosyne.transcription.live import WavTail
+
+    path = _wav(tmp_path)
+    _append(path, 1.0, value=1)
+    _append(path, 1.0, value=2)
+    tail = WavTail(path)
+    span = tail.read_span(0.9, 1.1)
+    assert span.size == int(0.2 * RATE) and span[0] == 1 and span[-1] == 2
+    assert tail.read_new().size == 2 * RATE  # the tail still starts at the beginning

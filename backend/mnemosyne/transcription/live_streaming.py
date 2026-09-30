@@ -5,16 +5,27 @@ speaker index most active there (or nobody). A live line takes the speaker most 
 span, or, when the transcriber gave word times, each word takes its own and the line is split
 where the speaker changes. `LiveSpeakerNames` turns a source's speaker index into the label
 people see ("Speaker 3"); streaming indices are stable for the whole recording, so labels never
-need clustering or renaming to stay consistent.
+need clustering or renaming to stay consistent. `VoiceNamer` then renames them once a speaker
+has said enough: to the label they had in an earlier part of the same meeting (each part is a
+new recording, so a new stream), or to a voice-profile name.
 """
 
 from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ..models.transcript import TranscriptSegment, WordSegment
 from .diarizers.nemotron_stream import FRAME_SECONDS, SpeakerFrames
 from .engine import SpeakerTurn
+
+if TYPE_CHECKING:
+    from .live import LiveSource, LiveTranscriber
+
+logger = logging.getLogger(__name__)
 
 ACTIVE = 0.5  # a speaker is talking in a frame when their probability reaches this
 NOBODY = 255
@@ -171,3 +182,97 @@ class LiveSpeakerNames:
                 self.labels[key] = new
                 hit = True
         return hit
+
+
+MIN_NAMING_SECONDS = 3.0  # clean speech before a speaker is first embedded
+RETRY_SECONDS = 60.0  # more clean speech before trying a profile match again
+
+MatchNames = Callable[[dict[str, list[float]]], dict[str, str]]
+
+
+def _unit(v) -> np.ndarray:
+    v = np.asarray(v, dtype=np.float64)
+    return v / (np.linalg.norm(v) or 1.0)
+
+
+class VoiceNamer:
+    """Names streamed speakers by voice: first as the same speaker of an earlier part of this
+    meeting (`voices`: label -> embedding, shared across the meeting's recordings and updated
+    here), then by voice profile (`match_names`, e.g. SpeakerService.match). Embeds each
+    speaker's longest clean turns with the pyannote embedder, at most one speaker per tick."""
+
+    def __init__(
+        self,
+        embedder: Any,
+        match_names: MatchNames | None = None,
+        voices: dict[str, list[float]] | None = None,
+        threshold: float = 0.6,
+    ):
+        self.embedder = embedder
+        self.match_names = match_names
+        self.voices = voices if voices is not None else {}
+        self.threshold = threshold
+        self.tried: dict[tuple[str, int], float] = {}  # clean seconds at the last attempt
+        self.named: set[tuple[str, int]] = set()  # matched a voice profile: nothing left to do
+        self.failed = False
+
+    async def update(self, live: LiveTranscriber, source: LiveSource) -> None:
+        if self.embedder is None or self.failed or source.timeline is None:
+            return
+        try:
+            await self._update(live, source)
+        except Exception:
+            logger.warning("Live speaker naming failed; labels stay numbered", exc_info=True)
+            self.failed = True
+
+    async def _update(self, live: LiveTranscriber, source: LiveSource) -> None:
+        from .diarizers.nemotron import embedding_spans
+
+        timeline = source.timeline
+        for index in timeline.speakers():
+            key = (source.kind, index)
+            if key in self.named or key not in live.names.labels:
+                continue  # done, or no line of theirs shown yet
+            seconds = timeline.seconds(index)
+            last = self.tried.get(key)
+            if seconds < MIN_NAMING_SECONDS:
+                continue
+            if last is not None and seconds - last < RETRY_SECONDS:
+                continue
+            self.tried[key] = seconds
+            turns = [t for t in timeline.turns(clean=True) if t.speaker == str(index)]
+            vecs = []
+            for start, end in embedding_spans(turns).get(str(index), []):
+                pcm = source.tail.read_span(start, end)
+                vec = await self.embedder.embed(pcm, source.tail.sample_rate or 48000)
+                if vec is not None:
+                    vecs.append(_unit(vec))
+            if not vecs:
+                continue
+            vec = _unit(np.mean(vecs, axis=0)).tolist()
+            label = live.names.labels[key]
+            if last is None:  # first look: the same person as in an earlier part?
+                label = self._continue(live, label, vec)
+            name = (self.match_names({label: vec}) if self.match_names else {}).get(label)
+            if name and name != label:
+                live.rename(label, name)
+                label = live.names.labels[key]
+            if name and label == name:
+                self.named.add(key)
+            self.voices[label] = vec
+            return  # one embedding pass per tick
+
+    def _continue(self, live: LiveTranscriber, label: str, vec: list[float]) -> str:
+        """The label of the earlier part's speaker this voice matches, taken over if free."""
+        in_use = set(live.names.labels.values())
+        best, best_score = None, self.threshold
+        for other, emb in self.voices.items():
+            if other == label or other in in_use:
+                continue
+            score = float(np.dot(_unit(emb), _unit(vec)))
+            if score >= best_score:
+                best, best_score = other, score
+        if best is None:
+            return label
+        live.rename(label, best)
+        return best

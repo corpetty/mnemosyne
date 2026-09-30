@@ -33,7 +33,7 @@ import numpy as np
 from ..models.transcript import TranscriptSegment
 from .engine import Transcriber
 from .live_speakers import OnlineClusterer, SpeakerEmbedder
-from .live_streaming import LiveSpeakerNames, SpeakerTimeline, split_line
+from .live_streaming import LiveSpeakerNames, SpeakerTimeline, VoiceNamer, split_line
 from .mentions import MentionSpotter
 
 logger = logging.getLogger(__name__)
@@ -94,11 +94,26 @@ class WavTail:
             raw = f.read()
         usable = len(raw) - (len(raw) % frame)
         self._pos += usable
-        if usable == 0:
+        return self._mono(raw[:usable])
+
+    def read_span(self, start: float, end: float) -> np.ndarray:
+        """Samples between two times (seconds) as int16 mono, without moving the tail."""
+        if self._data_offset is None and not self._parse_header():
+            return np.zeros(0, dtype=np.int16)
+        frame = self.sample_width * self.channels
+        a = int(max(start, 0.0) * self.sample_rate)
+        b = int(max(end, start) * self.sample_rate)
+        with self.path.open("rb") as f:
+            f.seek(self._data_offset + a * frame)
+            raw = f.read((b - a) * frame)
+        return self._mono(raw[: len(raw) - len(raw) % frame])
+
+    def _mono(self, raw: bytes) -> np.ndarray:
+        if not raw:
             return np.zeros(0, dtype=np.int16)
         if self.sample_width != 2:
             raise ValueError(f"Unsupported sample width {self.sample_width}")
-        pcm = np.frombuffer(raw[:usable], dtype=np.int16)
+        pcm = np.frombuffer(raw, dtype=np.int16)
         if self.channels > 1:
             pcm = pcm.reshape(-1, self.channels).mean(axis=1).astype(np.int16)
         return pcm
@@ -167,6 +182,7 @@ class LiveTranscriber:
         adaptive: bool = True,
         pressure: Callable[[], float | None] = cpu_pressure,
         names: LiveSpeakerNames | None = None,
+        namer: VoiceNamer | None = None,
     ):
         self.transcriber = transcriber
         self.sources = sources
@@ -192,6 +208,7 @@ class LiveTranscriber:
         self.committed: list[TranscriptSegment] = []
         self.committed_kind: list[str] = []  # source kind of each committed segment
         self.names = names or LiveSpeakerNames()
+        self.namer = namer  # voice profiles and earlier parts' speakers, for streamed sources
         self.pending: list[int] = []  # committed lines that end past their stream's frontier
 
     async def run(self) -> None:
@@ -317,6 +334,9 @@ class LiveTranscriber:
             source.buffer = source.buffer[-int(self.commit_margin * rate) :]
             source.buffer_start += duration - source.buffer.size / rate
 
+        if source.stream is not None and self.namer is not None:
+            await self.namer.update(self, source)
+
         partial = " ".join(s.text for s in rest).strip()
         if partial != source.partial:
             source.partial = partial
@@ -378,6 +398,8 @@ class LiveTranscriber:
         if index is None:  # nobody the stream knows: whoever spoke before
             return source.last_speaker or source.speaker
         taken = {source.speaker} | {s.speaker for s in self.sources}
+        if self.namer is not None:  # earlier parts' speakers keep their labels for themselves
+            taken |= set(self.namer.voices)
         return self.names.label(source.kind, index, taken)
 
     def _stream_lines(self, source: LiveSource, seg: TranscriptSegment) -> list[TranscriptSegment]:
