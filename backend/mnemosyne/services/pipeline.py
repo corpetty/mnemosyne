@@ -379,6 +379,8 @@ def summarize_session(
             data.chapters = []
             for item in data.action_items:
                 item.at = None
+            for fact in data.client_facts:
+                fact.at = None
         # To-dos the copilot heard that the summary missed; then keep done flags and issue
         # links of items that survive a re-summarize.
         add_live_todos(session.copilot_notes, result["data"])

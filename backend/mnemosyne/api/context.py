@@ -20,6 +20,7 @@ from ..jobs import JobManager
 from ..search.index import VectorIndex
 from ..services.calendar_service import CalendarService, calendar_source
 from ..services.link import LinkService
+from ..services.meeting_types import available_types
 from ..services.model_service import ModelService
 from ..services.pairing import PairingService
 from ..services.session_service import SessionService
@@ -76,7 +77,7 @@ class AppContext:
 
     def __post_init__(self) -> None:
         self.summarizer.name_source = self.known_names
-        self.sessions.type_source = lambda: self.settings.meeting_types
+        self.sessions.type_source = lambda: available_types(self.settings)
         self.sessions.is_recording = lambda sid: sid in self.active_recordings
 
     def known_names(self) -> list[str]:

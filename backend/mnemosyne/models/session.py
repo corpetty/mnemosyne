@@ -82,6 +82,29 @@ class Chapter(ApiModel):
     title: str
 
 
+ClientFactKind = Literal[
+    "goal",
+    "life_event",
+    "income_change",
+    "risk_tolerance",
+    "account",
+    "beneficiary",
+    "insurance",
+    "estate",
+    "next_review",
+    "other",
+]
+
+
+class ClientFact(ApiModel):
+    """Something said about a client in an advisory meeting (the `advisory` summary style):
+    recorded as said, never the model's own advice."""
+
+    kind: ClientFactKind = "other"
+    text: str
+    at: float | None = None  # seconds: the transcript line where it was said
+
+
 class SummaryData(ApiModel):
     """Structured summary produced by the LLM. `summary` on the session keeps
     the markdown body for compatibility."""
@@ -101,6 +124,7 @@ class SummaryData(ApiModel):
     decision_at: list[float | None] = Field(default_factory=list)
     question_at: list[float | None] = Field(default_factory=list)
     chapters: list[Chapter] = Field(default_factory=list)
+    client_facts: list[ClientFact] = Field(default_factory=list)  # advisory style only
     followup: str = ""  # last drafted follow-up message (email or chat)
 
 

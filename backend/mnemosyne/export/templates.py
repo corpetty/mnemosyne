@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from ..models.session import SummaryData
+from ..models.session import ClientFact, SummaryData
 
 
 def _yaml_str(value: str) -> str:
@@ -13,6 +13,36 @@ def _yaml_str(value: str) -> str:
 
 def _is_label(name: str) -> bool:
     return name.startswith("SPEAKER_") or name.upper() == "UNKNOWN"
+
+
+FACT_HEADINGS = {
+    "goal": "Goals",
+    "life_event": "Life events",
+    "income_change": "Income changes",
+    "risk_tolerance": "Risk tolerance",
+    "account": "Accounts",
+    "beneficiary": "Beneficiaries",
+    "insurance": "Insurance",
+    "estate": "Estate",
+    "next_review": "Next review",
+    "other": "Other",
+}
+
+
+def _client_facts(facts: list[ClientFact]) -> list[str]:
+    """Grouped by kind, in FACT_HEADINGS order, each with the time it was said."""
+    lines: list[str] = []
+    for kind, heading in FACT_HEADINGS.items():
+        group = [f for f in facts if f.kind == kind]
+        if not group:
+            continue
+        if lines:
+            lines.append("")
+        lines.append(f"### {heading}\n")
+        for f in group:
+            at = f" ({int(f.at // 60):02d}:{int(f.at % 60):02d})" if f.at is not None else ""
+            lines.append(f"- {f.text}{at}")
+    return lines
 
 
 def render_meeting_note(
@@ -92,6 +122,10 @@ def render_meeting_note(
         if summary_data.open_questions:
             sections.append("## Open Questions\n")
             sections.extend(f"- {q}" for q in summary_data.open_questions)
+            sections.append("")
+        if summary_data.client_facts:
+            sections.append("## Client Facts\n")
+            sections.extend(_client_facts(summary_data.client_facts))
             sections.append("")
         if summary_data.chapters:
             sections.append("## Chapters\n")

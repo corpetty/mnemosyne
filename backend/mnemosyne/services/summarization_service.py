@@ -9,7 +9,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 
 from ..config import Settings
-from ..models.session import ActionItem, SummaryData
+from ..models.session import ActionItem, ClientFact, SummaryData
 from ..summarization.anthropic_provider import AnthropicProvider
 from ..summarization.ollama import OllamaProvider
 from ..summarization.openai_provider import OpenAIProvider
@@ -265,6 +265,13 @@ def merge_parts(parts: list[dict], style: str) -> tuple[str, SummaryData]:
     )
     decisions, decision_at = unique_timed("decisions")
     questions, question_at = unique_timed("open_questions")
+    facts: list[ClientFact] = []
+    for p in parts:
+        for f in p.get("client_facts", []):
+            if not any(f["kind"] == g.kind and same_item(f["text"], g.text) for g in facts):
+                facts.append(
+                    ClientFact(kind=f["kind"], text=f["text"], at=parse_seconds(f.get("at")))
+                )
     return summary, SummaryData(
         style=style,
         topics=unique([t for p in parts for t in p["topics"]])[:8],
@@ -274,4 +281,5 @@ def merge_parts(parts: list[dict], style: str) -> tuple[str, SummaryData]:
         open_questions=questions,
         question_at=question_at,
         chapters=parse_summary_response(raw_chapters)[1].chapters,
+        client_facts=facts,
     )

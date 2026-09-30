@@ -10,8 +10,9 @@ from __future__ import annotations
 import json
 import re
 from datetime import date, datetime
+from typing import get_args
 
-from ..models.session import ActionItem, Chapter, SummaryData
+from ..models.session import ActionItem, Chapter, ClientFact, ClientFactKind, SummaryData
 
 STYLES: dict[str, str] = {
     "meeting": (
@@ -33,6 +34,12 @@ STYLES: dict[str, str] = {
     "brainstorm": (
         "You are summarizing a brainstorming session. List every distinct idea raised, group "
         "related ones, and note which got traction or objections."
+    ),
+    "advisory": (
+        "You are writing the record of a meeting between a financial advisor and their client "
+        "for the advisory firm. Capture what the client and the advisor said: the client's "
+        "goals and situation, what changed since last time, what was agreed and when they "
+        "meet next. You report what was said; you are not an advisor."
     ),
 }
 
@@ -60,13 +67,40 @@ Rules:
 """
 
 
+CLIENT_FACT_KINDS: tuple[str, ...] = get_args(ClientFactKind)
+
+ADVISORY_FORMAT = """\
+Also include the key "client_facts" in the JSON object:
+  "client_facts": [{"kind": "<one of: KINDS>",
+                    "text": "<the fact, attributed: Client said ... / Advisor said ...>",
+                    "at": "<MM:SS>"}]
+Rules for this record (a financial advisory firm keeps it):
+- Record only what the client and the advisor actually said. Never add recommendations,
+  opinions on investments or products, suitability judgements or any advice of your own,
+  in the summary or in any other field.
+- Attribute every client fact to who said it ("Client said ...", "Advisor said ...") and keep
+  amounts, dates and names as they were said; do not estimate, calculate or fill in anything.
+- One fact per item. goal: what the client wants to achieve; life_event: a marriage, birth,
+  death, move, retirement, college...; income_change: a raise, job loss, bonus, pension;
+  risk_tolerance: how the client describes their comfort with risk or losses; account: an
+  account mentioned (never a full account number); beneficiary; insurance; estate: wills,
+  trusts, powers of attorney; next_review: when the next review or meeting is; other.
+- client_facts may be an empty list; each "at" is the timestamp of the line where it was
+  said. When merging parts, keep every distinct fact with its earliest "at".
+""".replace("KINDS", ", ".join(CLIENT_FACT_KINDS))
+
+
+def format_instructions(style: str) -> str:
+    return FORMAT_INSTRUCTIONS + (ADVISORY_FORMAT if style == "advisory" else "")
+
+
 def get_system_prompt(segment_count: int, style: str = "meeting", extra: str = "") -> str:
     base = STYLES.get(style, STYLES["meeting"])
     brevity = " The transcript is short; be very brief." if segment_count < 10 else ""
     extra_block = (
         f"\nAdditional instructions from the user:\n{extra.strip()}\n" if extra.strip() else ""
     )
-    return f"{base}{brevity}\n{extra_block}\n{FORMAT_INSTRUCTIONS}"
+    return f"{base}{brevity}\n{extra_block}\n{format_instructions(style)}"
 
 
 def transcript_lines(segments: list[dict]) -> list[str]:
@@ -126,11 +160,11 @@ def reduce_system_prompt(style: str = "meeting", extra: str = "") -> str:
     extra_block = (
         f"\nAdditional instructions from the user:\n{extra.strip()}\n" if extra.strip() else ""
     )
-    return f"{base}\n{REDUCE_PROMPT}{extra_block}\n{FORMAT_INSTRUCTIONS}"
+    return f"{base}\n{REDUCE_PROMPT}{extra_block}\n{format_instructions(style)}"
 
 
 def part_payload(part: int, start: str, end: str, summary: str, data: SummaryData) -> dict:
-    return {
+    payload = {
         "part": part,
         "from": start,
         "to": end,
@@ -143,6 +177,11 @@ def part_payload(part: int, start: str, end: str, summary: str, data: SummaryDat
         "open_questions": _with_at(data.open_questions, data.question_at),
         "chapters": [{"start": mmss(c.start), "title": c.title} for c in data.chapters],
     }
+    if data.client_facts:
+        payload["client_facts"] = [
+            {"kind": f.kind, "text": f.text, "at": _mmss_or_none(f.at)} for f in data.client_facts
+        ]
+    return payload
 
 
 def _mmss_or_none(seconds: float | None) -> str | None:
@@ -222,6 +261,46 @@ def _action_items(value) -> list[ActionItem]:
     return out
 
 
+# What models write instead of the kinds they were given.
+_KIND_ALIASES = {
+    "goals": "goal",
+    "objective": "goal",
+    "life": "life_event",
+    "event": "life_event",
+    "income": "income_change",
+    "risk": "risk_tolerance",
+    "accounts": "account",
+    "beneficiaries": "beneficiary",
+    "estate_planning": "estate",
+    "review": "next_review",
+    "next_meeting": "next_review",
+    "next_review_date": "next_review",
+}
+
+
+def _fact_kind(value) -> str:
+    if not isinstance(value, str):
+        return "other"
+    kind = re.sub(r"[\s-]+", "_", value.strip().lower())
+    kind = _KIND_ALIASES.get(kind, kind)
+    return kind if kind in CLIENT_FACT_KINDS else "other"
+
+
+def _client_facts(value) -> list[ClientFact]:
+    out: list[ClientFact] = []
+    if not isinstance(value, list):
+        return out
+    for v in value:
+        if isinstance(v, str) and v.strip():
+            out.append(ClientFact(text=v.strip()))
+        elif isinstance(v, dict):
+            text = v.get("text") or v.get("fact") or v.get("item")
+            if isinstance(text, str) and text.strip():
+                at = parse_seconds(v.get("at", v.get("time")))
+                out.append(ClientFact(kind=_fact_kind(v.get("kind")), text=text.strip(), at=at))
+    return out
+
+
 _TS = re.compile(r"^\s*(?:(\d+):)?(\d{1,3}):(\d{2})(?:\.\d+)?\s*$")
 
 
@@ -286,8 +365,8 @@ def snap_chapters(chapters: list[Chapter], starts: list[float]) -> list[Chapter]
 
 
 def snap_item_times(data: SummaryData, starts: list[float], tolerance: float = 20.0) -> None:
-    """Snap the "at" of decisions, action items and open questions to the nearest line start;
-    drop times that are not within `tolerance` seconds of any line (in place)."""
+    """Snap the "at" of decisions, action items, open questions and client facts to the nearest
+    line start; drop times that are not within `tolerance` seconds of any line (in place)."""
 
     def snap(t: float | None) -> float | None:
         if t is None or not starts:
@@ -299,6 +378,8 @@ def snap_item_times(data: SummaryData, starts: list[float], tolerance: float = 2
     data.question_at = [snap(t) for t in data.question_at]
     for item in data.action_items:
         item.at = snap(item.at)
+    for fact in data.client_facts:
+        fact.at = snap(fact.at)
 
 
 def parse_summary_response(text: str, style: str = "meeting") -> tuple[str, SummaryData]:
@@ -328,5 +409,6 @@ def parse_summary_response(text: str, style: str = "meeting") -> tuple[str, Summ
         open_questions=questions,
         question_at=question_at,
         chapters=_chapters(obj.get("chapters")),
+        client_facts=_client_facts(obj.get("client_facts")),
     )
     return summary.strip(), data

@@ -8,6 +8,7 @@ from pydantic import create_model
 from ... import access
 from ...config import SECRET_FIELDS, Settings, config_file_path, save_settings
 from ...models.base import ApiModel
+from ...services.meeting_types import available_types
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -29,6 +30,8 @@ class SettingsResponse(ApiModel):
     env_overrides: list[str]
     config_file: str
     obsidian_vault_exists: bool
+    # Every type a meeting can be given: meeting_types plus the advisor pack when it is on.
+    meeting_type_names: list[str]
 
 
 # Every Settings field except data_dir, all optional. Derived from Settings so a
@@ -52,6 +55,7 @@ def _response(settings: Settings) -> SettingsResponse:
         env_overrides=settings.env_overrides(),
         config_file=str(config_file_path()),
         obsidian_vault_exists=bool(vault) and Path(vault).expanduser().is_dir(),
+        meeting_type_names=[t.name for t in available_types(settings)],
     )
 
 

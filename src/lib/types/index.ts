@@ -32,6 +32,7 @@ export type UserInvite = S['Invite'];
 export type Recording = S['Recording'];
 export type ActionItem = S['ActionItem'];
 export type SummaryData = S['SummaryData'];
+export type ClientFact = S['ClientFact'];
 export type WordSegment = S['WordSegment'];
 export type TranscriptSegment = S['TranscriptSegment'];
 export type Job = S['Job'];

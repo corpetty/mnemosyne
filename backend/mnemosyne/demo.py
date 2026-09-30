@@ -100,6 +100,28 @@ DEMO_SUMMARY = {
 }
 
 
+# Added to the summary for the advisory style (its prompt asks for "client_facts").
+DEMO_CLIENT_FACTS = [
+    {"kind": "goal", "text": "Client said they want to retire at 62.", "at": "00:00"},
+    {
+        "kind": "life_event",
+        "text": "Client said their daughter starts college in fall 2027.",
+        "at": "00:03",
+    },
+    {
+        "kind": "risk_tolerance",
+        "text": "Client said they would not be comfortable with a 20% drop.",
+        "at": "00:07",
+    },
+    {
+        "kind": "beneficiary",
+        "text": "Client said they want to add their spouse as beneficiary of the 401(k).",
+        "at": "00:10",
+    },
+    {"kind": "next_review", "text": "Advisor said the next review is in March.", "at": "00:16"},
+]
+
+
 class DemoProvider:
     """Answers each prompt type the app sends with a fixed, well-formed reply."""
 
@@ -110,6 +132,8 @@ class DemoProvider:
 
     async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
         if "Respond with ONLY a JSON object" in system_prompt:
+            if '"client_facts"' in system_prompt:
+                return json.dumps({**DEMO_SUMMARY, "client_facts": DEMO_CLIENT_FACTS})
             return json.dumps(DEMO_SUMMARY)
         if "numbered excerpts" in system_prompt:
             return "The migration ships in October [1]."

@@ -2527,6 +2527,23 @@ export interface components {
             /** Sessions */
             sessions: components["schemas"]["SessionUsage"][];
         };
+        /**
+         * ClientFact
+         * @description Something said about a client in an advisory meeting (the `advisory` summary style):
+         *     recorded as said, never the model's own advice.
+         */
+        ClientFact: {
+            /** At */
+            at: number | null;
+            /**
+             * Kind
+             * @default other
+             * @enum {string}
+             */
+            kind: "goal" | "life_event" | "income_change" | "risk_tolerance" | "account" | "beneficiary" | "insurance" | "estate" | "next_review" | "other";
+            /** Text */
+            text: string;
+        };
         /** Clip */
         Clip: {
             /** Filename */
@@ -3728,6 +3745,8 @@ export interface components {
             config_file: string;
             /** Env Overrides */
             env_overrides: string[];
+            /** Meeting Type Names */
+            meeting_type_names: string[];
             /** Obsidian Vault Exists */
             obsidian_vault_exists: boolean;
             /** Secrets Set */
@@ -3738,6 +3757,8 @@ export interface components {
         };
         /** SettingsUpdate */
         SettingsUpdate: {
+            /** Advisor Meeting Types */
+            advisor_meeting_types?: boolean | null;
             /** Anthropic Api Key */
             anthropic_api_key?: string | null;
             /** Api Token */
@@ -3953,6 +3974,8 @@ export interface components {
         };
         /** SettingsValues */
         SettingsValues: {
+            /** Advisor Meeting Types */
+            advisor_meeting_types: boolean;
             /** Anthropic Api Key */
             anthropic_api_key: string;
             /** Api Token */
@@ -4304,6 +4327,8 @@ export interface components {
             action_items: components["schemas"]["ActionItem"][];
             /** Chapters */
             chapters: components["schemas"]["Chapter"][];
+            /** Client Facts */
+            client_facts: components["schemas"]["ClientFact"][];
             /** Decision At */
             decision_at: (number | null)[];
             /** Decisions */

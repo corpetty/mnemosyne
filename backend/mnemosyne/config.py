@@ -279,6 +279,10 @@ class Settings(BaseSettings):
     # Kinds of meeting (standup, 1:1, customer call...) with their own summary style,
     # instructions, Obsidian folder, local-only and auto-record, matched by title.
     meeting_types: list[MeetingType] = Field(default_factory=list)
+    # Offer the financial advisor types too (discovery, annual review, onboarding, plan
+    # presentation, service call; services/meeting_types.py). Not copied into meeting_types,
+    # so they follow app updates; a type of your own with the same name wins.
+    advisor_meeting_types: bool = False
     # Transcripts longer than this (formatted characters, about 4 per token) are summarized
     # in parts and then merged, so small context windows still work. 0 never splits.
     summary_chunk_chars: int = 40000

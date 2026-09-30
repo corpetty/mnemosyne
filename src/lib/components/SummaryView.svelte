@@ -169,7 +169,7 @@
 			toastState.error(e instanceof Error ? e.message : 'Could not post');
 		}
 	}
-	import type { ProviderModels, SummaryStyle } from '$lib/types/index.js';
+	import type { ClientFact, ProviderModels, SummaryStyle } from '$lib/types/index.js';
 
 	let providers = $state<ProviderModels[]>(cachedProviders ?? []);
 	let styles = $state<SummaryStyle[]>(cachedStyles ?? []);
@@ -239,6 +239,10 @@
 			if (d.action_items.length)
 				text += '\n\n## Action Items\n' + d.action_items.map((a) => `- [ ] ${a.text}${a.owner ? ` (${a.owner})` : ''}`).join('\n');
 			if (d.open_questions.length) text += '\n\n## Open Questions\n' + d.open_questions.map((x) => `- ${x}`).join('\n');
+			if (factGroups.length)
+				text +=
+					'\n\n## Client Facts' +
+					factGroups.map((g) => `\n\n### ${g.heading}\n` + g.facts.map((f) => `- ${f.text}`).join('\n')).join('');
 		}
 		await copyText(text, 'Summary copied');
 	}
@@ -248,6 +252,24 @@
 	});
 
 	const data = $derived(sessionState.activeSession?.summary_data ?? null);
+	// Client facts (advisory summaries), grouped by kind in this order.
+	const FACT_HEADINGS: [ClientFact['kind'], string][] = [
+		['goal', 'Goals'],
+		['life_event', 'Life events'],
+		['income_change', 'Income changes'],
+		['risk_tolerance', 'Risk tolerance'],
+		['account', 'Accounts'],
+		['beneficiary', 'Beneficiaries'],
+		['insurance', 'Insurance'],
+		['estate', 'Estate'],
+		['next_review', 'Next review'],
+		['other', 'Other']
+	];
+	const factGroups = $derived(
+		FACT_HEADINGS.map(([kind, heading]) => ({ kind, heading, facts: (data?.client_facts ?? []).filter((f) => f.kind === kind) })).filter(
+			(g) => g.facts.length
+		)
+	);
 	const liveNotes = $derived(sessionState.activeSession?.copilot_notes ?? null);
 	const activeJob = $derived(
 		sessionState.activeSession ? jobsState.active(sessionState.activeSession.id, 'summarize') : null
@@ -347,6 +369,21 @@
 							<ul class="space-y-1 text-sm text-gray-200 list-disc list-inside">
 								{#each data.open_questions as q, i}<li>{q}{@render at(data.question_at[i])}</li>{/each}
 							</ul>
+						</section>
+					{/if}
+					{#if factGroups.length}
+						<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 md:col-span-2" aria-label="Client facts">
+							<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Client facts</h4>
+							<div class="grid gap-3 sm:grid-cols-2">
+								{#each factGroups as g (g.kind)}
+									<div>
+										<h5 class="text-[11px] text-gray-500 mb-1">{g.heading}</h5>
+										<ul class="space-y-1 text-sm text-gray-200 list-disc list-inside">
+											{#each g.facts as f}<li>{f.text}{@render at(f.at)}</li>{/each}
+										</ul>
+									</div>
+								{/each}
+							</div>
 						</section>
 					{/if}
 				</div>

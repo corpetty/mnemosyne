@@ -150,9 +150,9 @@ class MeetingTypeChoice(ApiModel):
 async def set_meeting_type(
     session_id: str, request: MeetingTypeChoice, ctx: AppContext = Depends(get_ctx)
 ):
-    from ...services.meeting_types import NONE
+    from ...services.meeting_types import NONE, available_types
 
-    if request.name != NONE and request.name not in {t.name for t in ctx.settings.meeting_types}:
+    if request.name != NONE and request.name not in {t.name for t in available_types(ctx.settings)}:
         raise HTTPException(status_code=400, detail="No such meeting type")
     session = ctx.sessions.set_meeting_type(session_id, request.name)
     if session is None:

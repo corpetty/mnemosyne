@@ -3,11 +3,12 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 
-	// The open meeting's type (Settings → AI → Meeting types); shown once any type exists.
+	// The open meeting's type (Settings → AI → Meeting types, plus the advisor pack when it is
+	// on); shown once any type exists.
 	let names = $state<string[]>([]);
 	$effect(() => {
 		getSettings()
-			.then((s) => (names = (s.values.meeting_types ?? []).map((t) => t.name)))
+			.then((s) => (names = s.meeting_type_names))
 			.catch(() => {});
 	});
 	const session = $derived(sessionState.activeSession);
