@@ -255,7 +255,21 @@ per-word split, `VoiceNamer` for earlier parts and voice profiles, `AppContext.l
 `mnemosyne-bench --live` (bench_live.py) and scripts/fetch-ami.py (AMI from the HF mirror into
 ~/.cache/mnemosyne-trials/ami). AMI ES2004a-d: 95.8-97.4% of live words on the right speaker vs
 92.9-96.7% for clustering + 30 s re-diarization, at similar or lower GPU time (~20 ms per 0.72 s).
-More than 8 voices in one stream get merged.
+More than 8 voices in one stream get merged. Released as 0.11.0.
+
+Advisory pilot, Phase A (docs/plans/2026-09-30-advisory-pilot.md, unreleased): one office server,
+2-3 advisors on Windows/Mac in Chrome/Edge, local only, HubSpot CRM. `firm_mode` (no cloud providers
+are created, sign-in and consent required, advisor meeting types); the backend serves the web app
+(`web_dir`, api/web.py); key from a TPM-sealed systemd credential (`CredentialKeyStore`);
+deploy/firm/, scripts/firm-server-check.sh, docs/firm-server.md. Users and roles (access.py,
+services/users.py: advisor sees own meetings, reviewer reads all, admin; invite codes, users.json;
+`mnemosyne-backend users`), enforced in SessionRepository (`Hidden` = 404). Browser recorder
+(AudioWorklet PCM over `/api/record/{id}/{source}`, `BrowserProcess`, devices -1/-2). Consent before
+each recording (`require_consent`). Identifier redaction (summarization/privacy.py). HubSpot push
+(services/hubspot.py). `advisory` summary style with `client_facts`. Records (services/records.py:
+versions, chained seals, `records_retention_years`, legal hold, deletions log, exam export zip).
+Pilot kit: scripts/make-demo-meeting.py (espeak-ng, two voices), docs/security-overview.md,
+docs/pilot-checklist.md, scripts/docs-to-pdf.mjs. Mnemosyne never gives financial advice.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
