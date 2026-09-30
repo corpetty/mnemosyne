@@ -235,6 +235,10 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
     if other.local_only:  # the stricter privacy wins
         fields["local_only"] = True
     app.repo.update_fields(target.id, **fields)
+    if other_emails := app.repo.attendee_emails(other.id):
+        app.repo.set_attendee_emails(
+            target.id, {**other_emails, **app.repo.attendee_emails(target.id)}
+        )
     seal_session_audio(app, target.id)
     app.sessions.set_status(
         target.id, SessionStatus.COMPLETED if segments else SessionStatus.CREATED

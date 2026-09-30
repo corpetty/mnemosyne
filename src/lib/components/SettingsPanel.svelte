@@ -42,6 +42,7 @@
 		| 'github_token'
 		| 'linear_api_key'
 		| 'jira_api_token'
+		| 'hubspot_token'
 		| 'slack_webhook_url'
 		| 'matrix_access_token';
 	const SECRET_KEYS: SecretKey[] = [
@@ -54,6 +55,7 @@
 		'github_token',
 		'linear_api_key',
 		'jira_api_token',
+		'hubspot_token',
 		'slack_webhook_url',
 		'matrix_access_token'
 	];
@@ -67,6 +69,7 @@
 		github_token: '',
 		linear_api_key: '',
 		jira_api_token: '',
+		hubspot_token: '',
 		slack_webhook_url: '',
 		matrix_access_token: ''
 	});
@@ -150,6 +153,8 @@
 				jira_email: v.jira_email,
 				jira_project: v.jira_project,
 				jira_issue_type: v.jira_issue_type,
+				hubspot_owner_email: v.hubspot_owner_email,
+				hubspot_auto_push: v.hubspot_auto_push,
 				matrix_homeserver: v.matrix_homeserver,
 				matrix_room_id: v.matrix_room_id,
 				ollama_url: v.ollama_url,
@@ -280,7 +285,7 @@
 	}
 
 	let integrationTest = $state<Record<string, string>>({});
-	async function testIntegration(name: 'linear' | 'jira' | 'slack' | 'matrix') {
+	async function testIntegration(name: 'linear' | 'jira' | 'slack' | 'matrix' | 'hubspot') {
 		integrationTest = { ...integrationTest, [name]: 'Checking…' };
 		try {
 			const r = await checkIntegration(name);
@@ -1090,7 +1095,7 @@
 
 			<!-- Other issue trackers and chat -->
 			<section>
-				<h3 class="text-lg font-semibold text-gray-200 mb-1">Linear, Jira, Slack and Matrix</h3>
+				<h3 class="text-lg font-semibold text-gray-200 mb-1">Linear, Jira, Slack, Matrix and HubSpot</h3>
 				<p class="text-xs text-gray-500 mb-3">
 					Action items can also become Linear or Jira issues, and follow-ups can be posted to Slack or a Matrix room. Fill in
 					what you use, save, then Test.
@@ -1106,7 +1111,7 @@
 						</div>
 					</label>
 				{/snippet}
-				{#snippet test(name: 'linear' | 'jira' | 'slack' | 'matrix')}
+				{#snippet test(name: 'linear' | 'jira' | 'slack' | 'matrix' | 'hubspot')}
 					<div class="flex items-center gap-2 col-span-2">
 						<button onclick={() => testIntegration(name)} class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Test</button>
 						{#if integrationTest[name]}<span class="text-xs text-gray-400">{integrationTest[name]}</span>{/if}
@@ -1159,6 +1164,24 @@
 						</label>
 						<div class="col-span-2">{@render secret('matrix_access_token', 'syt_…', 'Access token (of a bot or your account)')}</div>
 						{@render test('matrix')}
+					</div>
+					<div class="grid grid-cols-2 gap-3">
+						<h4 class="col-span-2 text-sm font-medium text-gray-300">HubSpot</h4>
+						<p class="col-span-2 text-[11px] text-gray-600 -mt-2">
+							Send a meeting to the client's HubSpot record: the summary as a meeting, a note with decisions and client facts,
+							action items as tasks. Create a private app (Settings → Integrations → Private Apps) with the scopes
+							crm.objects.contacts.read and .write, crm.objects.companies.read and crm.objects.owners.read.
+						</p>
+						<div class="col-span-2">{@render secret('hubspot_token', 'pat-…', 'Private app access token')}</div>
+						<label>
+							<span class={labelClass}>Assign tasks to (HubSpot user's email)</span>
+							<input type="email" bind:value={form.hubspot_owner_email} disabled={locked('hubspot_owner_email')} placeholder="advisor@firm.com" class={inputClass} />
+						</label>
+						<label class="flex items-center gap-2 text-sm text-gray-300 self-end pb-1.5">
+							<input type="checkbox" bind:checked={form.hubspot_auto_push} disabled={locked('hubspot_auto_push')} class="rounded border-gray-600 bg-gray-800" />
+							Update HubSpot after each summary (meetings already sent once)
+						</label>
+						{@render test('hubspot')}
 					</div>
 				</div>
 			</section>

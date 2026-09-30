@@ -383,6 +383,14 @@ class SessionRepository:
                 self._conn.execute(
                     f"ALTER TABLE {table} ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''"
                 )
+        # Not on the Session model: calendar attendees' addresses (name -> email) and what a
+        # meeting became in a CRM (services/hubspot.py), keyed by CRM.
+        if "attendee_emails" not in cols:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN attendee_emails TEXT NOT NULL DEFAULT '{}'"
+            )
+        if "crm" not in cols:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN crm TEXT NOT NULL DEFAULT '{}'")
         self._conn.commit()
 
     def _migrate_fts_rowids(self) -> None:
@@ -1457,6 +1465,45 @@ class SessionRepository:
             text=m["summary"].strip(),
             score=score,
         )
+
+    def attendee_emails(self, session_id: str) -> dict[str, str]:
+        if not self._readable(session_id):
+            return {}
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT attendee_emails FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        return json.loads(row["attendee_emails"] or "{}") if row else {}
+
+    def set_attendee_emails(self, session_id: str, emails: dict[str, str]) -> None:
+        self._check_write(session_id)
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET attendee_emails=? WHERE id=?", (json.dumps(emails), session_id)
+            )
+
+    def crm_state(self, session_id: str, crm: str) -> dict | None:
+        if not self._readable(session_id):
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT crm FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        return json.loads(row["crm"] or "{}").get(crm) if row else None
+
+    def set_crm_state(self, session_id: str, crm: str, state: dict) -> None:
+        self._check_write(session_id)
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT crm FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+            if row is None:
+                return
+            data = json.loads(row["crm"] or "{}")
+            data[crm] = state
+            self._conn.execute(
+                "UPDATE sessions SET crm=? WHERE id=?", (json.dumps(data), session_id)
+            )
 
     def local_only_ids(self) -> set[str]:
         with self._lock:

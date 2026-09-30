@@ -33,6 +33,9 @@ import type {
   Diagnostics,
   CopilotNotes,
   IssueResult,
+  HubSpotMatches,
+  HubSpotPushResult,
+  HubSpotState,
   RepoCheck,
   Level,
   SelfTestResult,
@@ -743,12 +746,28 @@ export async function createIssues(sessionId: string, tracker: TrackerName, indi
   });
 }
 
-export async function getIntegrations(): Promise<{ trackers: TrackerName[]; destinations: DestinationName[] }> {
+export async function getIntegrations(): Promise<{ trackers: TrackerName[]; destinations: DestinationName[]; crm: 'hubspot'[] }> {
   return request('/api/integrations');
 }
 
-export async function checkIntegration(name: 'linear' | 'jira' | 'slack' | 'matrix'): Promise<{ ok: boolean; message: string }> {
+export async function checkIntegration(name: 'linear' | 'jira' | 'slack' | 'matrix' | 'hubspot'): Promise<{ ok: boolean; message: string }> {
   return request(`/api/integrations/${name}/check`);
+}
+
+// HubSpot: the meeting, a note and its action items as tasks, on the confirmed contacts
+export async function getHubSpotState(sessionId: string): Promise<HubSpotState> {
+  return request(`/api/sessions/${sessionId}/crm/hubspot`);
+}
+
+export async function getHubSpotMatches(sessionId: string): Promise<HubSpotMatches> {
+  return request(`/api/sessions/${sessionId}/crm/hubspot/matches`);
+}
+
+export async function pushToHubSpot(sessionId: string, contactIds: string[]): Promise<HubSpotPushResult> {
+  return request(`/api/sessions/${sessionId}/crm/hubspot`, {
+    method: 'POST',
+    body: JSON.stringify({ contact_ids: contactIds })
+  });
 }
 
 export async function sendFollowup(sessionId: string, destination: DestinationName, text: string): Promise<{ ok: boolean; message: string }> {

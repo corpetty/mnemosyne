@@ -90,6 +90,7 @@ def test_summarize_uses_default_provider_from_settings(
         "model": "fake-model-b",
         "title": "",
         "exported": None,
+        "hubspot": None,
     }
     assert fake_provider.calls[-1]["model"] == "fake-model-b"
 

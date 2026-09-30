@@ -139,6 +139,12 @@
 				return `Summarized with ${d.provider}${d.model ? `/${d.model}` : ''}`;
 			case 'summarize_failed':
 				return `Summary failed: ${d.error}`;
+			case 'hubspot_pushed': {
+				const who = (d.contacts as string[] | undefined)?.join(', ');
+				return `${d.created ? 'Sent to' : 'Updated in'} HubSpot${who ? ` for ${who}` : ''}${d.auto ? ' after the summary' : ''}`;
+			}
+			case 'hubspot_failed':
+				return `HubSpot${d.auto ? ' (after the summary)' : ''}: ${d.error}`;
 			case 'audio_deleted':
 				return `Audio deleted${d.reason === 'retention' ? ' by the retention rule' : ''}`;
 			default:
@@ -146,7 +152,7 @@
 		}
 	}
 	const bad = (kind: string) =>
-		['save_failed', 'interrupted', 'recover_failed', 'capture_problem', 'transcribe_failed', 'summarize_failed'].includes(kind);
+		['save_failed', 'interrupted', 'recover_failed', 'capture_problem', 'transcribe_failed', 'summarize_failed', 'hubspot_failed'].includes(kind);
 
 	const fileLine = (f: HistoryFile) =>
 		[f.source, f.device_name, f.name].filter(Boolean).join(' · ');

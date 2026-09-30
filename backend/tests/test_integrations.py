@@ -150,7 +150,7 @@ def test_slack_and_matrix_posts(client, ctx):
     ctx.http_transport = httpx.MockTransport(handle)
     s = _session(ctx)
     st = ctx.settings
-    assert client.get("/api/integrations").json() == {"trackers": [], "destinations": []}
+    assert client.get("/api/integrations").json() == {"trackers": [], "destinations": [], "crm": []}
     r = client.post(f"/api/sessions/{s.id}/followup/send", json={"destination": "slack"})
     assert r.status_code == 400
     st.slack_webhook_url = "https://hooks.slack.com/services/T/B/x"

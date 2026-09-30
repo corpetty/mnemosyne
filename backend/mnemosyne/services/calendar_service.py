@@ -42,6 +42,8 @@ class CalendarEvent(ApiModel):
     end: datetime
     location: str = ""
     attendees: list[str] = Field(default_factory=list)
+    # Attendee name -> email address, for those the calendar gave one (CRM matching).
+    attendee_emails: dict[str, str] = Field(default_factory=dict)
     description: str = ""  # plain text (calendars often send HTML)
 
 
@@ -89,19 +91,22 @@ def _aware(value) -> datetime | None:
     return None
 
 
-def _person(addr) -> str | None:
-    """A display name for an ATTENDEE/ORGANIZER, skipping rooms and resources."""
+def _person(addr) -> tuple[str | None, str | None]:
+    """A display name and email address for an ATTENDEE/ORGANIZER, skipping rooms and
+    resources."""
     params = getattr(addr, "params", {}) or {}
     if str(params.get("CUTYPE", "INDIVIDUAL")).upper() in ("ROOM", "RESOURCE"):
-        return None
+        return None, None
     name = str(params.get("CN", "")).strip().strip('"')
     email = str(addr).removeprefix("mailto:").removeprefix("MAILTO:").strip()
+    email = email if "@" in email else None
     if name and "@" not in name:
-        return name
-    if email and "@" in email:
+        return name, email
+    if email:
         local = email.split("@", 1)[0]
-        return " ".join(part.capitalize() for part in local.replace("_", ".").split(".") if part)
-    return name or None
+        name = " ".join(part.capitalize() for part in local.replace("_", ".").split(".") if part)
+        return name, email
+    return name or None, None
 
 
 def parse_events(ics_text: str, start: datetime, end: datetime) -> list[CalendarEvent]:
@@ -123,13 +128,16 @@ def parse_events(ics_text: str, start: datetime, end: datetime) -> list[Calendar
         if e - s > MAX_MEETING:
             continue
         people: list[str] = []
+        emails: dict[str, str] = {}
         raw = comp.get("ATTENDEE") or []
         for addr in [comp.get("ORGANIZER"), *(raw if isinstance(raw, list) else [raw])]:
             if addr is None:
                 continue
-            name = _person(addr)
+            name, email = _person(addr)
             if name and name not in people:
                 people.append(name)
+            if name and email:
+                emails.setdefault(name, email)
         events.append(
             CalendarEvent(
                 uid=f"{comp.get('UID', '')}@{s.isoformat()}",
@@ -138,6 +146,7 @@ def parse_events(ics_text: str, start: datetime, end: datetime) -> list[Calendar
                 end=e,
                 location=str(comp.get("LOCATION", "")).strip(),
                 attendees=people,
+                attendee_emails=emails,
                 description=plain_text(str(comp.get("DESCRIPTION", ""))),
             )
         )

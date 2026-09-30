@@ -72,6 +72,8 @@ def test_parse_expands_recurrence_and_filters():
     assert standup.start == at(9) and standup.end == at(9, 15)
     # organizer first, CN preferred, email fallback prettified, rooms skipped
     assert standup.attendees == ["Corey Petty", "Alice Smith", "Bob Jones"]
+    assert standup.attendee_emails["Alice Smith"] == "alice@example.com"
+    assert standup.attendee_emails["Bob Jones"] == "bob.jones@example.com"
     assert evs[1].location.startswith("https://")
     # recurrence: one standup per day
     week = parse_events(ICS, at(0, day=21), at(23, day=27))

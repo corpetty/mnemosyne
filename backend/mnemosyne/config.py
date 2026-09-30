@@ -62,6 +62,7 @@ SECRET_FIELDS = frozenset(
         "github_token",
         "linear_api_key",
         "jira_api_token",
+        "hubspot_token",
         "slack_webhook_url",
         "matrix_access_token",
     }
@@ -262,6 +263,13 @@ class Settings(BaseSettings):
     jira_api_token: str = ""
     jira_project: str = ""  # project key, e.g. "OPS"
     jira_issue_type: str = "Task"
+
+    # HubSpot (services/hubspot.py): a private app's access token; tasks are assigned to the
+    # HubSpot user with this email; push after every summary of a meeting whose contacts were
+    # already confirmed.
+    hubspot_token: str = ""
+    hubspot_owner_email: str = ""
+    hubspot_auto_push: bool = False
 
     # Posting follow-ups: a Slack incoming webhook, and/or a Matrix room.
     slack_webhook_url: str = ""

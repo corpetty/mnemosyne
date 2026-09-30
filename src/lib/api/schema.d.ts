@@ -1346,6 +1346,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/crm/hubspot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hubspot State
+         * @description What this meeting became in HubSpot so far (no network).
+         */
+        get: operations["hubspot_state_api_sessions__session_id__crm_hubspot_get"];
+        put?: never;
+        /**
+         * Hubspot Push
+         * @description Send the meeting to HubSpot (a meeting, a note and a task per action item, associated
+         *     with these contacts and their companies), or update what an earlier push created. The
+         *     contacts are remembered for the next push and for auto push.
+         */
+        post: operations["hubspot_push_api_sessions__session_id__crm_hubspot_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/crm/hubspot/matches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hubspot Matches
+         * @description HubSpot contacts this meeting may belong to: the confirmed ones, then attendees found by
+         *     email, then attendees and speakers found by name.
+         */
+        get: operations["hubspot_matches_api_sessions__session_id__crm_hubspot_matches_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/export/markdown": {
         parameters: {
             query?: never;
@@ -2445,6 +2492,10 @@ export interface components {
         };
         /** CalendarEvent */
         CalendarEvent: {
+            /** Attendee Emails */
+            attendee_emails: {
+                [key: string]: string;
+            };
             /** Attendees */
             attendees: string[];
             /**
@@ -2581,6 +2632,8 @@ export interface components {
         };
         /** Configured */
         Configured: {
+            /** Crm */
+            crm: "hubspot"[];
             /** Destinations */
             destinations: ("slack" | "matrix")[];
             /** Trackers */
@@ -2904,6 +2957,84 @@ export interface components {
             seconds: number | null;
             /** Started At */
             started_at: string | null;
+        };
+        /** HubSpotContact */
+        HubSpotContact: {
+            /**
+             * Company
+             * @default
+             */
+            company: string;
+            /** Company Id */
+            company_id: string | null;
+            /**
+             * Email
+             * @default
+             */
+            email: string;
+            /** Id */
+            id: string;
+            /**
+             * Matched By
+             * @default confirmed
+             * @enum {string}
+             */
+            matched_by: "email" | "name" | "confirmed";
+            /**
+             * Matched On
+             * @default
+             */
+            matched_on: string;
+            /** Name */
+            name: string;
+        };
+        /** HubSpotMatches */
+        HubSpotMatches: {
+            /** Candidates */
+            candidates: components["schemas"]["HubSpotContact"][];
+            /** Searched */
+            searched: string[];
+            state: components["schemas"]["HubSpotState"];
+        };
+        /** HubSpotPushRequest */
+        HubSpotPushRequest: {
+            /** Contact Ids */
+            contact_ids: string[];
+        };
+        /** HubSpotPushResult */
+        HubSpotPushResult: {
+            /** Created */
+            created: boolean;
+            /** Message */
+            message: string;
+            state: components["schemas"]["HubSpotState"];
+        };
+        /**
+         * HubSpotState
+         * @description What a meeting became in HubSpot (stored in sessions.crm under "hubspot").
+         */
+        HubSpotState: {
+            /**
+             * Associated
+             * @default []
+             */
+            associated: string[];
+            /**
+             * Contacts
+             * @default []
+             */
+            contacts: components["schemas"]["HubSpotContact"][];
+            /** Meeting Id */
+            meeting_id: string | null;
+            /** Note Id */
+            note_id: string | null;
+            /** Pushed At */
+            pushed_at: string | null;
+            /**
+             * Task Ids
+             * @default []
+             */
+            task_ids: string[];
         };
         /** IndexStatus */
         IndexStatus: {
@@ -3839,6 +3970,12 @@ export interface components {
             glossary_llm_correct?: boolean | null;
             /** Hf Token */
             hf_token?: string | null;
+            /** Hubspot Auto Push */
+            hubspot_auto_push?: boolean | null;
+            /** Hubspot Owner Email */
+            hubspot_owner_email?: string | null;
+            /** Hubspot Token */
+            hubspot_token?: string | null;
             /** Jira Api Token */
             jira_api_token?: string | null;
             /** Jira Email */
@@ -4062,6 +4199,12 @@ export interface components {
             glossary_llm_correct: boolean;
             /** Hf Token */
             hf_token: string;
+            /** Hubspot Auto Push */
+            hubspot_auto_push: boolean;
+            /** Hubspot Owner Email */
+            hubspot_owner_email: string;
+            /** Hubspot Token */
+            hubspot_token: string;
             /** Jira Api Token */
             jira_api_token: string;
             /** Jira Email */
@@ -5838,7 +5981,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                name: "linear" | "jira" | "slack" | "matrix";
+                name: "linear" | "jira" | "slack" | "matrix" | "hubspot";
             };
             cookie?: never;
         };
@@ -6963,6 +7106,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hubspot_state_api_sessions__session_id__crm_hubspot_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HubSpotState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hubspot_push_api_sessions__session_id__crm_hubspot_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HubSpotPushRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HubSpotPushResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hubspot_matches_api_sessions__session_id__crm_hubspot_matches_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HubSpotMatches"];
                 };
             };
             /** @description Validation Error */

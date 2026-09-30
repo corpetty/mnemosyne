@@ -131,6 +131,7 @@ async def _apply_calendar(ctx: AppContext, session: Session) -> Session:
     if not session.agenda and (points := agenda_from_description(event.description)):
         fields["agenda"] = [AgendaItem(text=p) for p in points]
     ctx.repo.update_fields(session.id, **fields)
+    ctx.repo.set_attendee_emails(session.id, event.attendee_emails)
     from ...services.assets import attach_calendar_links
 
     attach_calendar_links(ctx, session.id, event.description)

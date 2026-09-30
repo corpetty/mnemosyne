@@ -404,11 +404,15 @@ def summarize_session(
         history.log(
             app, session_id, "summarized", provider=result["provider"], model=result["model"]
         )
+        from .hubspot import auto_push
+
+        crm = await auto_push(app, session_id)  # never raises
         return {
             "provider": result["provider"],
             "model": result["model"],
             "title": title,
             "exported": exported,
+            "hubspot": crm,
         }
 
     return run

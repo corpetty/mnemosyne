@@ -1,11 +1,12 @@
-"""Integrations: issues from action items (GitHub, Linear, Jira) and posting follow-ups
-(Slack, Matrix)."""
+"""Integrations: issues from action items (GitHub, Linear, Jira), posting follow-ups
+(Slack, Matrix) and meetings in a CRM (HubSpot)."""
 
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...models.base import ApiModel
+from ...services import hubspot
 from ...services.chat_post import MatrixPoster, SlackPoster
 from ...services.github_service import GitHubService, IssueResult, RepoCheck
 from ...services.trackers import JiraTracker, LinearTracker, TrackerCheck
@@ -15,6 +16,7 @@ router = APIRouter(prefix="/api", tags=["integrations"])
 
 Tracker = Literal["github", "linear", "jira"]
 Destination = Literal["slack", "matrix"]
+Crm = Literal["hubspot"]
 
 
 def _github(ctx: AppContext) -> GitHubService:
@@ -57,9 +59,13 @@ async def check_github(ctx: AppContext = Depends(get_ctx)):
 
 @router.get("/integrations/{name}/check", response_model=TrackerCheck)
 async def check_integration(
-    name: Literal["linear", "jira", "slack", "matrix"], ctx: AppContext = Depends(get_ctx)
+    name: Literal["linear", "jira", "slack", "matrix", "hubspot"],
+    ctx: AppContext = Depends(get_ctx),
 ):
-    target = _tracker(ctx, name) if name in ("linear", "jira") else _poster(ctx, name)
+    if name == "hubspot":
+        target = hubspot.client_for(ctx)
+    else:
+        target = _tracker(ctx, name) if name in ("linear", "jira") else _poster(ctx, name)
     try:
         return await target.check()
     except Exception as e:
@@ -69,6 +75,7 @@ async def check_integration(
 class Configured(ApiModel):
     trackers: list[Tracker]
     destinations: list[Destination]
+    crm: list[Crm]
 
 
 @router.get("/integrations", response_model=Configured)
@@ -77,6 +84,7 @@ async def configured(ctx: AppContext = Depends(get_ctx)):
     return Configured(
         trackers=[t for t in ("github", "linear", "jira") if _tracker(ctx, t).validate() is None],
         destinations=[d for d in ("slack", "matrix") if _poster(ctx, d).validate() is None],
+        crm=["hubspot"] if hubspot.client_for(ctx).validate() is None else [],
     )
 
 
@@ -141,3 +149,55 @@ async def send_followup(session_id: str, request: SendRequest, ctx: AppContext =
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     return SendResult(ok=True, message=f"Posted to {request.destination.capitalize()}")
+
+
+def _crm_session(ctx: AppContext, session_id: str):
+    session = ctx.sessions.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+@router.get("/sessions/{session_id}/crm/hubspot", response_model=hubspot.HubSpotState)
+async def hubspot_state(session_id: str, ctx: AppContext = Depends(get_ctx)):
+    """What this meeting became in HubSpot so far (no network)."""
+    if not ctx.repo.exists(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return hubspot.load_state(ctx, session_id)
+
+
+@router.get("/sessions/{session_id}/crm/hubspot/matches", response_model=hubspot.HubSpotMatches)
+async def hubspot_matches(session_id: str, ctx: AppContext = Depends(get_ctx)):
+    """HubSpot contacts this meeting may belong to: the confirmed ones, then attendees found by
+    email, then attendees and speakers found by name."""
+    session = _crm_session(ctx, session_id)
+    if problem := hubspot.client_for(ctx).validate():
+        raise HTTPException(status_code=400, detail=problem)
+    try:
+        return await hubspot.find_matches(ctx, session)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+
+class HubSpotPushRequest(ApiModel):
+    contact_ids: list[str]
+
+
+@router.post("/sessions/{session_id}/crm/hubspot", response_model=hubspot.HubSpotPushResult)
+async def hubspot_push(
+    session_id: str, request: HubSpotPushRequest, ctx: AppContext = Depends(get_ctx)
+):
+    """Send the meeting to HubSpot (a meeting, a note and a task per action item, associated
+    with these contacts and their companies), or update what an earlier push created. The
+    contacts are remembered for the next push and for auto push."""
+    session = _crm_session(ctx, session_id)
+    if problem := hubspot.client_for(ctx).validate():
+        raise HTTPException(status_code=400, detail=problem)
+    if not session.summary:
+        raise HTTPException(status_code=400, detail="Summarize the meeting first")
+    if not any(i.strip() for i in request.contact_ids):
+        raise HTTPException(status_code=400, detail="Choose at least one HubSpot contact")
+    try:
+        return await hubspot.push_session(ctx, session, request.contact_ids)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e

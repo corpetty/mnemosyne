@@ -82,6 +82,10 @@ export type Level = S['Level'];
 export type SelfTestResult = S['SelfTestResult'];
 export type RepoCheck = S['RepoCheck'];
 export type IssueResult = S['IssueResult'];
+export type HubSpotContact = S['HubSpotContact'];
+export type HubSpotState = S['HubSpotState'];
+export type HubSpotMatches = S['HubSpotMatches'];
+export type HubSpotPushResult = S['HubSpotPushResult'];
 
 /** A recording interrupted by a crash, finished when the backend started again. */
 export interface RecoveredRecording {

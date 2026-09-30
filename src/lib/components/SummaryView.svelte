@@ -14,6 +14,7 @@
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import Markdown from './Markdown.svelte';
 	import ExternalNotesCard from './ExternalNotesCard.svelte';
+	import HubSpotCard from './HubSpotCard.svelte';
 	import {
 		createIssues,
 		draftFollowup,
@@ -122,12 +123,14 @@
 	const TRACKER_LABEL: Record<TrackerName, string> = { github: 'GitHub', linear: 'Linear', jira: 'Jira' };
 	let trackers = $state<TrackerName[]>([]);
 	let destinations = $state<DestinationName[]>([]);
+	let hubspot = $state(false);
 	let tracker = $state<TrackerName>('github');
 	$effect(() => {
 		getIntegrations()
 			.then((r) => {
 				trackers = r.trackers;
 				destinations = r.destinations;
+				hubspot = r.crm.includes('hubspot');
 				if (r.trackers.length && !r.trackers.includes(tracker)) tracker = r.trackers[0];
 			})
 			.catch(() => {});
@@ -388,6 +391,7 @@
 					{/if}
 				</div>
 				<p class="text-[11px] text-gray-600">{data.style} summary · {data.provider}/{data.model}</p>
+				{#if hubspot}<HubSpotCard />{/if}
 				<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 space-y-2">
 					<div class="flex flex-wrap items-center gap-2">
 						<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mr-auto">Follow-up</h4>

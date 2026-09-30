@@ -804,6 +804,36 @@ posts the text (default: the saved follow-up draft) to the Slack incoming webhoo
 (`slack_webhook_url`) or the Matrix room (`matrix_homeserver`, `matrix_access_token`,
 `matrix_room_id`). 400 when not configured or there is nothing to send; 502 on a remote error.
 
+## HubSpot
+
+A meeting in the client's HubSpot record (services/hubspot.py, CRM API v3 on
+`https://api.hubapi.com`). Settings: `hubspot_token` (a private app access token, secret; scopes
+`crm.objects.contacts.read`/`.write`, `crm.objects.companies.read`, `crm.objects.owners.read`),
+`hubspot_owner_email` (the HubSpot user tasks, the meeting and the note are assigned to) and
+`hubspot_auto_push`. `GET /api/integrations` lists `crm: ["hubspot"]` when a token is set;
+`GET /api/integrations/hubspot/check` → `{ok, message}` (reads contacts and looks up the owner).
+
+`GET /api/sessions/{session_id}/crm/hubspot` → `HubSpotState` `{contacts, meeting_id, note_id,
+task_ids, associated, pushed_at}`: what this meeting became in HubSpot (no network).
+
+`GET /api/sessions/{session_id}/crm/hubspot/matches` → `{candidates, searched, state}`: the
+contacts confirmed before, then calendar attendees found by email (the calendar's addresses are
+kept per session when recording starts; an attendee written as an address counts too), then
+attendees and named speakers found by first and last name. Each candidate has `name`, `email`,
+`company` (the contact's primary company), `matched_by` (`confirmed` | `email` | `name`).
+
+`POST /api/sessions/{session_id}/crm/hubspot` with `{"contact_ids": ["101"]}` → `{created,
+message, state}`: a meeting engagement (title, start/end from the session and its transcript's
+length, the summary as HTML), a note (client facts, decisions, open questions) and one task per
+action item (due date, done → `COMPLETED`), each associated with the contacts and their primary
+companies. The contacts and the created ids are stored with the session (`sessions.crm`); pushing
+again PATCHes the same records (and associates contacts added since) instead of duplicating,
+and re-creates a record deleted in HubSpot. 400 when not configured, not summarized or no
+contacts; 502 with a readable message on a HubSpot error. Every push or failure is logged in the
+meeting's history (`hubspot_pushed`, `hubspot_failed`). With `hubspot_auto_push`, each summary job
+of a meeting that has confirmed contacts pushes again; a failure never fails the summary (the
+job result's `hubspot` holds the outcome).
+
 ## Speaker profiles
 
 Known voices, built from renames. Vectors are never returned.
