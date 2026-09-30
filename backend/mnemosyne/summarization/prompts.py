@@ -80,6 +80,11 @@ Rules for this record (a financial advisory firm keeps it):
   in the summary or in any other field.
 - Attribute every client fact to who said it ("Client said ...", "Advisor said ...") and keep
   amounts, dates and names as they were said; do not estimate, calculate or fill in anything.
+- Everywhere (summary, decisions, action items, facts): plain, short sentences in the words the
+  people used. Do not rephrase into formal or legal language. Never add a detail that was not
+  said: no deadlines, weekdays, documents, signatures, steps or reasons of your own. An action
+  item is what someone promised to do, with the deadline exactly as said ("by the end of the
+  month", "this week") or none.
 - One fact per item. goal: what the client wants to achieve; life_event: a marriage, birth,
   death, move, retirement, college...; income_change: a raise, job loss, bonus, pension;
   risk_tolerance: how the client describes their comfort with risk or losses; account: an
