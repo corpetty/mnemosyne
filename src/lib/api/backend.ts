@@ -46,6 +46,9 @@ import type {
   SessionDetail,
   SessionSpeaker,
   SessionSummary,
+  Me,
+  UserInfo,
+  UserInvite,
   SettingsResponse,
   SettingsUpdate,
   SpeakerProfile,
@@ -84,6 +87,7 @@ export async function getHealth(): Promise<{
   version: string;
   host?: string;
   auth_required?: boolean;
+  firm_mode?: boolean;
 }> {
   return request('/health');
 }
@@ -390,6 +394,43 @@ export async function saveClip(sessionId: string, clipId: string, path: string):
 }
 
 // Encryption at rest
+// ---- people on a firm's server (backend services/users.py) ------------------------------
+
+export async function getMe(): Promise<Me> {
+  return request('/api/users/me');
+}
+
+export async function redeemInvite(code: string, device: string): Promise<{ token: string; user: UserInfo }> {
+  return request('/api/users/redeem', { method: 'POST', body: JSON.stringify({ code, device }) });
+}
+
+export async function signOut(): Promise<void> {
+  await request('/api/users/me/signout', { method: 'POST' });
+}
+
+export async function listUsers(): Promise<UserInfo[]> {
+  return request('/api/users');
+}
+
+export async function addUser(name: string, email: string, role: string): Promise<UserInvite> {
+  return request('/api/users', { method: 'POST', body: JSON.stringify({ name, email, role }) });
+}
+
+export async function changeUser(
+  id: string,
+  change: { name?: string; email?: string; role?: string; disabled?: boolean }
+): Promise<UserInfo> {
+  return request(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(change) });
+}
+
+export async function inviteUser(id: string): Promise<UserInvite> {
+  return request(`/api/users/${id}/invite`, { method: 'POST' });
+}
+
+export async function signOutUser(id: string): Promise<void> {
+  await request(`/api/users/${id}/signout`, { method: 'POST' });
+}
+
 export async function getEncryption(): Promise<EncryptionStatus> {
   return request('/api/encryption');
 }

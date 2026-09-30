@@ -22,6 +22,9 @@ class UiState {
   importRequest = $state(0); // bumped to open the sidebar's file picker
   /** Meetings are encrypted and the key is missing: show the unlock screen. */
   locked = $state(false);
+  /** A firm's server and this browser is not signed in: show the sign-in screen. */
+  signIn = $state(false);
+  signInError = $state('');
 
   backendStatus = $state<BackendStatus>('checking');
   // Progress from the Tauri shell while it installs/starts the backend (release builds).

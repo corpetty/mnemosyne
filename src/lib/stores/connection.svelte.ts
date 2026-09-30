@@ -2,6 +2,8 @@
  * Which backend this UI talks to. Stored per browser/webview in localStorage,
  * because in server mode the settings live on the remote backend itself.
  */
+import type { Me } from '$lib/types/index.js';
+
 const KEY = 'mnemosyne.connection';
 export const LOCAL_BACKEND = 'http://127.0.0.1:8008';
 
@@ -43,6 +45,8 @@ class ConnectionState {
   /** From /health: hostname of the backend we reached and whether it wants a token. */
   host = $state<string | null>(null);
   authRequired = $state(false);
+  /** Who is signed in on a firm's server (empty id: the desktop app or the admin token). */
+  me = $state<Me | null>(null);
 
   constructor() {
     const s = load();

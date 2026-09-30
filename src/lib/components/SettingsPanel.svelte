@@ -16,8 +16,12 @@
 	import { collectDiagnostics } from '$lib/app/diagnostics.js';
 	import ReportProblem from './ReportProblem.svelte';
 	import EncryptionSettings from './EncryptionSettings.svelte';
+	import FirmPeopleSettings from './FirmPeopleSettings.svelte';
 	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
+	// A firm's server: settings belong to its admins (advisors and reviewers only read them).
+	const readOnly = $derived(!!connectionState.me?.id && connectionState.me.role !== 'admin');
+	const firmAdmin = $derived(!!connectionState.me?.firm_mode && connectionState.me.role === 'admin');
 	let settings = $state<SettingsResponse | null>(null);
 	let providers = $state<ProviderModels[]>([]);
 	let voices = $state<SpeakerProfile[]>([]);
@@ -350,6 +354,14 @@
 		<button onclick={openSetup} class="ml-auto px-3 py-1 text-xs rounded text-gray-500 hover:text-gray-300">Run setup again</button>
 	</nav>
 
+	{#if readOnly}
+		<p class="rounded border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-400">
+			Settings on this server are managed by your administrator.
+		</p>
+	{/if}
+	{#if tab === 'general' && firmAdmin}
+		<FirmPeopleSettings />
+	{/if}
 	{#if tab === 'general'}
 		<!-- Connection (stored in this app instance, not on the backend) -->
 		<section>
@@ -634,7 +646,7 @@
 			<div class="flex items-center gap-3">
 				<button
 					onclick={save}
-					disabled={saving}
+					disabled={saving || readOnly}
 					class="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white font-medium transition-colors"
 				>
 					{saving ? 'Saving...' : 'Save settings'}
@@ -795,7 +807,7 @@
 			<div class="flex items-center gap-3">
 				<button
 					onclick={save}
-					disabled={saving}
+					disabled={saving || readOnly}
 					class="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white font-medium transition-colors"
 				>
 					{saving ? 'Saving...' : 'Save settings'}
@@ -928,7 +940,7 @@
 			<div class="flex items-center gap-3">
 				<button
 					onclick={save}
-					disabled={saving}
+					disabled={saving || readOnly}
 					class="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white font-medium transition-colors"
 				>
 					{saving ? 'Saving...' : 'Save settings'}
@@ -1131,7 +1143,7 @@
 			<div class="flex items-center gap-3">
 				<button
 					onclick={save}
-					disabled={saving}
+					disabled={saving || readOnly}
 					class="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white font-medium transition-colors"
 				>
 					{saving ? 'Saving...' : 'Save settings'}
@@ -1213,7 +1225,7 @@
 			<div class="flex items-center gap-3">
 				<button
 					onclick={save}
-					disabled={saving}
+					disabled={saving || readOnly}
 					class="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white font-medium transition-colors"
 				>
 					{saving ? 'Saving...' : 'Save settings'}

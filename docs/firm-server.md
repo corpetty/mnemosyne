@@ -107,6 +107,29 @@ the firm's tailnet can open it, from the office or from home. docs/remote-access
 and renews the certificate. For a name that only resolves inside the office, use Caddy's DNS
 challenge for the firm's DNS provider.
 
+## People
+
+Nobody has a password. The first admin comes from the server itself:
+
+```bash
+sudo -u mnemosyne MNEMOSYNE_DATA_DIR=/srv/mnemosyne/data \
+  /opt/mnemosyne/backend/.venv/bin/mnemosyne-backend users add "Pat Lee" --email pat@example-firm.com \
+  --role admin --address https://mnemosyne.tail1234.ts.net
+```
+
+It prints an invite link. Opening it signs that browser in as that person; it works once and
+expires after a week. From then on the admin adds everyone else in Settings → General → People and
+access, and sends each their own link (directly, not in a shared channel: whoever opens it first
+signs in as them). Someone on a second computer gets a second link.
+
+- **Advisor**: sees and changes only their own meetings (the ones they recorded or imported).
+- **Reviewer** (compliance): reads every meeting, changes only their own.
+- **Admin**: everything, including people and settings.
+
+Opening, playing and exporting a meeting is noted in that meeting's history with who did it.
+"Disable" and "Sign out everywhere" take effect at once. The people list lives in
+`/srv/mnemosyne/data/users.json` (tokens as hashes only).
+
 ## Backups
 
 Settings → General → Backups: a folder on a second disk or a network share, every day, keeping at

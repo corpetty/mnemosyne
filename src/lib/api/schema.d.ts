@@ -1974,6 +1974,132 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Users
+         * @description Everyone's name and role (a reviewer sees whose meeting is whose); details for admins.
+         */
+        get: operations["list_users_api_users_get"];
+        put?: never;
+        /** Add User */
+        post: operations["add_user_api_users_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Me */
+        get: operations["me_api_users_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/me/signout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign Out
+         * @description Forget this browser's token.
+         */
+        post: operations["sign_out_api_users_me_signout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/redeem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Redeem */
+        post: operations["redeem_api_users_redeem_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change User */
+        patch: operations["change_user_api_users__user_id__patch"];
+        trace?: never;
+    };
+    "/api/users/{user_id}/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Invite */
+        post: operations["invite_api_users__user_id__invite_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/signout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign Out Everywhere */
+        post: operations["sign_out_everywhere_api_users__user_id__signout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -2779,6 +2905,17 @@ export interface components {
             /** Total Sessions */
             total_sessions: number;
         };
+        /** Invite */
+        Invite: {
+            /** Code */
+            code: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            user: components["schemas"]["UserInfo"];
+        };
         /** IssueResult */
         IssueResult: {
             /** Created */
@@ -2808,6 +2945,11 @@ export interface components {
              * @default
              */
             message: string;
+            /**
+             * Owner Id
+             * @default
+             */
+            owner_id: string;
             /** Progress */
             progress: number | null;
             /** Result */
@@ -2861,6 +3003,19 @@ export interface components {
         LocalOnlyRequest: {
             /** Local Only */
             local_only: boolean;
+        };
+        /** Me */
+        Me: {
+            /** Email */
+            email: string;
+            /** Firm Mode */
+            firm_mode: boolean;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
         };
         /** MeetingStats */
         MeetingStats: {
@@ -2919,6 +3074,21 @@ export interface components {
         MeetingTypeChoice: {
             /** Name */
             name: string;
+        };
+        /** NewUser */
+        NewUser: {
+            /**
+             * Email
+             * @default
+             */
+            email: string;
+            /** Name */
+            name: string;
+            /**
+             * Role
+             * @default advisor
+             */
+            role: string;
         };
         /** NotesCreate */
         NotesCreate: {
@@ -3185,23 +3355,17 @@ export interface components {
             /** Recovery Code */
             recovery_code: string;
         };
-        /** RedeemRequest */
-        RedeemRequest: {
-            /** Code */
-            code: string;
-            /** Endpoint Id */
-            endpoint_id?: string | null;
-            /**
-             * Name
-             * @default
-             */
-            name: string;
-        };
         /** RedeemResponse */
         RedeemResponse: {
             device: components["schemas"]["PairedDeviceInfo"];
             /** Token */
             token: string;
+        };
+        /** Redeemed */
+        Redeemed: {
+            /** Token */
+            token: string;
+            user: components["schemas"]["UserInfo"];
         };
         /** RelatedMeeting */
         RelatedMeeting: {
@@ -3432,6 +3596,11 @@ export interface components {
              * @default
              */
             notes: string;
+            /**
+             * Owner Id
+             * @default
+             */
+            owner_id: string;
             /** Participants */
             participants: string[];
             /** Recordings */
@@ -3523,6 +3692,11 @@ export interface components {
             local_only: boolean;
             /** Name */
             name: string;
+            /**
+             * Owner Id
+             * @default
+             */
+            owner_id: string;
             /** Participant Count */
             participant_count: number;
             status: components["schemas"]["SessionStatus"];
@@ -3630,6 +3804,8 @@ export interface components {
             echo_similarity?: number | null;
             /** Embedding Model */
             embedding_model?: string | null;
+            /** Firm Mode */
+            firm_mode?: boolean | null;
             /** Github Labels */
             github_labels?: string | null;
             /** Github Repo */
@@ -3760,6 +3936,8 @@ export interface components {
             unload_models_after_minutes?: number | null;
             /** Vllm Url */
             vllm_url?: string | null;
+            /** Web Dir */
+            web_dir?: string | null;
             /** Whisper Batch Size */
             whisper_batch_size?: number | null;
             /** Whisper Compute Type */
@@ -3843,6 +4021,8 @@ export interface components {
             encrypt_at_rest: boolean;
             /** Encryption Check */
             encryption_check: string;
+            /** Firm Mode */
+            firm_mode: boolean;
             /** Github Labels */
             github_labels: string;
             /** Github Repo */
@@ -3973,6 +4153,8 @@ export interface components {
             unload_models_after_minutes: number;
             /** Vllm Url */
             vllm_url: string;
+            /** Web Dir */
+            web_dir: string;
             /** Whisper Batch Size */
             whisper_batch_size: number;
             /** Whisper Compute Type */
@@ -4292,6 +4474,51 @@ export interface components {
             /** Start */
             start: number;
         };
+        /** UserChange */
+        UserChange: {
+            /** Disabled */
+            disabled?: boolean | null;
+            /** Email */
+            email?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Role */
+            role?: string | null;
+        };
+        /** UserDevice */
+        UserDevice: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Device */
+            device: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
+        };
+        /** UserInfo */
+        UserInfo: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Devices */
+            devices: components["schemas"]["UserDevice"][];
+            /** Disabled */
+            disabled: boolean;
+            /** Email */
+            email: string;
+            /** Id */
+            id: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -4324,10 +4551,32 @@ export interface components {
             /** Asset Id */
             asset_id: string;
         };
+        /** RedeemRequest */
+        mnemosyne__api__routes__pairing__RedeemRequest: {
+            /** Code */
+            code: string;
+            /** Endpoint Id */
+            endpoint_id?: string | null;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+        };
         /** AttachRequest */
         mnemosyne__api__routes__system__AttachRequest: {
             /** Pid */
             pid: number;
+        };
+        /** RedeemRequest */
+        mnemosyne__api__routes__users__RedeemRequest: {
+            /** Code */
+            code: string;
+            /**
+             * Device
+             * @default
+             */
+            device: string;
         };
     };
     responses: never;
@@ -5809,7 +6058,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RedeemRequest"];
+                "application/json": components["schemas"]["mnemosyne__api__routes__pairing__RedeemRequest"];
             };
         };
         responses: {
@@ -7795,6 +8044,229 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_users_api_users_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserInfo"][];
+                };
+            };
+        };
+    };
+    add_user_api_users_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewUser"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Invite"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    me_api_users_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+        };
+    };
+    sign_out_api_users_me_signout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    redeem_api_users_redeem_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["mnemosyne__api__routes__users__RedeemRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Redeemed"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_user_api_users__user_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    invite_api_users__user_id__invite_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Invite"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sign_out_everywhere_api_users__user_id__signout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

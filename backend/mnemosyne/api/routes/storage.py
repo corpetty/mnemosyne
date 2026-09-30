@@ -2,14 +2,16 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ... import access
 from ...models.session import Session
 from ...services.storage_service import CleanupResult, StorageReport
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["storage"])
+ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
 
 
-@router.get("/storage", response_model=StorageReport)
+@router.get("/storage", response_model=StorageReport, dependencies=ADMIN)
 async def storage_report(ctx: AppContext = Depends(get_ctx)):
     return ctx.storage.report(ctx.settings.audio_retention_days)
 
@@ -26,7 +28,7 @@ async def delete_session_audio(session_id: str, ctx: AppContext = Depends(get_ct
     return ctx.sessions.get_session(session_id)
 
 
-@router.post("/storage/cleanup", response_model=CleanupResult)
+@router.post("/storage/cleanup", response_model=CleanupResult, dependencies=ADMIN)
 async def cleanup(
     dry_run: bool = True, days: int | None = None, ctx: AppContext = Depends(get_ctx)
 ):

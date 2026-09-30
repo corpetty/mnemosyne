@@ -9,6 +9,8 @@ import {
   getEncryption,
   getHealth,
   getJob,
+  getMe,
+  redeemInvite,
   getSettings,
   getSystemInfo,
   listSessions
@@ -18,7 +20,7 @@ import { digestState } from '$lib/stores/digest.svelte.js';
 import { audioState } from '$lib/stores/audio.svelte.js';
 import { autoRecordState, type AutoMode } from '$lib/stores/autorecord.svelte.js';
 import { calendarState } from '$lib/stores/calendar.svelte.js';
-import { connectionState } from '$lib/stores/connection.svelte.js';
+import { connectionState, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
 import { jobsState } from '$lib/stores/jobs.svelte.js';
 import { sessionState } from '$lib/stores/session.svelte.js';
 import { toastState } from '$lib/stores/toast.svelte.js';
@@ -636,6 +638,43 @@ async function syncRemoteTunnel() {
   }
 }
 
+/** "Chrome on Windows": how an admin tells this browser apart in the list of people. */
+function deviceName(): string {
+  const ua = navigator.userAgent;
+  const browser = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  const os = /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'Mac' : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Linux/.test(ua) ? 'Linux' : '';
+  return os ? `${browser} on ${os}` : browser;
+}
+
+/** An invite link (`?invite=<code>`, a firm's server) becomes this browser's own token. */
+async function redeemInviteFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('invite');
+  if (!code) return;
+  params.delete('invite');
+  const rest = params.toString();
+  history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash);
+  try {
+    const { token } = await redeemInvite(code, deviceName());
+    connectionState.save(connectionState.url, token);
+    uiState.signInError = '';
+  } catch (e) {
+    uiState.signInError = e instanceof Error ? e.message.replace(/^\d+: /, '') : 'This invite link did not work';
+  }
+}
+
+/** Who is signed in; false when the server wants someone and nobody (valid) is. */
+async function signedIn(): Promise<boolean> {
+  if (!connectionState.authRequired) return true;
+  try {
+    connectionState.me = await getMe();
+    return true;
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('401')) return false;
+    throw e;
+  }
+}
+
 export function connectApp(): () => void {
   let unsubscribeSessions: (() => void) | null = null;
   let unlistenShell: (() => void) | null = null;
@@ -649,6 +688,12 @@ export function connectApp(): () => void {
         const h = await getHealth();
         connectionState.host = h.host ?? null;
         connectionState.authRequired = !!h.auth_required;
+        if (SAME_ORIGIN) await redeemInviteFromUrl();
+        if (!(await signedIn())) {
+          uiState.backendStatus = 'connected';
+          uiState.signIn = true;
+          return;
+        }
         const encryption = await getEncryption().catch(() => null);
         if (encryption?.locked) {
           uiState.backendStatus = 'connected';

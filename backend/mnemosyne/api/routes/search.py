@@ -5,12 +5,14 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 
+from ... import access
 from ...models.search import SearchHit
 from ...search.hybrid import hybrid_search
 from ...search.index import IndexStatus
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["search"])
+ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
 
 
 @router.get("/search", response_model=list[SearchHit])
@@ -30,7 +32,11 @@ async def index_status(ctx: AppContext = Depends(get_ctx)):
     return ctx.index.status()
 
 
-@router.post("/search/index/rebuild", response_model=IndexStatus)
+@router.post(
+    "/search/index/rebuild",
+    response_model=IndexStatus,
+    dependencies=ADMIN,
+)
 async def rebuild_index(ctx: AppContext = Depends(get_ctx)):
     """Drop every vector and re-embed all meetings in the background."""
     await ctx.index.rebuild()

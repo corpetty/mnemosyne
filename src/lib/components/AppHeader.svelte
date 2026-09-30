@@ -5,6 +5,16 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { uiState, type View } from '$lib/stores/ui.svelte.js';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
+	import { signOut } from '$lib/api/backend.js';
+
+	async function signOutHere() {
+		try {
+			await signOut();
+		} finally {
+			connectionState.save(connectionState.url, '');
+			window.location.reload();
+		}
+	}
 
 	const NAV: { view: View; label: string; title: string }[] = [
 		{ view: 'ask', label: 'Ask', title: 'Ask across all meetings' },
@@ -43,19 +53,21 @@
 		</button>
 	</div>
 
-	<nav class="flex min-w-0 shrink items-center overflow-x-auto rounded-lg bg-gray-900 border border-gray-800 p-0.5" aria-label="Views">
-		{#each NAV as item (item.view)}
-			<button
-				onclick={() => toggleView(item.view)}
-				title={item.title}
-				aria-current={active(item.view) ? 'page' : undefined}
-				class="px-2 lg:px-3 py-1 rounded-md text-xs font-medium transition-colors
-					{active(item.view) ? 'bg-gray-700 text-gray-100' : 'text-gray-400 hover:text-gray-200'}"
-			>
-				{item.label}
-			</button>
-		{/each}
-	</nav>
+	{#if !uiState.signIn}
+		<nav class="flex min-w-0 shrink items-center overflow-x-auto rounded-lg bg-gray-900 border border-gray-800 p-0.5" aria-label="Views">
+			{#each NAV as item (item.view)}
+				<button
+					onclick={() => toggleView(item.view)}
+					title={item.title}
+					aria-current={active(item.view) ? 'page' : undefined}
+					class="px-2 lg:px-3 py-1 rounded-md text-xs font-medium transition-colors
+						{active(item.view) ? 'bg-gray-700 text-gray-100' : 'text-gray-400 hover:text-gray-200'}"
+				>
+					{item.label}
+				</button>
+			{/each}
+		</nav>
+	{/if}
 
 	<div class="ml-auto flex shrink-0 items-center gap-3 text-xs">
 		<span class="flex items-center gap-1.5 text-gray-500" title={status}>
@@ -71,6 +83,14 @@
 			<span class="hidden xl:inline">{status}</span>
 		</span>
 		<RecordingPill />
+		{#if connectionState.me?.id}
+			<!-- A firm's server: who is signed in in this browser. -->
+			<span class="hidden md:flex items-center gap-2 text-gray-400" title="Signed in as {connectionState.me.name} ({connectionState.me.role})">
+				<span class="text-gray-300">{connectionState.me.name}</span>
+				{#if connectionState.me.role !== 'advisor'}<span class="text-gray-500">{connectionState.me.role}</span>{/if}
+				<button onclick={signOutHere} class="text-gray-500 hover:text-gray-300 underline-offset-2 hover:underline">Sign out</button>
+			</span>
+		{/if}
 		<button
 			onclick={() => (uiState.paletteOpen = true)}
 			class="hidden lg:flex items-center gap-2 px-2 py-1 rounded border border-gray-800 text-xs text-gray-500 hover:text-gray-300 hover:border-gray-700"

@@ -33,6 +33,7 @@ def test_list_sessions_summary_fields_and_order(client):
         "has_audio": False,
         "participant_count": 0,
         "local_only": False,
+        "owner_id": "",
     }
 
 

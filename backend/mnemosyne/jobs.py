@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from pydantic import Field
 
+from . import access
 from .events import EventBus
 from .models.base import ApiModel
 
@@ -36,6 +37,8 @@ class Job(ApiModel):
     id: str = Field(default_factory=lambda: str(uuid4())[:8])
     kind: str
     session_id: str | None = None
+    # Who started it on a firm's server (access.py): an Ask's answer is theirs alone.
+    owner_id: str = ""
     status: JobStatus = JobStatus.QUEUED
     message: str = ""
     progress: float | None = None  # 0..1 when known
@@ -88,7 +91,7 @@ class JobManager:
     # ---- public API ----------------------------------------------------
 
     def submit(self, kind: str, runner: JobRunner, session_id: str | None = None) -> Job:
-        job = Job(kind=kind, session_id=session_id)
+        job = Job(kind=kind, session_id=session_id, owner_id=access.user_id())
         self._prune()
         self.jobs[job.id] = job
         self._publish(job)

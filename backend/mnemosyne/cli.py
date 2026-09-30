@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import sys
 import warnings
 
 
@@ -21,8 +22,57 @@ def quiet_known_warnings() -> None:
     warnings.filterwarnings("ignore", message=r"\s*std\(\): degrees of freedom is <= 0")
 
 
+def users_command(argv: list[str]) -> None:
+    """`mnemosyne-backend users ...`: people on a firm's server, for the first admin (who has
+    nobody to invite them) and for scripts. Works while the server runs (services/users.py)."""
+    from datetime import datetime
+
+    from .access import ROLES
+    from .config import load_settings
+    from .services.users import UserService
+
+    parser = argparse.ArgumentParser(prog="mnemosyne-backend users")
+    sub = parser.add_subparsers(dest="action", required=True)
+    add = sub.add_parser("add", help="add a person and print their invite link")
+    add.add_argument("name")
+    add.add_argument("--email", default="")
+    add.add_argument("--role", choices=ROLES, default="advisor")
+    add.add_argument("--address", default="https://<this server>", help="the address advisors open")
+    inv = sub.add_parser("invite", help="a new invite link for someone (another computer)")
+    inv.add_argument("user_id")
+    inv.add_argument("--address", default="https://<this server>")
+    sub.add_parser("list", help="everyone, with their id and role")
+    args = parser.parse_args(argv)
+
+    users = UserService(load_settings().data_dir / "users.json")
+    if args.action == "list":
+        for u in users.list():
+            state = " (disabled)" if u.disabled else ""
+            print(f"{u.id}  {u.role:<8}  {u.name} <{u.email}>{state}")
+        return
+    if args.action == "add":
+        try:
+            user = users.add(args.name, args.email, args.role)
+        except ValueError as e:
+            raise SystemExit(str(e)) from e
+        user_id = user.id
+    else:
+        user_id = args.user_id
+    try:
+        code, expires = users.invite(user_id)
+    except KeyError:
+        hint = "see: mnemosyne-backend users list"
+        raise SystemExit(f"No person with id {user_id} ({hint})") from None
+    until = datetime.fromtimestamp(expires).strftime("%Y-%m-%d %H:%M")
+    print(f"Invite link (works once, until {until}):")
+    print(f"  {args.address.rstrip('/')}/?invite={code}")
+
+
 def main() -> None:
     quiet_known_warnings()
+    if sys.argv[1:2] == ["users"]:
+        users_command(sys.argv[2:])
+        return
     import uvicorn
 
     from .api.app import create_app

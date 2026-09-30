@@ -526,6 +526,7 @@ async def get_audio(
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    history.log_access(ctx, session_id, "played")
     path = session.audio_file
     if recording:
         match = next((r for r in session.recordings if r.id == recording), None)

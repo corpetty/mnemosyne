@@ -15,6 +15,7 @@ from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
+from .. import access
 from ..models.ask import Ask, Citation, Passage, PassageLine
 from ..models.digest import Digest
 from ..models.search import SearchHit, SegmentHit
@@ -372,6 +373,16 @@ class SessionRepository:
             )
             # Only meetings transcribed from now on ask "who is who".
             self._conn.execute("UPDATE sessions SET speakers_reviewed = 1")
+        # Who a meeting, a saved question or a digest belongs to on a firm's server (access.py).
+        if "owner_id" not in cols:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''")
+        for table in ("asks", "digests"):
+            if "owner_id" not in {
+                r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")
+            }:
+                self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''"
+                )
         self._conn.commit()
 
     def _migrate_fts_rowids(self) -> None:
@@ -455,23 +466,60 @@ class SessionRepository:
             self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             shutil.copyfile(self.db_path, dest)
 
+    # ---- who may see and change what (access.py) ----------------------
+
+    def _owner(self, session_id: str) -> str | None:
+        """The meeting's owner id ("" for nobody's), or None for an unknown meeting."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT owner_id FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        return None if row is None else row["owner_id"]
+
+    def _readable(self, session_id: str) -> bool:
+        only = access.read_owner()
+        return only is None or self._owner(session_id) in (None, only)
+
+    def _check_write(self, session_id: str) -> None:
+        owner = self._owner(session_id)
+        if owner is not None and not access.can_write(owner):
+            if not self._readable(session_id):
+                raise access.Hidden("Session not found")
+            raise access.Forbidden("This is someone else's meeting")
+
+    def visible_ids(self) -> set[str] | None:
+        """The meetings the caller may see, or None for all of them."""
+        only = access.read_owner()
+        if only is None:
+            return None
+        with self._lock:
+            rows = self._conn.execute("SELECT id FROM sessions WHERE owner_id=?", (only,))
+            return {r["id"] for r in rows}
+
+    def owner_of(self, session_id: str) -> str | None:
+        return self._owner(session_id)
+
     # ---- reads ---------------------------------------------------------
 
     def exists(self, session_id: str) -> bool:
-        with self._lock:
-            row = self._conn.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone()
-        return row is not None
+        return self._owner(session_id) is not None and self._readable(session_id)
 
     def list_summaries(self) -> list[SessionSummary]:
         sql = """
         SELECT s.id, s.name, s.status, s.created_at, s.updated_at, s.participants, s.local_only,
                length(s.summary) > 0 AS has_summary,
-               s.audio_file IS NOT NULL AS has_audio,
+               s.audio_file IS NOT NULL AS has_audio, s.owner_id,
                EXISTS(SELECT 1 FROM segments g WHERE g.session_id = s.id) AS has_transcript
-        FROM sessions s ORDER BY s.created_at DESC
+        FROM sessions s {where} ORDER BY s.created_at DESC
         """
+        only = access.read_owner()
         with self._lock:
-            rows = self._conn.execute(sql).fetchall()
+            if only is None:
+                rows = self._conn.execute(sql.format(where="")).fetchall()
+            else:
+                rows = self._conn.execute(
+                    sql.format(where="WHERE s.owner_id=?"), (only,)
+                ).fetchall()
         return [
             SessionSummary(
                 id=r["id"],
@@ -484,14 +532,17 @@ class SessionRepository:
                 has_audio=bool(r["has_audio"]),
                 participant_count=len(json.loads(r["participants"])),
                 local_only=bool(r["local_only"]),
+                owner_id=r["owner_id"],
             )
             for r in rows
         ]
 
     def get(self, session_id: str) -> Session | None:
+        """The meeting, or None when there is none or the caller may not see it."""
+        only = access.read_owner()
         with self._lock:
             row = self._conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
-            if row is None:
+            if row is None or (only is not None and row["owner_id"] != only):
                 return None
             seg_rows = self._conn.execute(
                 "SELECT * FROM segments WHERE session_id=? ORDER BY idx", (session_id,)
@@ -539,6 +590,7 @@ class SessionRepository:
             speakers_reviewed=bool(row["speakers_reviewed"]),
             agenda=[AgendaItem.model_validate(a) for a in json.loads(row["agenda"] or "[]")],
             meeting_type=row["meeting_type"],
+            owner_id=row["owner_id"],
             assets=[_asset(r) for r in asset_rows],
             external_notes=[
                 ExternalNotes(
@@ -590,15 +642,19 @@ class SessionRepository:
     # ---- writes --------------------------------------------------------
 
     def save(self, session: Session) -> Session:
-        """Insert or fully replace a session including segments and recordings."""
+        """Insert or fully replace a session including segments and recordings. A new meeting
+        belongs to whoever creates it (access.py); an existing one keeps its owner."""
+        self._check_write(session.id)
+        owner = self._owner(session.id)
+        session.owner_id = owner if owner is not None else (session.owner_id or access.user_id())
         session.updated_at = datetime.now()
         with self._lock, self._conn:
             self._conn.execute(
                 """INSERT INTO sessions(id, name, status, created_at, updated_at, audio_file,
                                         summary, summary_data, notes, participants,
                                         attendees, local_only, copilot_notes,
-                                        speakers_reviewed, agenda, meeting_type)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                        speakers_reviewed, agenda, meeting_type, owner_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      name=excluded.name, status=excluded.status, updated_at=excluded.updated_at,
                      audio_file=excluded.audio_file, summary=excluded.summary,
@@ -625,6 +681,7 @@ class SessionRepository:
                     int(session.speakers_reviewed),
                     json.dumps([a.model_dump() for a in session.agenda]),
                     session.meeting_type,
+                    session.owner_id,
                 ),
             )
             self._write_segments(session.id, session.transcript)
@@ -634,6 +691,7 @@ class SessionRepository:
     def update_fields(self, session_id: str, **fields) -> Session | None:
         """Cheap metadata update. Valid keys: name, status, audio_file, summary, notes,
         participants."""
+        self._check_write(session_id)
         allowed = {
             "name",
             "status",
@@ -681,6 +739,7 @@ class SessionRepository:
         return self.get(session_id)
 
     def replace_segments(self, session_id: str, segments: list[TranscriptSegment]) -> None:
+        self._check_write(session_id)
         with self._lock, self._conn:
             self._write_segments(session_id, segments)
             self._conn.execute(
@@ -689,6 +748,7 @@ class SessionRepository:
             )
 
     def add_recordings(self, session_id: str, recordings: list[Recording]) -> None:
+        self._check_write(session_id)
         with self._lock, self._conn:
             self._conn.executemany(
                 """INSERT OR REPLACE INTO recordings
@@ -714,6 +774,7 @@ class SessionRepository:
     def clear_audio(self, session_id: str) -> bool:
         """Forget a session's audio (recordings rows + mixed file path). Files are the
         caller's job. Returns False for an unknown session."""
+        self._check_write(session_id)
         with self._lock, self._conn:
             cur = self._conn.execute(
                 "UPDATE sessions SET audio_file=NULL, updated_at=? WHERE id=?",
@@ -727,6 +788,7 @@ class SessionRepository:
     # ---- other assistants' notes ---------------------------------------
 
     def add_external_notes(self, session_id: str, notes: ExternalNotes) -> None:
+        self._check_write(session_id)
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO external_notes (id, session_id, source, text, filename, added_at)"
@@ -742,6 +804,7 @@ class SessionRepository:
             )
 
     def delete_external_notes(self, session_id: str, notes_id: str) -> bool:
+        self._check_write(session_id)
         with self._lock, self._conn:
             cur = self._conn.execute(
                 "DELETE FROM external_notes WHERE id=? AND session_id=?", (notes_id, session_id)
@@ -803,6 +866,8 @@ class SessionRepository:
         return [(_asset(r), r["used"]) for r in rows]
 
     def asset_texts(self, session_id: str) -> list[tuple[Asset, str]]:
+        if not self._readable(session_id):
+            return []
         with self._lock:
             rows = self._conn.execute(
                 "SELECT a.* FROM assets a JOIN session_assets sa ON sa.asset_id = a.id"
@@ -812,6 +877,7 @@ class SessionRepository:
         return [(_asset(r), r["text"]) for r in rows]
 
     def attach_asset(self, session_id: str, asset_id: str) -> None:
+        self._check_write(session_id)
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT OR IGNORE INTO session_assets (session_id, asset_id, added_at)"
@@ -820,6 +886,7 @@ class SessionRepository:
             )
 
     def detach_asset(self, session_id: str, asset_id: str) -> bool:
+        self._check_write(session_id)
         with self._lock, self._conn:
             cur = self._conn.execute(
                 "DELETE FROM session_assets WHERE session_id=? AND asset_id=?",
@@ -856,6 +923,7 @@ class SessionRepository:
     def add_bookmark(self, session_id: str, part: int, seconds: float, note: str = "") -> str:
         from uuid import uuid4
 
+        self._check_write(session_id)
         bookmark_id = str(uuid4())[:8]
         with self._lock, self._conn:
             self._conn.execute(
@@ -873,6 +941,7 @@ class SessionRepository:
         return bookmark_id
 
     def update_bookmark(self, session_id: str, bookmark_id: str, note: str) -> bool:
+        self._check_write(session_id)
         with self._lock, self._conn:
             cur = self._conn.execute(
                 "UPDATE bookmarks SET note=? WHERE id=? AND session_id=?",
@@ -881,6 +950,7 @@ class SessionRepository:
         return cur.rowcount > 0
 
     def delete_bookmark(self, session_id: str, bookmark_id: str) -> bool:
+        self._check_write(session_id)
         with self._lock, self._conn:
             cur = self._conn.execute(
                 "DELETE FROM bookmarks WHERE id=? AND session_id=?", (bookmark_id, session_id)
@@ -912,6 +982,8 @@ class SessionRepository:
             )
 
     def events(self, session_id: str) -> list[dict]:
+        if not self._readable(session_id):
+            return []
         with self._lock:
             rows = self._conn.execute(
                 "SELECT at, kind, part, detail FROM session_events WHERE session_id=? ORDER BY id",
@@ -950,6 +1022,7 @@ class SessionRepository:
                     )
 
     def delete(self, session_id: str) -> bool:
+        self._check_write(session_id)
         with self._lock, self._conn:
             cur = self._conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
         return cur.rowcount > 0
@@ -960,6 +1033,7 @@ class SessionRepository:
         self, session_id: str, edit: Callable[[list[TranscriptSegment]], list[TranscriptSegment]]
     ) -> Session | None:
         """Apply `edit` to the transcript, then recompute participants."""
+        self._check_write(session_id)
         session = self.get(session_id)
         if session is None:
             return None
@@ -1089,11 +1163,13 @@ class SessionRepository:
                    WHERE sessions_fts MATCH ? ORDER BY score LIMIT ?""",
                 (fts, max(3, limit // 4)),
             ).fetchall()
+            visible = self.visible_ids()
             meta = {
                 r["id"]: r
                 for r in self._conn.execute(
                     "SELECT id, name, created_at, summary FROM sessions"
                 ).fetchall()
+                if visible is None or r["id"] in visible
             }
 
             # Merge hit windows per session, keeping each window's best score.
@@ -1166,7 +1242,7 @@ class SessionRepository:
         with self._lock, self._conn:
             self._conn.execute(
                 """INSERT OR REPLACE INTO asks(id, question, answer, citations, provider, model,
-                                               created_at) VALUES (?,?,?,?,?,?,?)""",
+                                               created_at, owner_id) VALUES (?,?,?,?,?,?,?,?)""",
                 (
                     ask.id,
                     ask.question,
@@ -1175,14 +1251,18 @@ class SessionRepository:
                     ask.provider,
                     ask.model,
                     ask.created_at.isoformat(),
+                    access.user_id(),
                 ),
             )
         return ask
 
     def list_asks(self, limit: int = 50) -> list[Ask]:
+        """Saved questions: a signed-in user's own (access.py), else all."""
+        user = access.user_id()
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM asks ORDER BY created_at DESC LIMIT ?", (limit,)
+                "SELECT * FROM asks WHERE ? = '' OR owner_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user, user, limit),
             ).fetchall()
         return [
             Ask(
@@ -1198,8 +1278,11 @@ class SessionRepository:
         ]
 
     def delete_ask(self, ask_id: str) -> bool:
+        user = access.user_id()
         with self._lock, self._conn:
-            cur = self._conn.execute("DELETE FROM asks WHERE id=?", (ask_id,))
+            cur = self._conn.execute(
+                "DELETE FROM asks WHERE id=? AND (? = '' OR owner_id = ?)", (ask_id, user, user)
+            )
         return cur.rowcount > 0
 
     # ---- action items ----------------------------------------------------
@@ -1208,6 +1291,7 @@ class SessionRepository:
         """Every action item of every summarized session, newest meeting first."""
         from ..services.tasks import TaskItem
 
+        visible = self.visible_ids()
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id, name, created_at, summary_data FROM sessions"
@@ -1215,6 +1299,8 @@ class SessionRepository:
             ).fetchall()
         out = []
         for r in rows:
+            if visible is not None and r["id"] not in visible:
+                continue
             data = SummaryData.model_validate_json(r["summary_data"])
             for i, a in enumerate(data.action_items):
                 out.append(
@@ -1236,10 +1322,12 @@ class SessionRepository:
         """Name, date, attendees and summary of every session, without transcripts."""
         from ..services.brief import MeetingMeta
 
+        visible = self.visible_ids()
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id, name, created_at, attendees, summary, summary_data FROM sessions"
             ).fetchall()
+        rows = [r for r in rows if visible is None or r["id"] in visible]
         return [
             MeetingMeta(
                 id=r["id"],
@@ -1303,10 +1391,12 @@ class SessionRepository:
         return r["updated_at"] if r else None
 
     def all_vectors(self) -> list:
+        visible = self.visible_ids()
         with self._lock:
-            return self._conn.execute(
+            rows = self._conn.execute(
                 "SELECT session_id, kind, first_idx, last_idx, vec FROM chunk_vectors"
             ).fetchall()
+        return rows if visible is None else [r for r in rows if r["session_id"] in visible]
 
     def indexed_session_count(self) -> int:
         with self._lock:
@@ -1316,11 +1406,15 @@ class SessionRepository:
         return int(r["n"])
 
     def session_ids(self) -> list[str]:
+        visible = self.visible_ids()
         with self._lock:
-            return [r["id"] for r in self._conn.execute("SELECT id FROM sessions").fetchall()]
+            ids = [r["id"] for r in self._conn.execute("SELECT id FROM sessions").fetchall()]
+        return ids if visible is None else [i for i in ids if i in visible]
 
     def passage_window(self, session_id: str, lo: int, hi: int, focus: int, score: float):
         """A transcript Passage for lines lo..hi of a session, or None."""
+        if not self._readable(session_id):
+            return None
         with self._lock:
             m = self._conn.execute(
                 "SELECT id, name, created_at FROM sessions WHERE id=?", (session_id,)
@@ -1347,6 +1441,8 @@ class SessionRepository:
         )
 
     def summary_passage(self, session_id: str, score: float):
+        if not self._readable(session_id):
+            return None
         with self._lock:
             m = self._conn.execute(
                 "SELECT id, name, created_at, summary FROM sessions WHERE id=?", (session_id,)
@@ -1369,11 +1465,13 @@ class SessionRepository:
 
     def people_rows(self) -> list:
         """id, name, created_at, participants, attendees, summary_data of every session."""
+        visible = self.visible_ids()
         with self._lock:
-            return self._conn.execute(
+            rows = self._conn.execute(
                 "SELECT id, name, created_at, participants, attendees, summary_data FROM sessions"
                 " ORDER BY created_at DESC"
             ).fetchall()
+        return rows if visible is None else [r for r in rows if r["id"] in visible]
 
     # ---- digests ---------------------------------------------------------
 
@@ -1390,15 +1488,18 @@ class SessionRepository:
         return [s for s in (self.get(r["id"]) for r in rows) if s is not None]
 
     def save_digest(self, digest: Digest) -> Digest:
-        """Save, replacing any earlier digest of the same range (label)."""
+        """Save, replacing any earlier digest of the same range (label) and owner: on a firm's
+        server each advisor has their own (access.py)."""
+        owner = access.user_id()
         with self._lock, self._conn:
             self._conn.execute(
-                "DELETE FROM digests WHERE label=? AND id<>?", (digest.label, digest.id)
+                "DELETE FROM digests WHERE label=? AND id<>? AND owner_id=?",
+                (digest.label, digest.id, owner),
             )
             self._conn.execute(
                 """INSERT OR REPLACE INTO digests(id, label, start, end, markdown, session_ids,
-                                                  provider, model, path, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                                                  provider, model, path, created_at, owner_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     digest.id,
                     digest.label,
@@ -1410,6 +1511,7 @@ class SessionRepository:
                     digest.model,
                     digest.path,
                     digest.created_at.isoformat(),
+                    owner,
                 ),
             )
         return digest
@@ -1429,31 +1531,46 @@ class SessionRepository:
             created_at=_dt(r["created_at"]),
         )
 
+    # A signed-in user's own digests; everyone's for the desktop app and the admin token.
+    _MINE = "(? = '' OR owner_id = ?)"
+
     def list_digests(self, limit: int = 50) -> list[Digest]:
+        u = access.user_id()
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM digests ORDER BY start DESC, created_at DESC LIMIT ?", (limit,)
+                f"SELECT * FROM digests WHERE {self._MINE}"
+                " ORDER BY start DESC, created_at DESC LIMIT ?",
+                (u, u, limit),
             ).fetchall()
         return [self._digest(r) for r in rows]
 
     def get_digest(self, digest_id: str) -> Digest | None:
+        u = access.user_id()
         with self._lock:
-            r = self._conn.execute("SELECT * FROM digests WHERE id=?", (digest_id,)).fetchone()
+            r = self._conn.execute(
+                f"SELECT * FROM digests WHERE id=? AND {self._MINE}", (digest_id, u, u)
+            ).fetchone()
         return self._digest(r) if r else None
 
     def has_digest(self, label: str) -> bool:
         with self._lock:
-            r = self._conn.execute("SELECT 1 FROM digests WHERE label=?", (label,)).fetchone()
+            r = self._conn.execute(
+                "SELECT 1 FROM digests WHERE label=? AND owner_id=?", (label, access.user_id())
+            ).fetchone()
         return r is not None
 
     def delete_digest(self, digest_id: str) -> bool:
+        u = access.user_id()
         with self._lock, self._conn:
-            cur = self._conn.execute("DELETE FROM digests WHERE id=?", (digest_id,))
+            cur = self._conn.execute(
+                f"DELETE FROM digests WHERE id=? AND {self._MINE}", (digest_id, u, u)
+            )
         return cur.rowcount > 0
 
     # ---- speakers ------------------------------------------------------
 
     def set_session_embeddings(self, session_id: str, embeddings: dict[str, list[float]]) -> None:
+        self._check_write(session_id)
         with self._lock, self._conn:
             self._conn.executemany(
                 "INSERT OR REPLACE INTO session_speakers(session_id, label, embedding)"
@@ -1462,6 +1579,8 @@ class SessionRepository:
             )
 
     def get_session_embeddings(self, session_id: str) -> dict[str, list[float]]:
+        if not self._readable(session_id):
+            return {}
         with self._lock:
             rows = self._conn.execute(
                 "SELECT label, embedding FROM session_speakers WHERE session_id=?", (session_id,)
@@ -1471,6 +1590,7 @@ class SessionRepository:
     def relabel_session_speaker(self, session_id: str, old: str, new: str) -> Session | None:
         """Rename a speaker label everywhere in one session (segments, words,
         participants, stored embedding)."""
+        self._check_write(session_id)
         session = self.get(session_id)
         if session is None:
             return None

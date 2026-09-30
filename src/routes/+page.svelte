@@ -19,6 +19,7 @@
 	import SessionList from '$lib/components/SessionList.svelte';
 	import SessionView from '$lib/components/SessionView.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
+	import SignInScreen from '$lib/components/SignInScreen.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import StatusBar from '$lib/components/StatusBar.svelte';
 	import TasksPanel from '$lib/components/TasksPanel.svelte';
@@ -102,6 +103,8 @@
 
 	{#if uiState.locked}
 		<UnlockScreen />
+	{:else if uiState.signIn}
+		<SignInScreen />
 	{:else}
 		<div class="flex flex-1 overflow-hidden">
 			{#if !uiState.sidebarCollapsed}

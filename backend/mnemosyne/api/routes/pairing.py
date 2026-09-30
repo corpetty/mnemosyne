@@ -8,12 +8,14 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from ... import access
 from ...models.base import ApiModel
 from ...services.pairing import DESKTOP, PHONE, InvalidPairingCode, PairedDevice
 from ..context import AppContext, get_ctx
 from .mobile import phone_page_urls
 
 router = APIRouter(prefix="/api/pairing", tags=["pairing"])
+ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
 
 
 class CodeRequest(BaseModel):
@@ -60,7 +62,7 @@ def _info(d: PairedDevice) -> PairedDeviceInfo:
     )
 
 
-@router.post("/codes", response_model=PairingCode)
+@router.post("/codes", response_model=PairingCode, dependencies=ADMIN)
 async def create_code(body: CodeRequest | None = None, ctx: AppContext = Depends(get_ctx)):
     kind = body.kind if body else PHONE
     if not ctx.settings.api_token:
@@ -90,12 +92,12 @@ async def redeem(body: RedeemRequest, ctx: AppContext = Depends(get_ctx)):
     return RedeemResponse(device=_info(device), token=token)
 
 
-@router.get("/devices", response_model=list[PairedDeviceInfo])
+@router.get("/devices", response_model=list[PairedDeviceInfo], dependencies=ADMIN)
 async def list_devices(ctx: AppContext = Depends(get_ctx)):
     return [_info(d) for d in ctx.pairing.devices()]
 
 
-@router.delete("/devices/{device_id}")
+@router.delete("/devices/{device_id}", dependencies=ADMIN)
 async def remove_device(device_id: str, ctx: AppContext = Depends(get_ctx)):
     if not ctx.pairing.revoke(device_id):
         raise HTTPException(status_code=404, detail="Device not found")
@@ -111,7 +113,7 @@ async def me(request: Request, ctx: AppContext = Depends(get_ctx)):
     return _info(device)
 
 
-@router.get("/remote", response_model=RemoteAccess)
+@router.get("/remote", response_model=RemoteAccess, dependencies=ADMIN)
 async def remote_access(ctx: AppContext = Depends(get_ctx)):
     st = ctx.link.status
     return RemoteAccess(

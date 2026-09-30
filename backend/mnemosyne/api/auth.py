@@ -1,11 +1,12 @@
-"""Optional bearer-token auth for server mode.
+"""Bearer-token auth for server mode, and who is signed in on a firm's server.
 
-Off unless `api_token` is set. Then every /api path and /ws needs the token in
+Off unless `api_token` is set or `firm_mode` is on. Then every /api path and /ws needs a token in
 `Authorization: Bearer <token>` or `?token=` (for <audio> elements and the
 WebSocket, which cannot set headers). /health, /docs, /openapi.json, the phone page, the web
 app's files and redeeming a pairing code stay open. A paired phone's own token
 (services/pairing.py) opens only DEVICE_PATHS, what the phone page needs; a paired computer's
-opens everything.
+opens everything. A person's token (services/users.py) opens the API as that person: the request
+runs with them in `access.current`, which decides what they see (access.py).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from urllib.parse import parse_qs
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .. import access
 from ..services.pairing import DESKTOP
 from .context import AppContext
 
@@ -26,6 +28,7 @@ OPEN_PATHS = {
     "/docs/oauth2-redirect",
     "/m",
     "/api/pairing/redeem",
+    "/api/users/redeem",
 }
 DEVICE_PATHS = {"/api/audio/import", "/api/pairing/me"}
 
@@ -46,7 +49,8 @@ class TokenAuthMiddleware:
             return await self.app(scope, receive, send)
         token = self.ctx.settings.api_token
         path = scope.get("path", "")
-        if not token or is_open(path) or scope.get("method") == "OPTIONS":
+        required = bool(token) or self.ctx.settings.firm_mode
+        if not required or is_open(path) or scope.get("method") == "OPTIONS":
             return await self.app(scope, receive, send)
 
         presented = ""
@@ -58,8 +62,16 @@ class TokenAuthMiddleware:
             qs = parse_qs(scope.get("query_string", b"").decode())
             presented = (qs.get("token") or [""])[0]
 
-        if hmac.compare_digest(presented.encode(), token.encode()):
+        if token and hmac.compare_digest(presented.encode(), token.encode()):
             return await self.app(scope, receive, send)
+        user = self.ctx.users.verify(presented)
+        if user is not None:
+            scope.setdefault("state", {})["user_id"] = user.id
+            reset = access.current.set(access.Principal(user.id, user.name, user.role))
+            try:
+                return await self.app(scope, receive, send)
+            finally:
+                access.current.reset(reset)
         device = self.ctx.pairing.verify(presented)
         if device is not None and (device.kind == DESKTOP or path in DEVICE_PATHS):
             scope.setdefault("state", {})["device_id"] = device.id

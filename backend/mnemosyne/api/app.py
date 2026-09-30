@@ -2,7 +2,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from .. import access
 from ..config import Settings, load_settings
 from .app_watch import watch_app
 from .auth import LockedMiddleware, TokenAuthMiddleware
@@ -36,6 +38,7 @@ from .routes.storage import router as storage_router
 from .routes.system import router as system_router
 from .routes.tasks import router as tasks_router
 from .routes.topics import router as topics_router
+from .routes.users import router as users_router
 from .websocket import router as ws_router
 
 
@@ -59,6 +62,11 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(access.Forbidden)
+    async def forbidden(_request, exc: access.Forbidden):
+        status = 404 if isinstance(exc, access.Hidden) else 403
+        return JSONResponse(status_code=status, content={"detail": str(exc)})
 
     app.add_middleware(LockedMiddleware, ctx=ctx)
     app.add_middleware(TokenAuthMiddleware, ctx=ctx)
@@ -86,6 +94,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(topics_router)
     app.include_router(mobile_router)
     app.include_router(pairing_router)
+    app.include_router(users_router)
     app.include_router(system_router)
     app.include_router(storage_router)
     app.include_router(history_router)
@@ -103,7 +112,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
             "status": "ok",
             "version": app.version,
             "host": socket.gethostname(),
-            "auth_required": bool(ctx.settings.api_token),
+            "auth_required": bool(ctx.settings.api_token) or ctx.settings.firm_mode,
             "firm_mode": ctx.settings.firm_mode,
             # For the desktop shell, which finds this backend already running after a crash.
             "pid": os.getpid(),

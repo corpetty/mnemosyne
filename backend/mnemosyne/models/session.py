@@ -172,6 +172,8 @@ class Session(ApiModel):
     external_notes: list[ExternalNotes] = Field(default_factory=list)  # other assistants' notes
     # Its kind (settings.meeting_types, by name); "" = none yet, "none" = chosen none.
     meeting_type: str = ""
+    # On a firm's server, the advisor whose meeting it is (services/users.py); "" = nobody's.
+    owner_id: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -195,3 +197,4 @@ class SessionSummary(ApiModel):
     has_audio: bool = False
     participant_count: int
     local_only: bool = False
+    owner_id: str = ""

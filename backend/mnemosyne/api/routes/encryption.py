@@ -4,12 +4,14 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ... import access
 from ...models.base import ApiModel
 from ...services import encryption
 from ...services.encryption import EncryptionEnabled, EncryptionStatus
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/encryption", tags=["encryption"])
+ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
 
 
 class RecoveryRequest(ApiModel):
@@ -26,7 +28,7 @@ async def get_status(ctx: AppContext = Depends(get_ctx)):
     return encryption.status(ctx)
 
 
-@router.post("/enable", response_model=EncryptionEnabled)
+@router.post("/enable", response_model=EncryptionEnabled, dependencies=ADMIN)
 async def enable(ctx: AppContext = Depends(get_ctx)):
     """Encrypt the database and every audio file; returns the recovery code (shown once)."""
     _idle(ctx)
@@ -36,7 +38,7 @@ async def enable(ctx: AppContext = Depends(get_ctx)):
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
-@router.post("/disable", response_model=EncryptionStatus)
+@router.post("/disable", response_model=EncryptionStatus, dependencies=ADMIN)
 async def disable(ctx: AppContext = Depends(get_ctx)):
     """Decrypt everything again and forget the key."""
     _idle(ctx)

@@ -42,6 +42,29 @@ def log(app: AppContext, session_id: str, kind: str, part: int | None = None, **
         logger.warning("Could not log %s for session %s", kind, session_id, exc_info=True)
 
 
+ACCESS_EVERY = 1800.0  # one "viewed" per person and meeting per half hour, not per request
+_accessed: dict[tuple[str, str, str], float] = {}
+
+
+def log_access(app: AppContext, session_id: str, kind: str) -> None:
+    """On a firm's server, note who opened, played or exported a meeting (access.py), so "who
+    looked at this client's meeting" has an answer. Nothing for the desktop app or the admin
+    token. Never raises."""
+    import time
+
+    from .. import access
+
+    who = access.principal()
+    if who is None:
+        return
+    key = (who.user_id, session_id, kind)
+    now = time.monotonic()
+    if now - _accessed.get(key, -ACCESS_EVERY) < ACCESS_EVERY:
+        return
+    _accessed[key] = now
+    log(app, session_id, kind, by=who.name, user_id=who.user_id, role=who.role)
+
+
 def measure(path: Path, file_key: bytes | None) -> float | None:
     """An audio file's length, remembered while the file is unchanged."""
     from .parts import audio_seconds

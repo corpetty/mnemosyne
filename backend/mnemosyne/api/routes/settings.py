@@ -5,11 +5,13 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import create_model
 
+from ... import access
 from ...config import SECRET_FIELDS, Settings, config_file_path, save_settings
 from ...models.base import ApiModel
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
 
 
 # Every setting as it is sent to the UI (secrets blanked); derived from Settings so the
@@ -58,7 +60,7 @@ async def get_settings(ctx: AppContext = Depends(get_ctx)):
     return _response(ctx.settings)
 
 
-@router.put("", response_model=SettingsResponse)
+@router.put("", response_model=SettingsResponse, dependencies=ADMIN)
 async def update_settings(update: SettingsUpdate, ctx: AppContext = Depends(get_ctx)):
     current = ctx.settings.model_dump()
     provided = update.model_dump(exclude_unset=True)

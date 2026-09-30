@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ...export.obsidian import ObsidianExporter
 from ...models.base import ApiModel
+from ...services import history
 from ..context import AppContext, get_ctx
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ async def export_markdown(session_id: str, ctx: AppContext = Depends(get_ctx)):
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    history.log_access(ctx, session_id, "exported")
     return {
         "markdown": build_exporter(ctx, ctx.settings.obsidian_vault_path or ".").render(session)
     }
@@ -126,6 +128,7 @@ async def export_to_obsidian(session_id: str, ctx: AppContext = Depends(get_ctx)
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    history.log_access(ctx, session_id, "exported")
 
     try:
         path = await asyncio.to_thread(export_session, ctx, session, vault_path)

@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ... import access
 from ...jobs import Job
 from ...models.base import ApiModel
 from ...services.backup import (
@@ -16,6 +17,7 @@ from ...services.backup import (
 from ..context import AppContext, backup_runner, get_ctx
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
+ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
 
 
 class BackupStatus(ApiModel):
@@ -34,7 +36,7 @@ class RestoreResponse(ApiModel):
     restart_required: bool  # the backend restores on its next start
 
 
-@router.get("", response_model=BackupStatus)
+@router.get("", response_model=BackupStatus, dependencies=ADMIN)
 async def status(ctx: AppContext = Depends(get_ctx)):
     return BackupStatus(
         dir=str(backup_dir(ctx.settings)),
@@ -51,7 +53,7 @@ def _busy(ctx: AppContext) -> str | None:
     return "Wait for the running jobs to finish" if kinds else None
 
 
-@router.post("", response_model=Job)
+@router.post("", response_model=Job, dependencies=ADMIN)
 async def back_up(ctx: AppContext = Depends(get_ctx)):
     """Write a backup now (a `backup` job; its result is the BackupInfo)."""
     if ctx.active_recordings:
@@ -61,7 +63,7 @@ async def back_up(ctx: AppContext = Depends(get_ctx)):
     return ctx.jobs.submit("backup", backup_runner(ctx))
 
 
-@router.post("/restore", response_model=RestoreResponse)
+@router.post("/restore", response_model=RestoreResponse, dependencies=ADMIN)
 async def restore(request: RestoreRequest, ctx: AppContext = Depends(get_ctx)):
     """Restore a backup at the next start of the backend: the data there now is kept aside
     (pre-restore-<time>/ in the data folder), not deleted."""

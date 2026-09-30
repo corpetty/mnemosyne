@@ -70,6 +70,32 @@ outside the database, so they are checked even while encrypted meetings are lock
 starts (see below). `firm_mode`: a firm's server (docs/firm-server.md), where no cloud model
 provider exists.
 
+### People on a firm's server
+With `firm_mode` on, every `/api` request needs a person's token (or `api_token`, which acts as an
+admin). The request then runs as that person (`access.py`): an **advisor** sees only meetings they
+own (`Session.owner_id`, set when they create one), a **reviewer** reads all and changes only their
+own, an **admin** does everything. Someone else's meeting answers 404 to an advisor and 403 to a
+reviewer who tries to change it. Lists, search, Ask, tasks, people, topics, digests, jobs
+(`Job.owner_id`) and the WebSocket stream are filtered the same way; saved questions and digests are
+personal. Opening, playing and exporting a meeting adds `viewed` / `played` / `exported` to its
+history (at most once per person per half hour).
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/users/me` | who this token is (`id` "" for the desktop app or `api_token`), `role`, `firm_mode` |
+| GET | `/api/users` | everyone's name and role; emails and devices for admins |
+| POST | `/api/users` | admin: `{name, email, role}` → the person and a one-time invite `code` |
+| PATCH | `/api/users/{id}` | admin: `name`, `email`, `role`, `disabled` (the last enabled admin stays) |
+| POST | `/api/users/{id}/invite` | admin: a new invite code (valid 7 days, once) |
+| POST | `/api/users/{id}/signout` | admin: drop all their tokens |
+| POST | `/api/users/redeem` | no token needed: `{code, device}` → `{token, user}` |
+| POST | `/api/users/me/signout` | forget this token |
+
+The web app turns `<address>/?invite=<code>` into a token for that browser.
+`mnemosyne-backend users add|invite|list` does the same from the server's shell (for the first admin).
+Admin-only elsewhere: `PUT /api/settings`, storage report and cleanup, backups, turning encryption
+on or off, rebuilding the search index, pairing devices, editing voice profiles, diagnostics.
+
 ### The web app (`web_dir`)
 With `web_dir` set to the output of `pnpm build`, the backend serves the web app at every path
 outside `/api/`, `/ws`, `/health`, `/m` and the docs, without a token (the data behind `/api/` still

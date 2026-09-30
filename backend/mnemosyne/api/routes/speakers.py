@@ -2,12 +2,14 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ... import access
 from ...models.base import ApiModel
 from ...models.session import Session
 from ...models.speaker import SpeakerProfileSummary
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["speakers"])
+ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
 
 
 class RenameSpeakerRequest(ApiModel):
@@ -80,7 +82,11 @@ async def list_speakers(ctx: AppContext = Depends(get_ctx)):
     return [_summary(p) for p in ctx.repo.list_speakers()]
 
 
-@router.patch("/speakers/{speaker_id}", response_model=SpeakerProfileSummary)
+@router.patch(
+    "/speakers/{speaker_id}",
+    response_model=SpeakerProfileSummary,
+    dependencies=ADMIN,
+)
 async def rename_profile(
     speaker_id: str, request: RenameProfileRequest, ctx: AppContext = Depends(get_ctx)
 ):
@@ -95,7 +101,7 @@ async def rename_profile(
     return _summary(profile)
 
 
-@router.delete("/speakers/{speaker_id}")
+@router.delete("/speakers/{speaker_id}", dependencies=ADMIN)
 async def delete_profile(speaker_id: str, ctx: AppContext = Depends(get_ctx)):
     if not ctx.repo.delete_speaker(speaker_id):
         raise HTTPException(status_code=404, detail="Speaker not found")

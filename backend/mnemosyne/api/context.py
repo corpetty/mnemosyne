@@ -26,6 +26,7 @@ from ..services.session_service import SessionService
 from ..services.speaker_service import SpeakerService
 from ..services.storage_service import StorageService
 from ..services.summarization_service import SummarizationService
+from ..services.users import UserService
 from ..storage.sqlite import SessionRepository, import_json_sessions
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class AppContext:
     jobs: JobManager
     index: VectorIndex
     pairing: PairingService
+    users: UserService
     link: LinkService
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
     startup_problems: list[str] = field(default_factory=list)  # shown by the app
@@ -139,6 +141,7 @@ class AppContext:
             bus=bus,
             index=VectorIndex(repo, settings),
             pairing=PairingService(settings.data_dir / "paired_devices.json"),
+            users=UserService(settings.data_dir / "users.json"),
             link=LinkService(settings.data_dir, int(os.environ.get("MNEMOSYNE_BIND_PORT", "8008"))),
             jobs=JobManager(
                 bus,

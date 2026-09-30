@@ -11,6 +11,7 @@ from ...models.session import (
     Session,
     SessionSummary,
 )
+from ...services import history
 from ...services.combine import combine_runner
 from ...services.copilot import copilot_ask_runner
 from ...services.pipeline import transcribe_session
@@ -54,7 +55,9 @@ async def create_session(request: CreateSessionRequest, ctx: AppContext = Depend
 
 @router.get("/{session_id}", response_model=Session)
 async def get_session(session_id: str, ctx: AppContext = Depends(get_ctx)):
-    return _require(ctx, session_id)
+    session = _require(ctx, session_id)
+    history.log_access(ctx, session_id, "viewed")
+    return session
 
 
 @router.get("/{session_id}/stats", response_model=MeetingStats)
