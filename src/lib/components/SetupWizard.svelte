@@ -6,6 +6,7 @@
 	import { uiState } from '$lib/stores/ui.svelte.js';
 	import type { ProviderModels, SettingsUpdate, SystemInfo } from '$lib/types/index.js';
 	import DeviceSelector from './DeviceSelector.svelte';
+	import BrowserSources from './BrowserSources.svelte';
 
 	const STEPS = ['Welcome', 'Audio', 'Transcription', 'Summaries', 'Notes & calendar', 'Done'] as const;
 	let step = $state(0);
@@ -165,7 +166,11 @@
 				headphones). Use <em>check</em> to see your mic level and <em>test capture</em> to confirm system audio is really
 				recorded.
 			</p>
-			<DeviceSelector />
+			{#if audioState.inBrowser}
+				<BrowserSources />
+			{:else}
+				<DeviceSelector />
+			{/if}
 			{#if audioState.selectedDeviceIds.size === 0}
 				<p class="text-xs text-gray-500">Nothing selected yet; you can also choose later on a meeting's Recording tab.</p>
 			{/if}

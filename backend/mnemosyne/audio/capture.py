@@ -1,7 +1,14 @@
-"""PipeWire audio capture: device enumeration and multi-source recording."""
+"""PipeWire audio capture: device enumeration and multi-source recording.
+
+A browser can be the recorder instead (a firm's server, api/routes/record.py): its sources are
+recording processes like pw-record's, with a BrowserProcess and negative device ids, and the
+WebSocket that receives its audio writes the same kind of growing WAV file. Everything after
+(levels, health, live transcription, saving, recovery) reads the files and cannot tell.
+"""
 
 import asyncio
 import json
+import struct
 import subprocess
 import time
 import uuid
@@ -30,8 +37,89 @@ class AudioDevice:
 @dataclass
 class RecordingProcess:
     device_id: int
-    process: asyncio.subprocess.Process
+    process: asyncio.subprocess.Process  # or a BrowserProcess
     output_path: Path
+    # A browser's source ("mic" or "system") and what it called it; None for a PipeWire device,
+    # whose kind and description come from the device list.
+    source: str | None = None
+    label: str | None = None
+
+
+class BrowserProcess:
+    """Stands in for pw-record when a browser sends the audio: the recording WebSocket appends
+    to the file while `returncode` is None; stopping the capture ends it."""
+
+    def __init__(self):
+        self.returncode: int | None = None
+
+    def terminate(self) -> None:
+        self.returncode = 0
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+    async def wait(self) -> int | None:
+        return self.returncode
+
+
+BROWSER_SOURCES = {"mic": -1, "system": -2}  # device ids of a browser's sources
+
+
+def is_browser(recording: "RecordingSession") -> bool:
+    return any(isinstance(p.process, BrowserProcess) for p in recording.processes)
+
+
+def source_of(proc: RecordingProcess, devices: dict) -> str:
+    """ "system" for what the computer plays (a sink, or a browser's shared call audio)."""
+    if proc.source is not None:
+        return proc.source
+    device = devices.get(proc.device_id)
+    return "system" if (device is not None and device.is_output) else "mic"
+
+
+def label_of(proc: RecordingProcess, devices: dict) -> str:
+    if proc.label is not None:
+        return proc.label
+    device = devices.get(proc.device_id)
+    return device.description if device else str(proc.device_id)
+
+
+def wav_header(sample_rate: int, channels: int = 1) -> bytes:
+    """A 16-bit PCM WAV header for a file still being written: sizes are fixed on stop
+    (services/recovery.py repair_wav), and readers here go by the file size."""
+    return (
+        b"RIFF"
+        + struct.pack("<I", 0xFFFFFFFF)
+        + b"WAVEfmt "
+        + struct.pack(
+            "<IHHIIHH", 16, 1, channels, sample_rate, sample_rate * channels * 2, channels * 2, 16
+        )
+        + b"data"
+        + struct.pack("<I", 0xFFFFFFFF)
+    )
+
+
+def start_browser_recording(
+    sources: list[str], output_dir: Path, sample_rate: int, labels: dict[str, str]
+) -> "RecordingSession":
+    """A recording whose sources a browser sends (16-bit mono PCM at `sample_rate`)."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    recording = RecordingSession(session_id=str(uuid.uuid4())[:8], output_dir=output_dir)
+    defaults = {"mic": "Browser microphone", "system": "Call audio (browser)"}
+    for source in dict.fromkeys(sources):
+        path = output_dir / f"{recording.session_id}_browser_{source}.wav"
+        path.write_bytes(wav_header(sample_rate))
+        recording.processes.append(
+            RecordingProcess(
+                device_id=BROWSER_SOURCES[source],
+                process=BrowserProcess(),
+                output_path=path,
+                source=source,
+                label=(labels.get(source) or defaults[source])[:80],
+            )
+        )
+    recording.is_recording = True
+    return recording
 
 
 @dataclass
@@ -213,6 +301,12 @@ async def stop_recording(session: RecordingSession) -> list[Path | None]:
         path = rec.output_path
         if not path.exists() or path.stat().st_size == 0:
             return None
+        if isinstance(rec.process, BrowserProcess):
+            from ..services.recovery import repair_wav
+
+            if await asyncio.to_thread(repair_wav, path) <= 0:  # the header only: no audio
+                path.unlink(missing_ok=True)
+                return None
         return await convert_to_opus(path)
 
     return list(await asyncio.gather(*(one(rec) for rec in session.processes)))

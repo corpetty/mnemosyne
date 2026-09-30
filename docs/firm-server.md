@@ -130,6 +130,26 @@ Opening, playing and exporting a meeting is noted in that meeting's history with
 "Disable" and "Sign out everywhere" take effect at once. The people list lives in
 `/srv/mnemosyne/data/users.json` (tokens as hashes only).
 
+## Recording, for advisors
+
+Advisors record in the browser: New meeting → Record. Chrome or Edge asks for the microphone the
+first time, and, when "The call's audio" is ticked, what to share:
+
+- **Zoom or Teams in their own app (Windows):** choose *Entire screen* and tick *Share system
+  audio*. Only the sound is recorded, never the screen.
+- **A call in a browser tab (Google Meet, Zoom or Teams on the web):** choose that tab and tick
+  *Share tab audio*. This is also the way on a Mac, where Chrome shares a tab's sound but not the
+  system's.
+- **In the room:** untick the call's audio; the microphone records everyone. Put the laptop in
+  the middle of the table.
+- **Phone calls:** a softphone on the computer (Teams, Zoom Phone) is a call like any other. A
+  desk or mobile phone's own recording can be added afterwards with Import.
+
+The audio goes to the server as it is recorded, so the live transcript, the copilot and speaker
+labels work as on the desktop app, and closing the laptop loses seconds, not the meeting: the
+browser reconnects and carries on, and a recording no browser sends to for 10 minutes is saved
+and stopped on its own. Keep the tab open while recording (it can be in the background).
+
 ## Backups
 
 Settings → General → Backups: a folder on a second disk or a network share, every day, keeping at

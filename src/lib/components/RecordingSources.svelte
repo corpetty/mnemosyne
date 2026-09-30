@@ -21,7 +21,8 @@
 			{/if}
 		</span>
 	{/each}
-	{#if failing}
+	{#if failing && !audioState.inBrowser}
+		<!-- In a browser the connection comes back by itself (app/browser-capture.ts). -->
 		<button
 			onclick={restartCapture}
 			disabled={!!audioState.pending}

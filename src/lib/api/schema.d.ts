@@ -372,6 +372,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audio/start-browser": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Browser */
+        post: operations["start_browser_api_audio_start_browser_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audio/status/{session_id}": {
         parameters: {
             query?: never;
@@ -4382,6 +4399,29 @@ export interface components {
             /** Offset */
             offset: number;
         };
+        /**
+         * StartBrowserRecordingRequest
+         * @description Record from the browser that asks (a firm's server): it sends each source's audio to
+         *     /api/record/{recording_id}/{source} (api/routes/record.py).
+         */
+        StartBrowserRecordingRequest: {
+            /**
+             * Labels
+             * @default {}
+             */
+            labels: {
+                [key: string]: string;
+            };
+            /**
+             * Sample Rate
+             * @default 48000
+             */
+            sample_rate: number;
+            /** Session Id */
+            session_id?: string | null;
+            /** Sources */
+            sources: ("mic" | "system")[];
+        };
         /** StartRecordingRequest */
         StartRecordingRequest: {
             /** Device Ids */
@@ -5384,6 +5424,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["StartRecordingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartRecordingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_browser_api_audio_start_browser_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartBrowserRecordingRequest"];
             };
         };
         responses: {

@@ -15,6 +15,7 @@
 	import MeetingTypePicker from './MeetingTypePicker.svelte';
 	import MeetingBrief from './MeetingBrief.svelte';
 	import DeviceSelector from './DeviceSelector.svelte';
+	import BrowserSources from './BrowserSources.svelte';
 	import LiveTranscript from './LiveTranscript.svelte';
 	import RecordingSources from './RecordingSources.svelte';
 	import NotesEditor from './NotesEditor.svelte';
@@ -137,7 +138,11 @@
 							exclude={sessionState.activeSession.id}
 						/>
 					{/if}
-					<DeviceSelector />
+					{#if audioState.inBrowser}
+						<BrowserSources />
+					{:else}
+						<DeviceSelector />
+					{/if}
 					<AudioControls
 						onStartOverride={() => startRecording()}
 						onStopOverride={stopAndTranscribe}

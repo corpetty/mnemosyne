@@ -96,6 +96,18 @@ The web app turns `<address>/?invite=<code>` into a token for that browser.
 Admin-only elsewhere: `PUT /api/settings`, storage report and cleanup, backups, turning encryption
 on or off, rebuilding the search index, pairing devices, editing voice profiles, diagnostics.
 
+### Recording from a browser
+`POST /api/audio/start-browser` `{sources: ["mic", "system"], sample_rate, labels?, session_id?}`
+starts a recording like `/api/audio/start` (a new meeting or a new part), whose audio the browser
+sends itself: one WebSocket per source, `/api/record/{recording_id}/{source}` (token as `?token=`),
+binary messages of 16-bit little-endian mono PCM at `sample_rate`, appended to that source's WAV.
+Stop with `POST /api/audio/stop/{session_id}` after the sockets have sent what they hold. A
+reconnect carries on in the same file and replaces the previous connection (closed with 4409);
+an unknown recording or source closes with 4404, someone else's meeting with 4403, a stopped
+recording with 1000. Sources appear as devices `-1` (mic) and `-2` (system) in `levels` and
+`capture_health` events; `/api/audio/restart` answers 400 for them. A browser recording that has
+received nothing for 10 minutes is stopped (`recording_stopped`, reason `browser_gone`).
+
 ### The web app (`web_dir`)
 With `web_dir` set to the output of `pnpm build`, the backend serves the web app at every path
 outside `/api/`, `/ws`, `/health`, `/m` and the docs, without a token (the data behind `/api/` still

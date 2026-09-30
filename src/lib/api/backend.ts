@@ -111,6 +111,17 @@ export async function startRecording(
   });
 }
 
+/** Record from this browser (a firm's server): it then sends the audio itself
+ * (app/browser-capture.ts). */
+export async function startBrowserRecording(body: {
+  sources: ('mic' | 'system')[];
+  sample_rate: number;
+  labels: Record<string, string>;
+  session_id: string | null;
+}): Promise<StartRecordingResponse> {
+  return request('/api/audio/start-browser', { method: 'POST', body: JSON.stringify(body) });
+}
+
 export async function stopRecording(
   sessionId: string,
   transcribe?: boolean

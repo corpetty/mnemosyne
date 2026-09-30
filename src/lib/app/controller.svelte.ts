@@ -15,6 +15,7 @@ import {
   getSystemInfo,
   listSessions
 } from '$lib/api/backend.js';
+import { browserCapture } from '$lib/app/browser-capture.js';
 import { askState } from '$lib/stores/ask.svelte.js';
 import { digestState } from '$lib/stores/digest.svelte.js';
 import { audioState } from '$lib/stores/audio.svelte.js';
@@ -49,6 +50,11 @@ export const openSetup = () => openView('setup');
 
 export async function startRecording(fresh = false) {
   if (audioState.pending) return; // a click already on its way
+  // In the browser the microphone and share dialogs come first, straight from the click.
+  if (audioState.inBrowser && !(await audioState.acquireBrowser())) {
+    toastState.error(audioState.error ?? 'Could not start recording');
+    return;
+  }
   audioState.pending = 'starting'; // at once, before the session exists
   try {
     if (fresh || !sessionState.activeSession) {
@@ -676,6 +682,8 @@ async function signedIn(): Promise<boolean> {
 }
 
 export function connectApp(): () => void {
+  // Recording in this browser: say when sharing stops or the recording ends elsewhere.
+  browserCapture.onProblem = (message) => toastState.show(message, 'error', 20_000);
   let unsubscribeSessions: (() => void) | null = null;
   let unlistenShell: (() => void) | null = null;
   let cancelled = false;

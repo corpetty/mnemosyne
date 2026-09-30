@@ -52,14 +52,15 @@ class RecoveredRecording(ApiModel):
 def write_manifest(recording: RecordingSession, devices: dict[int, AudioDevice]) -> None:
     """Remember which file is which source. Device ids change after a reboot, so this cannot
     be looked up at recovery time."""
+    from ..audio.capture import label_of, source_of
+
     tracks = []
     for proc in recording.processes:
-        device = devices.get(proc.device_id)
         tracks.append(
             {
                 "device_id": proc.device_id,
-                "device_name": device.description if device else str(proc.device_id),
-                "source": "system" if (device is not None and device.is_output) else "mic",
+                "device_name": label_of(proc, devices),
+                "source": source_of(proc, devices),
                 "wav": proc.output_path.name,
             }
         )

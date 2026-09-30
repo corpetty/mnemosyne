@@ -6,11 +6,21 @@ import re
 import shutil
 import time
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 
-from ...audio.capture import list_devices, start_recording, stop_capture, stop_recording
+from ...audio.capture import (
+    is_browser,
+    label_of,
+    list_devices,
+    source_of,
+    start_browser_recording,
+    start_recording,
+    stop_capture,
+    stop_recording,
+)
 from ...audio.health import CaptureHealth
 from ...audio.levels import Level, SelfTestResult, sample_level, self_test
 from ...audio.mixer import mix_audio_files
@@ -35,6 +45,23 @@ router = APIRouter(prefix="/api/audio", tags=["audio"])
 class StartRecordingRequest(ApiModel):
     device_ids: list[int]
     session_id: str | None = None  # Existing session ID, or create new
+
+
+class StartBrowserRecordingRequest(ApiModel):
+    """Record from the browser that asks (a firm's server): it sends each source's audio to
+    /api/record/{recording_id}/{source} (api/routes/record.py)."""
+
+    sources: list[Literal["mic", "system"]]  # system: the call's audio, shared by the browser
+    sample_rate: int = 48000  # of the 16-bit mono PCM it will send
+    session_id: str | None = None
+    labels: dict[str, str] = {}  # what the browser calls each source ("MacBook microphone")
+
+
+BROWSER_GONE_SECONDS = 600.0  # a browser recording nobody sends audio to is stopped after this
+
+
+def _devices() -> dict:
+    return {d.id: d for d in list_devices()}
 
 
 class StartRecordingResponse(ApiModel):
@@ -65,6 +92,8 @@ async def _stream_levels(ctx: AppContext, session_id: str, recording, interval: 
     tails = {p.device_id: WavTail(p.output_path) for p in recording.processes}
     ids = [p.device_id for p in recording.processes]
     health = CaptureHealth({d: recording.labels.get(d, str(d)) for d in ids})
+    browser = is_browser(recording)
+    last_audio = time.monotonic()
     try:
         while True:
             await asyncio.sleep(interval)
@@ -73,6 +102,8 @@ async def _stream_levels(ctx: AppContext, session_id: str, recording, interval: 
                 try:
                     pcm = tails[proc.device_id].read_new()
                     levels[str(proc.device_id)] = level_of(pcm).model_dump()
+                    if pcm.size:
+                        last_audio = time.monotonic()
                 except Exception:
                     pcm = None
                 exited = recording.is_recording and proc.process.returncode is not None
@@ -81,6 +112,13 @@ async def _stream_levels(ctx: AppContext, session_id: str, recording, interval: 
                     _report_health(ctx, session_id, recording, health, change)
             if levels:
                 ctx.bus.publish({"type": "levels", "session_id": session_id, "levels": levels})
+            if browser and time.monotonic() - last_audio > BROWSER_GONE_SECONDS:
+                # The browser was closed without Stop (or lost its network for good): save
+                # what it sent instead of recording nothing forever.
+                if ctx.active_recordings.get(session_id) is recording:
+                    logger.warning("Session %s: no audio from the browser; stopping", session_id)
+                    asyncio.create_task(stop_active(ctx, session_id, reason="browser_gone"))
+                return
     except asyncio.CancelledError:
         pass
 
@@ -142,9 +180,27 @@ async def _apply_calendar(ctx: AppContext, session: Session) -> Session:
 async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ctx)):
     if not request.device_ids:
         raise HTTPException(status_code=400, detail="No devices selected")
+    return await _start(
+        ctx, request.session_id, lambda session: begin_recording(ctx, session, request.device_ids)
+    )
 
-    if request.session_id:
-        session = ctx.sessions.get_session(request.session_id)
+
+@router.post("/start-browser", response_model=StartRecordingResponse)
+async def start_browser(request: StartBrowserRecordingRequest, ctx: AppContext = Depends(get_ctx)):
+    if not request.sources:
+        raise HTTPException(
+            status_code=400, detail="Nothing to record: no microphone or call audio"
+        )
+    if not 8000 <= request.sample_rate <= 96000:
+        raise HTTPException(status_code=400, detail="Unsupported sample rate")
+    return await _start(
+        ctx, request.session_id, lambda session: begin_recording(ctx, session, [], browser=request)
+    )
+
+
+async def _start(ctx: AppContext, session_id: str | None, begin) -> StartRecordingResponse:
+    if session_id:
+        session = ctx.sessions.get_session(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
     else:
@@ -164,7 +220,7 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
         session = ctx.sessions.get_session(session.id) or session
         await _save_pending(ctx, session)
         session = ctx.sessions.get_session(session.id) or session
-        return await begin_recording(ctx, session, request.device_ids)
+        return await begin(session)
     finally:
         ctx.starting.discard(session.id)
 
@@ -188,14 +244,27 @@ async def _save_pending(ctx: AppContext, session: Session) -> None:
 
 
 async def begin_recording(
-    ctx: AppContext, session: Session, device_ids: list[int], keep_notes: bool = False
+    ctx: AppContext,
+    session: Session,
+    device_ids: list[int],
+    keep_notes: bool = False,
+    browser: StartBrowserRecordingRequest | None = None,
 ) -> StartRecordingResponse:
-    device_ids = await _apply_echo_mic(ctx, device_ids)
     output_dir = ctx.settings.recordings_dir / session.id
-    try:
-        recording = await start_recording(device_ids, output_dir)
-    except (RuntimeError, FileNotFoundError) as e:
-        raise HTTPException(status_code=503, detail=f"Could not start recording: {e}") from e
+    if browser is not None:
+        recording = await asyncio.to_thread(
+            start_browser_recording,
+            browser.sources,
+            output_dir,
+            browser.sample_rate,
+            browser.labels,
+        )
+    else:
+        device_ids = await _apply_echo_mic(ctx, device_ids)
+        try:
+            recording = await start_recording(device_ids, output_dir)
+        except (RuntimeError, FileNotFoundError) as e:
+            raise HTTPException(status_code=503, detail=f"Could not start recording: {e}") from e
     if not recording.processes:
         raise HTTPException(status_code=400, detail="None of the selected devices could be opened")
     # Recording again into a meeting that has audio adds a part; nothing is replaced. A part
@@ -205,13 +274,14 @@ async def begin_recording(
     taken = pending_parts(ctx.settings.recordings_dir / session.id, session)
     recording.part = max(next_part(session), max(taken, default=-1) + 1)
     try:
-        devices = {d.id: d for d in await asyncio.to_thread(list_devices)}
+        devices = {} if is_browser(recording) else await asyncio.to_thread(_devices)
     except Exception:
         devices = {}
     for proc in recording.processes:
         if (device := devices.get(proc.device_id)) is not None:
             recording.node_names[proc.device_id] = device.name
-            recording.labels[proc.device_id] = device.description
+        if proc.source is not None or device is not None:
+            recording.labels[proc.device_id] = label_of(proc, devices)
     try:
         write_manifest(recording, devices)
     except Exception:  # recovery then falls back to one "mic" track per file
@@ -316,7 +386,7 @@ def _finish_recording(ctx: AppContext, session_id: str, recording, want_transcri
 
         job.update("Encoding the recording", progress=0.1)
         try:
-            devices = {d.id: d for d in await asyncio.to_thread(list_devices)}
+            devices = {} if is_browser(recording) else await asyncio.to_thread(_devices)
         except Exception:
             devices = {}
         files = await stop_recording(recording)
@@ -329,12 +399,11 @@ def _finish_recording(ctx: AppContext, session_id: str, recording, want_transcri
             raise RuntimeError("Recording produced no audio")
         recordings: list[Recording] = []
         for proc, path in pairs:
-            device = devices.get(proc.device_id)
             recordings.append(
                 Recording(
-                    source="system" if (device is not None and device.is_output) else "mic",
+                    source=source_of(proc, devices),
                     device_id=proc.device_id,
-                    device_name=device.description if device else str(proc.device_id),
+                    device_name=label_of(proc, devices),
                     path=str(path),
                 )
             )
@@ -386,6 +455,10 @@ async def restart(session_id: str, ctx: AppContext = Depends(get_ctx)):
     recording = ctx.active_recordings.get(session_id)
     if recording is None or not recording.is_recording:
         raise HTTPException(status_code=404, detail="No active recording for this session")
+    if is_browser(recording):
+        raise HTTPException(
+            status_code=400, detail="A browser recording reconnects from the browser"
+        )
     ids = [p.device_id for p in recording.processes]
     names = dict(recording.node_names)
     job, _ = await stop_active(ctx, session_id, transcribe=False, reason="capture_restart")

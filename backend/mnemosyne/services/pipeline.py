@@ -533,14 +533,15 @@ def live_transcribe(app: AppContext, session_id: str, recording):
     def prepare():
         """Everything that blocks (pw-dump, importing torch, building models), in a thread:
         on the event loop it held up every request at the start of a recording."""
-        try:
-            devices = {d.id: d for d in list_devices()}
+        from ..audio.capture import is_browser, source_of
+
+        try:  # a browser's sources say what they are; a firm's server may have no PipeWire
+            devices = {} if is_browser(recording) else {d.id: d for d in list_devices()}
         except Exception:
             devices = {}
         sources = []
         for proc in recording.processes:
-            device = devices.get(proc.device_id)
-            is_system = device is not None and device.is_output
+            is_system = source_of(proc, devices) == "system"
             if multi:
                 speaker = settings.remote_speaker_name if is_system else settings.local_speaker_name
             else:
