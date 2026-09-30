@@ -210,7 +210,10 @@ def _classify(raw: str, digits: str, spelled: bool, before: str, after: str, inh
         return "dob" if nearest == "dob" else None
     if nearest in ("money", "phone"):
         return "ssn" if ssn_shape else None
-    if ssn_shape or (nearest == "ssn" and 7 <= n <= 10) or ("ssn" in present and n == 9):
+    # After "social", every number is (part of) one, however it was grouped or spelled ("one
+    # two three / four five / ..."): never shown, not even its last four. Not a year ("in 2024").
+    year = not spelled and n == 4 and digits[:2] in ("19", "20") and not _ENDING.search(before)
+    if ssn_shape or (nearest == "ssn" and not year) or ("ssn" in present and n == 9):
         return "ssn"
     if "routing" in present and n == 9 and _aba(digits):
         return "routing"
@@ -233,6 +236,30 @@ def _classify(raw: str, digits: str, spelled: bool, before: str, after: str, inh
     return "account"
 
 
+_GROUP_GAP = re.compile(r"[\s,.-]{1,3}")
+_ID_CUE = re.compile(
+    r"\b(?:" + "|".join(p for k, p in _CUES if k in ("ssn", "routing", "card", "account")) + r")\b",
+    re.I,
+)
+
+
+def _join_groups(text: str, candidates: list[tuple[int, int, bool]]) -> list[tuple[int, int, bool]]:
+    """Speech recognition splits a number said in groups ("123 456789", "1234 5678 9012"):
+    after an identifier's cue, digit groups with only spaces, commas or hyphens between them are
+    one number. Without a cue they stay apart (phone numbers, amounts)."""
+    out: list[tuple[int, int, bool]] = []
+    for start, end, spelled in candidates:
+        if out and not spelled and not out[-1][2]:
+            p_start, p_end, _ = out[-1]
+            cued = _ID_CUE.search(text[max(0, p_start - _CUE_WINDOW) : p_start])
+            if cued and _GROUP_GAP.fullmatch(text[p_end:start]):
+                if len(re.sub(r"[^0-9]", "", text[p_start:end])) <= 19:
+                    out[-1] = (p_start, end, False)
+                    continue
+        out.append((start, end, spelled))
+    return out
+
+
 def _find_identifiers(text: str, start_at: int = 0) -> list[tuple[int, int, str, str]]:
     """(start, end, kind, digits) of the financial identifiers in text, in order. Text before
     `start_at` is only context: what was said just before, e.g. the previous transcript line."""
@@ -246,6 +273,7 @@ def _find_identifiers(text: str, start_at: int = 0) -> list[tuple[int, int, str,
         [(m.start(), m.end(), False) for m in _DIGITS.finditer(text)]
         + [(m.start(), m.end(), True) for m in _SPELLED.finditer(text)]
     )
+    candidates = _join_groups(text, candidates)
     prev_end, prev_kind = 0, None
     for start, end, spelled in candidates:
         if any(s < end and start < e for s, e, _, _ in dobs):
@@ -307,9 +335,9 @@ def redact_transcript(segments: list) -> list:
     end of the previous one, where the question often is. A number spread over several words
     becomes one word holding the marker, spanning their times."""
     out = []
-    prev = ""
+    said = ""  # the end of what was said before: a cue, or a number begun on earlier lines
     for seg in segments:
-        context = prev[-_CUE_WINDOW:]
+        context = said[-2 * _CUE_WINDOW :]
         update: dict = {}
         text = redact_identifiers(seg.text, context)
         if text != seg.text:
@@ -319,7 +347,7 @@ def redact_transcript(segments: list) -> list:
             if words is not seg.words:
                 update["words"] = words
         out.append(seg.model_copy(update=update) if update else seg)
-        prev = seg.text
+        said = f"{said} {seg.text}"[-2 * _CUE_WINDOW :]
     return out
 
 

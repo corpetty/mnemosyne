@@ -267,3 +267,48 @@ def test_stored_transcript_is_redacted_when_on(client, ctx):
 def test_stored_transcript_is_kept_as_said_by_default(client, ctx):
     result = _transcribe(client, ctx, _CALL)
     assert "four five six" in result["session"]["transcript"][1]["text"]
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Sure, it's 123 456789",
+        "Sure, it's 123 45 6789",
+        "it's 123456 789",
+        "the last four are 6789",
+    ],
+)
+def test_a_social_split_into_groups_is_masked_whole(said):
+    """Speech recognition groups digits as it likes; after "social security number" on the line
+    before, none of them may show."""
+    out = redact_identifiers(said, "After the form I'll need your social security number.")
+    assert not any(d in out for d in ("123", "456", "6789")), out
+    assert "[SSN]" in out
+
+
+def test_groups_join_only_after_a_cue():
+    assert (
+        redact_identifiers("Call me at 415 555 0100 tomorrow") == "Call me at 415 555 0100 tomorrow"
+    )
+    assert "3456" in redact_identifiers("it's 1234 5678 9012 3456", "which card?")
+    assert "[card ••3456]" in redact_identifiers("it's 1234 5678 9012 3456", "which card?")
+
+
+def test_a_social_spelled_over_several_lines_is_masked():
+    """Seen with Parakeet: the number came out as three lines of its own."""
+    from mnemosyne.models.transcript import TranscriptSegment as T
+
+    lines = [
+        "For the form I'll need your social security number.",
+        "Sure.",
+        "It's one two three",
+        "Four five",
+        "Six seven eight nine",
+        "We moved it in 2024.",
+    ]
+    out = redact_transcript(
+        [T(text=x, speaker="A", start=i, end=i + 1) for i, x in enumerate(lines)]
+    )
+    texts = [s.text for s in out]
+    assert texts[2:5] == ["It's [SSN]", "[SSN]", "[SSN]"]
+    assert texts[5] == "We moved it in 2024."
