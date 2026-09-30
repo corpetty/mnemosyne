@@ -10,6 +10,7 @@
 	import ResourcesCard from './ResourcesCard.svelte';
 	import HistoryCard from './HistoryCard.svelte';
 	import RecordsCard from './RecordsCard.svelte';
+	import SupervisionCard from './SupervisionCard.svelte';
 	import CalendarCard from './CalendarCard.svelte';
 	import CopilotPanel from './CopilotPanel.svelte';
 	import MeetingActions from './MeetingActions.svelte';
@@ -164,6 +165,7 @@
 				</div>
 			{/if}
 		{:else if uiState.activeTab === 'transcript'}
+			<SupervisionCard />
 			<TranscriptView />
 		{:else if uiState.activeTab === 'summary'}
 			<SummaryView />

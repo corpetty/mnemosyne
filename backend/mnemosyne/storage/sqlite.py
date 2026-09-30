@@ -239,6 +239,28 @@ CREATE TABLE IF NOT EXISTS session_seals (
     chain TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS session_seals_session ON session_seals(session_id);
+-- Supervision (services/supervision.py): transcript lines with a compliance phrase, and
+-- reviewers' sign-offs. A meeting is reviewed when a review is newer than its newest flag.
+CREATE TABLE IF NOT EXISTS supervision_flags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    idx INTEGER NOT NULL,
+    start REAL NOT NULL,
+    speaker TEXT NOT NULL DEFAULT '',
+    phrase TEXT NOT NULL,
+    text TEXT NOT NULL,
+    found_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS supervision_flags_session ON supervision_flags(session_id);
+CREATE TABLE IF NOT EXISTS supervision_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    by_id TEXT NOT NULL DEFAULT '',
+    by TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS supervision_reviews_session ON supervision_reviews(session_id);
 -- Meetings and audio deleted: who, when, why. Outlives what it describes.
 CREATE TABLE IF NOT EXISTS deletions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1255,6 +1277,102 @@ class SessionRepository:
                 (start, start, end, end),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # ---- supervision (services/supervision.py) --------------------------
+
+    def set_flags(self, session_id: str, flags: list[dict], replace: bool) -> int:
+        """Store flagged lines ({idx, start, speaker, phrase, text}). A flag already there
+        keeps when it was found, so a meeting reviewed stays reviewed. `replace` drops the
+        ones no longer found (a new transcript from the audio); otherwise they stay, so an
+        edit never hides what was said. Returns how many flags are new."""
+        # By what was said and when, not the line's number: deleting or merging other lines
+        # renumbers it without making it a new flag.
+        key = lambda f: (f["phrase"], f["text"], round(f["start"], 2))  # noqa: E731
+        now = datetime.now().isoformat()
+        with self._lock, self._conn:
+            rows = self._conn.execute(
+                "SELECT id, start, phrase, text FROM supervision_flags WHERE session_id=?",
+                (session_id,),
+            ).fetchall()
+            have = {key(r): r["id"] for r in rows}
+            wanted = {key(f): f for f in flags}
+            if replace:
+                gone = [i for k, i in have.items() if k not in wanted]
+                self._conn.executemany(
+                    "DELETE FROM supervision_flags WHERE id=?", [(i,) for i in gone]
+                )
+            self._conn.executemany(
+                "UPDATE supervision_flags SET idx=?, speaker=? WHERE id=?",
+                [(f["idx"], f["speaker"], have[k]) for k, f in wanted.items() if k in have],
+            )
+            new = [f for k, f in wanted.items() if k not in have]
+            self._conn.executemany(
+                "INSERT INTO supervision_flags (session_id, idx, start, speaker, phrase, text,"
+                " found_at) VALUES (?,?,?,?,?,?,?)",
+                [
+                    (session_id, f["idx"], f["start"], f["speaker"], f["phrase"], f["text"], now)
+                    for f in new
+                ],
+            )
+        return len(new)
+
+    def flags(self, session_id: str) -> list[dict]:
+        if not self._readable(session_id):
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT idx, start, speaker, phrase, text, found_at FROM supervision_flags"
+                " WHERE session_id=? ORDER BY start, idx, id",
+                (session_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_review(self, session_id: str, note: str) -> None:
+        who = access.principal()
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO supervision_reviews (session_id, at, by_id, by, note)"
+                " VALUES (?,?,?,?,?)",
+                (
+                    session_id,
+                    datetime.now().isoformat(),
+                    who.user_id if who else "",
+                    who.name if who else "",
+                    note,
+                ),
+            )
+
+    def reviews(self, session_id: str) -> list[dict]:
+        if not self._readable(session_id):
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT at, by_id, by, note FROM supervision_reviews WHERE session_id=?"
+                " ORDER BY id",
+                (session_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def supervision_queue(self) -> list[dict]:
+        """Every visible meeting with flags: its flags' phrases, when the newest was found,
+        and its last review."""
+        sql = """
+        SELECT s.id, s.name, s.created_at, s.owner_id,
+               count(f.id) AS flags, group_concat(DISTINCT f.phrase) AS phrases,
+               max(f.found_at) AS last_found_at,
+               (SELECT r.at FROM supervision_reviews r WHERE r.session_id = s.id
+                ORDER BY r.id DESC LIMIT 1) AS reviewed_at,
+               (SELECT r.by FROM supervision_reviews r WHERE r.session_id = s.id
+                ORDER BY r.id DESC LIMIT 1) AS reviewed_by,
+               (SELECT r.note FROM supervision_reviews r WHERE r.session_id = s.id
+                ORDER BY r.id DESC LIMIT 1) AS note
+        FROM sessions s JOIN supervision_flags f ON f.session_id = s.id
+        GROUP BY s.id ORDER BY s.created_at DESC
+        """
+        visible = self.visible_ids()
+        with self._lock:
+            rows = self._conn.execute(sql).fetchall()
+        return [dict(r) for r in rows if visible is None or r["id"] in visible]
 
     # ---- search --------------------------------------------------------
 

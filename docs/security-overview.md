@@ -69,6 +69,9 @@ No usage data, analytics or recordings are sent to the software's authors or any
   meeting or its audio needs an admin and a written reason, and automatic clean-up leaves it alone.
 - **Legal hold.** A reviewer or admin can put a meeting on hold; then nobody can delete any of it.
 - **Deletion log.** Every deletion, with who, when and why, is kept after the meeting is gone.
+- **Supervision.** Lines where someone uses a phrase the firm lists ("guarantee", "can't lose",
+  "you should buy", ...) are flagged, and the meeting waits in the reviewer's queue until they mark
+  it reviewed with a note, which goes into its history. Editing a transcript never removes a flag.
 - **Export for an exam.** One meeting, or all meetings in a date range, as a single file: audio,
   transcripts, summaries, earlier versions, histories (consent, access), the seals, the deletion log
   and a checksum list that verifies nothing in the export changed.

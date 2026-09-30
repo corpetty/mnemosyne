@@ -1889,6 +1889,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/supervision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Meeting */
+        get: operations["meeting_api_sessions__session_id__supervision_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/supervision/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Review
+         * @description Mark the meeting's flags reviewed, with a note; kept in its history.
+         */
+        post: operations["review_api_sessions__session_id__supervision_review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/transcribe": {
         parameters: {
             query?: never;
@@ -2027,6 +2064,47 @@ export interface paths {
         get: operations["summary_styles_api_summary_styles_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/supervision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Queue
+         * @description Flagged meetings, the ones still to review first, newest first within each.
+         */
+        get: operations["queue_api_supervision_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/supervision/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan
+         * @description Every meeting against the current phrases (a `supervision_scan` job). Settings changes
+         *     start one on their own; this is for meetings from before supervision was on.
+         */
+        post: operations["scan_api_supervision_scan_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3033,6 +3111,24 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** Flag */
+        Flag: {
+            /**
+             * Found At
+             * Format: date-time
+             */
+            found_at: string;
+            /** Idx */
+            idx: number;
+            /** Phrase */
+            phrase: string;
+            /** Speaker */
+            speaker: string;
+            /** Start */
+            start: number;
+            /** Text */
+            text: string;
+        };
         /** FollowupRequest */
         FollowupRequest: {
             /**
@@ -3337,6 +3433,8 @@ export interface components {
             name: string;
             /** Role */
             role: string;
+            /** Supervision */
+            supervision: boolean;
         };
         /** MeetingRecord */
         MeetingRecord: {
@@ -3362,6 +3460,15 @@ export interface components {
             timeline: components["schemas"]["Turn"][];
             /** Turns */
             turns: number;
+        };
+        /** MeetingSupervision */
+        MeetingSupervision: {
+            /** Flags */
+            flags: components["schemas"]["Flag"][];
+            /** Reviewed */
+            reviewed: boolean;
+            /** Reviews */
+            reviews: components["schemas"]["Review"][];
         };
         /**
          * MeetingType
@@ -3629,6 +3736,32 @@ export interface components {
             /** Provider */
             provider: string;
         };
+        /** QueueItem */
+        QueueItem: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Flags */
+            flags: number;
+            /** Name */
+            name: string;
+            /** Note */
+            note: string;
+            /** Owner */
+            owner: string;
+            /** Phrases */
+            phrases: string[];
+            /** Reviewed */
+            reviewed: boolean;
+            /** Reviewed At */
+            reviewed_at: string | null;
+            /** Reviewed By */
+            reviewed_by: string;
+            /** Session Id */
+            session_id: string;
+        };
         /** Quote */
         Quote: {
             clip: components["schemas"]["Clip"] | null;
@@ -3783,6 +3916,26 @@ export interface components {
             kept_in: string;
             /** Name */
             name: string;
+        };
+        /** Review */
+        Review: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** By */
+            by: string;
+            /** Note */
+            note: string;
+        };
+        /** ReviewRequest */
+        ReviewRequest: {
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** ReviewedRequest */
         ReviewedRequest: {
@@ -4116,6 +4269,8 @@ export interface components {
             calendar_source?: string | null;
             /** Cloud Redaction */
             cloud_redaction?: boolean | null;
+            /** Compliance Phrases */
+            compliance_phrases?: string | null;
             /** Config Version */
             config_version?: number | null;
             /** Consent Script */
@@ -4286,6 +4441,8 @@ export interface components {
             summary_instructions?: string | null;
             /** Summary Style */
             summary_style?: string | null;
+            /** Supervision */
+            supervision?: boolean | null;
             /** Transcriber */
             transcriber?: string | null;
             /** Unload Models After Minutes */
@@ -4345,6 +4502,8 @@ export interface components {
             calendar_source: string;
             /** Cloud Redaction */
             cloud_redaction: boolean;
+            /** Compliance Phrases */
+            compliance_phrases: string;
             /** Config Version */
             config_version: number;
             /** Consent Script */
@@ -4521,6 +4680,8 @@ export interface components {
             summary_instructions: string;
             /** Summary Style */
             summary_style: string;
+            /** Supervision */
+            supervision: boolean;
             /** Transcriber */
             transcriber: string;
             /** Unload Models After Minutes */
@@ -8393,6 +8554,72 @@ export interface operations {
             };
         };
     };
+    meeting_api_sessions__session_id__supervision_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingSupervision"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_api_sessions__session_id__supervision_review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingSupervision"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     transcribe_api_sessions__session_id__transcribe_post: {
         parameters: {
             query?: never;
@@ -8663,6 +8890,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SummaryStyle"][];
+                };
+            };
+        };
+    };
+    queue_api_supervision_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueItem"][];
+                };
+            };
+        };
+    };
+    scan_api_supervision_scan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
         };

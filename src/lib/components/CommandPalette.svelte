@@ -14,6 +14,8 @@
 	import { listActionItems, listPeople, listTopics } from '$lib/api/backend.js';
 	import { exportActive, openSetup, openView, startRecording, stopAndTranscribe } from '$lib/app/controller.svelte.js';
 	import { fuzzyScore } from '$lib/app/fuzzy.js';
+	import { canReview } from '$lib/app/supervision.js';
+	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { askState } from '$lib/stores/ask.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -104,6 +106,7 @@
 			view('people', 'People'),
 			view('topics', 'Topics'),
 			view('digest', 'Weekly digest'),
+			...(canReview(connectionState.me) ? [view('review', 'Review flagged meetings')] : []),
 			settings('general', 'General'),
 			settings('recording', 'Recording'),
 			settings('transcription', 'Transcription'),

@@ -6,7 +6,7 @@ from ... import access
 from ...models.base import ApiModel
 from ...models.session import Session
 from ...models.speaker import SpeakerProfileSummary
-from ...services import records
+from ...services import records, supervision
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["speakers"])
@@ -45,6 +45,7 @@ async def rename_session_speaker(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     records.seal_later(ctx, session_id, "speaker renamed")
+    supervision.scan(ctx, session_id)  # flags show the new name
     ctx.bus.publish({"type": "session", "session_id": session_id, "status": session.status.value})
     return session
 

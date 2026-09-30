@@ -5,7 +5,7 @@ export type SettingsTab = 'general' | 'recording' | 'transcription' | 'ai' | 'no
 export type ShellStage = 'installing' | 'starting' | 'ready' | 'error' | null;
 
 /** What the main area shows when no meeting is open (an open meeting always wins). */
-export type View = 'home' | 'ask' | 'tasks' | 'people' | 'topics' | 'digest' | 'settings' | 'setup';
+export type View = 'home' | 'ask' | 'tasks' | 'people' | 'topics' | 'digest' | 'review' | 'settings' | 'setup';
 
 class UiState {
   view = $state<View>('home');

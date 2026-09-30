@@ -21,6 +21,7 @@
 	import SessionView from '$lib/components/SessionView.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
 	import SignInScreen from '$lib/components/SignInScreen.svelte';
+	import SupervisionPanel from '$lib/components/SupervisionPanel.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import StatusBar from '$lib/components/StatusBar.svelte';
 	import TasksPanel from '$lib/components/TasksPanel.svelte';
@@ -41,6 +42,7 @@
 		people: { component: PeoplePanel, width: 'max-w-4xl' },
 		topics: { component: TopicsPanel, width: 'max-w-3xl' },
 		digest: { component: DigestPanel, width: 'max-w-3xl' },
+		review: { component: SupervisionPanel, width: 'max-w-3xl' },
 		settings: { component: SettingsPanel as Component<{ onOpenSession?: () => void }>, width: 'max-w-3xl' },
 		setup: { component: SetupWizard as Component<{ onOpenSession?: () => void }>, width: 'max-w-2xl' }
 	};

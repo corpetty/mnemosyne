@@ -37,6 +37,7 @@ from .routes.sessions import router as sessions_router
 from .routes.settings import router as settings_router
 from .routes.speakers import router as speakers_router
 from .routes.storage import router as storage_router
+from .routes.supervision import router as supervision_router
 from .routes.system import router as system_router
 from .routes.tasks import router as tasks_router
 from .routes.topics import router as topics_router
@@ -77,6 +78,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(audio_router)
     app.include_router(record_router)
     app.include_router(records_router)
+    app.include_router(supervision_router)
     app.include_router(sessions_router)
     app.include_router(clips_router)
     app.include_router(encryption_router)

@@ -159,6 +159,8 @@
 				return `Put on legal hold (${d.reason})${d.by ? ` by ${d.by}` : ''}`;
 			case 'legal_hold_lifted':
 				return `Legal hold lifted${d.by ? ` by ${d.by}` : ''} (was: ${d.reason})`;
+			case 'supervision_reviewed':
+				return `Flagged lines reviewed${d.by ? ` by ${d.by}` : ''}${d.note ? `: ${d.note}` : ''}`;
 			case 'consent':
 				return `${CONSENT[d.consent as string] ?? 'Consent recorded'}${d.by ? ` (${d.by})` : ''}`;
 			case 'viewed':

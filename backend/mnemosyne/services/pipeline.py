@@ -252,6 +252,9 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
             from . import records
 
             await asyncio.to_thread(records.seal, app, session_id, "transcribed")
+            from . import supervision
+
+            supervision.scan(app, session_id, replace=True)  # a new transcript: its own flags
             app.repo.update_fields(session_id, speakers_reviewed=False)  # new labels to name
             if settings.auto_summarize and segments:
                 app.jobs.submit(

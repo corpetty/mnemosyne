@@ -82,7 +82,7 @@ history (at most once per person per half hour).
 
 | Method | Path | |
 |---|---|---|
-| GET | `/api/users/me` | who this token is (`id` "" for the desktop app or `api_token`), `role`, `firm_mode` |
+| GET | `/api/users/me` | who this token is (`id` "" for the desktop app or `api_token`), `role`, `firm_mode`, `supervision` |
 | GET | `/api/users` | everyone's name and role; emails and devices for admins |
 | POST | `/api/users` | admin: `{name, email, role}` → the person and a one-time invite `code` |
 | PATCH | `/api/users/{id}` | admin: `name`, `email`, `role`, `disabled` (the last enabled admin stays) |
@@ -133,6 +133,21 @@ A legal hold refuses both to everyone (403) and refuses combining. Every deletio
 | GET | `/api/records/deletions?start=&end=` | reviewer or admin: the deletion log |
 | POST | `/api/records/export` | `{session_ids}` or `{start, end}` → a `records_export` job; its result has `export_id` |
 | GET | `/api/records/exports/{export_id}` | the zip, for whoever started it (or an admin), once |
+
+### Supervision
+`services/supervision.py`, on with `supervision` or `firm_mode`. Lines of the final transcript with a
+phrase from `compliance_phrases` are flagged (`supervision_flags`). A new transcription replaces a
+meeting's flags; edits, speaker renames and combining only add, so editing a line never removes its
+flag. Changing the phrases (or turning supervision on) starts a `supervision_scan` job over every
+meeting. A meeting is `reviewed` when its last review is newer than its newest flag. All of these are
+for reviewers and admins (403 for advisors); `/api/users/me` has `supervision`.
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/supervision` | flagged meetings, unreviewed first: `flags`, `phrases`, `owner`, `reviewed`, last review |
+| GET | `/api/sessions/{id}/supervision` | `flags` (`idx`, `start`, `speaker`, `phrase`, `text`), `reviews`, `reviewed` |
+| POST | `/api/sessions/{id}/supervision/review` | `{note}`: mark reviewed (history `supervision_reviewed`) |
+| POST | `/api/supervision/scan` | admin: a `supervision_scan` job over every meeting (adds flags only) |
 
 ### The web app (`web_dir`)
 With `web_dir` set to the output of `pnpm build`, the backend serves the web app at every path

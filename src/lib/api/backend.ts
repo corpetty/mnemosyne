@@ -55,6 +55,8 @@ import type {
   MeetingRecord,
   RecordVersion,
   Deletion,
+  MeetingSupervision,
+  SupervisionQueueItem,
   SettingsResponse,
   SettingsUpdate,
   SpeakerProfile,
@@ -734,6 +736,22 @@ export async function getRecordVersion(sessionId: string, versionId: number): Pr
 
 export async function setLegalHold(sessionId: string, reason: string): Promise<MeetingRecord> {
   return request(`/api/sessions/${sessionId}/legal-hold`, { method: 'PUT', body: JSON.stringify({ reason }) });
+}
+
+export async function getSupervisionQueue(): Promise<SupervisionQueueItem[]> {
+  return request('/api/supervision');
+}
+
+export async function getMeetingSupervision(sessionId: string): Promise<MeetingSupervision> {
+  return request(`/api/sessions/${sessionId}/supervision`);
+}
+
+export async function markReviewed(sessionId: string, note: string): Promise<MeetingSupervision> {
+  return request(`/api/sessions/${sessionId}/supervision/review`, { method: 'POST', body: JSON.stringify({ note }) });
+}
+
+export async function scanForCompliancePhrases(): Promise<Job> {
+  return request('/api/supervision/scan', { method: 'POST' });
 }
 
 export async function startRecordsExport(body: {

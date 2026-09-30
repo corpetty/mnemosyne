@@ -15,6 +15,12 @@ def parse_keywords(text: str) -> list[str]:
     return out
 
 
+def keyword_pattern(keyword: str) -> re.Pattern:
+    """Whole words, any case, any run of spaces between words, either apostrophe."""
+    body = re.escape(keyword).replace(r"\ ", r"\s+").replace("'", "['\u2019]")
+    return re.compile(r"(?<!\w)" + body + r"(?!\w)", re.I)
+
+
 class MentionSpotter:
     """Finds the first keyword in a line, whole words only, case-insensitive, and stays
     quiet about a keyword for `cooldown` seconds of recording after it fired."""
@@ -22,10 +28,7 @@ class MentionSpotter:
     def __init__(self, keywords: list[str], cooldown: float = 20.0):
         self.keywords = keywords
         self.cooldown = cooldown
-        self._patterns = [
-            (k, re.compile(r"(?<!\w)" + re.escape(k).replace(r"\ ", r"\s+") + r"(?!\w)", re.I))
-            for k in keywords
-        ]
+        self._patterns = [(k, keyword_pattern(k)) for k in keywords]
         self._last: dict[str, float] = {}
 
     def __bool__(self) -> bool:

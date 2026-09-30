@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from ... import access
 from ...models.base import ApiModel
+from ...services import supervision
 from ...services.users import InvalidInvite, User
 from ..context import AppContext, get_ctx
 
@@ -25,6 +26,7 @@ class Me(ApiModel):
     email: str
     role: str
     firm_mode: bool
+    supervision: bool  # flagged meetings to review (services/supervision.py)
 
 
 class UserDevice(ApiModel):
@@ -95,7 +97,14 @@ def _info(u: User, full: bool) -> UserInfo:
 async def me(ctx: AppContext = Depends(get_ctx)):
     p = access.principal()
     if p is None:
-        return Me(id="", name="", email="", role=access.ADMIN, firm_mode=ctx.settings.firm_mode)
+        return Me(
+            id="",
+            name="",
+            email="",
+            role=access.ADMIN,
+            firm_mode=ctx.settings.firm_mode,
+            supervision=supervision.enabled(ctx.settings),
+        )
     user = ctx.users.get(p.user_id)
     return Me(
         id=p.user_id,
@@ -103,6 +112,7 @@ async def me(ctx: AppContext = Depends(get_ctx)):
         email=user.email if user else "",
         role=p.role,
         firm_mode=ctx.settings.firm_mode,
+        supervision=supervision.enabled(ctx.settings),
     )
 
 

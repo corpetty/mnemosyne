@@ -678,13 +678,25 @@ async function redeemInviteFromUrl() {
 
 /** Who is signed in; false when the server wants someone and nobody (valid) is. */
 async function signedIn(): Promise<boolean> {
-  if (!connectionState.authRequired) return true;
+  if (!connectionState.authRequired) {
+    await refreshMe(); // the desktop app: an admin, and whether supervision is on
+    return true;
+  }
   try {
     connectionState.me = await getMe();
     return true;
   } catch (e) {
     if (e instanceof Error && e.message.startsWith('401')) return false;
     throw e;
+  }
+}
+
+/** Reload who this is and what the server has on for them (after settings change). */
+export async function refreshMe(): Promise<void> {
+  try {
+    connectionState.me = await getMe();
+  } catch {
+    // An older backend without /api/users/me: nothing role-dependent to show.
   }
 }
 

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { deleteSpeakerProfile, getSettings, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
-	import { loadAutoRecordSettings, openSetup } from '$lib/app/controller.svelte.js';
+	import { loadAutoRecordSettings, openSetup, refreshMe } from '$lib/app/controller.svelte.js';
 	import { updateState } from '$lib/stores/update.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -120,6 +120,8 @@
 				live_transcription: v.live_transcription,
 				require_consent: v.require_consent,
 				records_retention_years: v.records_retention_years,
+				supervision: v.supervision,
+				compliance_phrases: v.compliance_phrases,
 				consent_script: v.consent_script,
 				live_transcriber: v.live_transcriber,
 				live_interval_seconds: v.live_interval_seconds,
@@ -232,6 +234,7 @@
 			}
 			loadAutoRecordSettings();
 			calendarState.start(); // the calendar may have been turned on, off or changed
+			void refreshMe(); // supervision on or off shows or hides the Review view
 			secrets = emptySecrets();
 			providers = await listModels();
 			toastState.success('Settings saved');
@@ -380,6 +383,23 @@
 			<span class={labelClass}>Records period (years; 0 = off): deleting a meeting or its audio sooner needs an admin and a reason</span>
 			<input type="number" min="0" max="30" bind:value={form.records_retention_years} disabled={locked('records_retention_years')} class={inputClass} />
 		</label>
+		<section aria-label="Supervision">
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">Supervision</h3>
+			<p class="text-xs text-gray-500 mb-3">
+				Lines of a meeting's transcript that use one of these phrases are flagged, and the meeting waits in the Review view
+				until a reviewer marks it reviewed. A flag is a line to read in context, not a finding. Always on on a firm's server.
+			</p>
+			{#if !connectionState.me?.firm_mode}
+				<label class="flex items-center gap-2 mb-2">
+					<input type="checkbox" bind:checked={form.supervision} disabled={locked('supervision')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Flag compliance phrases</span>
+				</label>
+			{/if}
+			<label class="block">
+				<span class={labelClass}>Phrases (comma-separated; changing them checks every meeting again)</span>
+				<textarea rows="3" bind:value={form.compliance_phrases} disabled={locked('compliance_phrases')} class={inputClass}></textarea>
+			</label>
+		</section>
 	{/if}
 	{#if tab === 'general'}
 		<!-- Connection (stored in this app instance, not on the backend) -->

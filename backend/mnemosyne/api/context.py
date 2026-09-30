@@ -159,7 +159,15 @@ class AppContext:
 
     async def apply_settings(self, settings: Settings) -> None:
         """Swap in new settings and rebuild anything that depends on them."""
+        from ..services import supervision
+
+        before = self.settings
         self.settings = settings
+        if supervision.enabled(settings) and (
+            not supervision.enabled(before)
+            or settings.compliance_phrases != before.compliance_phrases
+        ):
+            self.submit_supervision_scan()
         self.summarizer = SummarizationService(settings)
         self.summarizer.name_source = self.known_names
         self.speakers.threshold = settings.speaker_match_threshold
@@ -174,6 +182,20 @@ class AppContext:
             self.calendar = CalendarService(calendar_source(settings))
         await self.models.apply_settings(settings)
         await self.apply_remote_access()
+
+    def submit_supervision_scan(self):
+        """Every meeting against the current compliance phrases, as a `supervision_scan` job."""
+        import asyncio
+
+        from ..services import supervision
+
+        async def run(job) -> dict:
+            job.update("Looking for compliance phrases", progress=0.0)
+            return await asyncio.to_thread(
+                supervision.scan_all, self, lambda f: job.update(progress=f)
+            )
+
+        return self.jobs.submit("supervision_scan", run)
 
     async def apply_remote_access(self) -> None:
         relays = [u.strip() for u in self.settings.remote_relays.split(",") if u.strip()]

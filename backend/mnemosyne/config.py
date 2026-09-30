@@ -221,6 +221,16 @@ class Settings(BaseSettings):
     # Records (services/records.py): for this many years after a meeting, deleting it or its
     # audio needs an admin and a reason, and audio retention leaves it alone. 0 = off.
     records_retention_years: int = 0
+    # Supervision (services/supervision.py): lines of a meeting's final transcript with one of
+    # these phrases (comma- or line-separated) are flagged, and a reviewer marks each flagged
+    # meeting reviewed. Always on in firm mode.
+    supervision: bool = False
+    compliance_phrases: str = (
+        "guarantee, guaranteed, can't lose, cannot lose, risk-free, risk free, no risk, "
+        "sure thing, you should buy, you should sell, double your money, beat the market, "
+        "inside information, insider information, off the books, cash only, "
+        "don't tell compliance, between you and me"
+    )
     consent_script: str = (
         "Before we start: I'd like to record this conversation so I can keep accurate notes. "
         "The recording stays on our firm's own server. Is that all right with you?"

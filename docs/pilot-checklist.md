@@ -13,7 +13,8 @@ docs/firm-server.md; the compliance officer's overview is docs/security-overview
 - [ ] The compliance officer has read docs/security-overview.md and agreed:
   - [ ] the **consent wording** (Settings → Recording → Consent),
   - [ ] the **records period** (Settings → General),
-  - [ ] whether identifiers are also masked in stored transcripts (Settings → AI).
+  - [ ] whether identifiers are also masked in stored transcripts (Settings → AI),
+  - [ ] the **supervision phrases** (Settings → General → Supervision).
 - [ ] People added (Settings → General → People and access): the admin, each advisor, the
       compliance officer as reviewer. Each has opened their own invite link.
 - [ ] The **demo meeting**: `python3 scripts/make-demo-meeting.py`, then Import the WAV and name it
@@ -30,7 +31,8 @@ docs/firm-server.md; the compliance officer's overview is docs/security-overview
 
 - [ ] After the first week: review a few real meetings with the advisors and the compliance
       officer. Transcript quality, summaries, client facts, anything missed or wrong.
-- [ ] Weekly: the server's check script, and that backups are arriving.
+- [ ] Weekly: the reviewer works through the Review view; the server's check script; that backups
+      are arriving.
 - [ ] Problems: note the meeting and the time; the admin's Settings → General → Troubleshooting
       has "Copy diagnostics" (settings and recent log lines, no recordings or transcripts; the log
       can name meetings, so read it before sending it outside the firm).

@@ -6,6 +6,7 @@
 	import { uiState, type View } from '$lib/stores/ui.svelte.js';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
 	import { signOut } from '$lib/api/backend.js';
+	import { canReview } from '$lib/app/supervision.js';
 
 	async function signOutHere() {
 		try {
@@ -16,13 +17,19 @@
 		}
 	}
 
-	const NAV: { view: View; label: string; title: string }[] = [
+	const BASE_NAV: { view: View; label: string; title: string }[] = [
 		{ view: 'ask', label: 'Ask', title: 'Ask across all meetings' },
 		{ view: 'tasks', label: 'Tasks', title: 'Action items from all meetings' },
 		{ view: 'people', label: 'People', title: 'People across your meetings' },
 		{ view: 'topics', label: 'Topics', title: 'Follow a topic across meetings' },
 		{ view: 'digest', label: 'Digest', title: 'Digest of a week of meetings' }
 	];
+	// Reviewers and admins, when supervision is on: meetings with flagged lines.
+	const NAV = $derived(
+		canReview(connectionState.me)
+			? [...BASE_NAV, { view: 'review' as View, label: 'Review', title: 'Meetings with flagged lines to review' }]
+			: BASE_NAV
+	);
 
 	const active = (v: View) => uiState.view === v && !sessionState.activeSession;
 	const status = $derived(

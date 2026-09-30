@@ -222,6 +222,9 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
     )
     if segments:
         app.sessions.set_transcript(target.id, segments)
+        from . import supervision
+
+        supervision.scan(app, target.id)
     embeddings = dict(app.repo.get_session_embeddings(target.id))
     for label, vector in app.repo.get_session_embeddings(other.id).items():
         embeddings.setdefault(relabel.get(label, label), vector)
