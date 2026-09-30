@@ -154,6 +154,29 @@ labels work as on the desktop app, and closing the laptop loses seconds, not the
 browser reconnects and carries on, and a recording no browser sends to for 10 minutes is saved
 and stopped on its own. Keep the tab open while recording (it can be in the background).
 
+## Records
+
+With no archiving vendor, Mnemosyne is where the firm's meeting records live:
+
+- **Nothing is overwritten.** Editing a transcript, renaming a speaker, transcribing or summarizing
+  again keeps the earlier version (each meeting's Record card lists them, with who and when).
+- **Sealed.** After each transcription, summary and edit, the meeting's content and the SHA-256 of
+  each audio file are sealed, each seal chained to the one before. The Record card checks the chain
+  against what is there now; anything changed outside the app (a database row, a swapped file)
+  shows as "changed outside the app". Someone who can rewrite the whole database could rewrite the
+  chain as well, which is why the chain head also goes into every export and backup.
+- **Kept.** Settings → General → Records period (years): until then, deleting a meeting or its
+  audio needs an admin and a reason, and audio retention leaves it alone. The firm's compliance
+  officer decides the number (six years is common). A reviewer or an admin can put a meeting on
+  **legal hold**: then nobody can delete anything of it.
+- **Deletions are logged** with who, when and why, and the log outlives the meeting (Settings →
+  General → Records → the deletion log).
+- **Export for an exam**: one meeting (its Record card) or every meeting in a date range (Settings
+  → General → Records) as a zip: audio, transcripts, summaries, earlier versions, history
+  (recordings, consent, who opened what), seals, the deletion log, and `SHA256SUMS` to check
+  nothing changed. The zip holds the audio unencrypted: it can be downloaded once, and is removed
+  from the server a day after it was made even if nobody fetches it.
+
 ## Backups
 
 Settings → General → Backups: a folder on a second disk or a network share, every day, keeping at

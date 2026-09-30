@@ -9,6 +9,7 @@
 	import AgendaCard from './AgendaCard.svelte';
 	import ResourcesCard from './ResourcesCard.svelte';
 	import HistoryCard from './HistoryCard.svelte';
+	import RecordsCard from './RecordsCard.svelte';
 	import CalendarCard from './CalendarCard.svelte';
 	import CopilotPanel from './CopilotPanel.svelte';
 	import MeetingActions from './MeetingActions.svelte';
@@ -154,6 +155,7 @@
 						</p>
 					{/if}
 					<HistoryCard />
+					<RecordsCard />
 					<p class="text-xs text-gray-600">
 						Shortcuts: <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+R</kbd> Record
 						&middot; <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+S</kbd> Stop

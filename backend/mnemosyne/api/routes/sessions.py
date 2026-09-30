@@ -118,7 +118,10 @@ async def rename_session(
 
 
 @router.delete("/{session_id}")
-async def delete_session(session_id: str, ctx: AppContext = Depends(get_ctx)):
+async def delete_session(session_id: str, reason: str = "", ctx: AppContext = Depends(get_ctx)):
+    """Delete a meeting. Within the records period an admin gives a `reason`; never on legal
+    hold; logged either way (services/records.py)."""
+    session = _require(ctx, session_id)
     # Not under a recorder, an encoder or a transcription writing into it.
     if session_id in ctx.active_recordings or session_id in ctx.starting:
         raise HTTPException(status_code=409, detail="Stop the recording first")
@@ -129,6 +132,12 @@ async def delete_session(session_id: str, ctx: AppContext = Depends(get_ctx)):
         raise HTTPException(
             status_code=409, detail="The meeting is busy; try again when it is done"
         )
+    from ...services.records import check_delete
+
+    try:
+        check_delete(ctx, session, "meeting", reason)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if not ctx.sessions.delete_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"message": "Session deleted"}
@@ -196,6 +205,8 @@ async def combine(session_id: str, request: CombineRequest, ctx: AppContext = De
             raise HTTPException(status_code=409, detail=f"“{session.name}” is being recorded")
         if ctx.jobs.list(session_id=sid, active_only=True):
             raise HTTPException(status_code=409, detail=f"“{session.name}” is busy; try again soon")
+        if session.legal_hold:
+            raise HTTPException(status_code=409, detail=f"“{session.name}” is on legal hold")
     return ctx.jobs.submit("combine", combine_runner(ctx, session_id, request.other_id), session_id)
 
 

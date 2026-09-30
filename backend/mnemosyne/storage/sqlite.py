@@ -216,6 +216,41 @@ CREATE TABLE IF NOT EXISTS session_assets (
     added_at TEXT NOT NULL,
     PRIMARY KEY (session_id, asset_id)
 );
+-- Records (services/records.py). Earlier transcripts and summaries, kept when replaced.
+CREATE TABLE IF NOT EXISTS session_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    by TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS session_versions_session ON session_versions(session_id);
+-- Seals: a hash of the meeting's content and audio files, chained to the previous seal.
+CREATE TABLE IF NOT EXISTS session_seals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    audio TEXT NOT NULL DEFAULT '{}',
+    prev TEXT NOT NULL DEFAULT '',
+    chain TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS session_seals_session ON session_seals(session_id);
+-- Meetings and audio deleted: who, when, why. Outlives what it describes.
+CREATE TABLE IF NOT EXISTS deletions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    what TEXT NOT NULL,
+    by TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT ''
+);
 """
 SCHEMA = SCHEMA.replace("{FTS_TRIGGERS}", FTS_TRIGGERS)
 
@@ -391,6 +426,11 @@ class SessionRepository:
             )
         if "crm" not in cols:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN crm TEXT NOT NULL DEFAULT '{}'")
+        # A legal hold's reason ("" = none): no deleting the meeting or its audio (records.py).
+        if "legal_hold" not in cols:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN legal_hold TEXT NOT NULL DEFAULT ''"
+            )
         self._conn.commit()
 
     def _migrate_fts_rowids(self) -> None:
@@ -599,6 +639,7 @@ class SessionRepository:
             agenda=[AgendaItem.model_validate(a) for a in json.loads(row["agenda"] or "[]")],
             meeting_type=row["meeting_type"],
             owner_id=row["owner_id"],
+            legal_hold=row["legal_hold"],
             assets=[_asset(r) for r in asset_rows],
             external_notes=[
                 ExternalNotes(
@@ -720,6 +761,10 @@ class SessionRepository:
             raise ValueError(f"Cannot update fields: {sorted(bad)}")
         if not fields:
             return self.get(session_id)
+        if "summary" in fields:
+            before = self.get(session_id)
+            if before is not None and before.summary and before.summary != fields["summary"]:
+                self.keep_version(before, "summarized again")
         values = []
         sets = []
         for key, value in fields.items():
@@ -748,6 +793,9 @@ class SessionRepository:
 
     def replace_segments(self, session_id: str, segments: list[TranscriptSegment]) -> None:
         self._check_write(session_id)
+        before = self.get(session_id)
+        if before is not None and before.transcript and before.transcript != segments:
+            self.keep_version(before, "transcribed again")
         with self._lock, self._conn:
             self._write_segments(session_id, segments)
             self._conn.execute(
@@ -1047,6 +1095,8 @@ class SessionRepository:
             return None
         before = list(session.transcript)
         segments = edit(list(before))
+        if segments != before:
+            self.keep_version(session, "edited")
         speakers = list(dict.fromkeys(s.speaker for s in segments if s.speaker != "UNKNOWN"))
         # Keep participants that still appear, in their existing order, then new ones.
         participants = [p for p in session.participants if p in speakers]
@@ -1076,6 +1126,135 @@ class SessionRepository:
                 (json.dumps(participants), datetime.now().isoformat(), session_id),
             )
         return self.get(session_id)
+
+    # ---- records (services/records.py) -------------------------------
+
+    def keep_version(self, before: Session | None, reason: str) -> None:
+        """Keep a meeting's transcript and summary as they were `before` a change (the caller
+        knows the content does change); nothing when that is already the last version."""
+        from .records import canonical, content_hash, content_of
+
+        if before is None or not (before.transcript or before.summary):
+            return
+        session_id = before.id
+        content = content_of(before)
+        digest = content_hash(content)
+        who = access.principal()
+        with self._lock, self._conn:
+            last = self._conn.execute(
+                "SELECT content_hash FROM session_versions WHERE session_id=? ORDER BY id DESC",
+                (session_id,),
+            ).fetchone()
+            if last is not None and last["content_hash"] == digest:
+                return
+            self._conn.execute(
+                "INSERT INTO session_versions (session_id, at, reason, by, content, content_hash)"
+                " VALUES (?,?,?,?,?,?)",
+                (
+                    session_id,
+                    datetime.now().isoformat(),
+                    reason,
+                    who.name if who else "",
+                    canonical(content).decode(),
+                    digest,
+                ),
+            )
+
+    def versions(self, session_id: str, with_content: bool = False) -> list[dict]:
+        if not self._readable(session_id):
+            return []
+        cols = "id, at, reason, by, content_hash" + (", content" if with_content else "")
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {cols} FROM session_versions WHERE session_id=? ORDER BY id",
+                (session_id,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            v = {k: r[k] for k in ("id", "at", "reason", "by", "content_hash")}
+            if with_content:
+                v["content"] = json.loads(r["content"])
+            out.append(v)
+        return out
+
+    def add_seal(self, session_id: str, reason: str, content: str, audio: dict) -> dict | None:
+        """Chain a new seal to the meeting's last one; None when nothing changed since."""
+        from .records import chain_hash
+
+        at = datetime.now().isoformat()
+        with self._lock, self._conn:
+            last = self._conn.execute(
+                "SELECT content_hash, audio, chain FROM session_seals WHERE session_id=?"
+                " ORDER BY id DESC",
+                (session_id,),
+            ).fetchone()
+            if (
+                last is not None
+                and last["content_hash"] == content
+                and json.loads(last["audio"]) == audio
+            ):
+                return None
+            prev = last["chain"] if last is not None else ""
+            chain = chain_hash(prev, content, audio, at, reason)
+            self._conn.execute(
+                "INSERT INTO session_seals (session_id, at, reason, content_hash, audio, prev,"
+                " chain) VALUES (?,?,?,?,?,?,?)",
+                (session_id, at, reason, content, json.dumps(audio, sort_keys=True), prev, chain),
+            )
+        return {"at": at, "reason": reason, "content_hash": content, "chain": chain}
+
+    def seals(self, session_id: str) -> list[dict]:
+        if not self._readable(session_id):
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT at, reason, content_hash, audio, prev, chain FROM session_seals"
+                " WHERE session_id=? ORDER BY id",
+                (session_id,),
+            ).fetchall()
+        return [{**dict(r), "audio": json.loads(r["audio"])} for r in rows]
+
+    def protected_ids(self, since: str) -> set[str]:
+        """Meetings on legal hold, and (with `since`, an ISO date) created since then."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM sessions WHERE legal_hold<>'' OR (?<>'' AND created_at>=?)",
+                (since, since),
+            ).fetchall()
+        return {r["id"] for r in rows}
+
+    def set_legal_hold(self, session_id: str, reason: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET legal_hold=? WHERE id=?", (reason.strip(), session_id)
+            )
+
+    def log_deletion(self, session: Session, what: str, by: str, role: str, reason: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO deletions (at, session_id, name, created_at, what, by, role, reason)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    datetime.now().isoformat(),
+                    session.id,
+                    session.name,
+                    session.created_at.isoformat(),
+                    what,
+                    by,
+                    role,
+                    reason,
+                ),
+            )
+
+    def deletions(self, start: str = "", end: str = "") -> list[dict]:
+        """Deleted meetings and audio (at within [start, end), ISO dates; blank = open)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT at, session_id, name, created_at, what, by, role, reason FROM deletions"
+                " WHERE (?='' OR at>=?) AND (?='' OR at<?) ORDER BY at",
+                (start, start, end, end),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     # ---- search --------------------------------------------------------
 
@@ -1641,6 +1820,8 @@ class SessionRepository:
         session = self.get(session_id)
         if session is None:
             return None
+        if old != new and any(s.speaker == old for s in session.transcript):
+            self.keep_version(session, f"speaker {old} renamed")
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE segments SET speaker=? WHERE session_id=? AND speaker=?",

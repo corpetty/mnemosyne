@@ -218,6 +218,9 @@ class Settings(BaseSettings):
     # informed, in the room, one party where the law allows); it goes into the meeting's
     # history. Always on in firm mode. consent_script: what to read out, shown with it.
     require_consent: bool = False
+    # Records (services/records.py): for this many years after a meeting, deleting it or its
+    # audio needs an admin and a reason, and audio retention leaves it alone. 0 = off.
+    records_retention_years: int = 0
     consent_script: str = (
         "Before we start: I'd like to record this conversation so I can keep accurate notes. "
         "The recording stays on our firm's own server. Is that all right with you?"

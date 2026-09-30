@@ -17,6 +17,7 @@
 	import ReportProblem from './ReportProblem.svelte';
 	import EncryptionSettings from './EncryptionSettings.svelte';
 	import FirmPeopleSettings from './FirmPeopleSettings.svelte';
+	import RecordsSettings from './RecordsSettings.svelte';
 	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
 	// A firm's server: settings belong to its admins (advisors and reviewers only read them).
@@ -118,6 +119,7 @@
 				per_source_transcription: v.per_source_transcription,
 				live_transcription: v.live_transcription,
 				require_consent: v.require_consent,
+				records_retention_years: v.records_retention_years,
 				consent_script: v.consent_script,
 				live_transcriber: v.live_transcriber,
 				live_interval_seconds: v.live_interval_seconds,
@@ -371,6 +373,13 @@
 	{/if}
 	{#if tab === 'general' && firmAdmin}
 		<FirmPeopleSettings />
+	{/if}
+	{#if tab === 'general' && !readOnly}
+		<RecordsSettings />
+		<label class="block max-w-xs">
+			<span class={labelClass}>Records period (years; 0 = off): deleting a meeting or its audio sooner needs an admin and a reason</span>
+			<input type="number" min="0" max="30" bind:value={form.records_retention_years} disabled={locked('records_retention_years')} class={inputClass} />
+		</label>
 	{/if}
 	{#if tab === 'general'}
 		<!-- Connection (stored in this app instance, not on the backend) -->

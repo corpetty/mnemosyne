@@ -257,6 +257,13 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
         other_name=other.name,
         parts=[n for n, piece in enumerate(all_pieces) if piece.session.id == other.id],
     )
+    from .. import access
+
+    who = access.principal()
+    app.repo.log_deletion(
+        other, "meeting", who.name if who else "", who.role if who else "",
+        f"combined into “{target.name}” ({target.id})",
+    )  # fmt: skip
     app.sessions.delete_session(other.id)
     logger.info("Meeting %s combined into %s (%d parts)", other.id, target.id, len(all_pieces))
     return {"parts": len(all_pieces), "seconds": round(offset, 1), "removed": other.id}

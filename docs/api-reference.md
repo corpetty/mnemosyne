@@ -115,6 +115,25 @@ recording with 1000. Sources appear as devices `-1` (mic) and `-2` (system) in `
 `capture_health` events; `/api/audio/restart` answers 400 for them. A browser recording that has
 received nothing for 10 minutes is stopped (`recording_stopped`, reason `browser_gone`).
 
+### Records
+`services/records.py`. Versions: a replaced transcript or summary is kept (`session_versions`;
+reasons `edited`, `speaker X renamed`, `transcribed again`, `summarized again`). Seals: after
+transcription, summary and edits, a SHA-256 of the content (transcript lines and summary) and of each
+audio file as stored, chained (`session_seals`). `records_retention_years`: within it, deleting a
+meeting (`DELETE /api/sessions/{id}?reason=`) or its audio (`DELETE /api/sessions/{id}/audio?reason=`)
+needs an admin and a `reason` (400 without, 403 for others), and audio retention skips the meeting.
+A legal hold refuses both to everyone (403) and refuses combining. Every deletion is logged in
+`deletions`.
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/sessions/{id}/records` | `kept_until`, `legal_hold`, `versions`, `verification` (`ok`, `seals`, `chain_head`, `problems`) |
+| GET | `/api/sessions/{id}/versions/{version_id}` | an earlier version's transcript lines and summary |
+| PUT | `/api/sessions/{id}/legal-hold` | reviewer or admin: `{reason}` holds, `""` lifts (logged in history) |
+| GET | `/api/records/deletions?start=&end=` | reviewer or admin: the deletion log |
+| POST | `/api/records/export` | `{session_ids}` or `{start, end}` → a `records_export` job; its result has `export_id` |
+| GET | `/api/records/exports/{export_id}` | the zip, for whoever started it (or an admin), once |
+
 ### The web app (`web_dir`)
 With `web_dir` set to the output of `pnpm build`, the backend serves the web app at every path
 outside `/api/`, `/ws`, `/health`, `/m` and the docs, without a token (the data behind `/api/` still

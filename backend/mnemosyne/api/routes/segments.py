@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ...models.base import ApiModel
 from ...models.session import Session
 from ...models.transcript import TranscriptSegment, WordSegment
+from ...services import records
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/sessions/{session_id}/segments", tags=["segments"])
@@ -28,6 +29,7 @@ def _apply(ctx: AppContext, session_id: str, edit) -> Session:
         raise HTTPException(status_code=400, detail=str(e)) from e
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    records.seal_later(ctx, session_id, "edited")
     ctx.bus.publish({"type": "session", "session_id": session_id, "status": session.status.value})
     return session
 

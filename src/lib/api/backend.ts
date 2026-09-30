@@ -52,6 +52,9 @@ import type {
   Me,
   UserInfo,
   UserInvite,
+  MeetingRecord,
+  RecordVersion,
+  Deletion,
   SettingsResponse,
   SettingsUpdate,
   SpeakerProfile,
@@ -172,8 +175,10 @@ export async function renameSession(sessionId: string, name: string): Promise<Se
   });
 }
 
-export async function deleteSession(sessionId: string): Promise<void> {
-  return request(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+/** `reason`: needed within the records period (backend services/records.py). */
+export async function deleteSession(sessionId: string, reason = ''): Promise<void> {
+  const q = reason ? `?reason=${encodeURIComponent(reason)}` : '';
+  return request(`/api/sessions/${sessionId}${q}`, { method: 'DELETE' });
 }
 
 export async function updateNotes(sessionId: string, notes: string): Promise<SessionDetail> {
@@ -712,8 +717,43 @@ export async function restoreBackup(name: string): Promise<RestoreResponse> {
   return request('/api/backup/restore', { method: 'POST', body: JSON.stringify({ name }) });
 }
 
-export async function deleteSessionAudio(sessionId: string): Promise<SessionDetail> {
-  return request(`/api/sessions/${sessionId}/audio`, { method: 'DELETE' });
+export async function deleteSessionAudio(sessionId: string, reason = ''): Promise<SessionDetail> {
+  const q = reason ? `?reason=${encodeURIComponent(reason)}` : '';
+  return request(`/api/sessions/${sessionId}/audio${q}`, { method: 'DELETE' });
+}
+
+// ---- records (backend services/records.py) --------------------------------------------
+
+export async function getMeetingRecord(sessionId: string): Promise<MeetingRecord> {
+  return request(`/api/sessions/${sessionId}/records`);
+}
+
+export async function getRecordVersion(sessionId: string, versionId: number): Promise<RecordVersion> {
+  return request(`/api/sessions/${sessionId}/versions/${versionId}`);
+}
+
+export async function setLegalHold(sessionId: string, reason: string): Promise<MeetingRecord> {
+  return request(`/api/sessions/${sessionId}/legal-hold`, { method: 'PUT', body: JSON.stringify({ reason }) });
+}
+
+export async function startRecordsExport(body: {
+  session_ids?: string[];
+  start?: string | null;
+  end?: string | null;
+}): Promise<Job> {
+  return request('/api/records/export', { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** Where to download an export (once), token included for a plain link. */
+export function recordsExportUrl(exportId: string): string {
+  return connectionState.withToken(`${base()}/api/records/exports/${exportId}`);
+}
+
+export async function getDeletions(start = '', end = ''): Promise<Deletion[]> {
+  const q = new URLSearchParams();
+  if (start) q.set('start', start);
+  if (end) q.set('end', end);
+  return request(`/api/records/deletions?${q}`);
 }
 
 export async function runCleanup(days: number, dryRun: boolean): Promise<CleanupResult> {

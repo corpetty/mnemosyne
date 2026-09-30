@@ -193,7 +193,10 @@ class AppContext:
         days = self.settings.audio_retention_days
         if days <= 0:
             return None
-        result = self.storage.cleanup(days, busy=self.busy_sessions())
+        from ..services.records import protected_ids
+
+        keep = self.busy_sessions() | protected_ids(self)  # never records or held meetings
+        result = self.storage.cleanup(days, busy=keep)
         if result.sessions:
             logger.info(
                 "Retention: removed audio from %d session(s), %d bytes",

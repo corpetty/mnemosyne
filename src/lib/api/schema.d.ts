@@ -964,6 +964,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/records/deletions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Deletions */
+        get: operations["deletions_api_records_deletions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/records/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export
+         * @description Meetings (these ids, or created start..end) as a zip for an exam: a `records_export`
+         *     job whose result names the file to download from /api/records/exports/{id}.
+         */
+        post: operations["export_api_records_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/records/exports/{export_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download */
+        get: operations["download_api_records_exports__export_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/search": {
         parameters: {
             query?: never;
@@ -1067,7 +1122,11 @@ export interface paths {
         get: operations["get_session_api_sessions__session_id__get"];
         put?: never;
         post?: never;
-        /** Delete Session */
+        /**
+         * Delete Session
+         * @description Delete a meeting. Within the records period an admin gives a `reason`; never on legal
+         *     hold; logged either way (services/records.py).
+         */
         delete: operations["delete_session_api_sessions__session_id__delete"];
         options?: never;
         head?: never;
@@ -1203,7 +1262,8 @@ export interface paths {
         post?: never;
         /**
          * Delete Session Audio
-         * @description Delete a session's audio files; transcript, summary and notes are kept.
+         * @description Delete a session's audio files; transcript, summary and notes are kept. Within the
+         *     records period an admin gives a `reason`; never on legal hold (services/records.py).
          */
         delete: operations["delete_session_audio_api_sessions__session_id__audio_delete"];
         options?: never;
@@ -1559,6 +1619,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/legal-hold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Legal Hold
+         * @description Put a meeting on legal hold (nothing of it can be deleted) or lift it.
+         */
+        put: operations["legal_hold_api_sessions__session_id__legal_hold_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/local-only": {
         parameters: {
             query?: never;
@@ -1607,6 +1687,23 @@ export interface paths {
         put?: never;
         /** Update Notes */
         post: operations["update_notes_api_sessions__session_id__notes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Meeting Record */
+        get: operations["meeting_record_api_sessions__session_id__records_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1806,6 +1903,23 @@ export interface paths {
          * @description Queue a transcription job for the session's recorded audio.
          */
         post: operations["transcribe_api_sessions__session_id__transcribe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/versions/{version_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Version */
+        get: operations["version_api_sessions__session_id__versions__version_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2716,6 +2830,31 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** Deletion */
+        Deletion: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** By */
+            by: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Name */
+            name: string;
+            /** Reason */
+            reason: string;
+            /** Role */
+            role: string;
+            /** Session Id */
+            session_id: string;
+            /** What */
+            what: string;
+        };
         /** DesktopCalendar */
         DesktopCalendar: {
             /** Account */
@@ -2853,6 +2992,18 @@ export interface components {
             enabled: boolean;
             /** Locked */
             locked: boolean;
+        };
+        /** ExportRequest */
+        ExportRequest: {
+            /** End */
+            end?: string | null;
+            /**
+             * Session Ids
+             * @default []
+             */
+            session_ids: string[];
+            /** Start */
+            start?: string | null;
         };
         /** ExportResponse */
         ExportResponse: {
@@ -3133,6 +3284,11 @@ export interface components {
          * @enum {string}
          */
         JobStatus: "queued" | "running" | "completed" | "failed" | "cancelled";
+        /** LegalHoldRequest */
+        LegalHoldRequest: {
+            /** Reason */
+            reason: string;
+        };
         /** Level */
         Level: {
             /** Peak Db */
@@ -3181,6 +3337,16 @@ export interface components {
             name: string;
             /** Role */
             role: string;
+        };
+        /** MeetingRecord */
+        MeetingRecord: {
+            /** Kept Until */
+            kept_until: string | null;
+            /** Legal Hold */
+            legal_hold: string;
+            verification: components["schemas"]["Verification"];
+            /** Versions */
+            versions: components["schemas"]["VersionInfo"][];
         };
         /** MeetingStats */
         MeetingStats: {
@@ -3742,6 +3908,11 @@ export interface components {
             /** Id */
             id: string;
             /**
+             * Legal Hold
+             * @default
+             */
+            legal_hold: string;
+            /**
              * Local Only
              * @default false
              */
@@ -4081,6 +4252,8 @@ export interface components {
             per_source_transcription?: boolean | null;
             /** Phone Url */
             phone_url?: string | null;
+            /** Records Retention Years */
+            records_retention_years?: number | null;
             /** Redact Exports */
             redact_exports?: boolean | null;
             /** Redact Stored Transcripts */
@@ -4314,6 +4487,8 @@ export interface components {
             per_source_transcription: boolean;
             /** Phone Url */
             phone_url: string;
+            /** Records Retention Years */
+            records_retention_years: number;
             /** Redact Exports */
             redact_exports: boolean;
             /** Redact Stored Transcripts */
@@ -4759,6 +4934,53 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** Verification */
+        Verification: {
+            /** Chain Head */
+            chain_head: string;
+            /** Last Sealed At */
+            last_sealed_at: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Problems */
+            problems: string[];
+            /** Seals */
+            seals: number;
+        };
+        /** Version */
+        Version: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** By */
+            by: string;
+            /** Id */
+            id: number;
+            /** Reason */
+            reason: string;
+            /** Summary */
+            summary: string;
+            /** Transcript */
+            transcript: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** VersionInfo */
+        VersionInfo: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** By */
+            by: string;
+            /** Id */
+            id: number;
+            /** Reason */
+            reason: string;
         };
         /** WordSegment */
         WordSegment: {
@@ -6414,6 +6636,102 @@ export interface operations {
             };
         };
     };
+    deletions_api_records_deletions_get: {
+        parameters: {
+            query?: {
+                start?: string | null;
+                end?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deletion"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_api_records_export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_api_records_exports__export_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                export_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     search_api_search_get: {
         parameters: {
             query: {
@@ -6593,7 +6911,9 @@ export interface operations {
     };
     delete_session_api_sessions__session_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                reason?: string;
+            };
             header?: never;
             path: {
                 session_id: string;
@@ -6868,7 +7188,9 @@ export interface operations {
     };
     delete_session_audio_api_sessions__session_id__audio_delete: {
         parameters: {
-            query?: never;
+            query?: {
+                reason?: string;
+            };
             header?: never;
             path: {
                 session_id: string;
@@ -7566,6 +7888,41 @@ export interface operations {
             };
         };
     };
+    legal_hold_api_sessions__session_id__legal_hold_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LegalHoldRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     set_local_only_api_sessions__session_id__local_only_put: {
         parameters: {
             query?: never;
@@ -7658,6 +8015,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    meeting_record_api_sessions__session_id__records_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingRecord"];
                 };
             };
             /** @description Validation Error */
@@ -8023,6 +8411,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    version_api_sessions__session_id__versions__version_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Version"];
                 };
             };
             /** @description Validation Error */

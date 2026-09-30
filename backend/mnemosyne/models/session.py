@@ -198,6 +198,8 @@ class Session(ApiModel):
     meeting_type: str = ""
     # On a firm's server, the advisor whose meeting it is (services/users.py); "" = nobody's.
     owner_id: str = ""
+    # Why the meeting is on legal hold ("" = not held): it and its audio cannot be deleted.
+    legal_hold: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -91,7 +91,8 @@ class SessionState {
 
 	async deleteSession(sessionId: string): Promise<boolean> {
 		try {
-			await api.deleteSession(sessionId);
+			const { withReason } = await import('$lib/app/records.js');
+			if (!(await withReason((reason) => api.deleteSession(sessionId, reason)))) return false;
 			if (this.activeSession?.id === sessionId) this.show(null);
 			await this.loadSessions();
 			return true;

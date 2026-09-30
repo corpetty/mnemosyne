@@ -249,6 +249,9 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
                 fixed += llm_fixed
 
             app.sessions.set_transcript(session_id, segments)
+            from . import records
+
+            await asyncio.to_thread(records.seal, app, session_id, "transcribed")
             app.repo.update_fields(session_id, speakers_reviewed=False)  # new labels to name
             if settings.auto_summarize and segments:
                 app.jobs.submit(
@@ -387,6 +390,9 @@ def summarize_session(
         current = app.sessions.get_session(session_id)
         carry_over(current.summary_data if current else None, result["data"])
         app.sessions.set_summary(session_id, result["summary"], result["data"])
+        from . import records
+
+        await asyncio.to_thread(records.seal, app, session_id, "summarized")
         title = result["data"].title
         # Re-read: the user may have renamed the session while the LLM was running.
         current = app.sessions.get_session(session_id)

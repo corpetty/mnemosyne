@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { deleteSessionAudio, getStorage, runCleanup, updateSettings } from '$lib/api/backend.js';
+	import { withReason } from '$lib/app/records.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import type { CleanupResult, StorageReport } from '$lib/types/index.js';
@@ -75,7 +76,7 @@
 		if (!confirm(`Delete the audio for "${name}"? The transcript, summary and notes are kept.`)) return;
 		busy = true;
 		try {
-			await deleteSessionAudio(id);
+			if (!(await withReason((reason) => deleteSessionAudio(id, reason)))) return;
 			await load();
 			await sessionState.loadSessions();
 			if (sessionState.activeSession?.id === id) await sessionState.refreshActive();
