@@ -144,6 +144,21 @@ def test_resampler_passes_16k_through():
     assert r.flush().size == 0
 
 
+def test_model_knows_when_a_recording_still_streams():
+    from mnemosyne.transcription.diarizers.nemotron_stream import NemotronStreamModel
+
+    model = NemotronStreamModel()
+    model._model = object()  # "loaded"
+    assert not model.in_use()
+    stream = model.stream()
+    assert model.in_use()
+    stream.flushed = True
+    assert not model.in_use()
+    other = model.stream()
+    del other  # a live job that ended without flushing (its stream failed)
+    assert not model.in_use()
+
+
 # ---- the real model -------------------------------------------------------------------
 
 AMI = Path(

@@ -3662,6 +3662,8 @@ export interface components {
             live_adaptive?: boolean | null;
             /** Live Diarization */
             live_diarization?: boolean | null;
+            /** Live Diarizer */
+            live_diarizer?: string | null;
             /** Live Interval Seconds */
             live_interval_seconds?: number | null;
             /** Live Rediarize */
@@ -3873,6 +3875,8 @@ export interface components {
             live_adaptive: boolean;
             /** Live Diarization */
             live_diarization: boolean;
+            /** Live Diarizer */
+            live_diarizer: string;
             /** Live Interval Seconds */
             live_interval_seconds: number;
             /** Live Rediarize */

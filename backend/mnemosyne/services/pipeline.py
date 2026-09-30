@@ -545,7 +545,7 @@ def live_transcribe(app: AppContext, session_id: str, recording):
                 )
             )
 
-        embedder = clusterer = diarizer = None
+        embedder = clusterer = diarizer = stream_model = None
         if any(src.diarize for src in sources):
             from ..transcription.live_speakers import OnlineClusterer
 
@@ -560,15 +560,35 @@ def live_transcribe(app: AppContext, session_id: str, recording):
                 if multi:
                     clusterer.known.pop(settings.local_speaker_name, None)
             diarizer = app.models.live_rediarizer
-        return app.models.live_transcriber, sources, embedder, clusterer, diarizer
+            stream_model = app.models.live_stream_model
+        return app.models.live_transcriber, sources, embedder, clusterer, diarizer, stream_model
+
+    def match_names(embeddings: dict[str, list[float]]) -> dict[str, str]:
+        names = app.speakers.match(embeddings)
+        if multi:  # the local user is on the mic channel, never a remote voice
+            names = {k: v for k, v in names.items() if v != settings.local_speaker_name}
+        return names
 
     async def run(ctx: JobContext) -> dict:
         ctx.update("Live transcription")
+        stream_model = None
         try:
             prepared = await asyncio.to_thread(prepare)
+            transcriber, sources, embedder, clusterer, diarizer, stream_model = prepared
+            if stream_model is not None:
+                await _attach_streams(stream_model, sources)
         except asyncio.CancelledError:  # stopped before it got going
             return {"segments": 0, "speakers": []}
-        transcriber, sources, embedder, clusterer, diarizer = prepared
+        namer = None
+        if any(src.stream is not None for src in sources):
+            from ..transcription.live_streaming import VoiceNamer
+
+            namer = VoiceNamer(
+                embedder,
+                match_names=match_names,
+                voices=_session_voices(app, session_id),
+                threshold=settings.speaker_match_threshold,
+            )
         live = LiveTranscriber(
             transcriber=transcriber,
             sources=sources,
@@ -581,17 +601,12 @@ def live_transcribe(app: AppContext, session_id: str, recording):
             mentions=MentionSpotter(parse_keywords(settings.mention_keywords)),
             silence_db=settings.live_silence_db,
             adaptive=settings.live_adaptive,
+            namer=namer,
         )
         app.live[session_id] = live  # read by the copilot
         rediarize = None
         if diarizer is not None:
             from ..transcription.live_rediarize import LiveRediarizer
-
-            def match_names(embeddings: dict[str, list[float]]) -> dict[str, str]:
-                names = app.speakers.match(embeddings)
-                if multi:  # the local user is on the mic channel, never a remote voice
-                    names = {k: v for k, v in names.items() if v != settings.local_speaker_name}
-                return names
 
             rediarizer = LiveRediarizer(
                 diarizer,
@@ -610,11 +625,47 @@ def live_transcribe(app: AppContext, session_id: str, recording):
             if rediarize is not None:
                 rediarize.cancel()
             app.live.pop(session_id, None)
+            if namer is not None:
+                _session_voices(app, session_id)  # the next part may start within the hour
+            for kind, stats in live.stream_stats().items():
+                logger.info("Nemotron streaming (%s): %s", kind, stats)
         return _live_result(live)
 
     return run
 
 
+async def _attach_streams(stream_model, sources) -> None:
+    """Give every diarized source a Nemotron stream. When the model cannot load, the
+    sources keep voice clustering (logged; the live status says which one is in use)."""
+    try:
+        await stream_model.load()
+    except Exception:
+        logger.warning("Nemotron streaming unavailable; live speakers by voice", exc_info=True)
+        return
+    from ..transcription.live_streaming import SpeakerTimeline
+
+    for src in sources:
+        if src.diarize:
+            src.stream = stream_model.stream()
+            src.timeline = SpeakerTimeline()
+
+
+LIVE_VOICES_TTL = 3600.0  # seconds a finished meeting's live voices are kept for its next part
+
+
+def _session_voices(app: AppContext, session_id: str) -> dict:
+    """This meeting's streamed speakers' voices (label -> embedding), shared by its parts;
+    other meetings' are dropped an hour after their last live transcript."""
+    now = time.monotonic()
+    for sid, (at, _) in list(app.live_voices.items()):
+        if sid != session_id and sid not in app.live and now - at > LIVE_VOICES_TTL:
+            del app.live_voices[sid]
+    _, voices = app.live_voices.get(session_id, (now, {}))
+    app.live_voices[session_id] = (now, voices)
+    return voices
+
+
 def _live_result(live) -> dict:
     speakers = [c.label for c in live.clusterer.clusters] if live.clusterer else []
+    speakers += [s for s in dict.fromkeys(live.names.labels.values()) if s not in speakers]
     return {"segments": len(live.committed), "speakers": speakers}

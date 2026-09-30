@@ -96,10 +96,35 @@ def build_live_embedder(settings: Settings):
     return PyannoteEmbedder(settings.diarization_model, settings.hf_token)
 
 
+def resolve_live_diarizer(settings: Settings) -> str:
+    """ "streaming" or "clustering": where live speaker labels come from on this machine."""
+    if settings.live_diarizer in ("streaming", "clustering"):
+        return settings.live_diarizer
+    if settings.diarizer in ("none", "demo"):
+        return "clustering"
+    return "streaming" if nemotron_available() else "clustering"
+
+
+def build_live_stream_model(settings: Settings):
+    """Nemotron streaming for live speaker labels (diarizers/nemotron_stream.py), or None.
+    Never the engine's diarizer: the streaming settings live on the model."""
+    if not settings.live_diarization or resolve_live_diarizer(settings) != "streaming":
+        return None
+    import importlib.util
+
+    if importlib.util.find_spec("nemo") is None:
+        return None
+    from .diarizers.nemotron_stream import NemotronStreamModel
+
+    return NemotronStreamModel()
+
+
 def build_live_rediarizer(settings: Settings):
     """The diarizer that re-diarizes live recordings (live_rediarize.py), or None."""
     if not settings.live_diarization or settings.live_rediarize == "off":
         return None
+    if resolve_live_diarizer(settings) == "streaming":
+        return None  # streamed sources have their speakers already
     if settings.live_rediarize == "auto" and resolve_diarizer(settings) != "nemotron":
         return None
     try:
@@ -169,6 +194,8 @@ ENGINE_SETTINGS = (
 LIVE_SETTINGS = (
     "live_transcriber",
     "live_rediarize",
+    "live_diarizer",
+    "live_diarization",
     "diarizer",
     "diarization_model",
     "hf_token",

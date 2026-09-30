@@ -82,6 +82,8 @@ def fake_live_transcriber(monkeypatch) -> FakeTranscriber:
     monkeypatch.setattr(ModelService, "live_embedder", property(lambda self: None))
     # ...nor the live re-diarizer (it would load Nemotron onto the GPU).
     monkeypatch.setattr(ModelService, "live_rediarizer", property(lambda self: None))
+    # ...nor Nemotron streaming (same reason).
+    monkeypatch.setattr(ModelService, "live_stream_model", property(lambda self: None))
     return fake
 
 

@@ -30,6 +30,7 @@ import logging
 import math
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -316,6 +317,7 @@ class NemotronStreamModel:
         self.config = dict(config or LOW_LATENCY)
         self.lock = threading.Lock()
         self._model: Any = None
+        self._streams: weakref.WeakSet[NemotronStream] = weakref.WeakSet()
         self.chunk_frames = 0
         self.right_frames = 0
 
@@ -361,7 +363,13 @@ class NemotronStreamModel:
     def stream(self) -> NemotronStream:
         if self._model is None:
             raise RuntimeError("load() the streaming model first")
-        return NemotronStream(self)
+        stream = NemotronStream(self)
+        self._streams.add(stream)
+        return stream
+
+    def in_use(self) -> bool:
+        """A recording still streams through this model (not flushed, not garbage)."""
+        return any(not s.flushed for s in self._streams)
 
     def init_state(self):
         m = self._model

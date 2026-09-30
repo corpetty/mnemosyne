@@ -141,6 +141,11 @@ class Settings(BaseSettings):
     # GPU), nemotron = always try, off = voice-embedding clustering only.
     live_rediarize: str = "auto"  # auto | nemotron | off
     live_rediarize_seconds: float = 30.0
+    # Where live speaker labels come from: streaming = Nemotron streaming (NVIDIA GPU; the
+    # same speaker keeps the same label from the start, about a second behind the audio),
+    # clustering = voice embeddings + online clustering, corrected by live_rediarize;
+    # auto = streaming when Nemotron can run on CUDA, else clustering.
+    live_diarizer: str = "auto"  # auto | streaming | clustering
     # CPU threads for the live transcriber (Parakeet/ONNX). It re-runs every few seconds for
     # the whole recording; all cores would starve the desktop.
     live_threads: int = 2

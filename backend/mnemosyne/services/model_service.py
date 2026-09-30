@@ -25,6 +25,8 @@ class ModelService:
         self._live_embedder_built = False
         self._live_rediarizer = None
         self._live_rediarizer_built = False
+        self._live_stream = None
+        self._live_stream_built = False
         self.last_used = time.monotonic()  # for unloading idle models (unload_if_idle)
 
     @property
@@ -35,6 +37,7 @@ class ModelService:
             or self._live is not None
             or self._live_embedder is not None
             or self._live_rediarizer is not None
+            or (self._live_stream is not None and self._live_stream.is_loaded())
         )
 
     def touch(self) -> None:
@@ -92,15 +95,30 @@ class ModelService:
         """Diarizer for correcting live speaker labels (None when not wanted or available).
         Shares the final engine's Nemotron when that is already built."""
         if not self._live_rediarizer_built:
-            from ..transcription.registry import build_live_rediarizer
+            from ..transcription.registry import build_live_rediarizer, resolve_live_diarizer
 
             engine_diarizer = getattr(self._engine, "diarizer", None)
-            if getattr(engine_diarizer, "name", None) == "nemotron":
+            if not self.settings.live_diarization or self.settings.live_rediarize == "off":
+                self._live_rediarizer = None
+            elif resolve_live_diarizer(self.settings) == "streaming":
+                self._live_rediarizer = None  # streamed sources have their speakers already
+            elif getattr(engine_diarizer, "name", None) == "nemotron":
                 self._live_rediarizer = engine_diarizer
             else:
                 self._live_rediarizer = build_live_rediarizer(self.settings)
             self._live_rediarizer_built = True
         return self._live_rediarizer
+
+    @property
+    def live_stream_model(self):
+        """Nemotron streaming for live speaker labels (None when not wanted or available);
+        its own instance, never the engine's diarizer."""
+        if not self._live_stream_built:
+            from ..transcription.registry import build_live_stream_model
+
+            self._live_stream = build_live_stream_model(self.settings)
+            self._live_stream_built = True
+        return self._live_stream
 
     async def ensure_loaded(self) -> TranscriptionEngine:
         engine = self.engine
@@ -139,6 +157,12 @@ class ModelService:
             await self._live_rediarizer.unload()
         self._live_rediarizer = None
         self._live_rediarizer_built = False
+        # A recording that is streaming keeps its instance (settings changed mid-meeting); it
+        # is freed with that recording's live job.
+        if self._live_stream is not None and not self._live_stream.in_use():
+            await self._live_stream.unload()
+        self._live_stream = None
+        self._live_stream_built = False
 
     async def apply_settings(self, settings: Settings) -> None:
         """Adopt new settings; drop the engine if anything it was built from changed."""

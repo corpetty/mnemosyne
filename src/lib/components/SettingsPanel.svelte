@@ -115,6 +115,7 @@
 				unload_models_after_minutes: v.unload_models_after_minutes,
 				live_diarization: v.live_diarization,
 				live_rediarize: v.live_rediarize,
+				live_diarizer: v.live_diarizer,
 				live_speaker_threshold: v.live_speaker_threshold,
 				mention_keywords: v.mention_keywords,
 				live_threads: v.live_threads,
@@ -468,12 +469,20 @@
 						<span class="text-sm text-gray-300">Tell speakers apart live (known voices are named)</span>
 					</label>
 					<label>
-						<span class={labelClass}>Live speaker separation (0.35 merges more … 0.6 splits more)</span>
-						<input type="number" min="0.2" max="0.9" step="0.05" bind:value={form.live_speaker_threshold} disabled={locked('live_speaker_threshold') || !form.live_diarization} class={inputClass} />
+						<span class={labelClass}>Live speaker labels</span>
+						<select bind:value={form.live_diarizer} disabled={locked('live_diarizer') || !form.live_diarization} class={inputClass}>
+							<option value="auto">Automatic: Nemotron streaming on NVIDIA, else voice clustering</option>
+							<option value="streaming">Nemotron streaming (NVIDIA GPU, needs NeMo)</option>
+							<option value="clustering">Voice clustering</option>
+						</select>
 					</label>
 					<label>
-						<span class={labelClass}>Correct live speakers every 30 s with the full diarizer</span>
-						<select bind:value={form.live_rediarize} disabled={locked('live_rediarize') || !form.live_diarization} class={inputClass}>
+						<span class={labelClass}>Live speaker separation, voice clustering (0.35 merges more … 0.6 splits more)</span>
+						<input type="number" min="0.2" max="0.9" step="0.05" bind:value={form.live_speaker_threshold} disabled={locked('live_speaker_threshold') || !form.live_diarization || form.live_diarizer === 'streaming'} class={inputClass} />
+					</label>
+					<label>
+						<span class={labelClass}>Correct voice-clustering labels every 30 s with the full diarizer</span>
+						<select bind:value={form.live_rediarize} disabled={locked('live_rediarize') || !form.live_diarization || form.live_diarizer === 'streaming'} class={inputClass}>
 							<option value="auto">When the diarizer is Nemotron (recommended)</option>
 							<option value="nemotron">Always with Nemotron (needs NeMo)</option>
 							<option value="off">Off</option>

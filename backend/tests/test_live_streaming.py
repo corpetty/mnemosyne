@@ -492,3 +492,121 @@ def test_wav_tail_reads_a_span_without_moving(tmp_path):
     span = tail.read_span(0.9, 1.1)
     assert span.size == int(0.2 * RATE) and span[0] == 1 and span[-1] == 2
     assert tail.read_new().size == 2 * RATE  # the tail still starts at the beginning
+
+
+# ---- selection and the live job ----------------------------------------------------------
+
+
+def test_live_diarizer_resolves_to_streaming_only_on_cuda(monkeypatch):
+    from mnemosyne.config import Settings
+    from mnemosyne.transcription import registry
+
+    monkeypatch.setattr(registry, "nemotron_available", lambda: True)
+    assert registry.resolve_live_diarizer(Settings()) == "streaming"
+    assert registry.resolve_live_diarizer(Settings(diarizer="none")) == "clustering"
+    assert registry.resolve_live_diarizer(Settings(live_diarizer="clustering")) == "clustering"
+    # Streaming replaces the 30 s re-diarization.
+    assert registry.build_live_rediarizer(Settings(live_rediarize="nemotron")) is None
+    monkeypatch.setattr(registry, "nemotron_available", lambda: False)
+    assert registry.resolve_live_diarizer(Settings()) == "clustering"
+    assert registry.resolve_live_diarizer(Settings(live_diarizer="streaming")) == "streaming"
+    assert registry.build_live_stream_model(Settings(live_diarizer="clustering")) is None
+    assert registry.build_live_stream_model(Settings(live_diarization=False)) is None
+
+
+def test_streaming_turns_the_live_rediarizer_off(monkeypatch):
+    from mnemosyne.config import Settings
+    from mnemosyne.services.model_service import ModelService
+    from mnemosyne.transcription import registry
+
+    monkeypatch.undo()  # conftest fakes the live models; this needs the real property
+    monkeypatch.setattr(registry, "nemotron_available", lambda: True)
+
+    class Engine:
+        diarizer = type("D", (), {"name": "nemotron"})()
+
+    streaming = ModelService(Settings())
+    streaming._engine = Engine()
+    assert streaming.live_rediarizer is None
+    clustering = ModelService(Settings(live_diarizer="clustering"))
+    clustering._engine = Engine()
+    assert clustering.live_rediarizer is Engine.diarizer
+    off = ModelService(Settings(live_diarizer="clustering", live_rediarize="off"))
+    off._engine = Engine()
+    assert off.live_rediarizer is None
+
+
+class FakeStreamModel:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.loads = 0
+        self.streams = []
+
+    async def load(self):
+        self.loads += 1
+        if self.fail:
+            raise RuntimeError("no CUDA")
+
+    def stream(self):
+        s = FakeStream([])
+        self.streams.append(s)
+        return s
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_the_live_job_streams_the_remote_channel(
+    client, ctx, fake_pipewire, fake_engine, monkeypatch, fail
+):
+    import mnemosyne.api.routes.audio as audio_routes
+    from mnemosyne.services.model_service import ModelService
+    from tests.conftest import drain_until_job
+
+    model = FakeStreamModel(fail=fail)
+    monkeypatch.setattr(ModelService, "live_stream_model", property(lambda self: model))
+    # The live job looks the devices up itself: device 2 is the speakers (system audio).
+    monkeypatch.setattr("mnemosyne.audio.capture.list_devices", lambda: audio_routes.list_devices())
+    seen = {}
+
+    real_tick = LiveTranscriber.tick
+
+    async def tick(self, flush=False):
+        seen["sources"] = {s.kind: s.stream for s in self.sources}
+        seen["namer"] = self.namer
+        return await real_tick(self, flush)
+
+    monkeypatch.setattr(LiveTranscriber, "tick", tick)
+    started = client.post("/api/audio/start", json={"device_ids": [1, 2]}).json()
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        stopped = client.post(f"/api/audio/stop/{started['session_id']}").json()
+        drain_until_job(ws, stopped["job_id"])
+    live = client.get(f"/api/jobs/{started['live_job_id']}").json()
+    assert live["status"] == "completed"
+    assert model.loads == 1
+    if fail:
+        assert seen["sources"] == {"mic": None, "system": None}
+        assert seen["namer"] is None
+    else:
+        # Only the system channel is diarized; the mic is the local user.
+        assert seen["sources"]["mic"] is None
+        assert seen["sources"]["system"] is model.streams[0]
+        assert seen["namer"] is not None
+        assert started["session_id"] in ctx.live_voices
+
+
+def test_session_voices_are_kept_an_hour(monkeypatch):
+    import types
+
+    from mnemosyne.services import pipeline
+
+    app = types.SimpleNamespace(live_voices={}, live={})
+    clock = [1000.0]
+    monkeypatch.setattr(pipeline.time, "monotonic", lambda: clock[0])
+    a = pipeline._session_voices(app, "a")
+    a["Speaker 1"] = [1.0]
+    clock[0] += 1800
+    assert pipeline._session_voices(app, "a") == {"Speaker 1": [1.0]}
+    pipeline._session_voices(app, "b")
+    clock[0] += 3601
+    pipeline._session_voices(app, "c")
+    assert set(app.live_voices) == {"c"}

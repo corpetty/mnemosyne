@@ -58,6 +58,9 @@ class AppContext:
     _intervals: tuple[float, float] = (6 * 3600, 900)
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     live: dict = field(default_factory=dict)  # session id -> running LiveTranscriber
+    # session id -> (time.monotonic() last used, {label: voice embedding}): streamed speakers'
+    # voices, so the next part of a meeting gives the same person the same live label.
+    live_voices: dict = field(default_factory=dict)
     copilot_notes: dict = field(default_factory=dict)  # session id -> CopilotNotes
     recovered: list = field(default_factory=list)  # RecoveredRecording, since this start
     # Encryption at rest: where the master key lives, the key once known, and whether the
