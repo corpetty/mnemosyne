@@ -6,6 +6,18 @@
 	color-scheme: dark;
 }
 
+/* The app is one screen that scrolls inside its panes; the page itself never scrolls. Anything
+   that pokes out below (an absolutely positioned element with no positioned ancestor) would
+   otherwise make the document taller than the window, and scrolling past the end of a pane then
+   moved the whole app up over the bare window. Same colour as <main>, should any gap show. */
+html,
+body {
+	height: 100%;
+	overflow: hidden;
+	overscroll-behavior: none;
+	background-color: var(--color-gray-950);
+}
+
 /* WebKitGTK draws a closed <select> with the GTK theme (light in the AppImage) and ignores
    the background classes, leaving light text on a light box. Draw it ourselves instead.
    Unlayered on purpose: it must win over px-* utilities to keep room for the arrow. */

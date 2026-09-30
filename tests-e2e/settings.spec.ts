@@ -101,3 +101,22 @@ test('the calendar can be turned off, or read from the desktop', async ({ page }
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.getByText('Settings saved')).toBeVisible();
 });
+
+// The app scrolls inside its panes, never as a page: an element poking out below the window
+// (the calendar radios once did, 400 px) let the wheel move the whole app up over the window.
+test('settings never make the page taller than the window', async ({ page }) => {
+  await openApp(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const tabs = page.getByRole('navigation', { name: 'Settings sections' });
+  for (const tab of ['General', 'Recording', 'Transcription', 'AI', 'Notes & sharing']) {
+    await tabs.getByRole('button', { name: tab, exact: true }).click();
+    const [scrollHeight, height] = await page.evaluate(() => [
+      document.documentElement.scrollHeight,
+      window.innerHeight
+    ]);
+    expect(scrollHeight, tab).toBeLessThanOrEqual(height);
+  }
+  await page.mouse.move(600, 400);
+  for (let i = 0; i < 10; i++) await page.mouse.wheel(0, 2000);
+  expect(await page.evaluate(() => document.scrollingElement!.scrollTop)).toBe(0);
+});
