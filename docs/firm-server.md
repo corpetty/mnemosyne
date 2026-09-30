@@ -5,6 +5,8 @@ Windows or Mac computers and install nothing. Meetings, transcripts, summaries a
 stay on that machine: in firm mode no cloud model can be used (the providers are not even created).
 
 This page is for whoever sets the machine up. `scripts/firm-server-check.sh` checks the result.
+For the firm: docs/security-overview.md (for its compliance officer) and docs/pilot-checklist.md;
+`node scripts/docs-to-pdf.mjs <file.md>` prints either to PDF.
 
 ## The machine
 
