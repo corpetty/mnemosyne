@@ -121,11 +121,15 @@ test('ask answers with a citation that opens the meeting', async () => {
   const box = page.getByPlaceholder(/What did we decide/);
   await box.fill('When does the Waku migration ship?');
   await box.press('Enter');
-  await expect(page.getByText('The migration ships in October')).toBeVisible();
-  const cite = page.getByRole('button', { name: /\[1\]\s*release-sync/ });
+  await expect(page.getByText('The migration ships in October').first()).toBeVisible();
+  // Other test files import meetings with the same demo transcript at the same time, so the
+  // first citation may be one of theirs: whichever it names, it opens that meeting.
+  const cite = page.getByRole('button', { name: /^\[1\]/ }).first();
   await expect(cite).toBeVisible();
+  const cited = ((await cite.locator('span').nth(1).textContent()) ?? '').trim(); // the meeting
+  expect(cited).not.toBe('');
   await cite.click();
-  await expect(page.getByRole('heading', { name: 'release-sync' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: cited })).toBeVisible();
 });
 
 test('digest of this week', async () => {
