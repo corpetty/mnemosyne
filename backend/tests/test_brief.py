@@ -86,4 +86,10 @@ def test_brief_route(client, ctx):
     assert [m["name"] for m in only_title["meetings"]] == ["Infra weekly"]
 
     none = client.get("/api/brief", params={"title": "Board meeting"}).json()
-    assert none == {"meetings": [], "open_items": [], "open_questions": [], "last_summary": ""}
+    assert none == {
+        "meetings": [],
+        "open_items": [],
+        "open_questions": [],
+        "last_summary": "",
+        "household": None,
+    }

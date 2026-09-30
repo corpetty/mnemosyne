@@ -261,6 +261,21 @@ CREATE TABLE IF NOT EXISTS supervision_reviews (
     note TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS supervision_reviews_session ON supervision_reviews(session_id);
+-- Households (services/households.py): clients grouped as a firm serves them. Members are
+-- people by name (as in transcripts and calendars), with an email when known.
+CREATE TABLE IF NOT EXISTS households (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    hubspot_company_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS household_members (
+    household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'manual',
+    PRIMARY KEY (household_id, name)
+);
 -- Meetings and audio deleted: who, when, why. Outlives what it describes.
 CREATE TABLE IF NOT EXISTS deletions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1374,6 +1389,56 @@ class SessionRepository:
             rows = self._conn.execute(sql).fetchall()
         return [dict(r) for r in rows if visible is None or r["id"] in visible]
 
+    # ---- households (services/households.py) ---------------------------
+
+    def households(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, name, hubspot_company_id, created_at FROM households ORDER BY name"
+            ).fetchall()
+            members = self._conn.execute(
+                "SELECT household_id, name, email, source FROM household_members ORDER BY rowid"
+            ).fetchall()
+        out = {r["id"]: {**dict(r), "members": []} for r in rows}
+        for m in members:
+            if m["household_id"] in out:
+                out[m["household_id"]]["members"].append(
+                    {"name": m["name"], "email": m["email"], "source": m["source"]}
+                )
+        return list(out.values())
+
+    def save_household(
+        self, household_id: str, name: str, members: list[dict], hubspot_company_id: str = ""
+    ) -> None:
+        """Create or replace a household. A person belongs to one household: adding them here
+        takes them out of any other."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO households (id, name, hubspot_company_id, created_at)"
+                " VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,"
+                " hubspot_company_id=excluded.hubspot_company_id",
+                (household_id, name, hubspot_company_id, datetime.now().isoformat()),
+            )
+            self._conn.execute(
+                "DELETE FROM household_members WHERE household_id=?", (household_id,)
+            )
+            for m in members:
+                self._conn.execute(
+                    "DELETE FROM household_members WHERE lower(name)=lower(?)", (m["name"],)
+                )
+                self._conn.execute(
+                    "INSERT INTO household_members (household_id, name, email, source)"
+                    " VALUES (?,?,?,?)",
+                    (household_id, m["name"], m.get("email", ""), m.get("source", "manual")),
+                )
+
+    def delete_household(self, household_id: str) -> bool:
+        with self._lock, self._conn:
+            return (
+                self._conn.execute("DELETE FROM households WHERE id=?", (household_id,)).rowcount
+                > 0
+            )
+
     # ---- search --------------------------------------------------------
 
     def search(self, query: str, limit: int = 50, per_session: int = 5) -> list[SearchHit]:
@@ -1808,12 +1873,13 @@ class SessionRepository:
         return {r["id"] for r in rows}
 
     def people_rows(self) -> list:
-        """id, name, created_at, participants, attendees, summary_data of every session."""
+        """id, name, created_at, participants, attendees, summary_data, attendee_emails and crm
+        of every session."""
         visible = self.visible_ids()
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, name, created_at, participants, attendees, summary_data FROM sessions"
-                " ORDER BY created_at DESC"
+                "SELECT id, name, created_at, participants, attendees, summary_data,"
+                " attendee_emails, crm FROM sessions ORDER BY created_at DESC"
             ).fetchall()
         return rows if visible is None else [r for r in rows if r["id"] in visible]
 

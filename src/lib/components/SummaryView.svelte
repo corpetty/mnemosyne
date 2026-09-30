@@ -172,7 +172,8 @@
 			toastState.error(e instanceof Error ? e.message : 'Could not post');
 		}
 	}
-	import type { ClientFact, ProviderModels, SummaryStyle } from '$lib/types/index.js';
+	import type { ProviderModels, SummaryStyle } from '$lib/types/index.js';
+	import { groupFacts } from '$lib/app/facts.js';
 
 	let providers = $state<ProviderModels[]>(cachedProviders ?? []);
 	let styles = $state<SummaryStyle[]>(cachedStyles ?? []);
@@ -255,24 +256,7 @@
 	});
 
 	const data = $derived(sessionState.activeSession?.summary_data ?? null);
-	// Client facts (advisory summaries), grouped by kind in this order.
-	const FACT_HEADINGS: [ClientFact['kind'], string][] = [
-		['goal', 'Goals'],
-		['life_event', 'Life events'],
-		['income_change', 'Income changes'],
-		['risk_tolerance', 'Risk tolerance'],
-		['account', 'Accounts'],
-		['beneficiary', 'Beneficiaries'],
-		['insurance', 'Insurance'],
-		['estate', 'Estate'],
-		['next_review', 'Next review'],
-		['other', 'Other']
-	];
-	const factGroups = $derived(
-		FACT_HEADINGS.map(([kind, heading]) => ({ kind, heading, facts: (data?.client_facts ?? []).filter((f) => f.kind === kind) })).filter(
-			(g) => g.facts.length
-		)
-	);
+	const factGroups = $derived(groupFacts(data?.client_facts ?? []));
 	const liveNotes = $derived(sessionState.activeSession?.copilot_notes ?? null);
 	const activeJob = $derived(
 		sessionState.activeSession ? jobsState.active(sessionState.activeSession.id, 'summarize') : null

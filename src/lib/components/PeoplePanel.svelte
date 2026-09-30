@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { uiState } from '$lib/stores/ui.svelte.js';
-	import { getPerson, listPeople, setActionItemDone } from '$lib/api/backend.js';
+	import { getPerson, listHouseholds, listPeople, setActionItemDone } from '$lib/api/backend.js';
+	import HouseholdsPanel from './HouseholdsPanel.svelte';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
-	import type { PersonDetail, PersonSummary, TaskItem } from '$lib/types/index.js';
+	import type { HouseholdSummary, PersonDetail, PersonSummary, TaskItem } from '$lib/types/index.js';
 
 	let { onOpenSession }: { onOpenSession?: () => void } = $props();
 
@@ -12,6 +13,23 @@
 	let filter = $state('');
 	let selected = $state<string | null>(null);
 	let detail = $state<PersonDetail | null>(null);
+	let mode = $state<'people' | 'households'>('people');
+	let households = $state<HouseholdSummary[]>([]);
+	let householdRequest = $state<string | null>(null);
+
+	$effect(() => {
+		void mode; // the households tab may have changed them
+		listHouseholds()
+			.then((h) => (households = h))
+			.catch(() => (households = []));
+	});
+	const householdOf = (name: string) =>
+		households.find((h) => h.members.some((m) => m.name.toLowerCase() === name.toLowerCase())) ?? null;
+
+	function showHousehold(id: string) {
+		householdRequest = id;
+		mode = 'households';
+	}
 
 	$effect(() => {
 		listPeople()
@@ -70,14 +88,31 @@
 
 <div class="space-y-4">
 	<div>
-		<h2 class="text-xl font-semibold text-gray-100 mb-1">People</h2>
+		<div class="flex items-center gap-3 mb-1">
+			<h2 class="text-xl font-semibold text-gray-100">People</h2>
+			<div class="flex rounded-lg border border-gray-800 bg-gray-900 p-0.5" role="group" aria-label="Show">
+				{#each [['people', 'People'], ['households', 'Households']] as [value, label] (value)}
+					<button
+						onclick={() => ((mode = value as typeof mode), (householdRequest = null))}
+						aria-pressed={mode === value}
+						class="px-3 py-0.5 rounded-md text-xs {mode === value ? 'bg-gray-700 text-gray-100' : 'text-gray-400 hover:text-gray-200'}"
+					>{label}</button>
+				{/each}
+			</div>
+		</div>
 		<p class="text-xs text-gray-500">
-			Everyone named in your meetings: speakers you have named, invitees from the calendar, action item owners and saved
-			voices.
+			{#if mode === 'people'}
+				Everyone named in your meetings: speakers you have named, invitees from the calendar, action item owners and saved
+				voices.
+			{:else}
+				Clients grouped as you serve them, with what they told you across their meetings.
+			{/if}
 		</p>
 	</div>
 
-	{#if loaded && people.length === 0}
+	{#if mode === 'households'}
+		{#key householdRequest}<HouseholdsPanel {onOpenSession} initial={householdRequest} />{/key}
+	{:else if loaded && people.length === 0}
 		<p class="text-sm text-gray-600">Nobody yet. Name speakers in a transcript, or connect a calendar, and people show up here.</p>
 	{:else}
 		<div class="grid gap-4 md:grid-cols-[14rem_1fr]">
@@ -113,6 +148,10 @@
 							{detail.meetings.length} meetings{#if detail.total_talk_seconds} · talked {dur(detail.total_talk_seconds)} in total{/if}
 							{#if detail.has_voice} · voice saved{/if}
 						</p>
+						{#if householdOf(detail.name)}
+							{@const h = householdOf(detail.name)!}
+							<button onclick={() => showHousehold(h.id)} class="mt-1 text-xs text-blue-400 hover:text-blue-300">Household: {h.name}</button>
+						{/if}
 					</header>
 
 					{#if detail.open_tasks.length}

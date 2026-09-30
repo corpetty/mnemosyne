@@ -5,6 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...models.base import ApiModel
+from ...services import households
 from ...services.brief import Brief, build_brief
 from ...services.tasks import TaskItem, filter_tasks
 from ..context import AppContext, get_ctx
@@ -61,5 +62,8 @@ async def get_brief(
     exclude: str | None = None,
     ctx: AppContext = Depends(get_ctx),
 ):
-    """What is still open from earlier meetings with this title or these people."""
-    return build_brief(ctx.repo.meeting_meta(), title, attendees, exclude)
+    """What is still open from earlier meetings with this title or these people, and what the
+    household the meeting is with said last time."""
+    brief = build_brief(ctx.repo.meeting_meta(), title, attendees, exclude)
+    brief.household = households.brief(ctx, title, attendees, exclude)
+    return brief

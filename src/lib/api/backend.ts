@@ -56,6 +56,10 @@ import type {
   RecordVersion,
   Deletion,
   MeetingSupervision,
+  Household,
+  HouseholdDetail,
+  HouseholdSummary,
+  HubSpotSync,
   SupervisionQueueItem,
   SettingsResponse,
   SettingsUpdate,
@@ -615,6 +619,32 @@ export async function listPeople(): Promise<PersonSummary[]> {
 
 export async function getPerson(name: string): Promise<PersonDetail> {
   return request(`/api/people/${encodeURIComponent(name)}`);
+}
+
+export async function listHouseholds(): Promise<HouseholdSummary[]> {
+  return request('/api/households');
+}
+
+export async function getHousehold(id: string): Promise<HouseholdDetail> {
+  return request(`/api/households/${id}`);
+}
+
+export async function saveHousehold(
+  body: { name: string; members: { name: string; email?: string; source?: 'manual' | 'hubspot' }[] },
+  id?: string
+): Promise<Household> {
+  return request(id ? `/api/households/${id}` : '/api/households', {
+    method: id ? 'PUT' : 'POST',
+    body: JSON.stringify(body)
+  });
+}
+
+export async function deleteHousehold(id: string): Promise<void> {
+  await request(`/api/households/${id}`, { method: 'DELETE' });
+}
+
+export async function syncHouseholdsFromHubSpot(): Promise<HubSpotSync> {
+  return request('/api/households/sync-hubspot', { method: 'POST' });
 }
 
 export async function listTopics(): Promise<TopicCount[]> {

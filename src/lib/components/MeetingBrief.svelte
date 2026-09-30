@@ -33,8 +33,28 @@
 
 	const last = $derived(brief?.meetings[0] ?? null);
 	const open = $derived(compact ? expanded : true);
+	// The household the meeting is with (backend services/households.py): what it said last time.
+	const household = $derived(brief?.household ?? null);
 </script>
 
+{#if brief && household && household.facts.length && household.last_meeting}
+	{@const hm = household.last_meeting}
+	<div class="text-xs space-y-1 {compact ? '' : 'rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2'}" aria-label="Household brief">
+		<div class="flex flex-wrap items-center gap-x-2">
+			<span class="{compact ? 'text-blue-300' : 'text-gray-400 font-medium'}">{household.name}, last time:</span>
+			<button onclick={() => sessionState.selectSession(hm.id)} class="{compact ? 'text-blue-100' : 'text-gray-200'} hover:underline">{hm.name}</button>
+			<span class="{compact ? 'text-blue-300/70' : 'text-gray-600'}">· {day(hm.created_at)}</span>
+		</div>
+		<ul class="space-y-0.5">
+			{#each household.facts as f, i (i)}
+				<li class="text-gray-300">· {f.text}</li>
+			{/each}
+		</ul>
+		{#if household.earlier_facts}
+			<p class="{compact ? 'text-blue-300/70' : 'text-gray-600'}">{household.earlier_facts} more from earlier meetings under People → Households.</p>
+		{/if}
+	</div>
+{/if}
 {#if brief && last}
 	<div class="text-xs space-y-2 {compact ? '' : 'rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2'}" aria-label="Meeting brief">
 		<div class="flex flex-wrap items-center gap-x-2 gap-y-1">

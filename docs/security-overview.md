@@ -38,7 +38,7 @@ What does leave the server, and only as configured:
 
 | What | When | Content |
 |---|---|---|
-| HubSpot (if connected) | an advisor sends a meeting, or automatically after a summary if the firm turns that on | the summary, client facts and action items, with Social Security, account, routing and card numbers and dates of birth masked |
+| HubSpot (if connected) | an advisor sends a meeting, or automatically after a summary if the firm turns that on | the summary, client facts and action items, with Social Security, account, routing and card numbers and dates of birth masked. (When an admin syncs households, Mnemosyne reads companies and contact names from HubSpot and sends nothing.) |
 | Tailscale (if used for HTTPS) | while in use | encrypted connection between the advisors' browsers and the server; Tailscale's service sees which devices connect, not the content |
 | Software and models | at installation and updates | downloads only (code from GitHub, models from Hugging Face and Ollama); nothing is uploaded |
 | Backups | on the schedule set | encrypted copies to the location the firm chooses (a second disk or its network storage) |

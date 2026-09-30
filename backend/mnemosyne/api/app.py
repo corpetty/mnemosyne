@@ -23,6 +23,7 @@ from .routes.export import router as export_router
 from .routes.external_notes import router as external_notes_router
 from .routes.glossary import router as glossary_router
 from .routes.history import router as history_router
+from .routes.households import router as households_router
 from .routes.integrations import router as integrations_router
 from .routes.jobs import router as jobs_router
 from .routes.mobile import router as mobile_router
@@ -78,6 +79,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(audio_router)
     app.include_router(record_router)
     app.include_router(records_router)
+    app.include_router(households_router)
     app.include_router(supervision_router)
     app.include_router(sessions_router)
     app.include_router(clips_router)

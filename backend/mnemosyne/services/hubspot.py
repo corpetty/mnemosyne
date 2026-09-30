@@ -334,6 +334,39 @@ class HubSpotClient:
             return {}
         return {r["id"]: (r.get("properties") or {}).get("name") or "" for r in body["results"]}
 
+    async def companies_with_contacts(
+        self, limit: int = 5000
+    ) -> list[tuple[str, str, list[tuple[str, str]]]]:
+        """(company id, name, [(contact name, email)]) for every company with contacts, from
+        each contact's primary company (households, services/households.py). Reads only."""
+        if problem := self.validate():
+            raise HubSpotError(problem)
+        by_company: dict[str, list[tuple[str, str]]] = {}
+        async with self._client() as c:
+            after, seen = None, 0
+            while seen < limit:
+                params = {"limit": 100, "properties": ",".join(CONTACT_PROPERTIES)}
+                if after:
+                    params["after"] = after
+                body = await self._call(c, "GET", "/crm/v3/objects/contacts", params=params)
+                for r in body.get("results", []):
+                    p = r.get("properties") or {}
+                    cid, name = p.get("associatedcompanyid"), _name(p)
+                    if cid and name:
+                        by_company.setdefault(str(cid), []).append((name, p.get("email") or ""))
+                seen += len(body.get("results", []))
+                after = ((body.get("paging") or {}).get("next") or {}).get("after")
+                if not after:
+                    break
+            ids = sorted(by_company)
+            names: dict[str, str] = {}
+            for i in range(0, len(ids), 100):  # batch reads take 100 at a time
+                names |= await self._company_names(c, set(ids[i : i + 100]))
+        return [
+            (cid, names.get(cid) or f"HubSpot company {cid}", contacts)
+            for cid, contacts in by_company.items()
+        ]
+
     async def _contacts(self, c, rows: list[tuple[dict, str, str]]) -> list[HubSpotContact]:
         """(search result, matched_by, matched_on) rows as contacts with company names."""
         company_ids = {
