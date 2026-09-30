@@ -401,6 +401,18 @@ the names of known people (participants, invitees, owners, saved voices) replace
 `[PHONE_n]`, `[PERSON_n]`, and the reply is restored before it is parsed. Full multi-word names match
 in any case; single-word names and the parts of full names match only as written ("Will" but not
 "will"). Phone numbers are 9 to 15 digits that are not dates or thousands-grouped amounts.
+Financial identifiers become `[SSN_n]`, `[ACCOUNT_n]`, `[ROUTING_n]`, `[CARD_n]`, `[DOB_n]` first.
+
+Financial identifiers (summarization/privacy.py): Social Security numbers (123-45-6789, or 9 digits
+after "social"/"SSN"), account numbers (6 to 17 digits that are not money, dates, years, times or
+phone numbers; "account ending 1234"), routing numbers (9 digits passing the ABA checksum), card
+numbers (13 to 19 digits passing Luhn) and dates of birth introduced as such ("born on", "DOB").
+Spoken digits ("four five six, seventy-eight, double nine") count after a cue word, which may be at
+the end of the previous transcript line. With `redact_exports` (on by default) the Markdown export,
+Obsidian notes, daily note entries and person notes show them as `[SSN]`, `[account ••1234]`,
+`[routing number]`, `[card ••4242]`, `[date of birth]`; with `redact_stored_transcripts` (off by
+default) the transcript is saved that way (its words too) when a meeting is transcribed, so
+summaries, search and everything after only see the markers. The audio is never changed.
 
 ### `PATCH /api/sessions/{session_id}`
 

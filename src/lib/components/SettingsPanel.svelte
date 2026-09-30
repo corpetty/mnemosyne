@@ -157,6 +157,8 @@
 				default_provider: v.default_provider,
 				default_model: v.default_model,
 				cloud_redaction: v.cloud_redaction,
+				redact_exports: v.redact_exports,
+				redact_stored_transcripts: v.redact_stored_transcripts,
 				auto_record: v.auto_record,
 				auto_record_calendar: v.auto_record_calendar,
 				auto_stop_silence_minutes: v.auto_stop_silence_minutes,
@@ -874,9 +876,18 @@
 					</label>
 					<label class="flex items-center gap-2 col-span-2">
 						<input type="checkbox" bind:checked={form.cloud_redaction} disabled={locked('cloud_redaction')} class="rounded border-gray-600 bg-gray-800" />
-						<span class="text-sm text-gray-300">Hide names, emails and phone numbers from OpenAI and Anthropic (swapped for placeholders, restored in the reply)</span>
+						<span class="text-sm text-gray-300">Hide names, emails, phone numbers and financial identifiers from OpenAI and Anthropic (swapped for placeholders, restored in the reply)</span>
 					</label>
 					<p class="col-span-2 text-[11px] text-gray-600 -mt-1">Meetings marked local-only (lock in the meeting header) are never sent to them at all.</p>
+					<label class="flex items-center gap-2 col-span-2">
+						<input type="checkbox" bind:checked={form.redact_exports} disabled={locked('redact_exports')} class="rounded border-gray-600 bg-gray-800" />
+						<span class="text-sm text-gray-300">Redact Social Security, account, routing and card numbers and dates of birth in Markdown and Obsidian exports</span>
+					</label>
+					<label class="flex items-center gap-2 col-span-2">
+						<input type="checkbox" bind:checked={form.redact_stored_transcripts} disabled={locked('redact_stored_transcripts')} class="rounded border-gray-600 bg-gray-800" />
+						<span class="text-sm text-gray-300">Also redact them in saved transcripts</span>
+					</label>
+					<p class="col-span-2 text-[11px] text-gray-600 -mt-1">They become [SSN], [account ••1234] and the like, keeping at most the last four digits. Saved transcripts are redacted when a meeting is transcribed; the audio is kept as recorded.</p>
 				</div>
 			</section>
 

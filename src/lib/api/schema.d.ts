@@ -3904,6 +3904,10 @@ export interface components {
             per_source_transcription?: boolean | null;
             /** Phone Url */
             phone_url?: string | null;
+            /** Redact Exports */
+            redact_exports?: boolean | null;
+            /** Redact Stored Transcripts */
+            redact_stored_transcripts?: boolean | null;
             /** Remote Access */
             remote_access?: boolean | null;
             /** Remote Relays */
@@ -4121,6 +4125,10 @@ export interface components {
             per_source_transcription: boolean;
             /** Phone Url */
             phone_url: string;
+            /** Redact Exports */
+            redact_exports: boolean;
+            /** Redact Stored Transcripts */
+            redact_stored_transcripts: boolean;
             /** Remote Access */
             remote_access: boolean;
             /** Remote Relays */

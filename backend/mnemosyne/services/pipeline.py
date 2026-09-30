@@ -19,7 +19,7 @@ from ..jobs import JobContext
 from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus, transcript_hash
 from ..models.transcript import TranscriptSegment
 from ..storage.crypto import plaintext_async
-from ..summarization.privacy import LOCAL_ONLY_ERROR, is_cloud
+from ..summarization.privacy import LOCAL_ONLY_ERROR, is_cloud, redact_transcript
 from ..summarization.prompts import meeting_date_instructions
 from ..transcription.engine import AudioSource
 from ..transcription.glossary import (
@@ -190,6 +190,8 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
                 for k, v in part_embeddings.items():
                     embeddings.setdefault(k, v)
                 new = shift(new, starts.get(part, 0.0))
+                if settings.redact_stored_transcripts:  # before anything shows or keeps them
+                    new = redact_transcript(new)
                 for segment in new:
                     ctx.emit(
                         {
@@ -202,6 +204,10 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
             if not n_sources:
                 raise ValueError(f"Session {session_id} has no audio to transcribe")
             segments.sort(key=lambda s: (s.start, s.end))
+            if settings.redact_stored_transcripts:
+                # Again over the whole meeting: parts kept from before the setting was on, and
+                # a cue at the end of one part ("your social?") for a number in the next.
+                segments = redact_transcript(segments)
 
             mapping = app.speakers.match(embeddings) if settings.auto_label_speakers else {}
             if embeddings:

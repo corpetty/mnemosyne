@@ -40,17 +40,25 @@ class ObsidianExporter:
         tags: list[str] | None = None,
         link_people: bool = True,
         include_transcript: bool = True,
+        redact: bool = False,
     ):
         self.vault_path = Path(vault_path)
         self.subfolder = subfolder
         self.tags = tags
         self.link_people = link_people
         self.include_transcript = include_transcript
+        self.redact = redact  # financial identifiers, see privacy.redact_identifiers
 
     def render(self, session: Session, resources: list[str] | None = None) -> str:
         transcript = session.transcript
+        if self.redact:
+            from ..summarization.privacy import redact_transcript
+
+            # Line by line first: a line may only make sense after the one before it.
+            transcript = redact_transcript(transcript)
+            session = session.model_copy(update={"transcript": transcript})
         duration = max((s.end for s in transcript), default=None)
-        return render_meeting_note(
+        note = render_meeting_note(
             title=session.name,
             date=session.created_at,
             participants=session.participants,
@@ -68,6 +76,11 @@ class ObsidianExporter:
             resources=resources,
             external_notes=[(n.source, n.text) for n in session.external_notes],
         )
+        if self.redact:  # the summary, notes, action items and the rest
+            from ..summarization.privacy import redact_identifiers
+
+            note = redact_identifiers(note)
+        return note
 
     def export(self, session: Session, resources: list[str] | None = None) -> Path:
         """Export a session to the Obsidian vault.

@@ -59,23 +59,27 @@ def daily_note_path(vault: Path, when: datetime, folder: str = "") -> tuple[Path
     return vault / folder / f"{name}.md", template
 
 
-def _one_line(session: Session, limit: int = 160) -> str:
-    text = re.sub(r"[*_`#>]", "", session.summary or "").strip()
+def _one_line(session: Session, limit: int = 160, clean=lambda t: t) -> str:
+    text = clean(re.sub(r"[*_`#>]", "", session.summary or "").strip())
     first = re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0] if text else ""
     return first if len(first) <= limit else first[: limit - 1].rstrip() + "…"
 
 
-def entry(session: Session, link: str, me: str) -> list[str]:
-    """The lines for one meeting: `- 14:00 [[note|Title]]: one line`, then your open tasks."""
+def entry(session: Session, link: str, me: str, redact: bool = False) -> list[str]:
+    """The lines for one meeting: `- 14:00 [[note|Title]]: one line`, then your open tasks.
+    `redact`: financial identifiers in the text become markers (privacy.redact_identifiers)."""
+    from ..summarization.privacy import redact_identifiers
+
+    clean = redact_identifiers if redact else (lambda t: t)
     line = f"- {session.created_at:%H:%M} [[{link}|{session.name}]]"
-    if about := _one_line(session):
+    if about := _one_line(session, clean=clean):
         line += f": {about}"
     lines = [line]
     for item in session.summary_data.action_items if session.summary_data else []:
         if item.done or (item.owner or "") != me:
             continue
         due = f" 📅 {item.due.isoformat()}" if item.due else ""
-        lines.append(f"    - [ ] {item.text}{due}")
+        lines.append(f"    - [ ] {clean(item.text)}{due}")
     return lines
 
 
@@ -105,7 +109,9 @@ def upsert_entry(text: str, link: str, lines: list[str]) -> str:
     return f"{before}{BEGIN}\n{body}\n{END}{after}"
 
 
-def write_daily_entry(vault: Path, session: Session, link: str, me: str, folder: str = "") -> Path:
+def write_daily_entry(
+    vault: Path, session: Session, link: str, me: str, folder: str = "", redact: bool = False
+) -> Path:
     path, template = daily_note_path(vault, session.created_at, folder)
     if path.exists():
         text = path.read_text(encoding="utf-8")
@@ -125,7 +131,7 @@ def write_daily_entry(vault: Path, session: Session, link: str, me: str, folder:
         path.parent.mkdir(parents=True, exist_ok=True)
     # The user's own note: written whole or not at all (a crash mid-write must not truncate it).
     tmp = path.with_name(f".{path.name}.mnemosyne")
-    tmp.write_text(upsert_entry(text, link, entry(session, link, me)), encoding="utf-8")
+    tmp.write_text(upsert_entry(text, link, entry(session, link, me, redact)), encoding="utf-8")
     tmp.replace(path)
     logger.info("Daily note %s: %s", path, session.name)
     return path

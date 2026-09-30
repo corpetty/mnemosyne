@@ -194,9 +194,15 @@ class Settings(BaseSettings):
     default_provider: str = "ollama"
     default_model: str = ""
     # Before sending anything to a cloud provider (openai, anthropic), replace emails, phone
-    # numbers and the names of people in your meetings with placeholders, and put them back
-    # in the reply.
+    # numbers, financial identifiers and the names of people in your meetings with
+    # placeholders, and put them back in the reply.
     cloud_redaction: bool = False
+    # Social Security, account, routing and card numbers and dates of birth said in a meeting
+    # are written as [SSN], [account ••1234] etc. in Markdown and Obsidian exports.
+    redact_exports: bool = True
+    # ... and in the saved transcript itself, right after transcription (the audio is kept
+    # as it is). Summaries, search and everything else then only ever see the markers.
+    redact_stored_transcripts: bool = False
 
     # Server mode: when set, every /api request and the WebSocket must carry it
     # (Authorization: Bearer <token>, or ?token=). /health stays open.

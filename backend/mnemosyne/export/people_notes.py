@@ -23,9 +23,14 @@ def _mmss(sec: float) -> str:
     return f"{m // 60}h {m % 60:02d}m" if m >= 60 else f"{m}:{int(sec % 60):02d}"
 
 
-def render_person(d: PersonDetail, stems: dict[str, str]) -> str:
+def render_person(d: PersonDetail, stems: dict[str, str], redact: bool = False) -> str:
+    from ..summarization.privacy import redact_identifiers
+
     def link(sid: str, name: str) -> str:
         return f"[[{stems[sid]}|{name}]]" if sid in stems else name
+
+    def task(t) -> str:  # financial identifiers in a task become markers when `redact`
+        return redact_identifiers(t.text) if redact else t.text
 
     last = d.meetings[0].created_at.strftime("%Y-%m-%d") if d.meetings else "never"
     out = [
@@ -42,7 +47,7 @@ def render_person(d: PersonDetail, stems: dict[str, str]) -> str:
     ]
     if d.open_tasks:
         out += ["## Open tasks", ""]
-        out += [f"- [ ] {t.text} · {link(t.session_id, t.session_name)}" for t in d.open_tasks]
+        out += [f"- [ ] {task(t)} · {link(t.session_id, t.session_name)}" for t in d.open_tasks]
         out.append("")
     out += ["## Meetings", ""]
     for m in d.meetings:
@@ -51,7 +56,7 @@ def render_person(d: PersonDetail, stems: dict[str, str]) -> str:
     out.append("")
     if d.done_tasks:
         out += ["## Done", ""]
-        out += [f"- [x] {t.text} · {link(t.session_id, t.session_name)}" for t in d.done_tasks]
+        out += [f"- [x] {task(t)} · {link(t.session_id, t.session_name)}" for t in d.done_tasks]
         out.append("")
     return "\n".join(out)
 
@@ -73,7 +78,9 @@ def _vault_stems(vault: Path, ours: Path) -> set[str]:
     return stems
 
 
-def write_person_notes(repo, vault: Path, subfolder: str, names, generic=()) -> list[Path]:
+def write_person_notes(
+    repo, vault: Path, subfolder: str, names, generic=(), redact: bool = False
+) -> list[Path]:
     wanted = {sanitize_filename(n): n for n in names if is_person(n, generic)}
     if not wanted:
         return []
@@ -91,6 +98,6 @@ def write_person_notes(repo, vault: Path, subfolder: str, names, generic=()) -> 
         if detail is None:
             continue
         folder.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_person(detail, stems), encoding="utf-8")
+        path.write_text(render_person(detail, stems, redact), encoding="utf-8")
         written.append(path)
     return written

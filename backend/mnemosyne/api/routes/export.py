@@ -33,6 +33,7 @@ def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianEx
         tags=tags or None,
         link_people=st.obsidian_link_people,
         include_transcript=st.obsidian_include_transcript,
+        redact=st.redact_exports,
     )
 
 
@@ -85,6 +86,7 @@ def export_session(ctx: AppContext, session, vault_path: str):
                 st.obsidian_subfolder,
                 names,
                 (st.local_speaker_name, st.remote_speaker_name),
+                redact=st.redact_exports,
             )
         except Exception:
             logger.warning("Person notes failed for session %s", session.id, exc_info=True)
@@ -101,6 +103,7 @@ def export_session(ctx: AppContext, session, vault_path: str):
                 note_stem(session),
                 st.local_speaker_name,
                 st.obsidian_daily_folder,
+                redact=st.redact_exports,
             )
         except Exception:
             logger.warning("Daily note failed for session %s", session.id, exc_info=True)
