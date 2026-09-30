@@ -3947,6 +3947,8 @@ export interface components {
             cloud_redaction?: boolean | null;
             /** Config Version */
             config_version?: number | null;
+            /** Consent Script */
+            consent_script?: string | null;
             /** Copilot */
             copilot?: boolean | null;
             /** Copilot Interval Seconds */
@@ -4095,6 +4097,8 @@ export interface components {
             remote_stt_model?: string | null;
             /** Remote Stt Url */
             remote_stt_url?: string | null;
+            /** Require Consent */
+            require_consent?: boolean | null;
             /** Semantic Search */
             semantic_search?: boolean | null;
             /** Setup Complete */
@@ -4170,6 +4174,8 @@ export interface components {
             cloud_redaction: boolean;
             /** Config Version */
             config_version: number;
+            /** Consent Script */
+            consent_script: string;
             /** Copilot */
             copilot: boolean;
             /** Copilot Interval Seconds */
@@ -4324,6 +4330,8 @@ export interface components {
             remote_stt_model: string;
             /** Remote Stt Url */
             remote_stt_url: string;
+            /** Require Consent */
+            require_consent: boolean;
             /** Semantic Search */
             semantic_search: boolean;
             /** Setup Complete */
@@ -4405,6 +4413,8 @@ export interface components {
          *     /api/record/{recording_id}/{source} (api/routes/record.py).
          */
         StartBrowserRecordingRequest: {
+            /** Consent */
+            consent?: ("all_parties" | "in_person" | "one_party") | null;
             /**
              * Labels
              * @default {}
@@ -4424,6 +4434,8 @@ export interface components {
         };
         /** StartRecordingRequest */
         StartRecordingRequest: {
+            /** Consent */
+            consent?: ("all_parties" | "in_person" | "one_party") | null;
             /** Device Ids */
             device_ids: number[];
             /** Session Id */

@@ -12,6 +12,7 @@
 	import AutoRecordBanner from '$lib/components/AutoRecordBanner.svelte';
 	import CalendarBanner from '$lib/components/CalendarBanner.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
+	import ConsentDialog from '$lib/components/ConsentDialog.svelte';
 	import DigestPanel from '$lib/components/DigestPanel.svelte';
 	import HomeView from '$lib/components/HomeView.svelte';
 	import PeoplePanel from '$lib/components/PeoplePanel.svelte';
@@ -139,5 +140,8 @@
 {/if}
 {#if uiState.quitAsk}
 	<QuitDialog />
+{/if}
+{#if uiState.consentAsk}
+	<ConsentDialog />
 {/if}
 <ToastContainer />

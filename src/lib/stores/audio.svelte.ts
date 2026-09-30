@@ -196,7 +196,7 @@ class AudioState {
     return this.selectedDeviceIds.size > 0;
   }
 
-  async startRecording(sessionId?: string) {
+  async startRecording(sessionId?: string, consent?: string | null) {
     if (this.selectedDeviceIds.size === 0) {
       this.error = "Select at least one audio device";
       return;
@@ -214,7 +214,8 @@ class AudioState {
             sources: got.sources,
             sample_rate: got.sampleRate,
             labels: got.labels,
-            session_id: sessionId ?? null
+            session_id: sessionId ?? null,
+            consent: consent ?? null
           });
         } catch (e) {
           await browserCapture.stop();
@@ -227,7 +228,7 @@ class AudioState {
           d.id === BROWSER_MIC && got.labels.mic ? { ...d, description: got.labels.mic } : d
         );
       } else {
-        res = await api.startRecording([...this.selectedDeviceIds], sessionId);
+        res = await api.startRecording([...this.selectedDeviceIds], sessionId, consent);
       }
       this.activeSessionId = res.session_id;
       this.isRecording = true;

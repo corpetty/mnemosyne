@@ -96,6 +96,13 @@ The web app turns `<address>/?invite=<code>` into a token for that browser.
 Admin-only elsewhere: `PUT /api/settings`, storage report and cleanup, backups, turning encryption
 on or off, rebuilding the search index, pairing devices, editing voice profiles, diagnostics.
 
+### Consent
+With `require_consent` (always in firm mode; `/health` says `consent_required`), both
+`/api/audio/start` and `/api/audio/start-browser` need `consent`: `all_parties` (everyone was told
+and agreed), `in_person` (everyone in the room was told) or `one_party`; without it they answer
+400. It is logged as a `consent` event in the meeting's history with who started the recording.
+`consent_script` is the text the app offers to read out.
+
 ### Recording from a browser
 `POST /api/audio/start-browser` `{sources: ["mic", "system"], sample_rate, labels?, session_id?}`
 starts a recording like `/api/audio/start` (a new meeting or a new part), whose audio the browser

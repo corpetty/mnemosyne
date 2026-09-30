@@ -22,6 +22,8 @@ class UiState {
   importRequest = $state(0); // bumped to open the sidebar's file picker
   /** Meetings are encrypted and the key is missing: show the unlock screen. */
   locked = $state(false);
+  /** Recording needs a word on consent first (the server's require_consent, firm mode). */
+  consentAsk = $state<{ fresh: boolean } | null>(null);
   /** A firm's server and this browser is not signed in: show the sign-in screen. */
   signIn = $state(false);
   signInError = $state('');

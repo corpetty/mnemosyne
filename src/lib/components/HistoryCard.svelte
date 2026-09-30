@@ -95,8 +95,16 @@
 		stop: 'stopped',
 		capture_restart: 'stopped to restart the capture',
 		app_gone: 'stopped: the app had closed',
-		shutdown: 'stopped: the backend shut down'
+		shutdown: 'stopped: the backend shut down',
+		browser_gone: 'stopped: the browser sent no audio for 10 minutes'
 	};
+
+	const CONSENT: Record<string, string> = {
+		all_parties: 'Everyone on the call was told and agreed to the recording',
+		in_person: 'Everyone in the room was told about the recording',
+		one_party: 'Recorded with one-party consent'
+	};
+	const ACCESS: Record<string, string> = { viewed: 'Opened', played: 'Listened to', exported: 'Exported' };
 
 	function describe(e: HistoryEvent): string {
 		const d = e.detail as Record<string, unknown>;
@@ -147,6 +155,13 @@
 				return `HubSpot${d.auto ? ' (after the summary)' : ''}: ${d.error}`;
 			case 'audio_deleted':
 				return `Audio deleted${d.reason === 'retention' ? ' by the retention rule' : ''}`;
+			case 'consent':
+				return `${CONSENT[d.consent as string] ?? 'Consent recorded'}${d.by ? ` (${d.by})` : ''}`;
+			case 'viewed':
+			case 'played':
+			case 'exported':
+				// A firm's server notes who looked at a meeting (backend services/history.py).
+				return `${ACCESS[e.kind]} by ${d.by}${d.role && d.role !== 'advisor' ? ` (${d.role})` : ''}`;
 			default:
 				return e.kind.replaceAll('_', ' ');
 		}

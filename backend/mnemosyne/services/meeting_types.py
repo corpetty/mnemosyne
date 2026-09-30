@@ -76,7 +76,7 @@ def available_types(settings: Settings) -> list[MeetingType]:
     """The user's types, then the advisor pack when it is on (a user type of the same name
     replaces the built-in one)."""
     own = list(settings.meeting_types)
-    if not settings.advisor_meeting_types:
+    if not (settings.advisor_meeting_types or settings.firm_mode):  # a firm's server: on
         return own
     names = {t.name.lower() for t in own}
     return own + [t for t in ADVISOR_MEETING_TYPES if t.name.lower() not in names]

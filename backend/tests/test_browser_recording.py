@@ -104,7 +104,7 @@ def test_only_the_meetings_owner_can_send_audio(settings, keystore, fake_pipewir
     with TestClient(app) as client:
         r = client.post(
             "/api/audio/start-browser",
-            json={"sources": ["mic"], "sample_rate": RATE},
+            json={"sources": ["mic"], "sample_rate": RATE, "consent": "all_parties"},
             headers={"Authorization": f"Bearer {tokens['Ann']}"},
         )
         rid = r.json()["recording_id"]
@@ -177,3 +177,32 @@ def test_stopping_fixes_the_headers_and_drops_silent_sources(tmp_path):
         capture_output=True, text=True, check=True,
     )  # fmt: skip
     assert abs(float(probe.stdout) - 1.0) < 0.1
+
+
+def test_consent_is_asked_for_and_kept_in_the_meetings_history(client, ctx, fake_pipewire):
+    ctx.settings.require_consent = True
+    r = client.post("/api/audio/start-browser", json={"sources": ["mic"], "sample_rate": RATE})
+    assert r.status_code == 400 and "agreed" in r.json()["detail"]
+    r = client.post("/api/audio/start", json={"device_ids": [1]})
+    assert r.status_code == 400
+    started = _start(client, sources=("mic",), consent="in_person")
+    events = ctx.repo.events(started["session_id"])
+    consent = [e for e in events if e["kind"] == "consent"]
+    assert consent and consent[0]["detail"]["consent"] == "in_person"
+    r = client.post("/api/audio/start-browser", json={"sources": ["mic"], "consent": "maybe"})
+    assert r.status_code == 422
+
+
+def test_firm_mode_asks_for_consent_and_offers_the_advisor_meeting_types(settings):
+    from mnemosyne.services.meeting_types import available_types
+
+    settings.firm_mode = True
+    assert any(t.name == "Annual review" for t in available_types(settings))
+    from mnemosyne.api.routes.audio import consent_required
+
+    class Ctx:
+        pass
+
+    c = Ctx()
+    c.settings = settings
+    assert consent_required(c)

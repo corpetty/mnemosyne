@@ -214,6 +214,14 @@ class Settings(BaseSettings):
     # Serve the web app from this folder (the `build/` of `pnpm build`), so browsers need
     # nothing installed. Blank: only the desktop app's own copy of the UI.
     web_dir: str = ""
+    # Before each recording, say how the people in it agreed to be recorded (all parties
+    # informed, in the room, one party where the law allows); it goes into the meeting's
+    # history. Always on in firm mode. consent_script: what to read out, shown with it.
+    require_consent: bool = False
+    consent_script: str = (
+        "Before we start: I'd like to record this conversation so I can keep accurate notes. "
+        "The recording stays on our firm's own server. Is that all right with you?"
+    )
     # The address phones open to reach this backend when it is not the LAN address, e.g.
     # https://desk.tail1234.ts.net from `tailscale serve` (docs/remote-access.md). Blank: LAN.
     phone_url: str = ""

@@ -45,6 +45,8 @@ class ConnectionState {
   /** From /health: hostname of the backend we reached and whether it wants a token. */
   host = $state<string | null>(null);
   authRequired = $state(false);
+  /** Each recording asks how its people agreed to it (from /health). */
+  consentRequired = $state(false);
   /** Who is signed in on a firm's server (empty id: the desktop app or the admin token). */
   me = $state<Me | null>(null);
 

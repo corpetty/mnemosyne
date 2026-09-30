@@ -117,6 +117,8 @@
 				speaker_match_threshold: v.speaker_match_threshold,
 				per_source_transcription: v.per_source_transcription,
 				live_transcription: v.live_transcription,
+				require_consent: v.require_consent,
+				consent_script: v.consent_script,
 				live_transcriber: v.live_transcriber,
 				live_interval_seconds: v.live_interval_seconds,
 				unload_models_after_minutes: v.unload_models_after_minutes,
@@ -435,6 +437,21 @@
 		<p class="text-gray-500 text-sm">Loading settings...</p>
 	{:else if settings}
 		{#if tab === 'recording'}
+			<section>
+				<h3 class="text-lg font-semibold text-gray-200 mb-1">Consent</h3>
+				<p class="text-xs text-gray-500 mb-3">
+					Before each recording, say how the people in it agreed to be recorded (everyone told and agreed, told in the
+					room, or one-party consent); it is kept in the meeting's history. Always asked on a firm's server.
+				</p>
+				<label class="flex items-center gap-2 mb-2">
+					<input type="checkbox" bind:checked={form.require_consent} disabled={locked('require_consent')} class="rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">Ask before every recording</span>
+				</label>
+				<label class="block">
+					<span class={labelClass}>What to read out (shown when asking)</span>
+					<textarea rows="3" bind:value={form.consent_script} disabled={locked('consent_script')} class={inputClass}></textarea>
+				</label>
+			</section>
 			<!-- Auto-record -->
 			<section>
 				<h3 class="text-lg font-semibold text-gray-200 mb-1">Auto-record</h3>

@@ -91,6 +91,7 @@ export async function getHealth(): Promise<{
   host?: string;
   auth_required?: boolean;
   firm_mode?: boolean;
+  consent_required?: boolean;
 }> {
   return request('/health');
 }
@@ -103,11 +104,12 @@ export async function getDevices(): Promise<AudioDevice[]> {
 // Audio
 export async function startRecording(
   deviceIds: number[],
-  sessionId?: string
+  sessionId?: string,
+  consent?: string | null
 ): Promise<StartRecordingResponse> {
   return request('/api/audio/start', {
     method: 'POST',
-    body: JSON.stringify({ device_ids: deviceIds, session_id: sessionId ?? null })
+    body: JSON.stringify({ device_ids: deviceIds, session_id: sessionId ?? null, consent: consent ?? null })
   });
 }
 
@@ -118,6 +120,7 @@ export async function startBrowserRecording(body: {
   sample_rate: number;
   labels: Record<string, string>;
   session_id: string | null;
+  consent: string | null;
 }): Promise<StartRecordingResponse> {
   return request('/api/audio/start-browser', { method: 'POST', body: JSON.stringify(body) });
 }

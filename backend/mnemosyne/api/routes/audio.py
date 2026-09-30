@@ -42,9 +42,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/audio", tags=["audio"])
 
 
+# How the people in a recording agreed to it (require_consent): everyone on the call was told
+# and agreed; everyone in the room was told; only the one recording, where the law allows.
+Consent = Literal["all_parties", "in_person", "one_party"]
+
+
 class StartRecordingRequest(ApiModel):
     device_ids: list[int]
     session_id: str | None = None  # Existing session ID, or create new
+    consent: Consent | None = None
 
 
 class StartBrowserRecordingRequest(ApiModel):
@@ -55,6 +61,7 @@ class StartBrowserRecordingRequest(ApiModel):
     sample_rate: int = 48000  # of the 16-bit mono PCM it will send
     session_id: str | None = None
     labels: dict[str, str] = {}  # what the browser calls each source ("MacBook microphone")
+    consent: Consent | None = None
 
 
 BROWSER_GONE_SECONDS = 600.0  # a browser recording nobody sends audio to is stopped after this
@@ -181,7 +188,10 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
     if not request.device_ids:
         raise HTTPException(status_code=400, detail="No devices selected")
     return await _start(
-        ctx, request.session_id, lambda session: begin_recording(ctx, session, request.device_ids)
+        ctx,
+        request.session_id,
+        lambda session: begin_recording(ctx, session, request.device_ids),
+        request.consent,
     )
 
 
@@ -194,11 +204,24 @@ async def start_browser(request: StartBrowserRecordingRequest, ctx: AppContext =
     if not 8000 <= request.sample_rate <= 96000:
         raise HTTPException(status_code=400, detail="Unsupported sample rate")
     return await _start(
-        ctx, request.session_id, lambda session: begin_recording(ctx, session, [], browser=request)
+        ctx,
+        request.session_id,
+        lambda session: begin_recording(ctx, session, [], browser=request),
+        request.consent,
     )
 
 
-async def _start(ctx: AppContext, session_id: str | None, begin) -> StartRecordingResponse:
+def consent_required(ctx: AppContext) -> bool:
+    return ctx.settings.require_consent or ctx.settings.firm_mode
+
+
+async def _start(
+    ctx: AppContext, session_id: str | None, begin, consent: str | None = None
+) -> StartRecordingResponse:
+    if consent is None and consent_required(ctx):
+        raise HTTPException(
+            status_code=400, detail="Say how the people in this meeting agreed to be recorded"
+        )
     if session_id:
         session = ctx.sessions.get_session(session_id)
         if session is None:
@@ -220,7 +243,21 @@ async def _start(ctx: AppContext, session_id: str | None, begin) -> StartRecordi
         session = ctx.sessions.get_session(session.id) or session
         await _save_pending(ctx, session)
         session = ctx.sessions.get_session(session.id) or session
-        return await begin(session)
+        started = await begin(session)
+        if consent is not None:
+            from ... import access
+
+            who = access.principal()
+            recording = ctx.active_recordings.get(session.id)
+            history.log(
+                ctx,
+                session.id,
+                "consent",
+                recording.part if recording else None,
+                consent=consent,
+                by=who.name if who else "",
+            )
+        return started
     finally:
         ctx.starting.discard(session.id)
 

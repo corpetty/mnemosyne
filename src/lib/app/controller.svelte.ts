@@ -48,8 +48,15 @@ export const openSetup = () => openView('setup');
 
 // ---- recording -----------------------------------------------------------------
 
-export async function startRecording(fresh = false) {
+/** How the people in a recording agreed to it (backend routes/audio.py Consent). */
+export type Consent = 'all_parties' | 'in_person' | 'one_party';
+
+export async function startRecording(fresh = false, consent?: Consent) {
   if (audioState.pending) return; // a click already on its way
+  if (connectionState.consentRequired && !consent) {
+    uiState.consentAsk = { fresh }; // ConsentDialog asks, then comes back here
+    return;
+  }
   // In the browser the microphone and share dialogs come first, straight from the click.
   if (audioState.inBrowser && !(await audioState.acquireBrowser())) {
     toastState.error(audioState.error ?? 'Could not start recording');
@@ -62,7 +69,7 @@ export async function startRecording(fresh = false) {
     }
     if (!sessionState.activeSession) return;
     const sessionId = sessionState.activeSession.id;
-    const res = await audioState.startRecording(sessionId);
+    const res = await audioState.startRecording(sessionId, consent);
     if (res) {
       transcriptState.startLive(sessionId);
       toastState.info(res.live_job_id ? 'Recording started, live transcript on' : 'Recording started');
@@ -696,6 +703,7 @@ export function connectApp(): () => void {
         const h = await getHealth();
         connectionState.host = h.host ?? null;
         connectionState.authRequired = !!h.auth_required;
+        connectionState.consentRequired = !!h.consent_required;
         if (SAME_ORIGIN) await redeemInviteFromUrl();
         if (!(await signedIn())) {
           uiState.backendStatus = 'connected';

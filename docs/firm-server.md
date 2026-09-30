@@ -132,8 +132,12 @@ Opening, playing and exporting a meeting is noted in that meeting's history with
 
 ## Recording, for advisors
 
-Advisors record in the browser: New meeting → Record. Chrome or Edge asks for the microphone the
-first time, and, when "The call's audio" is ticked, what to share:
+Advisors record in the browser: New meeting → Record. First Mnemosyne asks how the people in the
+meeting agreed to be recorded (everyone told and agreed; in the room, everyone told; one-party
+consent where the law allows), with a short script to read out (Settings → Recording → Consent,
+which the firm's compliance officer should word). The answer and who gave it go into the
+meeting's history. Then Chrome or Edge asks for the microphone the first time, and, when "The
+call's audio" is ticked, what to share:
 
 - **Zoom or Teams in their own app (Windows):** choose *Entire screen* and tick *Share system
   audio*. Only the sound is recorded, never the screen.
