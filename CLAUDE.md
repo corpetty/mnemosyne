@@ -270,6 +270,11 @@ each recording (`require_consent`). Identifier redaction (summarization/privacy.
 versions, chained seals, `records_retention_years`, legal hold, deletions log, exam export zip).
 Pilot kit: scripts/make-demo-meeting.py (espeak-ng, two voices), docs/security-overview.md,
 docs/pilot-checklist.md, scripts/docs-to-pdf.mjs. Mnemosyne never gives financial advice.
+Phase B (same day): supervision (services/supervision.py, `supervision`/`compliance_phrases`,
+`supervision_flags`/`supervision_reviews`, Review view; a new transcription replaces flags, edits
+only add); households (services/households.py, People > Households, `household` in the brief,
+HubSpot companies synced read-only). Item 12 (native Windows/macOS capture) only if the browser
+recorder falls short on a Mac.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

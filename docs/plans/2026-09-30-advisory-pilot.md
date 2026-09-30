@@ -153,6 +153,9 @@ With no archive vendor, Mnemosyne keeps the records:
 
 ## Phase B: after the pilot starts
 
+Corey, 2026-09-30: "start phase B". Items 10 and 11 built the same day (d5e6163, 7136672);
+item 12 waits on its condition (the macOS system-audio check), which needs a Mac.
+
 ### 10. Supervision queue
 
 Compliance phrases flagged on the final transcript (a configurable lexicon: "guarantee",
