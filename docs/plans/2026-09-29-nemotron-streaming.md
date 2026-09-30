@@ -220,6 +220,13 @@ falls back and keeps the labels already shown, and the settings round-trip.
 
 ## Open questions for Corey
 
+Answered 2026-09-29: AMI download OK; the sessions are mine to pick; the re-diarization question is
+decided by the numbers. As built: the Edinburgh AMI server stalled, so `scripts/fetch-ami.py` reads
+the Hugging Face mirror (diarizers-community/ami, speaker turns without words; ~900 MB read, ~250 MB
+kept), and the live bench scores lines by time overlap with those turns. Re-diarization stays off
+with streaming: on ES2004a its end-of-meeting accuracy (93.5%) is below streaming alone (97.4%),
+because it relabels whole lines where streaming splits them at speaker changes.
+
 1. **AMI data.** Is it OK to download AMI ES2004a–d again (headset mix + word-level references,
    ~150 MB, to `~/.cache/mnemosyne-trials/ami/`)? Without it, item 2 uses your own corrected
    meetings and the synthetic set. Those are real but fewer, and unpublished.

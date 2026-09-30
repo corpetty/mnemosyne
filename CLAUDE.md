@@ -130,6 +130,12 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   (api/app_watch.py, `/api/system/attach`, `existing_backend` in lib.rs). The CLI binds the port
   before startup (cli.py `bind`): uvicorn binds after the lifespan, and a second backend's startup
   used to stop the first one's recorders. Recovery leaves recorders whose parent is a live Python.
+- Nemotron streaming (live speakers) is a second model instance on purpose: streaming settings
+  live on the model, so sharing the offline diarizer's would let a final job change them under a
+  recording. Its attention runs through SDPA (`sdpa_attention`): NeMo's compiled FlexAttention asks
+  Triton for 80 KB of shared memory on the streaming shapes, more than Turing (RTX 20xx) has.
+  `MNEMOSYNE_GPU_TESTS=1 uv run pytest tests/test_nemotron_stream.py -s` checks it against NeMo's own
+  chunked pass (needs the AMI files); re-run it when bumping NeMo.
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.
@@ -242,8 +248,16 @@ corrections (routes/glossary.py); Obsidian daily note (export/daily_note.py); bo
 <data_dir>/assets); other assistants' notes (services/external_notes.py; notes-only meetings are
 summarized from them). Extra context reaches the summary as instructions (pipeline.py).
 
-Candidates next: offline installer (pre-seeded uv cache); live diarization with Nemotron's
-streaming mode (replacing online clustering); publishing the Flatpak to Flathub (needs a license).
+Live speakers from Nemotron streaming (2026-09-29, docs/plans/2026-09-29-nemotron-streaming.md,
+unreleased): `live_diarizer` (auto = streaming on NVIDIA); transcription/diarizers/nemotron_stream.py
+(own model instance, low-latency config, SDPA attention), transcription/live_streaming.py (timeline,
+per-word split, `VoiceNamer` for earlier parts and voice profiles, `AppContext.live_voices`);
+`mnemosyne-bench --live` (bench_live.py) and scripts/fetch-ami.py (AMI from the HF mirror into
+~/.cache/mnemosyne-trials/ami). AMI ES2004a-d: 95.8-97.4% of live words on the right speaker vs
+92.9-96.7% for clustering + 30 s re-diarization, at similar or lower GPU time (~20 ms per 0.72 s).
+More than 8 voices in one stream get merged.
+
+Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
 Frontend package manager: pnpm is pinned via `packageManager` (corepack). If `pnpm` complains
 about an unexpected store location, run `pnpm install --config.confirmModulesPurge=false`.

@@ -251,8 +251,9 @@ runs a separate `Transcriber` instance (`live_transcriber`, Parakeet on CPU by d
 buffer. Segments that end at least one second before the buffer edge are committed and streamed as
 `live_segment` events with absolute times; the remainder is sent as a replaceable `live_partial` and
 retried on the next tick, so words cut by a chunk boundary are not lost. With mic and system captured
-separately the labels are `local_speaker_name` and `remote_speaker_name`; no diarization runs live.
-Stop cancels the job (a final flush tick runs) before the final `transcribe` job replaces everything.
+separately the mic is labelled `local_speaker_name` and the system channel is diarized live (see
+Live speaker labels). Stop cancels the job (a final flush tick runs) before the final `transcribe`
+job replaces everything.
 
 ### Echo cancellation at capture
 
@@ -293,17 +294,62 @@ managed in Settings.
 
 ### Live speaker labels
 
-`transcription/live_speakers.py`. For live sources that may hold several voices (the system channel,
-or the only source when there is one), each committed segment's audio is embedded with the embedding
-model inside the configured pyannote pipeline (community-1's bundled model, 256-d, ~10 ms per
-segment on GPU), so vectors live in the same space as saved voice profiles. `OnlineClusterer` assigns
-segments to running centroids by cosine similarity (`live_speaker_threshold`, default 0.45, measured
-on real and synthetic voices), merges clusters whose centroids later converge, and names a cluster
-after a saved profile once it matches above `speaker_match_threshold` (one cluster per name; the local
-user's profile is excluded when the mic is a separate channel). Renames are sent as `live_relabel`
-events and applied to lines already on screen. Segments under 1 s inherit the previous label. Without
-torch/pyannote (CPU-only installs) the live view keeps channel labels. The final diarized transcript
-after stop remains authoritative.
+Live sources that may hold several voices (the system channel, or the only source when there is
+one) get speaker labels one of two ways, chosen by `live_diarizer` (`registry.resolve_live_diarizer`:
+`auto` is streaming when NeMo and CUDA are available).
+
+**Nemotron streaming** (`transcription/diarizers/nemotron_stream.py`, `transcription/live_streaming.py`).
+Nemotron-3-Diarization is a Streaming Sortformer: an arrival-order speaker cache and a FIFO of recent
+frames carry speaker identity from chunk to chunk, so speaker *k* is the same person for the whole
+recording (up to 8 speakers), with no clustering.
+
+```
+WavTail.read_new() ──┬─> transcriber buffer ──> committed lines ──┐
+   (every sample,    │                                            │ speaker over each line
+    silence too)     └─> NemotronStream.push() ─> SpeakerTimeline ┘ (per word, split at changes)
+                          0.72 s chunks + 0.32 s        │
+                          look-ahead, 10 ms frames      └─> VoiceNamer: earlier parts, voice profiles
+```
+
+`NemotronStreamModel` is its own model instance, never the final engine's diarizer: the streaming
+settings (the model card's low-latency configuration) live on the model, and a final job during a
+recording would otherwise change them under the stream. Each diarized source gets a `NemotronStream`
+that resamples to 16 kHz, computes each chunk's mel features from the audio around it (identical to
+the whole file's; `tests/test_nemotron_stream.py` checks against NeMo's own chunked pass) and runs one
+`forward_streaming_step` per chunk, keeping no growing prediction tensor. Attention goes through SDPA
+in these threads (`sdpa_attention`): NeMo's compiled FlexAttention recompiles for every early step and
+on Turing picks a kernel that needs more shared memory than the GPU has. On an RTX 2080 Ti a step
+takes ~23 ms (about 3% of real time per source) and 590 MiB of VRAM, flat over a meeting.
+
+`SpeakerTimeline` keeps one byte per 10 ms (the most active speaker, or nobody) plus overlap flags.
+A committed line takes the speaker most active over it; with word times each word takes its own
+and the line is split where the speaker changes (runs of at least two words). A line ending past
+what the stream has scored (it runs about a second behind) is re-checked on the next tick and
+corrected with `live_labels`. Labels are "Speaker n" per (source, index) (`LiveSpeakerNames`).
+`VoiceNamer` embeds a speaker's longest clean turns with the pyannote embedder once they have
+3 s of clean speech: a match with a speaker of an earlier part of the same meeting takes that
+label back (each part is a new recording, so a new stream; voices are kept in memory in
+`AppContext.live_voices` for an hour), and a voice-profile match (`speaker_match_threshold`,
+never the local user's name on the system channel) renames it (`live_relabel`); unmatched
+speakers are tried again after another minute of speech. More than eight people are merged into
+eight live labels; the final transcript is unaffected. If the model cannot load or a step fails,
+the source falls back to voice clustering and the live status says so.
+
+**Voice clustering** (`transcription/live_speakers.py`). Each committed segment's audio is embedded
+with the embedding model inside the configured pyannote pipeline (community-1's bundled model, 256-d,
+~10 ms per segment on GPU), so vectors live in the same space as saved voice profiles.
+`OnlineClusterer` assigns segments to running centroids by cosine similarity
+(`live_speaker_threshold`, default 0.45), merges clusters whose centroids later converge, and names a
+cluster after a saved profile once it matches above `speaker_match_threshold` (one cluster per name;
+the local user's profile is excluded when the mic is a separate channel). Renames are sent as
+`live_relabel` events and applied to lines already on screen. Segments under 1 s inherit the previous
+label. With `live_rediarize` (and Nemotron available) the recording so far is re-diarized every
+`live_rediarize_seconds` and changed lines are corrected with `live_labels`
+(`transcription/live_rediarize.py`). Without torch/pyannote (CPU-only installs) the live view keeps
+channel labels.
+
+`mnemosyne-bench --live` (`bench_live.py`) replays a recording through the live transcript and
+scores both ways; with either, the final diarized transcript after stop remains authoritative.
 
 ### Model lifecycle
 
