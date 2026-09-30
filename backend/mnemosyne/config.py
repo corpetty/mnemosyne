@@ -201,6 +201,12 @@ class Settings(BaseSettings):
     # Server mode: when set, every /api request and the WebSocket must carry it
     # (Authorization: Bearer <token>, or ?token=). /health stays open.
     api_token: str = ""
+    # Firm mode: this backend is a firm's server, used by its advisors from their browsers
+    # (docs/firm-server.md). Nothing goes to a cloud model: those providers are not created.
+    firm_mode: bool = False
+    # Serve the web app from this folder (the `build/` of `pnpm build`), so browsers need
+    # nothing installed. Blank: only the desktop app's own copy of the UI.
+    web_dir: str = ""
     # The address phones open to reach this backend when it is not the LAN address, e.g.
     # https://desk.tail1234.ts.net from `tailscale serve` (docs/remote-access.md). Blank: LAN.
     phone_url: str = ""

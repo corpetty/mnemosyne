@@ -112,6 +112,34 @@ class SystemKeyStore:
             keyring.delete_password(KEYRING_SERVICE, self.account)
 
 
+class CredentialKeyStore:
+    """The key provided by the system, for a server with no desktop keyring: a file named by
+    MNEMOSYNE_KEY_FILE holding 32 random bytes in base64, typically a systemd credential
+    (`LoadCredentialEncrypted=`, sealed to the machine's TPM; docs/firm-server.md). It is
+    `fixed`: turning encryption on adopts it instead of making a new key."""
+
+    fixed = True
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+
+    def get(self) -> bytes | None:
+        try:
+            key = base64.b64decode(self.path.read_text().strip(), validate=True)
+        except (OSError, ValueError):
+            return None
+        return key if len(key) == 32 else None
+
+    def set(self, key: bytes) -> None:
+        if key != self.get():
+            raise RuntimeError(
+                f"The key comes from {self.path} (MNEMOSYNE_KEY_FILE) and cannot be replaced here"
+            )
+
+    def delete(self) -> None:
+        pass  # the system owns it
+
+
 class FileKeyStore:
     """The key in a file next to the data. Demo mode only (the browser tests): it protects
     nothing, but keeps test runs out of the user's real keyring."""

@@ -5,6 +5,16 @@
 const KEY = 'mnemosyne.connection';
 export const LOCAL_BACKEND = 'http://127.0.0.1:8008';
 
+/** Served by a backend itself (api/web.py, e.g. a firm's server opened in a browser): that
+ * server is the backend, not this computer's. */
+export const SAME_ORIGIN =
+  typeof document !== 'undefined' &&
+  document.querySelector('meta[name="mnemosyne-backend"][content="same-origin"]') !== null;
+
+function defaultUrl(): string {
+  return SAME_ORIGIN ? location.origin : LOCAL_BACKEND;
+}
+
 interface Stored {
   url: string;
   token: string;
@@ -23,7 +33,7 @@ function load(): Stored {
   } catch {
     /* no storage */
   }
-  return { url: LOCAL_BACKEND, token: '' };
+  return { url: defaultUrl(), token: '' };
 }
 
 class ConnectionState {
@@ -63,7 +73,7 @@ class ConnectionState {
   }
 
   save(url: string, token: string, remote = false) {
-    this.url = url.trim().replace(/\/+$/, '') || LOCAL_BACKEND;
+    this.url = url.trim().replace(/\/+$/, '') || defaultUrl();
     this.token = token.trim();
     this.remote = remote;
     try {
@@ -74,7 +84,7 @@ class ConnectionState {
   }
 
   useLocal() {
-    this.save(LOCAL_BACKEND, '');
+    this.save(defaultUrl(), '');
   }
 }
 

@@ -1,8 +1,11 @@
 # A pilot for a financial advisory firm
 
-Drafted 2026-09-30 for Corey's review; nothing here is agreed yet. Goal: one advisory firm can
-run Mnemosyne for real client meetings for a month, and its chief compliance officer (CCO) is
-comfortable with it.
+Drafted 2026-09-30; Corey: "office box, 2-3 advisors, local only, start phase A" (same day).
+Softphone/phone-system (question 4) and the HubSpot test account (question 5) are still open:
+item 3 treats phone calls as in the plan, item 7 is built against a mock until the account exists.
+
+Goal: one advisory firm can run Mnemosyne for real client meetings for a month, and its chief
+compliance officer (CCO) is comfortable with it.
 
 What we know about the firm: advisors are on Windows and macOS; the CRM is HubSpot; meetings
 happen on video calls (Zoom/Teams), by phone and in person; no archiving vendor (email or
@@ -23,7 +26,7 @@ Mnemosyne never gives financial advice itself (summaries record what was said).
 
 Which records rules apply to the firm (SEC Rule 204-2 for an RIA, FINRA for a broker-dealer,
 state recording-consent laws) is the CCO's call. The job here is to make every likely question
-answerable with "yes, here is how", and to write it down (item 12).
+answerable with "yes, here is how", and to write it down (item 9).
 
 ---
 

@@ -2,9 +2,10 @@
 
 Off unless `api_token` is set. Then every /api path and /ws needs the token in
 `Authorization: Bearer <token>` or `?token=` (for <audio> elements and the
-WebSocket, which cannot set headers). /health, /docs, /openapi.json, the phone page and
-redeeming a pairing code stay open. A paired phone's own token (services/pairing.py) opens
-only DEVICE_PATHS, what the phone page needs; a paired computer's opens everything.
+WebSocket, which cannot set headers). /health, /docs, /openapi.json, the phone page, the web
+app's files and redeeming a pairing code stay open. A paired phone's own token
+(services/pairing.py) opens only DEVICE_PATHS, what the phone page needs; a paired computer's
+opens everything.
 """
 
 from __future__ import annotations
@@ -29,6 +30,12 @@ OPEN_PATHS = {
 DEVICE_PATHS = {"/api/audio/import", "/api/pairing/me"}
 
 
+def is_open(path: str) -> bool:
+    """Paths anyone may load: the list above, and everything outside the API and WebSocket,
+    which is the web app's own files (api/web.py; the code is not a secret, the data is)."""
+    return path in OPEN_PATHS or not (path.startswith("/api/") or path == "/ws")
+
+
 class TokenAuthMiddleware:
     def __init__(self, app: ASGIApp, ctx: AppContext):
         self.app = app
@@ -39,7 +46,7 @@ class TokenAuthMiddleware:
             return await self.app(scope, receive, send)
         token = self.ctx.settings.api_token
         path = scope.get("path", "")
-        if not token or path in OPEN_PATHS or scope.get("method") == "OPTIONS":
+        if not token or is_open(path) or scope.get("method") == "OPTIONS":
             return await self.app(scope, receive, send)
 
         presented = ""

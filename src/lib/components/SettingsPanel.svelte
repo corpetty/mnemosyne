@@ -4,7 +4,7 @@
 	import { updateState } from '$lib/stores/update.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
-	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
+	import { connectionState, LOCAL_BACKEND, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
 	import PhoneLink from './PhoneLink.svelte';
 	import RemoteAccessHome from './RemoteAccessHome.svelte';
 	import RemoteConnect from './RemoteConnect.svelte';
@@ -360,10 +360,13 @@
 				<code class="text-gray-400">{connectionState.url}</code>{#if connectionState.host} on <span class="text-gray-300">{connectionState.host}</span>{/if}.
 			</p>
 			<div class="grid grid-cols-2 gap-3">
-				<label>
-					<span class={labelClass}>Backend URL</span>
-					<input type="text" bind:value={connUrl} placeholder={LOCAL_BACKEND} class={inputClass} />
-				</label>
+				{#if !SAME_ORIGIN}
+					<!-- Loaded from a server (a firm's): that server is the backend. -->
+					<label>
+						<span class={labelClass}>Backend URL</span>
+						<input type="text" bind:value={connUrl} placeholder={LOCAL_BACKEND} class={inputClass} />
+					</label>
+				{/if}
 				<label>
 					<span class={labelClass}>API token (if the backend requires one)</span>
 					<input type="password" bind:value={connToken} placeholder="optional" class={inputClass} />
@@ -371,11 +374,13 @@
 			</div>
 			<div class="flex items-center gap-3 mt-2">
 				<button onclick={() => applyConnection(connUrl, connToken)} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Connect</button>
-				{#if !connectionState.isLocal}
+				{#if !connectionState.isLocal && !SAME_ORIGIN}
 					<button onclick={() => applyConnection(LOCAL_BACKEND, '')} class="text-sm text-gray-400 hover:text-gray-200">Use local backend</button>
 				{/if}
 			</div>
-			<RemoteConnect />
+			{#if !SAME_ORIGIN}
+				<RemoteConnect />
+			{/if}
 		</section>
 
 		<section>

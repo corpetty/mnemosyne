@@ -1,0 +1,11 @@
+# HTTPS in front of Mnemosyne with a name in the firm's own domain (docs/firm-server.md).
+# Browsers only let a page use the microphone and share a call's audio over HTTPS.
+# Replace the name; Caddy gets and renews the certificate itself (the name must resolve to
+# this server, or use a DNS-challenge plugin for a name that is only on the office network).
+mnemosyne.example-firm.com {
+	reverse_proxy 127.0.0.1:8008
+	# Meetings are uploaded and streamed through here: no body size limit, long timeouts.
+	request_body {
+		max_size 4GB
+	}
+}

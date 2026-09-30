@@ -104,9 +104,14 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
             "version": app.version,
             "host": socket.gethostname(),
             "auth_required": bool(ctx.settings.api_token),
+            "firm_mode": ctx.settings.firm_mode,
             # For the desktop shell, which finds this backend already running after a crash.
             "pid": os.getpid(),
             "recording": any(r.is_recording for r in ctx.active_recordings.values()),
         }
 
+    if ctx.settings.web_dir:
+        from .web import mount_web
+
+        mount_web(app, ctx.settings.web_dir)  # last: every other route wins
     return app

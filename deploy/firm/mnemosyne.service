@@ -1,0 +1,38 @@
+# Mnemosyne on a firm's server (docs/firm-server.md). Install as
+# /etc/systemd/system/mnemosyne.service, then: systemctl daemon-reload && systemctl enable --now mnemosyne
+[Unit]
+Description=Mnemosyne (firm server)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+User=mnemosyne
+Group=mnemosyne
+WorkingDirectory=/opt/mnemosyne/backend
+ExecStart=/opt/mnemosyne/backend/.venv/bin/mnemosyne-backend --host 127.0.0.1 --port 8008
+Restart=on-failure
+
+# What makes it a firm server: no cloud models, the web app for the advisors' browsers.
+Environment=FIRM_MODE=true
+Environment=WEB_DIR=/opt/mnemosyne/build
+Environment=DEFAULT_PROVIDER=ollama
+Environment=DEFAULT_MODEL=qwen3:14b
+# Everything the firm owns lives under /srv/mnemosyne: meetings, settings, model caches.
+Environment=MNEMOSYNE_DATA_DIR=/srv/mnemosyne/data
+Environment=MNEMOSYNE_CONFIG_FILE=/srv/mnemosyne/config.toml
+Environment=HF_HOME=/srv/mnemosyne/cache/huggingface
+Environment=XDG_CACHE_HOME=/srv/mnemosyne/cache
+# The encryption key, sealed to this machine's TPM (docs/firm-server.md, "Encryption").
+LoadCredentialEncrypted=mnemosyne-key
+Environment=MNEMOSYNE_KEY_FILE=%d/mnemosyne-key
+# Secrets that are not the key (HF_TOKEN for voice profiles) go in this file, mode 0600.
+EnvironmentFile=-/srv/mnemosyne/secrets.env
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/mnemosyne
+
+[Install]
+WantedBy=multi-user.target

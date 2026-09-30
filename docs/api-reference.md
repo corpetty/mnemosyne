@@ -63,11 +63,18 @@ outside the database, so they are checked even while encrypted meetings are lock
 ### `GET /health`
 
 ```json
-{ "status": "ok", "version": "0.9.2", "host": "gpu-box", "auth_required": false, "pid": 4242, "recording": false }
+{ "status": "ok", "version": "0.9.2", "host": "gpu-box", "auth_required": false, "firm_mode": false, "pid": 4242, "recording": false }
 ```
 
 `pid` and `recording` are for the desktop shell, which may find a backend already running when it
-starts (see below).
+starts (see below). `firm_mode`: a firm's server (docs/firm-server.md), where no cloud model
+provider exists.
+
+### The web app (`web_dir`)
+With `web_dir` set to the output of `pnpm build`, the backend serves the web app at every path
+outside `/api/`, `/ws`, `/health`, `/m` and the docs, without a token (the data behind `/api/` still
+needs one). Its `index.html` carries `<meta name="mnemosyne-backend" content="same-origin">`, so the
+app talks to the server it was loaded from.
 
 ### Backend lifetime (desktop app)
 The shell passes its pid in `MNEMOSYNE_APP_PID`; the backend watches it (`api/app_watch.py`). When

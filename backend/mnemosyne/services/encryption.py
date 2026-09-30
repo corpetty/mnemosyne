@@ -149,6 +149,10 @@ def enable(app: AppContext) -> EncryptionEnabled:
     if app.settings.encrypt_at_rest:
         raise ValueError("Meetings are already encrypted")
     master = new_key()
+    if getattr(app.keystore, "fixed", False):  # the system provides the key (a server)
+        master = app.keystore.get()
+        if master is None:
+            raise RuntimeError("MNEMOSYNE_KEY_FILE holds no usable key (32 random bytes, base64)")
     app.keystore.set(master)  # raises when there is no keyring: nothing changed yet
     try:
         _replace_database(app, derive(master, "db"), None)

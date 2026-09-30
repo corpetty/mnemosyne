@@ -104,13 +104,14 @@ class AppContext:
         bus = EventBus()
         if keystore is None:
             from ..demo import enabled as demo_mode
-            from ..storage.crypto import FileKeyStore
+            from ..storage.crypto import CredentialKeyStore, FileKeyStore
 
-            keystore = (
-                FileKeyStore(settings.data_dir / "demo-key")
-                if demo_mode()
-                else SystemKeyStore(settings.data_dir)
-            )
+            if demo_mode():
+                keystore = FileKeyStore(settings.data_dir / "demo-key")
+            elif os.environ.get("MNEMOSYNE_KEY_FILE"):  # a server: systemd credential
+                keystore = CredentialKeyStore(Path(os.environ["MNEMOSYNE_KEY_FILE"]))
+            else:
+                keystore = SystemKeyStore(settings.data_dir)
         master, locked = None, False
         if settings.encrypt_at_rest:
             master = keystore.get()
