@@ -153,15 +153,23 @@
 
   async function start() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
-    rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    // `r`, not `rec`: stop() clears `rec` before the recorder fires its stop event, and
+    // reading `rec` there threw, so a recording made in the page was never sent (issue #4).
+    const r = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    rec = r;
     chunks = [];
-    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-    rec.onstop = () => {
-      const type = rec.mimeType || mime || 'audio/webm';
-      const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
-      upload(new Blob(chunks, { type }), `phone-recording.${ext}`);
+    r.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    r.onstop = () => {
+      try {
+        const type = r.mimeType || mime || 'audio/webm';
+        const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+        if (!chunks.length) return status('Nothing was recorded: try again.', 'err');
+        upload(new Blob(chunks, { type }), `phone-recording.${ext}`);
+      } catch (e) {
+        status(`Could not send the recording: ${e.message || e}`, 'err');
+      }
     };
-    rec.start(1000);
+    r.start(1000);
     started = Date.now();
     tick = setInterval(() => {
       const s = Math.floor((Date.now() - started) / 1000);
@@ -189,6 +197,7 @@
     ctx && ctx.close(); wake && wake.release();
     rec = null;
     $('rec').textContent = 'Start recording'; $('rec').classList.remove('on');
+    status('Sending…');
   }
 
   $('rec').addEventListener('click', async () => {
