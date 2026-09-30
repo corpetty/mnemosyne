@@ -111,14 +111,15 @@ def test_short_stream_only_scores_at_flush():
 
 def test_rate_change_is_refused():
     stream = NemotronStream(FakeBackend())
-    run(stream.push(np.zeros(100, dtype=np.float32), 48000))
+    run(stream.push(np.zeros(100, dtype=np.float32), RATE))
     with pytest.raises(ValueError):
         run(stream.push(np.zeros(100, dtype=np.float32), 44100))
 
 
 @pytest.mark.parametrize("rate", [48000, 44100, 22050])
 def test_streaming_resampler_matches_whole_file(rate):
-    from scipy.signal import resample_poly
+    # scipy comes with NeMo (the gpu extra), the only install that streams.
+    resample_poly = pytest.importorskip("scipy.signal").resample_poly
 
     t = np.arange(3 * rate) / rate
     x = (0.3 * np.sin(2 * np.pi * 440 * t) + 0.1 * np.sin(2 * np.pi * 3100 * t)).astype(np.float32)

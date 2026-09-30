@@ -99,13 +99,13 @@ class Resampler:
         self.next_out = 0  # next output index to emit
 
     def _run(self, final: bool) -> np.ndarray:
-        from scipy.signal import resample_poly
-
         if self.up == self.down:
             out, self.buf = self.buf, self.buf[:0]
             self.buf_start += len(out)
             self.next_out += len(out)
             return out
+        from scipy.signal import resample_poly  # comes with NeMo (the gpu extra)
+
         buf_end = self.buf_start + len(self.buf)
         if final:
             last = math.ceil(buf_end * self.up / self.down)
