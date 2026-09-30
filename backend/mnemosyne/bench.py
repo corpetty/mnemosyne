@@ -4,12 +4,15 @@
     mnemosyne-bench --session a1b2c3d4            # a meeting you corrected in the app
     mnemosyne-bench --audio x.wav --reference x.json
     mnemosyne-bench --synthetic --transcriber parakeet --diarizer pyannote --json
+    mnemosyne-bench --live --audio x.wav --reference x.turns.json   # live speaker labels
+
 
 Scores: word error rate (substitutions + deletions + insertions over reference words) and
 speaker accuracy (share of aligned words attributed to the right speaker, under the best
 one-to-one mapping of the engine's labels to the reference's), plus runtime and real-time
 factor. A session's transcript as edited in the app is its reference, so fixing a transcript
-turns it into a test case.
+turns it into a test case. `--live` replays the audio through the live transcript instead and
+scores its speaker labels (bench_live.py).
 """
 
 from __future__ import annotations
@@ -108,11 +111,18 @@ def speaker_accuracy(
     ]
     if not pairs:
         return 0.0, {}
-    counts: dict[tuple[str, str], int] = {}
+    counts: dict[tuple[str, str], float] = {}
     for r, h in pairs:
         counts[(r, h)] = counts.get((r, h), 0) + 1
-    ref_labels = sorted({r for r, _ in pairs})
-    hyp_labels = sorted({h for _, h in pairs})
+    best, best_map = best_mapping(counts)
+    return best / len(pairs), best_map
+
+
+def best_mapping(counts: dict[tuple[str, str], float]) -> tuple[float, dict[str, str]]:
+    """The one-to-one mapping of hypothesis labels to reference labels that agrees on the
+    most (reference, hypothesis) weight; returns that weight and the mapping."""
+    ref_labels = sorted({r for r, _ in counts})
+    hyp_labels = sorted({h for _, h in counts})
     best, best_map = -1, {}
     if len(hyp_labels) <= 7:
         pad = ref_labels + [None] * max(0, len(hyp_labels) - len(ref_labels))
@@ -127,7 +137,7 @@ def speaker_accuracy(
                 best_map[h] = r
                 used.add(r)
         best = sum(counts.get((r, h), 0) for h, r in best_map.items())
-    return best / len(pairs), best_map
+    return best, best_map
 
 
 # ---- references and audio ------------------------------------------------------------
@@ -290,6 +300,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--transcriber", help="override the configured transcriber")
     p.add_argument("--diarizer", help="override the configured diarizer")
     p.add_argument("--json", action="store_true", help="print JSON instead of a table")
+    p.add_argument("--live", action="store_true", help="score the live transcript's speakers")
+    p.add_argument(
+        "--modes",
+        default="clustering,rediarize,streaming",
+        help="--live labelling modes, comma-separated (clustering, rediarize, streaming)",
+    )
     args = p.parse_args(argv)
 
     from .config import load_settings
@@ -327,6 +343,15 @@ def main(argv: list[str] | None = None) -> None:
             if not args.reference:
                 p.error("--audio needs --reference")
             audio, reference = args.audio, load_reference(args.reference)
+        if args.live:
+            from .bench_live import MODES, format_live, run_live
+
+            modes = [m.strip() for m in args.modes.split(",") if m.strip()]
+            if bad := [m for m in modes if m not in MODES]:
+                p.error(f"unknown mode: {', '.join(bad)}")
+            results = asyncio.run(run_live(settings, audio, reference, modes))
+            print(json.dumps(results, indent=2) if args.json else format_live(results))
+            return
         result = run(settings, audio, reference)
     print(json.dumps(asdict(result), indent=2) if args.json else format_table(result))
 
