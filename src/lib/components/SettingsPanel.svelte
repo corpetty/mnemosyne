@@ -525,7 +525,8 @@
 				</p>
 				<div class="flex flex-wrap gap-2 mb-3" role="radiogroup" aria-label="Calendar source">
 					{#each [['off', 'No calendar'], ['desktop', "This computer's calendars"], ['ics', 'Private ICS address']] as [value, label] (value)}
-						<label class="flex items-center gap-2 rounded border px-3 py-1.5 text-sm cursor-pointer {form.calendar_source === value ? 'border-blue-600 bg-blue-950/30 text-gray-100' : 'border-gray-700 text-gray-400'}">
+						<!-- relative: the sr-only radio is positioned inside the label, not far down the page -->
+						<label class="relative flex items-center gap-2 rounded border px-3 py-1.5 text-sm cursor-pointer {form.calendar_source === value ? 'border-blue-600 bg-blue-950/30 text-gray-100' : 'border-gray-700 text-gray-400'}">
 							<input type="radio" name="calendar-source" value={value} bind:group={form.calendar_source} disabled={locked('calendar_source')} class="sr-only" />
 							{label}
 						</label>
