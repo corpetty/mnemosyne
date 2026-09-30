@@ -17,6 +17,7 @@ from mnemosyne.bench_live import (
 )
 from mnemosyne.config import Settings
 from mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.transcription.diarizers.nemotron_stream import SpeakerFrames
 from mnemosyne.transcription.live import WavTail
 
 TURNS = [
@@ -121,15 +122,52 @@ def test_caching_transcriber_transcribes_the_same_audio_once(tmp_path):
     assert again.inner.calls == 0
 
 
-def test_replay_scores_a_recording(tmp_path, monkeypatch):
-    mode = "clustering"
+class ScriptedStream:
+    """Speaker A (index 0) for the first 4 s, then B (index 1): scored with no delay."""
+
+    def __init__(self):
+        self.samples = 0
+        self.done = 0
+
+    def _frames(self, end):
+        if end <= self.done:
+            return None
+        idx = np.arange(self.done, end)
+        probs = np.zeros((end - self.done, 8), dtype=np.float32)
+        probs[idx < 400, 0] = 0.9
+        probs[(idx >= 400) & (idx < 800), 1] = 0.9
+        out = SpeakerFrames(self.done, probs)
+        self.done = end
+        return out
+
+    async def push(self, pcm, rate):
+        self.samples += pcm.size
+        return self._frames(self.samples * 100 // rate)
+
+    async def flush(self):
+        return None
+
+    def stats(self):
+        return {"steps": 1, "seconds": 0.5}
+
+
+class StreamModel:
+    def stream(self):
+        return ScriptedStream()
+
+
+@pytest.mark.parametrize("mode", ["clustering", "streaming"])
+def test_replay_scores_a_recording(tmp_path, monkeypatch, mode):
     monkeypatch.setattr("mnemosyne.bench_live.WORK_DIR", tmp_path)
     pcm = np.full(16000 * 8, 0.1, dtype=np.float32)
     transcriber = CachingTranscriber(CountingTranscriber(), tmp_path / "c.json")
-    models = {"embedder": None}
+    models = {"embedder": None, "stream": StreamModel()}
     turns = [{"speaker": "A", "start": 0.0, "end": 4.0}, {"speaker": "B", "start": 4.0, "end": 8.0}]
     r = asyncio.run(replay(Settings(), pcm, turns, mode, transcriber, models))
     assert r.lines == 8
-    # No embedder: every line is the source's label.
-    assert r.labels == 1 and r.final_accuracy == pytest.approx(0.5)
+    if mode == "streaming":
+        assert r.shown_accuracy == 1.0 and r.labels == 2
+        assert r.notes["steps"] == 1 and r.diarize_seconds == 0.5
+    else:  # no embedder: every line is the source's label
+        assert r.labels == 1 and r.final_accuracy == pytest.approx(0.5)
     assert not list(tmp_path.glob("replay-*.wav"))

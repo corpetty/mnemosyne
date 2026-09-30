@@ -7,6 +7,12 @@ safely before the buffer edge (so a word cut by the chunk boundary is retried
 on the next tick). Committed segments stream out as provisional events; the
 uncommitted tail is sent as a replaceable partial. The full pipeline after
 stop produces the authoritative transcript.
+
+Speakers come from one of two places. With a Nemotron stream on a source (live_streaming.py)
+every new sample is also pushed to the stream, and lines take the speaker the stream heard
+over them; lines that end past what the stream has scored are checked again on the next tick
+and corrected with `live_labels`. Otherwise each line is embedded and clustered
+(live_speakers.py). A stream that fails hands its source over to clustering.
 """
 
 from __future__ import annotations
@@ -20,12 +26,14 @@ import wave
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from ..models.transcript import TranscriptSegment
 from .engine import Transcriber
 from .live_speakers import OnlineClusterer, SpeakerEmbedder
+from .live_streaming import LiveSpeakerNames, SpeakerTimeline, split_line
 from .mentions import MentionSpotter
 
 logger = logging.getLogger(__name__)
@@ -108,9 +116,13 @@ class LiveSource:
     buffer_start: float = 0.0  # seconds into the recording where `buffer` begins
     partial: str = ""
     failures: int = 0  # ticks failed in a row
+    stream: Any = None  # a NemotronStream: speakers from Nemotron streaming instead of clusters
+    timeline: SpeakerTimeline | None = None
 
     def __post_init__(self):
         self.tail = WavTail(self.path)
+        if self.stream is not None and self.timeline is None:
+            self.timeline = SpeakerTimeline()
 
 
 def cpu_pressure(path: Path = Path("/proc/pressure/cpu")) -> float | None:
@@ -154,6 +166,7 @@ class LiveTranscriber:
         silence_db: float = -55.0,
         adaptive: bool = True,
         pressure: Callable[[], float | None] = cpu_pressure,
+        names: LiveSpeakerNames | None = None,
     ):
         self.transcriber = transcriber
         self.sources = sources
@@ -178,6 +191,8 @@ class LiveTranscriber:
         self._ready_status = "Live"
         self.committed: list[TranscriptSegment] = []
         self.committed_kind: list[str] = []  # source kind of each committed segment
+        self.names = names or LiveSpeakerNames()
+        self.pending: list[int] = []  # committed lines that end past their stream's frontier
 
     async def run(self) -> None:
         """Tick until cancelled. A final tick flushes what is left."""
@@ -185,7 +200,9 @@ class LiveTranscriber:
             self.emit(self._status("Loading live transcriber..."))
             await self.transcriber.load()
         status = "Live"
-        if self.embedder is not None and any(src.diarize for src in self.sources):
+        if any(src.stream is not None for src in self.sources):
+            status = "Live · speakers by Nemotron"
+        elif self.embedder is not None and any(src.diarize for src in self.sources):
             try:
                 if not self.embedder.is_loaded():
                     self.emit(self._status("Loading speaker detection..."))
@@ -234,6 +251,8 @@ class LiveTranscriber:
         if new.size:
             source.buffer = np.concatenate([source.buffer, new])
         rate = source.tail.sample_rate or 48000
+        # Every sample goes to the stream, silence included, so its timeline stays aligned.
+        await self._push_stream(source, new, rate, flush)
         duration = source.buffer.size / rate
         if duration < self.min_buffer:
             return
@@ -267,26 +286,26 @@ class LiveTranscriber:
         rest = [s for s in segments if s not in commit]
 
         for seg in commit:
-            speaker = await self._label(source, seg, rate)
-            absolute = seg.model_copy(
-                update={
-                    "speaker": speaker,
-                    "start": round(source.buffer_start + seg.start, 3),
-                    "end": round(source.buffer_start + seg.end, 3),
-                    "words": None,
-                }
-            )
-            self.committed.append(absolute)
-            self.committed_kind.append(source.kind)
-            self.emit(
-                {
-                    "type": "live_segment",
-                    "session_id": self.session_id,
-                    "source": source.kind,
-                    "segment": absolute.model_dump(),
-                }
-            )
-            self._check_mention(source, absolute)
+            if source.stream is not None:
+                lines = self._stream_lines(source, seg)
+            else:
+                speaker = await self._label(source, seg, rate)
+                lines = [self._absolute(source, seg).model_copy(update={"speaker": speaker})]
+            for line in lines:
+                line = line.model_copy(update={"words": None})
+                self.committed.append(line)
+                self.committed_kind.append(source.kind)
+                if source.timeline is not None and line.end > source.timeline.frontier:
+                    self.pending.append(len(self.committed) - 1)
+                self.emit(
+                    {
+                        "type": "live_segment",
+                        "session_id": self.session_id,
+                        "source": source.kind,
+                        "segment": line.model_dump(),
+                    }
+                )
+                self._check_mention(source, line)
 
         if commit:
             cut_seconds = max(s.end for s in commit)
@@ -310,6 +329,110 @@ class LiveTranscriber:
                     "text": partial,
                 }
             )
+
+    def _absolute(self, source: LiveSource, seg: TranscriptSegment) -> TranscriptSegment:
+        """A buffer-relative segment (and its words) on the recording's timeline."""
+        off = source.buffer_start
+        words = None
+        if seg.words:
+            words = [
+                w.model_copy(
+                    update={"start": round(off + w.start, 3), "end": round(off + w.end, 3)}
+                )
+                for w in seg.words
+            ]
+        return seg.model_copy(
+            update={
+                "start": round(off + seg.start, 3),
+                "end": round(off + seg.end, 3),
+                "words": words,
+            }
+        )
+
+    async def _push_stream(self, source: LiveSource, new: np.ndarray, rate: int, flush: bool):
+        if source.stream is None:
+            return
+        try:
+            frames = await source.stream.push(new, rate) if new.size else None
+            if frames is not None:
+                source.timeline.add(frames)
+            if flush:
+                frames = await source.stream.flush()
+                if frames is not None:
+                    source.timeline.add(frames)
+        except Exception:
+            logger.warning(
+                "Nemotron streaming failed for %s; labelling speakers by voice instead",
+                source.kind,
+                exc_info=True,
+            )
+            source.stream = None
+            self.pending = [i for i in self.pending if self.committed_kind[i] != source.kind]
+            fallback = "voice clustering" if self.embedder and self.clusterer else "none"
+            self._ready_status = f"Live · speaker detection: {fallback} (Nemotron failed)"
+            self.emit(self._status(self._ready_status))
+            return
+        self._recheck_pending(source, final=flush)
+
+    def _speaker_label(self, source: LiveSource, index: int | None) -> str:
+        if index is None:  # nobody the stream knows: whoever spoke before
+            return source.last_speaker or source.speaker
+        taken = {source.speaker} | {s.speaker for s in self.sources}
+        return self.names.label(source.kind, index, taken)
+
+    def _stream_lines(self, source: LiveSource, seg: TranscriptSegment) -> list[TranscriptSegment]:
+        lines = []
+        for line, index in split_line(self._absolute(source, seg), source.timeline):
+            label = self._speaker_label(source, index)
+            source.last_speaker = label
+            lines.append(line.model_copy(update={"speaker": label}))
+        return lines
+
+    def _recheck_pending(self, source: LiveSource, final: bool) -> None:
+        """Lines that ended past the stream's frontier when shown, now that it has passed
+        them: give them the speaker the stream heard, and send the changes."""
+        timeline = source.timeline
+        changes, keep = [], []
+        for i in self.pending:
+            seg = self.committed[i]
+            if self.committed_kind[i] != source.kind:
+                keep.append(i)
+                continue
+            if seg.end > timeline.frontier and not final:
+                keep.append(i)
+                continue
+            index = timeline.speaker_between(seg.start, seg.end)
+            if index is None:
+                continue
+            label = self._speaker_label(source, index)
+            if label != seg.speaker:
+                changes.append({"start": seg.start, "old": seg.speaker, "new": label})
+                seg.speaker = label
+        self.pending = keep
+        if changes:
+            self.emit(
+                {
+                    "type": "live_labels",
+                    "session_id": self.session_id,
+                    "source": source.kind,
+                    "labels": changes,
+                }
+            )
+
+    def rename(self, old: str, new: str) -> None:
+        """Show `new` for every line and speaker labelled `old` (a voice-profile match)."""
+        if not self.names.rename(old, new):
+            return
+        for s in self.committed:
+            if s.speaker == old:
+                s.speaker = new
+        for src in self.sources:
+            if src.last_speaker == old:
+                src.last_speaker = new
+        self.emit({"type": "live_relabel", "session_id": self.session_id, "old": old, "new": new})
+
+    def stream_stats(self) -> dict[str, dict]:
+        return {s.kind: s.stream.stats() for s in self.sources if s.stream is not None}
 
     def _check_mention(self, source: LiveSource, seg: TranscriptSegment) -> None:
         # Your own mic, when it is recorded separately, is you saying your own name.

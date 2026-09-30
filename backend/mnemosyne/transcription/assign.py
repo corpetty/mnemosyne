@@ -105,5 +105,10 @@ def _split(seg: TranscriptSegment, labels: list[str]) -> list[TranscriptSegment]
     return parts
 
 
+def split_by_labels(seg: TranscriptSegment, labels: list[str]) -> list[TranscriptSegment]:
+    """`seg` (with words) cut into one segment per run of words with the same label."""
+    return _split(seg, labels)
+
+
 def relabel(segments: list[TranscriptSegment], speaker: str) -> list[TranscriptSegment]:
     return [s.model_copy(update={"speaker": speaker}) for s in segments]

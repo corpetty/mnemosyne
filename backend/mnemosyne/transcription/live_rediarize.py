@@ -75,7 +75,8 @@ class LiveRediarizer:
 
     @property
     def sources(self) -> list[LiveSource]:
-        return [s for s in self.live.sources if s.diarize]
+        # Sources with a Nemotron stream already have its speakers (live_streaming.py).
+        return [s for s in self.live.sources if s.diarize and s.stream is None]
 
     async def run(self) -> None:
         """Pass after pass until cancelled. A failing diarizer stops the loop (the live

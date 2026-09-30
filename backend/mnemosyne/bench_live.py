@@ -194,9 +194,10 @@ async def replay(
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     path = WORK_DIR / f"replay-{mode}.wav"
     path.write_bytes(wav_header(RATE))
-    source = LiveSource(path=path, speaker="Speaker", kind="mixed", diarize=True)
+    stream = models["stream"].stream() if mode == "streaming" else None
+    source = LiveSource(path=path, speaker="Speaker", kind="mixed", diarize=True, stream=stream)
     recorder = Recorder()
-    embedder = models.get("embedder")
+    embedder = models.get("embedder") if stream is None else None
     clusterer = (
         OnlineClusterer(
             threshold=settings.live_speaker_threshold,
@@ -222,8 +223,6 @@ async def replay(
         from .transcription.live_rediarize import LiveRediarizer
 
         rediarizer = LiveRediarizer(models["rediarizer"], live, recorder, "bench")
-    elif mode == "streaming":
-        raise RuntimeError("streaming mode is not built yet")
 
     diarize_seconds = 0.0
     started = time.perf_counter()
@@ -248,6 +247,9 @@ async def replay(
     notes = {}
     if rediarizer is not None:
         notes["passes"] = rediarizer.passes
+    if stream is not None:
+        notes.update(stream.stats())
+        diarize_seconds = stream.stats().get("seconds", 0.0)
     return score_lines(
         mode,
         recorder.lines,
@@ -293,6 +295,11 @@ async def run_live(settings, audio: Path, reference: list[dict], modes: list[str
 
         models["rediarizer"] = NemotronDiarizer()
         await models["rediarizer"].load()
+    if "streaming" in modes:
+        from .transcription.diarizers.nemotron_stream import NemotronStreamModel
+
+        models["stream"] = NemotronStreamModel()
+        await models["stream"].load()
     results = []
     try:
         for mode in modes:
