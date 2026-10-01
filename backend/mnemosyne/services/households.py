@@ -15,7 +15,9 @@ contacts become households; members added by hand stay.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
@@ -124,6 +126,47 @@ def save(app: AppContext, data: HouseholdInput, household_id: str | None = None)
     return get(app, hid)  # type: ignore[return-value]
 
 
+@dataclass
+class _Row:
+    """A meeting as matching needs it, parsed once for every household."""
+
+    id: str
+    name: str
+    created_at: str
+    names: set[str]  # speakers and attendees, as keys
+    emails: set[str]
+    associated: set[str]  # HubSpot records it was pushed to ("companies:900")
+    raw_summary: str | None
+
+    @cached_property
+    def data(self) -> SummaryData | None:
+        return SummaryData.model_validate_json(self.raw_summary) if self.raw_summary else None
+
+
+def _load_rows(app: AppContext, exclude: str | None = None) -> list[_Row]:
+    """The meetings the caller may see, newest first."""
+    out = []
+    for r in app.repo.people_rows():
+        if r["id"] == exclude:
+            continue
+        attendees = json.loads(r["attendees"] or "[]")
+        emails = [a for a in attendees if "@" in a]
+        emails += list(json.loads(r["attendee_emails"] or "{}").values())
+        crm = json.loads(r["crm"] or "{}").get("hubspot") or {}
+        out.append(
+            _Row(
+                id=r["id"],
+                name=r["name"],
+                created_at=r["created_at"],
+                names={_key(n) for n in json.loads(r["participants"] or "[]") + attendees},
+                emails={e.strip().lower() for e in emails},
+                associated=set(crm.get("associated", [])),
+                raw_summary=r["summary_data"],
+            )
+        )
+    return out
+
+
 class _Matcher:
     """Does a meeting (its people, emails, title, CRM links) belong to this household?"""
 
@@ -144,62 +187,51 @@ class _Matcher:
     def title(self, title: str) -> bool:
         return any(p.search(title) for p in self.titles)
 
-    def row(self, r) -> bool:
-        attendees = json.loads(r["attendees"] or "[]")
-        emails = [a for a in attendees if "@" in a]
-        emails += list(json.loads(r["attendee_emails"] or "{}").values())
-        names = json.loads(r["participants"] or "[]") + attendees
-        if self.people(names, emails) or self.title(r["name"]):
-            return True
-        crm = json.loads(r["crm"] or "{}").get("hubspot") or {}
-        return bool(self.company) and self.company in crm.get("associated", [])
+    def row(self, r: _Row) -> bool:
+        return bool(
+            r.names & self.names
+            or r.emails & self.emails
+            or self.title(r.name)
+            or (self.company and self.company in r.associated)
+        )
 
 
-def _meeting(r) -> HouseholdMeeting:
-    return HouseholdMeeting(id=r["id"], name=r["name"], created_at=r["created_at"])
+def _meeting(r: _Row) -> HouseholdMeeting:
+    return HouseholdMeeting(id=r.id, name=r.name, created_at=r.created_at)
 
 
-def _facts(r, data: SummaryData | None) -> list[HouseholdFact]:
+def _facts(r: _Row) -> list[HouseholdFact]:
     return [
         HouseholdFact(
             kind=f.kind,
             text=f.text,
             at=f.at,
-            session_id=r["id"],
-            session_name=r["name"],
-            created_at=r["created_at"],
+            session_id=r.id,
+            session_name=r.name,
+            created_at=r.created_at,
         )
-        for f in (data.client_facts if data else [])
+        for f in (r.data.client_facts if r.data else [])
     ]
 
 
-def _rows(app: AppContext, h: Household, exclude: str | None = None) -> list[tuple]:
-    """(row, summary data) of the household's meetings the caller may see, newest first."""
+def _rows(app: AppContext, h: Household, exclude: str | None = None) -> list[_Row]:
+    """The household's meetings the caller may see, newest first."""
     match = _Matcher(h)
-    return [
-        (r, SummaryData.model_validate_json(r["summary_data"]) if r["summary_data"] else None)
-        for r in app.repo.people_rows()
-        if r["id"] != exclude and match.row(r)
-    ]
+    return [r for r in _load_rows(app, exclude) if match.row(r)]
 
 
 def summaries(app: AppContext) -> list[HouseholdSummary]:
-    rows = app.repo.people_rows()
+    rows = _load_rows(app)
     out = []
     for h in load(app):
         match = _Matcher(h)
         mine = [r for r in rows if match.row(r)]
-        facts = sum(
-            len(SummaryData.model_validate_json(r["summary_data"]).client_facts)
-            for r in mine
-            if r["summary_data"]
-        )
         out.append(
             HouseholdSummary(
                 **h.model_dump(),
                 meetings=len(mine),
-                last_meeting=mine[0]["created_at"] if mine else None,
-                facts=facts,
+                last_meeting=mine[0].created_at if mine else None,
+                facts=sum(len(r.data.client_facts) for r in mine if r.data),
             )
         )
     return out
@@ -212,9 +244,9 @@ def detail(app: AppContext, household_id: str) -> HouseholdDetail | None:
     rows = _rows(app, h)
     tasks = [
         TaskItem(
-            session_id=r["id"],
-            session_name=r["name"],
-            created_at=r["created_at"],
+            session_id=r.id,
+            session_name=r.name,
+            created_at=r.created_at,
             idx=i,
             text=a.text,
             owner=a.owner,
@@ -222,20 +254,16 @@ def detail(app: AppContext, household_id: str) -> HouseholdDetail | None:
             issue_url=a.issue_url,
             due=a.due,
         )
-        for r, data in rows
-        for i, a in enumerate(data.action_items if data else [])
+        for r in rows
+        for i, a in enumerate(r.data.action_items if r.data else [])
         if not a.done
     ]
     return HouseholdDetail(
         **h.model_dump(),
-        meetings=[_meeting(r) for r, _ in rows],
-        facts=[f for r, data in rows for f in _facts(r, data)],
+        meetings=[_meeting(r) for r in rows],
+        facts=[f for r in rows for f in _facts(r)],
         open_tasks=tasks,
     )
-
-
-def of_person(app: AppContext, name: str) -> Household | None:
-    return next((h for h in load(app) if _key(name) in {_key(m.name) for m in h.members}), None)
 
 
 def for_meeting(app: AppContext, title: str, attendees: list[str]) -> Household | None:
@@ -258,20 +286,14 @@ def brief(
     if h is None:
         return None
     rows = _rows(app, h, exclude)
-    last = next(((r, d) for r, d in rows if d and d.client_facts), None)
-    earlier = 0
-    if last is not None:
-        after = False
-        for r, d in rows:
-            if after:
-                earlier += len(d.client_facts) if d else 0
-            after = after or r["id"] == last[0]["id"]
+    with_facts = [r for r in rows if r.data and r.data.client_facts]
+    last = with_facts[0] if with_facts else None
     return HouseholdBrief(
         id=h.id,
         name=h.name,
-        last_meeting=_meeting(last[0]) if last else None,
-        facts=_facts(*last) if last else [],
-        earlier_facts=earlier,
+        last_meeting=_meeting(last) if last else None,
+        facts=_facts(last) if last else [],
+        earlier_facts=sum(len(r.data.client_facts) for r in with_facts[1:] if r.data),
     )
 
 

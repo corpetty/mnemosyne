@@ -53,6 +53,8 @@ No usage data, analytics or recordings are sent to the software's authors or any
 - **Advisors** see and change only their own meetings, including in search, questions across
   meetings and exports. **Reviewers** (compliance) read every meeting and change none of the
   others'. **Admins** also manage people and settings.
+- Households (which clients belong together, with their names and emails) are a firm-wide list
+  every signed-in person sees; what a household said comes only from meetings the viewer may see.
 - Opening, listening to and exporting a meeting is recorded in its history with who did it.
 
 ## Records
