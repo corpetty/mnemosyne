@@ -1,5 +1,9 @@
 """Supervision (services/supervision.py): compliance phrases flagged, a reviewer's queue."""
 
+import io
+import json
+import zipfile
+
 from fastapi.testclient import TestClient
 
 from mnemosyne.api.app import create_app
@@ -121,3 +125,18 @@ def test_advisors_have_no_queue_and_reviewers_see_everyone(
         assert item["owner"] == "Ann" and item["flags"] == 3
         r = client.post(f"/api/sessions/{sid}/supervision/review", json={"note": "ok"})
         assert r.json()["reviews"][0]["by"] == "Rev"
+
+
+def test_flags_and_reviews_go_into_an_exam_export(client, ctx, fake_engine, tmp_path):
+    ctx.settings.supervision = True
+    sid = _transcribe(client, ctx, fake_engine, tmp_path)
+    client.post(f"/api/sessions/{sid}/supervision/review", json={"note": "Checked"})
+    with client.websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        job = client.post("/api/records/export", json={"session_ids": [sid]}).json()
+        drain_until_job(ws, job["id"])
+    export_id = client.get(f"/api/jobs/{job['id']}").json()["result"]["export_id"]
+    z = zipfile.ZipFile(io.BytesIO(client.get(f"/api/records/exports/{export_id}").content))
+    [name] = [n for n in z.namelist() if n.endswith("supervision.json")]
+    data = json.loads(z.read(name))
+    assert len(data["flags"]) == 3 and data["reviews"][0]["note"] == "Checked"

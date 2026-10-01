@@ -193,6 +193,8 @@ One folder per meeting:
   history.json       what happened to the meeting: recordings, consent, transcriptions,
                      summaries, who opened, played or exported it
   seals.json         the chain of seals and its verification when exported
+  supervision.json   lines flagged for compliance phrases and the reviewers' sign-offs
+                     (only for meetings that have any)
   audio/             the recordings (each channel and the mix), unencrypted
 
 deletions.json lists meetings and audio deleted in the period, with who, when and why.
@@ -277,6 +279,10 @@ def export_zip(app: AppContext, request: ExportRequest, dest: Path, progress=Non
             check = verify(app, session.id)
             seals = {"seals": app.repo.seals(session.id), "verified": check.model_dump(mode="json")}
             put(f"{folder}/seals.json", json.dumps(seals, indent=1, default=str).encode())
+            flags, reviews = app.repo.flags(session.id), app.repo.reviews(session.id)
+            if flags or reviews:
+                supervised = {"flags": flags, "reviews": reviews}
+                put(f"{folder}/supervision.json", json.dumps(supervised, indent=1).encode())
             for path in audio_files(session):
                 with plaintext(path, app.file_key) as plain:
                     put(
