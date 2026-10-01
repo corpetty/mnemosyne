@@ -239,7 +239,7 @@ CREATE TABLE IF NOT EXISTS session_seals (
     chain TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS session_seals_session ON session_seals(session_id);
--- Supervision (services/supervision.py): transcript lines with a compliance phrase, and
+-- Flagged phrases (services/supervision.py): transcript lines with a review phrase, and
 -- reviewers' sign-offs. A meeting is reviewed when a review is newer than its newest flag.
 CREATE TABLE IF NOT EXISTS supervision_flags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

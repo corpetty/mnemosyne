@@ -7,7 +7,7 @@
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import type { MeetingSupervision } from '$lib/types/index.js';
 
-	// A meeting's lines with compliance phrases (backend services/supervision.py) and its
+	// A meeting's lines with flagged phrases (backend services/supervision.py) and its
 	// reviews, above the transcript, for reviewers and admins.
 	let data = $state<MeetingSupervision | null>(null);
 	let note = $state('');
@@ -63,7 +63,7 @@
 {#if data && data.flags.length}
 	<details bind:open class="mb-4 rounded-lg border {data.reviewed ? 'border-gray-800' : 'border-amber-800/60'} bg-gray-900/40 px-3 py-2 text-sm">
 		<summary class="cursor-pointer text-gray-300">
-			Supervision: {data.flags.length} flagged line{data.flags.length === 1 ? '' : 's'}
+			Flagged phrases: {data.flags.length} line{data.flags.length === 1 ? '' : 's'}
 			{#if data.reviewed}<span class="ml-2 rounded bg-green-900/50 px-1.5 text-xs text-green-300">reviewed</span>
 			{:else}<span class="ml-2 rounded bg-amber-900/60 px-1.5 text-xs text-amber-200">to review</span>{/if}
 		</summary>

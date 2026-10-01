@@ -6,7 +6,7 @@
 	import { wsState } from '$lib/stores/websocket.svelte.js';
 	import type { Job, SupervisionQueueItem } from '$lib/types/index.js';
 
-	// Meetings with lines that use a compliance phrase (backend services/supervision.py), the
+	// Meetings with lines that use a review phrase (backend services/supervision.py), the
 	// ones still to review first. Opening one shows its flags above the transcript.
 	let { onOpenSession }: { onOpenSession?: () => void } = $props();
 
@@ -63,7 +63,7 @@
 	<div>
 		<h2 class="text-xl font-semibold text-gray-100">Review</h2>
 		<p class="text-sm text-gray-500 mt-1">
-			Meetings where someone used a compliance phrase (Settings → General → Supervision). Read each flagged line in context,
+			Meetings where someone used a flagged phrase (Settings → General → Flagged phrases). Read each flagged line in context,
 			then mark the meeting reviewed with a note; the review goes into its history.
 		</p>
 	</div>

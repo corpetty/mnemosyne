@@ -225,16 +225,10 @@ class Settings(BaseSettings):
     # Records (services/records.py): for this many years after a meeting, deleting it or its
     # audio needs an admin and a reason, and audio retention leaves it alone. 0 = off.
     records_retention_years: int = 0
-    # Supervision (services/supervision.py): lines of a meeting's final transcript with one of
-    # these phrases (comma- or line-separated) are flagged, and a reviewer marks each flagged
-    # meeting reviewed.
-    supervision: bool = False
-    compliance_phrases: str = (
-        "guarantee, guaranteed, can't lose, cannot lose, risk-free, risk free, no risk, "
-        "sure thing, you should buy, you should sell, double your money, beat the market, "
-        "inside information, insider information, off the books, cash only, "
-        "don't tell compliance, between you and me"
-    )
+    # Flagged phrases (services/supervision.py): lines of a meeting's final transcript with one
+    # of these (comma- or line-separated) are flagged, and the meeting waits in the Review view
+    # until a reviewer marks it reviewed. Empty: nothing is flagged.
+    review_phrases: str = ""
     consent_script: str = (
         "Before we start: I'd like to record this conversation so I can keep accurate notes. "
         "Is that all right with you?"

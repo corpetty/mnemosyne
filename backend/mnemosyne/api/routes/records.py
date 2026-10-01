@@ -63,8 +63,8 @@ def _session(ctx: AppContext, session_id: str):
     return session
 
 
-def _compliance() -> None:
-    """Reviewers (compliance) and admins."""
+def _reviewer() -> None:
+    """Reviewers and admins."""
     p = access.principal()
     if p is not None and p.role not in (access.REVIEWER, access.ADMIN):
         raise access.Forbidden("Only a reviewer or an admin can do this")
@@ -97,7 +97,7 @@ async def legal_hold(
     session_id: str, request: LegalHoldRequest, ctx: AppContext = Depends(get_ctx)
 ):
     """Put a meeting on legal hold (nothing of it can be deleted) or lift it."""
-    _compliance()
+    _reviewer()
     session = _session(ctx, session_id)
     reason = request.reason.strip()[:200]
     ctx.repo.set_legal_hold(session_id, reason)
@@ -114,7 +114,7 @@ async def legal_hold(
 async def deletions(
     start: date | None = None, end: date | None = None, ctx: AppContext = Depends(get_ctx)
 ):
-    _compliance()
+    _reviewer()
     return ctx.repo.deletions(start.isoformat() if start else "", end.isoformat() if end else "")
 
 

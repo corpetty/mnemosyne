@@ -136,8 +136,8 @@ A legal hold refuses both to everyone (403) and refuses combining. Every deletio
 | GET | `/api/records/exports/{export_id}` | the zip, for whoever started it (or an admin), once |
 
 ### Supervision
-`services/supervision.py`, on with `supervision`. Lines of the final transcript with a
-phrase from `compliance_phrases` are flagged (`supervision_flags`). A new transcription replaces a
+`services/supervision.py`, on when `review_phrases` has any. Lines of the final transcript with a
+phrase from `review_phrases` are flagged (`supervision_flags`). A new transcription replaces a
 meeting's flags; edits, speaker renames and combining only add, so editing a line never removes its
 flag. Changing the phrases (or turning supervision on) starts a `supervision_scan` job over every
 meeting. A meeting is `reviewed` when its last review is newer than its newest flag. All of these are

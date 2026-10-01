@@ -120,8 +120,7 @@
 				live_transcription: v.live_transcription,
 				require_consent: v.require_consent,
 				records_retention_years: v.records_retention_years,
-				supervision: v.supervision,
-				compliance_phrases: v.compliance_phrases,
+				review_phrases: v.review_phrases,
 				consent_script: v.consent_script,
 				live_transcriber: v.live_transcriber,
 				live_interval_seconds: v.live_interval_seconds,
@@ -384,19 +383,15 @@
 			<span class={labelClass}>Records period (years; 0 = off): deleting a meeting or its audio sooner needs an admin and a reason</span>
 			<input type="number" min="0" max="30" bind:value={form.records_retention_years} disabled={locked('records_retention_years')} class={inputClass} />
 		</label>
-		<section aria-label="Supervision">
-			<h3 class="text-lg font-semibold text-gray-200 mb-1">Supervision</h3>
+		<section aria-label="Flagged phrases">
+			<h3 class="text-lg font-semibold text-gray-200 mb-1">Flagged phrases</h3>
 			<p class="text-xs text-gray-500 mb-3">
 				Lines of a meeting's transcript that use one of these phrases are flagged, and the meeting waits in the Review view
-				until a reviewer marks it reviewed. A flag is a line to read in context, not a finding.
+				until a reviewer marks it reviewed. A flag is a line to read in context, not a finding. Empty: nothing is flagged.
 			</p>
-			<label class="flex items-center gap-2 mb-2">
-				<input type="checkbox" bind:checked={form.supervision} disabled={locked('supervision')} class="rounded border-gray-600 bg-gray-800" />
-				<span class="text-sm text-gray-300">Flag compliance phrases</span>
-			</label>
 			<label class="block">
 				<span class={labelClass}>Phrases (comma-separated; changing them checks every meeting again)</span>
-				<textarea rows="3" bind:value={form.compliance_phrases} disabled={locked('compliance_phrases')} class={inputClass}></textarea>
+				<textarea rows="3" bind:value={form.review_phrases} disabled={locked('review_phrases')} placeholder="guarantee, off the record, between you and me" class={inputClass}></textarea>
 			</label>
 		</section>
 	{/if}

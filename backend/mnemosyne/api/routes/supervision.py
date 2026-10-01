@@ -1,5 +1,5 @@
 """Supervision (services/supervision.py): the queue of meetings with flagged lines, a meeting's
-flags and reviews, and marking a meeting reviewed. For reviewers (compliance) and admins."""
+flags and reviews, and marking a meeting reviewed. For reviewers and admins."""
 
 from datetime import datetime
 

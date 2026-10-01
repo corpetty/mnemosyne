@@ -1,8 +1,8 @@
-"""Supervision (advisory pilot, item 10): lines of a meeting's final transcript that use a
-compliance phrase ("guarantee", "can't lose", "you should buy", `compliance_phrases`) are
-flagged, and a reviewer (compliance) works through the flagged meetings, marking each reviewed
-with a note. A flag is a line to look at, not a finding: "I can't guarantee returns" is flagged
-too, and the reviewer decides.
+"""Flagged phrases: lines of a meeting's final transcript that use one of `review_phrases`
+(whatever a team wants a second pair of eyes on: "guarantee", a client's name, "off the record")
+are flagged, and a reviewer works through the flagged meetings in the Review view, marking each
+reviewed with a note. A flag is a line to look at, not a finding: "I can't guarantee it" is
+flagged too, and the reviewer decides.
 
 Flags follow the transcript: a new transcription replaces them (it comes from the audio); an
 edit or a change of phrases only adds, so editing a line never hides what was said. A review
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def enabled(settings: Settings) -> bool:
-    return settings.supervision
+    return bool(parse_keywords(settings.review_phrases))
 
 
 def find(segments: list[TranscriptSegment], phrases: list[str]) -> list[dict]:
@@ -48,7 +48,7 @@ def scan(app: AppContext, session_id: str, replace: bool = False) -> int:
         session = app.repo.get(session_id)
         if session is None:
             return 0
-        phrases = parse_keywords(app.settings.compliance_phrases)
+        phrases = parse_keywords(app.settings.review_phrases)
         return app.repo.set_flags(session_id, find(session.transcript, phrases), replace)
     except Exception:
         logger.warning("Could not flag session %s", session_id, exc_info=True)

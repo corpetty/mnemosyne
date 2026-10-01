@@ -164,8 +164,7 @@ class AppContext:
         before = self.settings
         self.settings = settings
         if supervision.enabled(settings) and (
-            not supervision.enabled(before)
-            or settings.compliance_phrases != before.compliance_phrases
+            not supervision.enabled(before) or settings.review_phrases != before.review_phrases
         ):
             self.submit_supervision_scan()
         self.summarizer = SummarizationService(settings)
@@ -184,13 +183,13 @@ class AppContext:
         await self.apply_remote_access()
 
     def submit_supervision_scan(self):
-        """Every meeting against the current compliance phrases, as a `supervision_scan` job."""
+        """Every meeting against the current review phrases, as a `supervision_scan` job."""
         import asyncio
 
         from ..services import supervision
 
         async def run(job) -> dict:
-            job.update("Looking for compliance phrases", progress=0.0)
+            job.update("Looking for flagged phrases", progress=0.0)
             return await asyncio.to_thread(
                 supervision.scan_all, self, lambda f: job.update(progress=f)
             )

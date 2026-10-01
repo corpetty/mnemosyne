@@ -193,7 +193,7 @@ One folder per meeting:
   history.json       what happened to the meeting: recordings, consent, transcriptions,
                      summaries, who opened, played or exported it
   seals.json         the chain of seals and its verification when exported
-  supervision.json   lines flagged for compliance phrases and the reviewers' sign-offs
+  supervision.json   lines flagged for review phrases and the reviewers' sign-offs
                      (only for meetings that have any)
   audio/             the recordings (each channel and the mix), unencrypted
 
@@ -292,9 +292,9 @@ def export_zip(app: AppContext, request: ExportRequest, dest: Path, progress=Non
                 progress(n / max(len(meetings), 1))
         start = (request.start or date(1970, 1, 1)).isoformat()
         end = (request.end or date.today()) + timedelta(days=1)
-        # The firm's deletion log goes to compliance (reviewers, admins), in date-range exports.
-        firm_wide = who is None or who.role in (access.REVIEWER, access.ADMIN)
-        wanted = firm_wide and not request.session_ids
+        # The deletion log goes to reviewers and admins, in date-range exports.
+        team_wide = who is None or who.role in (access.REVIEWER, access.ADMIN)
+        wanted = team_wide and not request.session_ids
         deletions = app.repo.deletions(start, end.isoformat()) if wanted else []
         put("deletions.json", json.dumps(deletions, indent=1, default=str).encode())
         put(

@@ -4,18 +4,18 @@ import { importMeeting, openApp } from './fixtures';
 const BACKEND = 'http://127.0.0.1:8018';
 
 test.afterEach(async ({ request }) => {
-  await request.put(`${BACKEND}/api/settings`, { data: { supervision: false } });
+  await request.put(`${BACKEND}/api/settings`, { data: { review_phrases: '' } });
   const sessions: { id: string; name: string }[] = await (await request.get(`${BACKEND}/api/sessions`)).json();
   for (const s of sessions.filter((x) => x.name === 'Supervised meeting')) await request.delete(`${BACKEND}/api/sessions/${s.id}`);
 });
 
-// A line with a compliance phrase puts the meeting in the Review view until a reviewer signs off.
+// A line with a flagged phrase puts the meeting in the Review view until a reviewer signs off.
 test('flagged lines are reviewed with a note', async ({ page, request }, info) => {
-  await request.put(`${BACKEND}/api/settings`, { data: { supervision: true, compliance_phrases: 'nobody yet' } });
+  await request.put(`${BACKEND}/api/settings`, { data: { review_phrases: 'nobody yet' } });
   await openApp(page);
   await importMeeting(page, info.outputDir, 'Supervised meeting');
 
-  const card = page.locator('details', { hasText: 'Supervision: 1 flagged line' });
+  const card = page.locator('details', { hasText: 'Flagged phrases: 1 line' });
   await expect(card).toBeVisible();
   await expect(card.locator('mark')).toHaveText('Nobody yet');
   await card.getByLabel('Note (what you checked, what follows)').fill('Scheduling, not advice');

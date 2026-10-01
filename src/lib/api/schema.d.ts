@@ -4476,8 +4476,6 @@ export interface components {
             cloud_models?: boolean | null;
             /** Cloud Redaction */
             cloud_redaction?: boolean | null;
-            /** Compliance Phrases */
-            compliance_phrases?: string | null;
             /** Config Version */
             config_version?: number | null;
             /** Consent Script */
@@ -4632,6 +4630,8 @@ export interface components {
             remote_stt_url?: string | null;
             /** Require Consent */
             require_consent?: boolean | null;
+            /** Review Phrases */
+            review_phrases?: string | null;
             /** Semantic Search */
             semantic_search?: boolean | null;
             /** Setup Complete */
@@ -4646,8 +4646,6 @@ export interface components {
             summary_instructions?: string | null;
             /** Summary Style */
             summary_style?: string | null;
-            /** Supervision */
-            supervision?: boolean | null;
             /** Team Mode */
             team_mode?: boolean | null;
             /** Transcriber */
@@ -4711,8 +4709,6 @@ export interface components {
             cloud_models: boolean;
             /** Cloud Redaction */
             cloud_redaction: boolean;
-            /** Compliance Phrases */
-            compliance_phrases: string;
             /** Config Version */
             config_version: number;
             /** Consent Script */
@@ -4873,6 +4869,8 @@ export interface components {
             remote_stt_url: string;
             /** Require Consent */
             require_consent: boolean;
+            /** Review Phrases */
+            review_phrases: string;
             /** Semantic Search */
             semantic_search: boolean;
             /** Setup Complete */
@@ -4887,8 +4885,6 @@ export interface components {
             summary_instructions: string;
             /** Summary Style */
             summary_style: string;
-            /** Supervision */
-            supervision: boolean;
             /** Team Mode */
             team_mode: boolean;
             /** Transcriber */

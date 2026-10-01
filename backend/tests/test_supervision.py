@@ -1,4 +1,4 @@
-"""Supervision (services/supervision.py): compliance phrases flagged, a reviewer's queue."""
+"""Flagged phrases (services/supervision.py): lines flagged, a reviewer's queue."""
 
 import io
 import json
@@ -11,6 +11,7 @@ from mnemosyne.models.transcript import TranscriptSegment
 from mnemosyne.services import supervision
 from tests.conftest import drain_until_job
 
+PHRASES = "guarantee, guaranteed, can't lose, risk-free"
 LINES = [
     TranscriptSegment(text="Thanks for coming in today.", speaker="Advisor", start=0.0, end=2.0),
     TranscriptSegment(text="This fund is basically risk-free.", speaker="Advisor", start=2, end=5),
@@ -47,7 +48,7 @@ def test_off_by_default(client, ctx, fake_engine, tmp_path):
 
 
 def test_a_transcription_is_flagged_and_reviewed(client, ctx, fake_engine, tmp_path):
-    ctx.settings.supervision = True
+    ctx.settings.review_phrases = PHRASES
     sid = _transcribe(client, ctx, fake_engine, tmp_path)
     [item] = client.get("/api/supervision").json()
     assert item["session_id"] == sid and item["flags"] == 3 and not item["reviewed"]
@@ -62,7 +63,7 @@ def test_a_transcription_is_flagged_and_reviewed(client, ctx, fake_engine, tmp_p
 
 
 def test_edits_add_flags_and_never_hide_them(client, ctx, fake_engine, tmp_path):
-    ctx.settings.supervision = True
+    ctx.settings.review_phrases = PHRASES
     sid = _transcribe(client, ctx, fake_engine, tmp_path)
     client.post(f"/api/sessions/{sid}/supervision/review", json={})
     # Editing the flagged line away keeps its flag; the meeting stays reviewed.
@@ -76,13 +77,13 @@ def test_edits_add_flags_and_never_hide_them(client, ctx, fake_engine, tmp_path)
     assert {f["phrase"]: f["idx"] for f in flags["flags"]}["can't lose"] == 1
     # A new phrase said in an edit puts the meeting back in the queue.
     client.patch(f"/api/sessions/{sid}/segments/0", json={"text": "You should buy this."})
-    ctx.settings.compliance_phrases += ", you should buy"
+    ctx.settings.review_phrases += ", you should buy"
     supervision.scan(ctx, sid)
     assert not client.get("/api/supervision").json()[0]["reviewed"]
 
 
 def test_a_new_transcription_replaces_the_flags(client, ctx, fake_engine, tmp_path):
-    ctx.settings.supervision = True
+    ctx.settings.review_phrases = PHRASES
     sid = _transcribe(client, ctx, fake_engine, tmp_path)
     fake_engine.segments = [LINES[0], LINES[3]]
     with client.websocket_connect("/ws") as ws:
@@ -95,7 +96,7 @@ def test_changing_the_phrases_rescans_every_meeting(client, ctx, fake_engine, tm
     sid = _transcribe(client, ctx, fake_engine, tmp_path)  # supervision off: no flags
     with client.websocket_connect("/ws") as ws:
         assert ws.receive_json()["type"] == "hello"
-        r = client.put("/api/settings", json={"supervision": True, "compliance_phrases": "fund"})
+        r = client.put("/api/settings", json={"review_phrases": "fund"})
         assert r.status_code == 200
         [job] = [j for j in ctx.jobs.list() if j.kind == "supervision_scan"]
         drain_until_job(ws, job.id)
@@ -107,7 +108,7 @@ def test_members_have_no_queue_and_reviewers_see_everyone(
     settings, keystore, tmp_path, fake_engine
 ):
     settings.team_mode = True
-    settings.supervision = True
+    settings.review_phrases = PHRASES
     app = create_app(settings, keystore=keystore)
     ctx = app.state.ctx
     ctx.models._engine = fake_engine
@@ -129,7 +130,7 @@ def test_members_have_no_queue_and_reviewers_see_everyone(
 
 
 def test_flags_and_reviews_go_into_an_exam_export(client, ctx, fake_engine, tmp_path):
-    ctx.settings.supervision = True
+    ctx.settings.review_phrases = PHRASES
     sid = _transcribe(client, ctx, fake_engine, tmp_path)
     client.post(f"/api/sessions/{sid}/supervision/review", json={"note": "Checked"})
     with client.websocket_connect("/ws") as ws:
