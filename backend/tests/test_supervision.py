@@ -41,7 +41,7 @@ def test_find_matches_whole_phrases_either_apostrophe():
     ]
 
 
-def test_off_by_default_outside_firm_mode(client, ctx, fake_engine, tmp_path):
+def test_off_by_default(client, ctx, fake_engine, tmp_path):
     sid = _transcribe(client, ctx, fake_engine, tmp_path)
     assert ctx.repo.flags(sid) == []
 
@@ -106,7 +106,8 @@ def test_changing_the_phrases_rescans_every_meeting(client, ctx, fake_engine, tm
 def test_advisors_have_no_queue_and_reviewers_see_everyone(
     settings, keystore, tmp_path, fake_engine
 ):
-    settings.firm_mode = True
+    settings.team_mode = True
+    settings.supervision = True
     app = create_app(settings, keystore=keystore)
     ctx = app.state.ctx
     ctx.models._engine = fake_engine

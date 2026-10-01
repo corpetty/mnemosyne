@@ -5,7 +5,7 @@
 	import { startRecording, type Consent } from '$lib/app/controller.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
 
-	// Before a recording, when the server asks for it (require_consent, firm mode): how did the
+	// Before a recording, when the server asks for it (require_consent, team mode): how did the
 	// people in this meeting agree? The answer goes into the meeting's history.
 	const OPTIONS: [Consent, string, string][] = [
 		['all_parties', 'Everyone was told and agreed', 'A call or meeting where each person heard it will be recorded and said yes.'],

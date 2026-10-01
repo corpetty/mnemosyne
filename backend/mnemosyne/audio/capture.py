@@ -1,6 +1,6 @@
 """PipeWire audio capture: device enumeration and multi-source recording.
 
-A browser can be the recorder instead (a firm's server, api/routes/record.py): its sources are
+A browser can be the recorder instead (a team server, api/routes/record.py): its sources are
 recording processes like pw-record's, with a BrowserProcess and negative device ids, and the
 WebSocket that receives its audio writes the same kind of growing WAV file. Everything after
 (levels, health, live transcription, saving, recovery) reads the files and cannot tell.

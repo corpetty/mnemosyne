@@ -1,4 +1,4 @@
-"""People on a firm's server (services/users.py, access.py): who am I, invites, and, for an
+"""People on a team server (services/users.py, access.py): who am I, invites, and, for an
 admin, adding people, changing roles, disabling and signing out. Redeeming an invite needs no
 token (api/auth.py); the web app turns `?invite=<code>` into a token for this browser."""
 
@@ -25,7 +25,8 @@ class Me(ApiModel):
     name: str
     email: str
     role: str
-    firm_mode: bool
+    team_mode: bool
+    cloud_models: bool  # OpenAI and Anthropic may be used (the local-only choice means something)
     supervision: bool  # flagged meetings to review (services/supervision.py)
 
 
@@ -102,7 +103,8 @@ async def me(ctx: AppContext = Depends(get_ctx)):
             name="",
             email="",
             role=access.ADMIN,
-            firm_mode=ctx.settings.firm_mode,
+            team_mode=ctx.settings.team_mode,
+            cloud_models=ctx.settings.cloud_models,
             supervision=supervision.enabled(ctx.settings),
         )
     user = ctx.users.get(p.user_id)
@@ -111,7 +113,8 @@ async def me(ctx: AppContext = Depends(get_ctx)):
         name=p.name,
         email=user.email if user else "",
         role=p.role,
-        firm_mode=ctx.settings.firm_mode,
+        team_mode=ctx.settings.team_mode,
+        cloud_models=ctx.settings.cloud_models,
         supervision=supervision.enabled(ctx.settings),
     )
 

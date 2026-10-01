@@ -54,7 +54,7 @@ class StartRecordingRequest(ApiModel):
 
 
 class StartBrowserRecordingRequest(ApiModel):
-    """Record from the browser that asks (a firm's server): it sends each source's audio to
+    """Record from the browser that asks (a team server): it sends each source's audio to
     /api/record/{recording_id}/{source} (api/routes/record.py)."""
 
     sources: list[Literal["mic", "system"]]  # system: the call's audio, shared by the browser
@@ -212,7 +212,7 @@ async def start_browser(request: StartBrowserRecordingRequest, ctx: AppContext =
 
 
 def consent_required(ctx: AppContext) -> bool:
-    return ctx.settings.require_consent or ctx.settings.firm_mode
+    return ctx.settings.require_consent
 
 
 async def _start(

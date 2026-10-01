@@ -1,4 +1,4 @@
-"""A firm's server: the web app served by the backend, firm mode, and a key from systemd."""
+"""a team server: the web app served by the backend, team mode, and a key from systemd."""
 
 import base64
 import os
@@ -70,17 +70,18 @@ def test_no_web_app_without_web_dir_or_without_a_build(settings, keystore, tmp_p
         assert c.get("/").status_code == 404
 
 
-def test_firm_mode_creates_no_cloud_provider(settings):
+def test_with_cloud_models_off_no_cloud_provider_exists(settings):
     settings.openai_api_key = "sk-x"
     settings.anthropic_api_key = "sk-y"
     assert {"openai", "anthropic"} <= set(SummarizationService(settings).providers)
-    settings.firm_mode = True
+    settings.cloud_models = False
     assert not {"openai", "anthropic"} & set(SummarizationService(settings).providers)
 
 
-def test_health_says_firm_mode(settings, keystore):
-    with _client(settings, keystore, firm_mode=True) as c:
-        assert c.get("/health").json()["firm_mode"] is True
+def test_health_says_team_mode(settings, keystore):
+    with _client(settings, keystore, team_mode=True, cloud_models=False) as c:
+        health = c.get("/health").json()
+        assert health["team_mode"] is True and health["cloud_models"] is False
 
 
 def test_credential_key_store_reads_a_systemd_credential(tmp_path):

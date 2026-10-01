@@ -69,8 +69,8 @@
 				<MeetingTypePicker />
 				<MeetingActions />
 			{/if}
-			<!-- A firm's server never uses a cloud model: nothing to choose. -->
-			{#if mine && !connectionState.me?.firm_mode}
+			<!-- With cloud models off on the server there is nothing to choose. -->
+			{#if mine && connectionState.me?.cloud_models !== false}
 			<button
 				onclick={toggleLocalOnly}
 				aria-pressed={sessionState.activeSession.local_only}

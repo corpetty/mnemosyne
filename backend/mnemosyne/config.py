@@ -194,6 +194,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     default_provider: str = "ollama"
     default_model: str = ""
+    # OpenAI and Anthropic may be used at all. Off: those providers are not even created, so no
+    # setting, meeting type or request can send a meeting to them (a team server that promises
+    # meetings stay on it).
+    cloud_models: bool = True
     # Before sending anything to a cloud provider (openai, anthropic), replace emails, phone
     # numbers, financial identifiers and the names of people in your meetings with
     # placeholders, and put them back in the reply.
@@ -208,22 +212,22 @@ class Settings(BaseSettings):
     # Server mode: when set, every /api request and the WebSocket must carry it
     # (Authorization: Bearer <token>, or ?token=). /health stays open.
     api_token: str = ""
-    # Firm mode: this backend is a firm's server, used by its advisors from their browsers
-    # (docs/firm-server.md). Nothing goes to a cloud model: those providers are not created.
-    firm_mode: bool = False
+    # Team mode: this backend is a team server, used by several people from their browsers
+    # (docs/team-server.md): everyone signs in and has their own meetings (access.py).
+    team_mode: bool = False
     # Serve the web app from this folder (the `build/` of `pnpm build`), so browsers need
     # nothing installed. Blank: only the desktop app's own copy of the UI.
     web_dir: str = ""
     # Before each recording, say how the people in it agreed to be recorded (all parties
     # informed, in the room, one party where the law allows); it goes into the meeting's
-    # history. Always on in firm mode. consent_script: what to read out, shown with it.
+    # history. consent_script: what to read out, shown with it.
     require_consent: bool = False
     # Records (services/records.py): for this many years after a meeting, deleting it or its
     # audio needs an admin and a reason, and audio retention leaves it alone. 0 = off.
     records_retention_years: int = 0
     # Supervision (services/supervision.py): lines of a meeting's final transcript with one of
     # these phrases (comma- or line-separated) are flagged, and a reviewer marks each flagged
-    # meeting reviewed. Always on in firm mode.
+    # meeting reviewed.
     supervision: bool = False
     compliance_phrases: str = (
         "guarantee, guaranteed, can't lose, cannot lose, risk-free, risk free, no risk, "
@@ -233,7 +237,7 @@ class Settings(BaseSettings):
     )
     consent_script: str = (
         "Before we start: I'd like to record this conversation so I can keep accurate notes. "
-        "The recording stays on our firm's own server. Is that all right with you?"
+        "Is that all right with you?"
     )
     # The address phones open to reach this backend when it is not the LAN address, e.g.
     # https://desk.tail1234.ts.net from `tailscale serve` (docs/remote-access.md). Blank: LAN.

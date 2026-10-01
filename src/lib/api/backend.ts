@@ -99,7 +99,8 @@ export async function getHealth(): Promise<{
   version: string;
   host?: string;
   auth_required?: boolean;
-  firm_mode?: boolean;
+  team_mode?: boolean;
+  cloud_models?: boolean;
   consent_required?: boolean;
 }> {
   return request('/health');
@@ -122,7 +123,7 @@ export async function startRecording(
   });
 }
 
-/** Record from this browser (a firm's server): it then sends the audio itself
+/** Record from this browser (a team server): it then sends the audio itself
  * (app/browser-capture.ts). */
 export async function startBrowserRecording(body: {
   sources: ('mic' | 'system')[];
@@ -422,7 +423,7 @@ export async function saveClip(sessionId: string, clipId: string, path: string):
 }
 
 // Encryption at rest
-// ---- people on a firm's server (backend services/users.py) ------------------------------
+// ---- people on a team server (backend services/users.py) ------------------------------
 
 export async function getMe(): Promise<Me> {
   return request('/api/users/me');

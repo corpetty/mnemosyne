@@ -12,7 +12,7 @@ from ...search.index import IndexStatus
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["search"])
-ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
+ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
 
 
 @router.get("/search", response_model=list[SearchHit])

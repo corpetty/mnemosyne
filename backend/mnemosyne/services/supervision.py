@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def enabled(settings: Settings) -> bool:
-    return settings.supervision or settings.firm_mode
+    return settings.supervision
 
 
 def find(segments: list[TranscriptSegment], phrases: list[str]) -> list[dict]:

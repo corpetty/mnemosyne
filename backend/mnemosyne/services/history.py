@@ -47,7 +47,7 @@ _accessed: dict[tuple[str, str, str], float] = {}
 
 
 def log_access(app: AppContext, session_id: str, kind: str) -> None:
-    """On a firm's server, note who opened, played or exported a meeting (access.py), so "who
+    """On a team server, note who opened, played or exported a meeting (access.py), so "who
     looked at this client's meeting" has an answer. Nothing for the desktop app or the admin
     token. Never raises."""
     import time

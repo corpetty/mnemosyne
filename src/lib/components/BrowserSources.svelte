@@ -3,7 +3,7 @@
 	import { listMicrophones } from '$lib/app/browser-capture.js';
 	import { audioState, BROWSER_CALL, BROWSER_MIC } from '$lib/stores/audio.svelte.js';
 
-	// What this browser records (a firm's server, app/browser-capture.ts): its microphone and the
+	// What this browser records (a team server, app/browser-capture.ts): its microphone and the
 	// call's audio, shared when recording starts.
 	let mics = $state<{ id: string; label: string }[]>([]);
 	const named = $derived(mics.some((m) => !/^Microphone \d+$/.test(m.label)));

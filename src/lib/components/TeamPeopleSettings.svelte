@@ -6,7 +6,7 @@
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import type { UserInfo, UserInvite } from '$lib/types/index.js';
 
-	// People on a firm's server (backend services/users.py): an admin adds them and sends each
+	// People on a team server (backend services/users.py): an admin adds them and sends each
 	// an invite link, which signs one browser in.
 	let people = $state<UserInfo[]>([]);
 	let name = $state('');

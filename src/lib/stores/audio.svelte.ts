@@ -4,7 +4,7 @@ import { wsState } from "./websocket.svelte.js";
 import { SAME_ORIGIN } from "./connection.svelte.js";
 import { browserCapture, type Acquired } from "$lib/app/browser-capture.js";
 
-// In a browser loaded from a server (a firm's), the sources are this browser's: its microphone
+// In a browser loaded from a server (a team server), the sources are this browser's: its microphone
 // and, when shared, the call's audio. They stand in the device list with these ids, which the
 // backend uses for them too, so the source line and the level meters work as for PipeWire.
 export const BROWSER_MIC = -1;

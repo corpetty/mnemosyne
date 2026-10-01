@@ -28,7 +28,7 @@ class FakeHubSpot:
                     "company": "", "associatedcompanyid": None},
         }  # fmt: skip
         self.companies = {"900": {"name": "Client Household"}}
-        self.owners = [{"id": "77", "email": "advisor@firm.com", "firstName": "Ann",
+        self.owners = [{"id": "77", "email": "owner@example.com", "firstName": "Ann",
                         "lastName": "Advisor", "userId": 5}]  # fmt: skip
         self.objects: dict[str, dict[str, dict]] = {"meetings": {}, "notes": {}, "tasks": {}}
         self.associations: set[tuple[str, str, str, str, int | None]] = set()
@@ -129,7 +129,7 @@ class FakeHubSpot:
         return {(to, t) for k, o, _, to, t in self.associations if (k, o) == (kind, oid)}
 
 
-def _setup(ctx, owner="advisor@firm.com"):
+def _setup(ctx, owner="owner@example.com"):
     fake = FakeHubSpot()
     ctx.http_transport = httpx.MockTransport(fake)
     ctx.settings.hubspot_token = TOKEN
@@ -170,9 +170,9 @@ def test_check(client, ctx):
     assert client.get("/api/integrations").json()["crm"] == ["hubspot"]
     r = client.get("/api/integrations/hubspot/check").json()
     assert r == {"ok": True, "message": "Ready: tasks are assigned to Ann Advisor"}
-    ctx.settings.hubspot_owner_email = "nobody@firm.com"
+    ctx.settings.hubspot_owner_email = "nobody@example.com"
     r = client.get("/api/integrations/hubspot/check").json()
-    assert r["ok"] is False and "No HubSpot user with the email nobody@firm.com" in r["message"]
+    assert r["ok"] is False and "No HubSpot user with the email nobody@example.com" in r["message"]
     ctx.settings.hubspot_token = "wrong"
     r = client.get("/api/integrations/hubspot/check").json()
     assert r["ok"] is False and "rejected the access token" in r["message"]
@@ -303,7 +303,7 @@ def test_push_errors_are_readable(client, ctx):
     fake.fail = None
     fake.owners = []
     r = client.post(url, json={"contact_ids": ["101"]})
-    assert "No HubSpot user with the email advisor@firm.com" in r.json()["detail"]
+    assert "No HubSpot user with the email owner@example.com" in r.json()["detail"]
     kinds = [e["kind"] for e in ctx.repo.events(s.id)]
     assert kinds.count("hubspot_failed") == 4
     # nothing was written
@@ -367,6 +367,6 @@ def test_identifiers_are_masked_before_they_reach_hubspot(client, ctx):
     for secret in ("123-45-6789", "44012233", "4242 4242 4242 4242"):
         assert secret not in sent
     assert "[SSN]" in sent and "[card ••4242]" in sent
-    ctx.settings.redact_exports = False  # the firm's choice
+    ctx.settings.redact_exports = False  # the admin's choice
     client.post(f"/api/sessions/{s.id}/crm/hubspot", json={"contact_ids": ["101"]})
     assert "123-45-6789" in " ".join(req.content.decode() for req in fake.writes())

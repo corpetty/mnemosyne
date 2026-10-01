@@ -16,13 +16,13 @@
 	import { collectDiagnostics } from '$lib/app/diagnostics.js';
 	import ReportProblem from './ReportProblem.svelte';
 	import EncryptionSettings from './EncryptionSettings.svelte';
-	import FirmPeopleSettings from './FirmPeopleSettings.svelte';
+	import TeamPeopleSettings from './TeamPeopleSettings.svelte';
 	import RecordsSettings from './RecordsSettings.svelte';
 	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
-	// A firm's server: settings belong to its admins (advisors and reviewers only read them).
+	// a team server: settings belong to its admins (advisors and reviewers only read them).
 	const readOnly = $derived(!!connectionState.me?.id && connectionState.me.role !== 'admin');
-	const firmAdmin = $derived(!!connectionState.me?.firm_mode && connectionState.me.role === 'admin');
+	const teamAdmin = $derived(!!connectionState.me?.team_mode && connectionState.me.role === 'admin');
 	let settings = $state<SettingsResponse | null>(null);
 	let providers = $state<ProviderModels[]>([]);
 	let voices = $state<SpeakerProfile[]>([]);
@@ -168,6 +168,7 @@
 				default_provider: v.default_provider,
 				default_model: v.default_model,
 				cloud_redaction: v.cloud_redaction,
+				cloud_models: v.cloud_models,
 				redact_exports: v.redact_exports,
 				redact_stored_transcripts: v.redact_stored_transcripts,
 				auto_record: v.auto_record,
@@ -374,8 +375,8 @@
 			Settings on this server are managed by your administrator.
 		</p>
 	{/if}
-	{#if tab === 'general' && firmAdmin}
-		<FirmPeopleSettings />
+	{#if tab === 'general' && teamAdmin}
+		<TeamPeopleSettings />
 	{/if}
 	{#if tab === 'general' && !readOnly}
 		<RecordsSettings />
@@ -387,14 +388,12 @@
 			<h3 class="text-lg font-semibold text-gray-200 mb-1">Supervision</h3>
 			<p class="text-xs text-gray-500 mb-3">
 				Lines of a meeting's transcript that use one of these phrases are flagged, and the meeting waits in the Review view
-				until a reviewer marks it reviewed. A flag is a line to read in context, not a finding. Always on on a firm's server.
+				until a reviewer marks it reviewed. A flag is a line to read in context, not a finding.
 			</p>
-			{#if !connectionState.me?.firm_mode}
-				<label class="flex items-center gap-2 mb-2">
-					<input type="checkbox" bind:checked={form.supervision} disabled={locked('supervision')} class="rounded border-gray-600 bg-gray-800" />
-					<span class="text-sm text-gray-300">Flag compliance phrases</span>
-				</label>
-			{/if}
+			<label class="flex items-center gap-2 mb-2">
+				<input type="checkbox" bind:checked={form.supervision} disabled={locked('supervision')} class="rounded border-gray-600 bg-gray-800" />
+				<span class="text-sm text-gray-300">Flag compliance phrases</span>
+			</label>
 			<label class="block">
 				<span class={labelClass}>Phrases (comma-separated; changing them checks every meeting again)</span>
 				<textarea rows="3" bind:value={form.compliance_phrases} disabled={locked('compliance_phrases')} class={inputClass}></textarea>
@@ -412,7 +411,7 @@
 			</p>
 			<div class="grid grid-cols-2 gap-3">
 				{#if !SAME_ORIGIN}
-					<!-- Loaded from a server (a firm's): that server is the backend. -->
+					<!-- Loaded from a server (a team server): that server is the backend. -->
 					<label>
 						<span class={labelClass}>Backend URL</span>
 						<input type="text" bind:value={connUrl} placeholder={LOCAL_BACKEND} class={inputClass} />
@@ -470,7 +469,7 @@
 				<h3 class="text-lg font-semibold text-gray-200 mb-1">Consent</h3>
 				<p class="text-xs text-gray-500 mb-3">
 					Before each recording, say how the people in it agreed to be recorded (everyone told and agreed, told in the
-					room, or one-party consent); it is kept in the meeting's history. Always asked on a firm's server.
+					room, or one-party consent); it is kept in the meeting's history. Always asked on a team server.
 				</p>
 				<label class="flex items-center gap-2 mb-2">
 					<input type="checkbox" bind:checked={form.require_consent} disabled={locked('require_consent')} class="rounded border-gray-600 bg-gray-800" />
@@ -927,6 +926,10 @@
 						</datalist>
 					</label>
 					<label class="flex items-center gap-2 col-span-2">
+						<input type="checkbox" bind:checked={form.cloud_models} disabled={locked('cloud_models')} class="rounded border-gray-600 bg-gray-800" />
+						<span class="text-sm text-gray-300">Allow OpenAI and Anthropic (off: no meeting can be sent to a cloud model, whatever else is set)</span>
+					</label>
+					<label class="flex items-center gap-2 col-span-2">
 						<input type="checkbox" bind:checked={form.cloud_redaction} disabled={locked('cloud_redaction')} class="rounded border-gray-600 bg-gray-800" />
 						<span class="text-sm text-gray-300">Hide names, emails, phone numbers and financial identifiers from OpenAI and Anthropic (swapped for placeholders, restored in the reply)</span>
 					</label>
@@ -1221,7 +1224,7 @@
 						<div class="col-span-2">{@render secret('hubspot_token', 'pat-…', 'Private app access token')}</div>
 						<label>
 							<span class={labelClass}>Assign tasks to (HubSpot user's email)</span>
-							<input type="email" bind:value={form.hubspot_owner_email} disabled={locked('hubspot_owner_email')} placeholder="advisor@firm.com" class={inputClass} />
+							<input type="email" bind:value={form.hubspot_owner_email} disabled={locked('hubspot_owner_email')} placeholder="you@example.com" class={inputClass} />
 						</label>
 						<label class="flex items-center gap-2 text-sm text-gray-300 self-end pb-1.5">
 							<input type="checkbox" bind:checked={form.hubspot_auto_push} disabled={locked('hubspot_auto_push')} class="rounded border-gray-600 bg-gray-800" />

@@ -339,7 +339,7 @@ Followed by sections for Summary, Participants, Notes, and the full Transcript w
 - [Development Guide](docs/development.md) — Setup, project structure, adding providers, building
 - [Troubleshooting](docs/troubleshooting.md) — Common issues and solutions
 - [Remote access](docs/remote-access.md) — Reach your meetings and pair phones from anywhere with Tailscale
-- [A firm's server](docs/firm-server.md) — One office machine, advisors in their browsers, nothing sent to a cloud model
+- [A team server](docs/team-server.md) — One machine for a group: everyone in their browser, signed in, with their own meetings
 
 ## Status
 

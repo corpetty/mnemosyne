@@ -12,7 +12,7 @@ from ...services.meeting_types import available_types
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
-ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
+ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
 
 
 # Every setting as it is sent to the UI (secrets blanked); derived from Settings so the

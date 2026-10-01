@@ -95,7 +95,7 @@ def test_a_person_is_in_one_household(client, ctx):
 
 
 def test_advisors_see_facts_only_from_their_own_meetings(settings, keystore):
-    settings.firm_mode = True
+    settings.team_mode = True
     app = create_app(settings, keystore=keystore)
     ctx = app.state.ctx
     tokens = {}

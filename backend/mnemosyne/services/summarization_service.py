@@ -52,9 +52,9 @@ class SummarizationService:
     def _init_providers(self, settings: Settings) -> None:
         self.providers["ollama"] = OllamaProvider(base_url=settings.ollama_url)
         self.providers["vllm"] = VLLMProvider(base_url=settings.vllm_url)
-        # Firm mode promises that meetings never leave the firm's server: no cloud provider
-        # exists to be picked by a setting, a meeting type or a request.
-        cloud = not settings.firm_mode
+        # With cloud models off, no cloud provider exists to be picked by a setting, a meeting
+        # type or a request.
+        cloud = settings.cloud_models
         if cloud and settings.openai_api_key:
             self.providers["openai"] = OpenAIProvider(api_key=settings.openai_api_key)
         if cloud and settings.anthropic_api_key:

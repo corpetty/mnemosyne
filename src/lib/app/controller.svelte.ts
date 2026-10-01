@@ -659,7 +659,7 @@ function deviceName(): string {
   return os ? `${browser} on ${os}` : browser;
 }
 
-/** An invite link (`?invite=<code>`, a firm's server) becomes this browser's own token. */
+/** An invite link (`?invite=<code>`, a team server) becomes this browser's own token. */
 async function redeemInviteFromUrl() {
   const params = new URLSearchParams(location.search);
   const code = params.get('invite');

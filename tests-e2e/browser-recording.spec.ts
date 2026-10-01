@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { openApp } from './fixtures';
 
-// Recording in the browser (a firm's server; src/lib/app/browser-capture.ts), here with the UI
+// Recording in the browser (a team server; src/lib/app/browser-capture.ts), here with the UI
 // from Vite and `mnemosyne.recordInBrowser` set. Chromium's fake microphone plays a beep; the
 // call-audio share dialog cannot be driven headless, so only the microphone is recorded.
 const BACKEND = 'http://127.0.0.1:8018';

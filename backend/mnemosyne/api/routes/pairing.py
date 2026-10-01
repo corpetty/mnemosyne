@@ -15,7 +15,7 @@ from ..context import AppContext, get_ctx
 from .mobile import phone_page_urls
 
 router = APIRouter(prefix="/api/pairing", tags=["pairing"])
-ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
+ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
 
 
 class CodeRequest(BaseModel):

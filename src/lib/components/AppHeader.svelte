@@ -91,7 +91,7 @@
 		</span>
 		<RecordingPill />
 		{#if connectionState.me?.id}
-			<!-- A firm's server: who is signed in in this browser. -->
+			<!-- a team server: who is signed in in this browser. -->
 			<span class="hidden md:flex items-center gap-2 text-gray-400" title="Signed in as {connectionState.me.name} ({connectionState.me.role})">
 				<span class="text-gray-300">{connectionState.me.name}</span>
 				{#if connectionState.me.role !== 'advisor'}<span class="text-gray-500">{connectionState.me.role}</span>{/if}

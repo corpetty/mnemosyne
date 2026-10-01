@@ -10,7 +10,7 @@ from ...services import records, supervision
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["speakers"])
-ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
+ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
 
 
 class RenameSpeakerRequest(ApiModel):

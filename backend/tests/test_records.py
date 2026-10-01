@@ -136,7 +136,7 @@ def test_an_exam_export_holds_everything_and_checks_out(client, ctx, fake_engine
 
 
 def test_advisors_hold_nothing_and_export_only_their_own(settings, keystore, tmp_path):
-    settings.firm_mode = True
+    settings.team_mode = True
     app = create_app(settings, keystore=keystore)
     ctx = app.state.ctx
     tokens = {}

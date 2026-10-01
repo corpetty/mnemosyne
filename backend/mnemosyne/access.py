@@ -1,4 +1,4 @@
-"""Who is asking, for a firm's server where each advisor sees their own meetings.
+"""Who is asking, for a team server where each advisor sees their own meetings.
 
 The auth middleware (api/auth.py) puts the signed-in user in `current` for the request; it
 follows the request into threads, background tasks and the jobs it starts (they copy the

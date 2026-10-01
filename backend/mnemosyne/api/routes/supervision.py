@@ -39,7 +39,7 @@ class QueueItem(ApiModel):
     session_id: str
     name: str
     created_at: datetime
-    owner: str  # the advisor's name on a firm's server, "" otherwise
+    owner: str  # the advisor's name on a team server, "" otherwise
     flags: int
     phrases: list[str]
     reviewed: bool

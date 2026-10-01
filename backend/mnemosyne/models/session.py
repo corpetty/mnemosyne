@@ -196,7 +196,7 @@ class Session(ApiModel):
     external_notes: list[ExternalNotes] = Field(default_factory=list)  # other assistants' notes
     # Its kind (settings.meeting_types, by name); "" = none yet, "none" = chosen none.
     meeting_type: str = ""
-    # On a firm's server, the advisor whose meeting it is (services/users.py); "" = nobody's.
+    # On a team server, the advisor whose meeting it is (services/users.py); "" = nobody's.
     owner_id: str = ""
     # Why the meeting is on legal hold ("" = not held): it and its audio cannot be deleted.
     legal_hold: str = ""

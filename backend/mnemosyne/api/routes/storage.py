@@ -8,7 +8,7 @@ from ...services.storage_service import CleanupResult, StorageReport
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["storage"])
-ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
+ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
 
 
 @router.get("/storage", response_model=StorageReport, dependencies=ADMIN)

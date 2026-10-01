@@ -17,7 +17,7 @@ from ...services.backup import (
 from ..context import AppContext, backup_runner, get_ctx
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
+ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
 
 
 class BackupStatus(ApiModel):

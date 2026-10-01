@@ -1,6 +1,6 @@
-"""Bearer-token auth for server mode, and who is signed in on a firm's server.
+"""Bearer-token auth for server mode, and who is signed in on a team server.
 
-Off unless `api_token` is set or `firm_mode` is on. Then every /api path and /ws needs a token in
+Off unless `api_token` is set or `team_mode` is on. Then every /api path and /ws needs a token in
 `Authorization: Bearer <token>` or `?token=` (for <audio> elements and the
 WebSocket, which cannot set headers). /health, /docs, /openapi.json, the phone page, the web
 app's files and redeeming a pairing code stay open. A paired phone's own token
@@ -49,7 +49,7 @@ class TokenAuthMiddleware:
             return await self.app(scope, receive, send)
         token = self.ctx.settings.api_token
         path = scope.get("path", "")
-        required = bool(token) or self.ctx.settings.firm_mode
+        required = bool(token) or self.ctx.settings.team_mode
         if not required or is_open(path) or scope.get("method") == "OPTIONS":
             return await self.app(scope, receive, send)
 

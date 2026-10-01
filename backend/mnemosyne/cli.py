@@ -23,7 +23,7 @@ def quiet_known_warnings() -> None:
 
 
 def users_command(argv: list[str]) -> None:
-    """`mnemosyne-backend users ...`: people on a firm's server, for the first admin (who has
+    """`mnemosyne-backend users ...`: people on a team server, for the first admin (who has
     nobody to invite them) and for scripts. Works while the server runs (services/users.py)."""
     from datetime import datetime
 

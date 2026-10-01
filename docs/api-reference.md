@@ -63,15 +63,16 @@ outside the database, so they are checked even while encrypted meetings are lock
 ### `GET /health`
 
 ```json
-{ "status": "ok", "version": "0.9.2", "host": "gpu-box", "auth_required": false, "firm_mode": false, "pid": 4242, "recording": false }
+{ "status": "ok", "version": "0.9.2", "host": "gpu-box", "auth_required": false, "team_mode": false, "cloud_models": true, "consent_required": false, "pid": 4242, "recording": false }
 ```
 
 `pid` and `recording` are for the desktop shell, which may find a backend already running when it
-starts (see below). `firm_mode`: a firm's server (docs/firm-server.md), where no cloud model
-provider exists.
+starts (see below). `team_mode`: a team server (docs/team-server.md), where everyone signs
+in. `cloud_models` false: no OpenAI or Anthropic provider exists, whatever else is set.
+`consent_required`: recording needs a word on consent first (`require_consent`).
 
-### People on a firm's server
-With `firm_mode` on, every `/api` request needs a person's token (or `api_token`, which acts as an
+### People on a team server
+With `team_mode` on, every `/api` request needs a person's token (or `api_token`, which acts as an
 admin). The request then runs as that person (`access.py`): an **advisor** sees only meetings they
 own (`Session.owner_id`, set when they create one), a **reviewer** reads all and changes only their
 own, an **admin** does everything. Someone else's meeting answers 404 to an advisor and 403 to a
@@ -82,7 +83,7 @@ history (at most once per person per half hour).
 
 | Method | Path | |
 |---|---|---|
-| GET | `/api/users/me` | who this token is (`id` "" for the desktop app or `api_token`), `role`, `firm_mode`, `supervision` |
+| GET | `/api/users/me` | who this token is (`id` "" for the desktop app or `api_token`), `role`, `team_mode`, `cloud_models`, `supervision` |
 | GET | `/api/users` | everyone's name and role; emails and devices for admins |
 | POST | `/api/users` | admin: `{name, email, role}` → the person and a one-time invite `code` |
 | PATCH | `/api/users/{id}` | admin: `name`, `email`, `role`, `disabled` (the last enabled admin stays) |
@@ -97,7 +98,7 @@ Admin-only elsewhere: `PUT /api/settings`, storage report and cleanup, backups, 
 on or off, rebuilding the search index, pairing devices, editing voice profiles, diagnostics.
 
 ### Consent
-With `require_consent` (always in firm mode; `/health` says `consent_required`), both
+With `require_consent` (always in team mode; `/health` says `consent_required`), both
 `/api/audio/start` and `/api/audio/start-browser` need `consent`: `all_parties` (everyone was told
 and agreed), `in_person` (everyone in the room was told) or `one_party`; without it they answer
 400. It is logged as a `consent` event in the meeting's history with who started the recording.
@@ -135,7 +136,7 @@ A legal hold refuses both to everyone (403) and refuses combining. Every deletio
 | GET | `/api/records/exports/{export_id}` | the zip, for whoever started it (or an admin), once |
 
 ### Supervision
-`services/supervision.py`, on with `supervision` or `firm_mode`. Lines of the final transcript with a
+`services/supervision.py`, on with `supervision`. Lines of the final transcript with a
 phrase from `compliance_phrases` are flagged (`supervision_flags`). A new transcription replaces a
 meeting's flags; edits, speaker renames and combining only add, so editing a line never removes its
 flag. Changing the phrases (or turning supervision on) starts a `supervision_scan` job over every

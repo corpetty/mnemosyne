@@ -1,4 +1,4 @@
-"""Recording from a browser (a firm's server): its audio arrives over a WebSocket per source
+"""Recording from a browser (a team server): its audio arrives over a WebSocket per source
 and is saved like pw-record's."""
 
 import numpy as np
@@ -93,7 +93,7 @@ def test_only_the_meetings_owner_can_send_audio(settings, keystore, fake_pipewir
 
     from mnemosyne.api.app import create_app
 
-    settings.firm_mode = True
+    settings.team_mode = True
     app = create_app(settings, keystore=keystore)
     ctx = app.state.ctx
     tokens = {}
@@ -193,11 +193,7 @@ def test_consent_is_asked_for_and_kept_in_the_meetings_history(client, ctx, fake
     assert r.status_code == 422
 
 
-def test_firm_mode_asks_for_consent_and_offers_the_advisor_meeting_types(settings):
-    from mnemosyne.services.meeting_types import available_types
-
-    settings.firm_mode = True
-    assert any(t.name == "Annual review" for t in available_types(settings))
+def test_consent_is_asked_only_when_the_setting_says_so(settings):
     from mnemosyne.api.routes.audio import consent_required
 
     class Ctx:
@@ -205,4 +201,7 @@ def test_firm_mode_asks_for_consent_and_offers_the_advisor_meeting_types(setting
 
     c = Ctx()
     c.settings = settings
+    settings.team_mode = True
+    assert not consent_required(c)  # a team server chooses for itself
+    settings.require_consent = True
     assert consent_required(c)

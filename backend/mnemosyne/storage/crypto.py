@@ -115,7 +115,7 @@ class SystemKeyStore:
 class CredentialKeyStore:
     """The key provided by the system, for a server with no desktop keyring: a file named by
     MNEMOSYNE_KEY_FILE holding 32 random bytes in base64, typically a systemd credential
-    (`LoadCredentialEncrypted=`, sealed to the machine's TPM; docs/firm-server.md). It is
+    (`LoadCredentialEncrypted=`, sealed to the machine's TPM; docs/team-server.md). It is
     `fixed`: turning encryption on adopts it instead of making a new key."""
 
     fixed = True

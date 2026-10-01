@@ -445,7 +445,7 @@ class SessionRepository:
             )
             # Only meetings transcribed from now on ask "who is who".
             self._conn.execute("UPDATE sessions SET speakers_reviewed = 1")
-        # Who a meeting, a saved question or a digest belongs to on a firm's server (access.py).
+        # Who a meeting, a saved question or a digest belongs to on a team server (access.py).
         if "owner_id" not in cols:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''")
         for table in ("asks", "digests"):
@@ -1898,7 +1898,7 @@ class SessionRepository:
         return [s for s in (self.get(r["id"]) for r in rows) if s is not None]
 
     def save_digest(self, digest: Digest) -> Digest:
-        """Save, replacing any earlier digest of the same range (label) and owner: on a firm's
+        """Save, replacing any earlier digest of the same range (label) and owner: on a team
         server each advisor has their own (access.py)."""
         owner = access.user_id()
         with self._lock, self._conn:

@@ -1,16 +1,18 @@
-# A firm's Mnemosyne server
+# A team's Mnemosyne server
 
-One machine in the office runs Mnemosyne; the advisors open it in Chrome or Edge on their own
-Windows or Mac computers and install nothing. Meetings, transcripts, summaries and the AI models all
-stay on that machine: in firm mode no cloud model can be used (the providers are not even created).
+One machine runs Mnemosyne for a group of people; they open it in Chrome or Edge on their own
+Windows, Mac or Linux computers and install nothing. Everyone signs in and has their own meetings;
+reviewers can read everyone's. With `CLOUD_MODELS=false` (as in the unit file below) meetings,
+transcripts, summaries and the AI models all stay on that machine: no cloud model can be used, the
+providers are not even created.
 
-This page is for whoever sets the machine up. `scripts/firm-server-check.sh` checks the result.
+This page is for whoever sets the machine up. `scripts/team-server-check.sh` checks the result.
 
 ## The machine
 
 - An NVIDIA GPU with **16 GB** of memory holds the speech models and a 14B-class summary model at
   the same time (8 GB works if summaries may wait for the speech models to unload). Two or three
-  advisors share one GPU comfortably: live transcription runs on the CPU, speaker labels take about
+  people share one GPU comfortably: live transcription runs on the CPU, speaker labels take about
   3% of the GPU per recorded channel, and final transcriptions queue.
 - 8 CPU cores, 32 GB RAM, and disk for the recordings: about 100 MB per recorded hour (each
   channel and the mix, compressed), plus a second disk (or a network share) for backups.
@@ -28,7 +30,7 @@ useradd --system --home-dir /srv/mnemosyne --create-home --shell /usr/sbin/nolog
 mkdir -p /opt/mnemosyne && chown mnemosyne: /opt/mnemosyne
 sudo -u mnemosyne git clone https://github.com/corpetty/mnemosyne /opt/mnemosyne
 cd /opt/mnemosyne
-sudo -u mnemosyne git checkout vX.Y.Z   # the latest release tag (firm mode needs 0.12.0 or later)
+sudo -u mnemosyne git checkout vX.Y.Z   # the latest release tag (team mode needs 0.12.0 or later)
 sudo -u mnemosyne bash -c 'cd backend && uv sync --frozen --extra gpu --extra onnx'
 sudo -u mnemosyne bash -c 'corepack enable --install-directory ~/.local/bin && pnpm install --frozen-lockfile && pnpm build'
 ```
@@ -49,8 +51,8 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen3:14b
 ```
 
-The unit file sets `DEFAULT_PROVIDER=ollama` and `DEFAULT_MODEL=qwen3:14b`. Try the demo meeting's
-summary before choosing a different model.
+The unit file sets `DEFAULT_PROVIDER=ollama` and `DEFAULT_MODEL=qwen3:14b`. Summarize a meeting or two
+before choosing a different model.
 
 ### Encryption
 
@@ -66,7 +68,7 @@ shred -u /root/mnemosyne-key
 
 After the first start, an admin turns encryption on (Settings → General → Encryption) and **prints
 the recovery code** it shows: with a new motherboard or TPM, the recovery code is the only way back
-in. Keep it where the firm keeps its other recovery codes.
+in. Keep it with your other recovery codes.
 
 **A replacement machine.** Restore the latest backup (Settings → General → Backups), then turn the
 recovery code back into the key and seal it to the new machine's TPM:
@@ -80,19 +82,19 @@ shred -u /root/mnemosyne-key && systemctl restart mnemosyne
 ### The service
 
 ```bash
-cp deploy/firm/mnemosyne.service /etc/systemd/system/
+cp deploy/team/mnemosyne.service /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now mnemosyne
 ```
 
-The backend listens on `127.0.0.1:8008` only; HTTPS in front of it is what the advisors reach.
+The backend listens on `127.0.0.1:8008` only; HTTPS in front of it is what people reach.
 
 ## HTTPS
 
-Browsers only let a page use the microphone and share a call's audio over HTTPS, so advisors need an
+Browsers only let a page use the microphone and share a call's audio over HTTPS, so people need an
 `https://` address with a certificate their browser accepts. Two ways:
 
-**Tailscale (simplest for a pilot).** Install Tailscale on the server and on each advisor's
-computer, in the firm's tailnet, with MagicDNS and HTTPS certificates on (admin console → DNS). Then
+**Tailscale (simplest).** Install Tailscale on the server and on each person's
+computer, in your tailnet, with MagicDNS and HTTPS certificates on (admin console → DNS). Then
 on the server:
 
 ```bash
@@ -100,12 +102,12 @@ tailscale serve --bg localhost:8008
 ```
 
 `tailscale serve status` shows the address (`https://mnemosyne.tail1234.ts.net`). Only computers in
-the firm's tailnet can open it, from the office or from home. docs/remote-access.md has more.
+your tailnet can open it, from the office or from home. docs/remote-access.md has more.
 
-**The firm's own domain.** Point a name such as `mnemosyne.example-firm.com` at the server and put
-[Caddy](https://caddyserver.com) in front with `deploy/firm/Caddyfile` (edit the name). Caddy gets
+**Your own domain.** Point a name such as `mnemosyne.example.com` at the server and put
+[Caddy](https://caddyserver.com) in front with `deploy/team/Caddyfile` (edit the name). Caddy gets
 and renews the certificate. For a name that only resolves inside the office, use Caddy's DNS
-challenge for the firm's DNS provider.
+challenge for your DNS provider.
 
 ## People
 
@@ -113,7 +115,7 @@ Nobody has a password. The first admin comes from the server itself:
 
 ```bash
 sudo -u mnemosyne MNEMOSYNE_DATA_DIR=/srv/mnemosyne/data \
-  /opt/mnemosyne/backend/.venv/bin/mnemosyne-backend users add "Pat Lee" --email pat@example-firm.com \
+  /opt/mnemosyne/backend/.venv/bin/mnemosyne-backend users add "Pat Lee" --email pat@example.com \
   --role admin --address https://mnemosyne.tail1234.ts.net
 ```
 
@@ -130,13 +132,13 @@ Opening, playing and exporting a meeting is noted in that meeting's history with
 "Disable" and "Sign out everywhere" take effect at once. The people list lives in
 `/srv/mnemosyne/data/users.json` (tokens as hashes only).
 
-## Recording, for advisors
+## Recording
 
-Advisors record in the browser: New meeting → Record. First Mnemosyne asks how the people in the
-meeting agreed to be recorded (everyone told and agreed; in the room, everyone told; one-party
-consent where the law allows), with a short script to read out (Settings → Recording → Consent,
-which the firm's compliance officer should word). The answer and who gave it go into the
-meeting's history. Then Chrome or Edge asks for the microphone the first time, and, when "The
+People record in the browser: New meeting → Record. With "Ask before every recording" on (Settings →
+Recording → Consent), Mnemosyne first asks how the people in the meeting agreed to be recorded
+(everyone told and agreed; in the room, everyone told; one-party consent where the law allows),
+with a short script to read out; the answer and who gave it go into the meeting's history. Then
+Chrome or Edge asks for the microphone the first time, and, when "The
 call's audio" is ticked, what to share:
 
 - **Zoom or Teams in their own app (Windows):** choose *Entire screen* and tick *Share system
@@ -156,7 +158,7 @@ and stopped on its own. Keep the tab open while recording (it can be in the back
 
 ## Records
 
-With no archiving vendor, Mnemosyne is where the firm's meeting records live:
+For a team that keeps its meetings as records:
 
 - **Nothing is overwritten.** Editing a transcript, renaming a speaker, transcribing or summarizing
   again keeps the earlier version (each meeting's Record card lists them, with who and when).
@@ -166,12 +168,11 @@ With no archiving vendor, Mnemosyne is where the firm's meeting records live:
   shows as "changed outside the app". Someone who can rewrite the whole database could rewrite the
   chain as well, which is why the chain head also goes into every export and backup.
 - **Kept.** Settings → General → Records period (years): until then, deleting a meeting or its
-  audio needs an admin and a reason, and audio retention leaves it alone. The firm's compliance
-  officer decides the number (six years is common). A reviewer or an admin can put a meeting on
-  **legal hold**: then nobody can delete anything of it.
+  audio needs an admin and a reason, and audio retention leaves it alone. A reviewer or an admin
+  can put a meeting on **legal hold**: then nobody can delete anything of it.
 - **Deletions are logged** with who, when and why, and the log outlives the meeting (Settings →
   General → Records → the deletion log).
-- **Export for an exam**: one meeting (its Record card) or every meeting in a date range (Settings
+- **Export**: one meeting (its Record card) or every meeting in a date range (Settings
   → General → Records) as a zip: audio, transcripts, summaries, earlier versions, history
   (recordings, consent, who opened what), seals, the deletion log, and `SHA256SUMS` to check
   nothing changed. The zip holds the audio unencrypted: it can be downloaded once, and is removed
@@ -185,10 +186,10 @@ least a week. Backups are encrypted with the same key, so the recovery code rest
 ## Check it
 
 ```bash
-/opt/mnemosyne/scripts/firm-server-check.sh https://mnemosyne.tail1234.ts.net
+/opt/mnemosyne/scripts/team-server-check.sh https://mnemosyne.tail1234.ts.net
 ```
 
-It checks the GPU, the service, firm mode, HTTPS with a valid certificate, the web app, Ollama and
+It checks the GPU, the service, team mode, HTTPS with a valid certificate, the web app, Ollama and
 the model, free disk, the clock (meeting records carry times) and the encryption credential.
 
 ## Updating

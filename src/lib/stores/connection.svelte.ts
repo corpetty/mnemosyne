@@ -7,7 +7,7 @@ import type { Me } from '$lib/types/index.js';
 const KEY = 'mnemosyne.connection';
 export const LOCAL_BACKEND = 'http://127.0.0.1:8008';
 
-/** Served by a backend itself (api/web.py, e.g. a firm's server opened in a browser): that
+/** Served by a backend itself (api/web.py, e.g. a team server opened in a browser): that
  * server is the backend, not this computer's. */
 export const SAME_ORIGIN =
   typeof document !== 'undefined' &&
@@ -47,7 +47,7 @@ class ConnectionState {
   authRequired = $state(false);
   /** Each recording asks how its people agreed to it (from /health). */
   consentRequired = $state(false);
-  /** Who is signed in on a firm's server (empty id: the desktop app or the admin token). */
+  /** Who is signed in on a team server (empty id: the desktop app or the admin token). */
   me = $state<Me | null>(null);
 
   constructor() {

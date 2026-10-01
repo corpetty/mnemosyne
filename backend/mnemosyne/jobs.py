@@ -37,7 +37,7 @@ class Job(ApiModel):
     id: str = Field(default_factory=lambda: str(uuid4())[:8])
     kind: str
     session_id: str | None = None
-    # Who started it on a firm's server (access.py): an Ask's answer is theirs alone.
+    # Who started it on a team server (access.py): an Ask's answer is theirs alone.
     owner_id: str = ""
     status: JobStatus = JobStatus.QUEUED
     message: str = ""

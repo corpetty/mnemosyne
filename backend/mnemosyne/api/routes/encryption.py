@@ -11,7 +11,7 @@ from ...services.encryption import EncryptionEnabled, EncryptionStatus
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/encryption", tags=["encryption"])
-ADMIN = [Depends(access.require_admin)]  # firm-wide: an admin's job (access.py)
+ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
 
 
 class RecoveryRequest(ApiModel):

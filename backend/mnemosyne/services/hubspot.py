@@ -626,7 +626,7 @@ async def find_matches(app: AppContext, session: Session) -> HubSpotMatches:
 
 def redacted(session: Session) -> Session:
     """What goes to HubSpot, with Social Security, account, routing and card numbers and dates
-    of birth masked, as in exports (redact_exports): a CRM is outside the firm's server."""
+    of birth masked, as in exports (redact_exports): a CRM is outside the team server."""
     from ..summarization.privacy import redact_identifiers as r
 
     data = session.summary_data

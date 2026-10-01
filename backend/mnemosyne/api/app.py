@@ -120,10 +120,11 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
             "status": "ok",
             "version": app.version,
             "host": socket.gethostname(),
-            "auth_required": bool(ctx.settings.api_token) or ctx.settings.firm_mode,
-            "firm_mode": ctx.settings.firm_mode,
+            "auth_required": bool(ctx.settings.api_token) or ctx.settings.team_mode,
+            "team_mode": ctx.settings.team_mode,
+            "cloud_models": ctx.settings.cloud_models,
             # Recording needs a word on how the people in it agreed (routes/audio.py).
-            "consent_required": ctx.settings.require_consent or ctx.settings.firm_mode,
+            "consent_required": ctx.settings.require_consent,
             # For the desktop shell, which finds this backend already running after a crash.
             "pid": os.getpid(),
             "recording": any(r.is_recording for r in ctx.active_recordings.values()),

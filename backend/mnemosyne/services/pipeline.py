@@ -544,7 +544,7 @@ def live_transcribe(app: AppContext, session_id: str, recording):
         on the event loop it held up every request at the start of a recording."""
         from ..audio.capture import is_browser, source_of
 
-        try:  # a browser's sources say what they are; a firm's server may have no PipeWire
+        try:  # a browser's sources say what they are; a team server may have no PipeWire
             devices = {} if is_browser(recording) else {d.id: d for d in list_devices()}
         except Exception:
             devices = {}

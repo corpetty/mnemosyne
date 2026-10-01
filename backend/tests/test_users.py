@@ -1,4 +1,4 @@
-"""People on a firm's server: invites and tokens, and who sees and changes which meetings."""
+"""People on a team server: invites and tokens, and who sees and changes which meetings."""
 
 import os
 
@@ -17,8 +17,8 @@ from mnemosyne.services.users import InvalidInvite, UserService
 def test_invite_redeem_verify_and_sign_out(tmp_path):
     clock = [1000.0]
     users = UserService(tmp_path / "users.json", clock=lambda: clock[0])
-    pat = users.add("Pat", "Pat@Firm.test", "admin")
-    assert pat.email == "pat@firm.test"
+    pat = users.add("Pat", "Pat@Team.test", "admin")
+    assert pat.email == "pat@team.test"
     code, _ = users.invite(pat.id)
     user, token = users.redeem(code, "Laptop")
     assert user.id == pat.id and users.verify(token).id == pat.id
@@ -34,7 +34,7 @@ def test_invites_expire_and_disabled_people_are_out(tmp_path):
     clock = [1000.0]
     users = UserService(tmp_path / "users.json", clock=lambda: clock[0])
     users.add("Admin", "", "admin")
-    sam = users.add("Sam", "sam@firm.test", "advisor")
+    sam = users.add("Sam", "sam@team.test", "advisor")
     old, _ = users.invite(sam.id)
     clock[0] += 8 * 24 * 3600
     with pytest.raises(InvalidInvite):
@@ -76,8 +76,8 @@ def test_changes_from_another_process_are_picked_up(tmp_path):
 
 
 @pytest.fixture
-def firm(settings, keystore):
-    settings.firm_mode = True
+def team(settings, keystore):
+    settings.team_mode = True
     app = create_app(settings, keystore=keystore)
     ctx = app.state.ctx
     people = {}
@@ -87,7 +87,7 @@ def firm(settings, keystore):
         ("Bob", "advisor"),
         ("Rev", "reviewer"),
     ]:
-        user = ctx.users.add(name, f"{name.lower()}@firm.test", role)
+        user = ctx.users.add(name, f"{name.lower()}@team.test", role)
         code, _ = ctx.users.invite(user.id)
         people[name] = (user, ctx.users.redeem(code, "test")[1])
     with TestClient(app) as client:
@@ -111,16 +111,16 @@ def _meeting(ctx, people, owner, name, text="the quarterly rebalance"):
         access.current.reset(reset)
 
 
-def test_firm_mode_needs_someone_signed_in(firm):
-    client, _, people = firm
+def test_team_mode_needs_someone_signed_in(team):
+    client, _, people = team
     assert client.get("/api/sessions").status_code == 401
     assert client.get("/health").json()["auth_required"] is True
     assert client.get("/api/users/me", headers=_h(people, "Ann")).json()["role"] == "advisor"
     assert client.get("/api/users/me", headers=_h(people, "Ann")).json()["name"] == "Ann"
 
 
-def test_an_invite_link_signs_a_browser_in(firm):
-    client, ctx, people = firm
+def test_an_invite_link_signs_a_browser_in(team):
+    client, ctx, people = team
     code, _ = ctx.users.invite(people["Bob"][0].id)
     r = client.post("/api/users/redeem", json={"code": code, "device": "Chrome"})
     assert r.status_code == 200
@@ -135,14 +135,14 @@ def test_an_invite_link_signs_a_browser_in(firm):
     )
 
 
-def test_meetings_belong_to_whoever_creates_them(firm):
-    client, _, people = firm
+def test_meetings_belong_to_whoever_creates_them(team):
+    client, _, people = team
     created = client.post("/api/sessions", json={"name": "Ann's"}, headers=_h(people, "Ann"))
     assert created.json()["owner_id"] == people["Ann"][0].id
 
 
-def test_advisors_see_only_their_own_meetings(firm):
-    client, ctx, people = firm
+def test_advisors_see_only_their_own_meetings(team):
+    client, ctx, people = team
     a = _meeting(ctx, people, "Ann", "Ann's client", "the Roth conversion for Dana")
     b = _meeting(ctx, people, "Bob", "Bob's client", "Bob talks about the Roth ladder")
 
@@ -162,8 +162,8 @@ def test_advisors_see_only_their_own_meetings(firm):
     assert ctx.repo.get(a.id).name == "Ann's client"
 
 
-def test_a_reviewer_reads_everything_and_changes_nothing_of_others(firm):
-    client, ctx, people = firm
+def test_a_reviewer_reads_everything_and_changes_nothing_of_others(team):
+    client, ctx, people = team
     a = _meeting(ctx, people, "Ann", "Ann's client")
     assert client.get(f"/api/sessions/{a.id}", headers=_h(people, "Rev")).status_code == 200
     r = client.patch(f"/api/sessions/{a.id}", json={"name": "x"}, headers=_h(people, "Rev"))
@@ -177,8 +177,8 @@ def test_a_reviewer_reads_everything_and_changes_nothing_of_others(firm):
     )
 
 
-def test_opening_a_meeting_is_in_its_history(firm):
-    client, ctx, people = firm
+def test_opening_a_meeting_is_in_its_history(team):
+    client, ctx, people = team
     a = _meeting(ctx, people, "Ann", "Ann's client")
     for _ in range(3):
         client.get(f"/api/sessions/{a.id}", headers=_h(people, "Rev"))
@@ -187,8 +187,8 @@ def test_opening_a_meeting_is_in_its_history(firm):
     assert viewed[0]["detail"]["by"] == "Rev" and viewed[0]["detail"]["role"] == "reviewer"
 
 
-def test_only_admins_change_settings_and_people(firm):
-    client, _, people = firm
+def test_only_admins_change_settings_and_people(team):
+    client, _, people = team
     for name in ("Ann", "Rev"):
         h = _h(people, name)
         assert client.put("/api/settings", json={"language": "fr"}, headers=h).status_code == 403
@@ -205,8 +205,8 @@ def test_only_admins_change_settings_and_people(firm):
     assert all(u["email"] == "" and u["devices"] == [] for u in listed)  # details: admins
 
 
-def test_jobs_are_visible_to_their_starter_and_the_meetings_owner(firm):
-    client, ctx, people = firm
+def test_jobs_are_visible_to_their_starter_and_the_meetings_owner(team):
+    client, ctx, people = team
     a = _meeting(ctx, people, "Ann", "Ann's client")
     ann = people["Ann"][0]
 
@@ -232,8 +232,8 @@ def test_jobs_are_visible_to_their_starter_and_the_meetings_owner(firm):
     assert {ask.id, summarize.id} <= mine
 
 
-def test_the_event_stream_keeps_other_advisors_meetings_out(firm):
-    client, ctx, people = firm
+def test_the_event_stream_keeps_other_advisors_meetings_out(team):
+    client, ctx, people = team
     a = _meeting(ctx, people, "Ann", "Ann's client")
     b = _meeting(ctx, people, "Bob", "Bob's client")
     token = people["Bob"][1]
@@ -247,13 +247,13 @@ def test_the_event_stream_keeps_other_advisors_meetings_out(firm):
         assert got["session_id"] == b.id and got["segment"]["text"] == "mine"
 
 
-def test_saved_questions_and_digests_are_personal(firm):
+def test_saved_questions_and_digests_are_personal(team):
     from datetime import date
 
     from mnemosyne.models.ask import Ask
     from mnemosyne.models.digest import Digest
 
-    client, ctx, people = firm
+    client, ctx, people = team
     for name in ("Ann", "Bob"):
         user = people[name][0]
         reset = access.current.set(access.Principal(user.id, user.name, user.role))

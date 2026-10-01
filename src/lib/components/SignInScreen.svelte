@@ -7,7 +7,7 @@
 	<section class="w-full max-w-md space-y-3 rounded-lg border border-gray-800 bg-gray-900 p-5" aria-label="Sign in">
 		<h2 class="text-lg font-semibold text-gray-100">Sign in to Mnemosyne</h2>
 		<p class="text-sm text-gray-400">
-			This is your firm's Mnemosyne{connectionState.host ? ` on ${connectionState.host}` : ''}. To sign in, open the
+			This is your team's Mnemosyne{connectionState.host ? ` on ${connectionState.host}` : ''}. To sign in, open the
 			invite link your administrator sent you, in this browser.
 		</p>
 		<p class="text-sm text-gray-500">

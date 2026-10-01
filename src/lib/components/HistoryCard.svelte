@@ -166,7 +166,7 @@
 			case 'viewed':
 			case 'played':
 			case 'exported':
-				// A firm's server notes who looked at a meeting (backend services/history.py).
+				// a team server notes who looked at a meeting (backend services/history.py).
 				return `${ACCESS[e.kind]} by ${d.by}${d.role && d.role !== 'advisor' ? ` (${d.role})` : ''}`;
 			default:
 				return e.kind.replaceAll('_', ' ');

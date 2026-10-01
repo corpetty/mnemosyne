@@ -1,5 +1,5 @@
 """The web app, served by the backend itself (`web_dir`), for browsers with nothing installed:
-a firm's advisors open the server's address (docs/firm-server.md).
+a team opens the server's address (docs/team-server.md).
 
 It is the same static SPA the desktop app bundles. Its index.html gets a marker telling the UI
 that its backend is the server it was loaded from, instead of this computer's 127.0.0.1:8008.

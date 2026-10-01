@@ -3626,10 +3626,10 @@ export interface components {
         };
         /** Me */
         Me: {
+            /** Cloud Models */
+            cloud_models: boolean;
             /** Email */
             email: string;
-            /** Firm Mode */
-            firm_mode: boolean;
             /** Id */
             id: string;
             /** Name */
@@ -3638,6 +3638,8 @@ export interface components {
             role: string;
             /** Supervision */
             supervision: boolean;
+            /** Team Mode */
+            team_mode: boolean;
         };
         /** MeetingRecord */
         MeetingRecord: {
@@ -4470,6 +4472,8 @@ export interface components {
             calendar_ics_url?: string | null;
             /** Calendar Source */
             calendar_source?: string | null;
+            /** Cloud Models */
+            cloud_models?: boolean | null;
             /** Cloud Redaction */
             cloud_redaction?: boolean | null;
             /** Compliance Phrases */
@@ -4504,8 +4508,6 @@ export interface components {
             echo_similarity?: number | null;
             /** Embedding Model */
             embedding_model?: string | null;
-            /** Firm Mode */
-            firm_mode?: boolean | null;
             /** Github Labels */
             github_labels?: string | null;
             /** Github Repo */
@@ -4646,6 +4648,8 @@ export interface components {
             summary_style?: string | null;
             /** Supervision */
             supervision?: boolean | null;
+            /** Team Mode */
+            team_mode?: boolean | null;
             /** Transcriber */
             transcriber?: string | null;
             /** Unload Models After Minutes */
@@ -4703,6 +4707,8 @@ export interface components {
             calendar_ics_url: string;
             /** Calendar Source */
             calendar_source: string;
+            /** Cloud Models */
+            cloud_models: boolean;
             /** Cloud Redaction */
             cloud_redaction: boolean;
             /** Compliance Phrases */
@@ -4743,8 +4749,6 @@ export interface components {
             encrypt_at_rest: boolean;
             /** Encryption Check */
             encryption_check: string;
-            /** Firm Mode */
-            firm_mode: boolean;
             /** Github Labels */
             github_labels: string;
             /** Github Repo */
@@ -4885,6 +4889,8 @@ export interface components {
             summary_style: string;
             /** Supervision */
             supervision: boolean;
+            /** Team Mode */
+            team_mode: boolean;
             /** Transcriber */
             transcriber: string;
             /** Unload Models After Minutes */
@@ -4948,7 +4954,7 @@ export interface components {
         };
         /**
          * StartBrowserRecordingRequest
-         * @description Record from the browser that asks (a firm's server): it sends each source's audio to
+         * @description Record from the browser that asks (a team server): it sends each source's audio to
          *     /api/record/{recording_id}/{source} (api/routes/record.py).
          */
         StartBrowserRecordingRequest: {

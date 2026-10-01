@@ -1,5 +1,5 @@
 /**
- * Recording in the browser, for a firm's server where the advisor's computer runs nothing but a
+ * Recording in the browser, for a team server where the advisor's computer runs nothing but a
  * browser (backend api/routes/record.py). The microphone and, when shared, the call's audio
  * (screen-share audio: "Share system audio" on Windows, a tab's audio anywhere) are tapped by an
  * AudioWorklet into 16-bit mono PCM and sent as they are recorded, 100 ms at a time, one
