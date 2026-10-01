@@ -199,7 +199,7 @@ class Settings(BaseSettings):
     # meetings stay on it).
     cloud_models: bool = True
     # Before sending anything to a cloud provider (openai, anthropic), replace emails, phone
-    # numbers, financial identifiers and the names of people in your meetings with
+    # numbers, ID, account and card numbers and the names of people in your meetings with
     # placeholders, and put them back in the reply.
     cloud_redaction: bool = False
     # Social Security, account, routing and card numbers and dates of birth said in a meeting

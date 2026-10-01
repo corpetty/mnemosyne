@@ -1,5 +1,5 @@
 """Meeting records (services/records.py): versions, seals and their verification, legal holds,
-deletions, and exports for an exam."""
+deletions, and exports."""
 
 import asyncio
 import json
@@ -120,8 +120,9 @@ async def deletions(
 
 @router.post("/records/export", response_model=Job)
 async def export(request: records.ExportRequest, ctx: AppContext = Depends(get_ctx)):
-    """Meetings (these ids, or created start..end) as a zip for an exam: a `records_export`
-    job whose result names the file to download from /api/records/exports/{id}."""
+    """Meetings (these ids, or created start..end) as a zip (an audit, a dispute, an archive):
+    a `records_export` job whose result names the file to download from
+    /api/records/exports/{id}."""
     if not request.session_ids and request.start is None:
         raise HTTPException(status_code=400, detail="Choose meetings or a start date")
     for sid in request.session_ids:

@@ -13,7 +13,7 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Live transcript while recording** (a few seconds behind speech, Parakeet on CPU) with **live speaker labels**: voices are told apart as they speak and people with a saved voice are named on the spot; replaced by the full diarized transcript after stop
 - **Pluggable transcription**: WhisperX (GPU), NVIDIA Parakeet TDT via ONNX (CPU, no torch), or any OpenAI-compatible speech server
 - **Speaker diarization** using NVIDIA Nemotron-3-Diarization on NVIDIA GPUs, otherwise pyannote.audio (community-1), or none
-- **Structured summaries**: decisions, action items with owners, open questions and topics as data, with styles (meeting, standup, interview, lecture, brainstorm) and your own standing instructions
+- **Structured summaries**: decisions, action items with owners, open questions and topics as data, with styles (meeting, standup, interview, lecture, brainstorm, client) and your own standing instructions; the client style also keeps what the client said about their goals, concerns and situation
 - **Obsidian-native export**: `[[people]]` links, tags, topics in frontmatter, action items as tasks, optional transcript
 - **Playback synced to the transcript**: click any timestamp to hear that moment; the line being played is highlighted
 - **Import** existing audio or video files (button or drag-and-drop) through the same pipeline
@@ -36,6 +36,13 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Level meters and a capture self-test**: see every source's level while recording, check a mic before a call, and verify that system audio is really captured from your output (it plays a short tone and checks it arrives)
 - **Echo cancellation** with one click: PipeWire's WebRTC canceller is loaded on demand and exposed as a virtual mic, so no headphones are needed
 - **Server mode**: point the app at a backend on another machine (with a bearer token) and work with its sessions
+- **Team server**: one machine for a group, opened in Chrome or Edge with nothing to install; everyone signs in with an invite link and has their own meetings, reviewers read everyone's, admins manage people (docs/team-server.md)
+- **Recording in the browser**: the microphone and a call's audio (a shared tab or screen) sent to the server as they are recorded, with an optional consent prompt kept in the meeting's history
+- **Records**: earlier transcripts and summaries kept, chained seals that show changes made outside the app, a retention period, legal holds, a deletion log and a zip export with checksums
+- **Flagged phrases**: lines using phrases you list wait in a Review view until someone signs them off
+- **Organizations**: people grouped by who they are with, their meetings, what they said and open tasks, in the pre-meeting brief too
+- **HubSpot**: send a meeting to the contacts' record (summary, notes, tasks), update it on the next push, bring companies in as organizations
+- **Identifier redaction**: Social Security, account, routing and card numbers and dates of birth masked in exports and CRM pushes, optionally in stored transcripts
 - **Echo-safe**: mic segments that merely repeat what came out of the speakers are dropped, so no-headphones calls still attribute correctly
 - **Per-source attribution**: mic and system audio are captured separately, so your own speech is labelled with your name and only the remote side is diarized
 - **Pluggable summarization** via Ollama (LAN default), vLLM, OpenAI, or Anthropic

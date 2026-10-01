@@ -7,7 +7,7 @@
 	import type { MeetingRecord, RecordVersion } from '$lib/types/index.js';
 
 	// The meeting as a record (backend services/records.py): how long it is kept, a legal hold,
-	// its seals checked against what is there now, earlier versions, and an export for an exam.
+	// its seals checked against what is there now, earlier versions, and an export of it.
 	let record = $state<MeetingRecord | null>(null);
 	let open = $state(false);
 	let shown = $state<RecordVersion | null>(null);
@@ -118,7 +118,7 @@
 					</div>
 				{/if}
 				<button onclick={exportThis} disabled={exporting} class="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-gray-200 hover:bg-gray-700 disabled:opacity-50">
-					{exporting ? 'Preparing the export…' : 'Export for an exam'}
+					{exporting ? 'Preparing the export…' : 'Export the record'}
 				</button>
 			</div>
 		{:else}

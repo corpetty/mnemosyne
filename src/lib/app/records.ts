@@ -16,7 +16,7 @@ export async function withReason(run: (reason: string) => Promise<unknown>): Pro
   }
 }
 
-/** Export meetings for an exam and download the zip when it is ready. */
+/** Export meetings' records and download the zip when it is ready. */
 export async function exportRecords(body: { session_ids?: string[]; start?: string; end?: string }) {
   const job = await startRecordsExport(body);
   for (;;) {

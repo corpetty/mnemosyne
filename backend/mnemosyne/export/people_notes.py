@@ -29,7 +29,7 @@ def render_person(d: PersonDetail, stems: dict[str, str], redact: bool = False) 
     def link(sid: str, name: str) -> str:
         return f"[[{stems[sid]}|{name}]]" if sid in stems else name
 
-    def task(t) -> str:  # financial identifiers in a task become markers when `redact`
+    def task(t) -> str:  # ID, account and card numbers in a task become markers when `redact`
         return redact_identifiers(t.text) if redact else t.text
 
     last = d.meetings[0].created_at.strftime("%Y-%m-%d") if d.meetings else "never"

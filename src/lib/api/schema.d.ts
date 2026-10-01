@@ -1053,8 +1053,9 @@ export interface paths {
         put?: never;
         /**
          * Export
-         * @description Meetings (these ids, or created start..end) as a zip for an exam: a `records_export`
-         *     job whose result names the file to download from /api/records/exports/{id}.
+         * @description Meetings (these ids, or created start..end) as a zip (an audit, a dispute, an archive):
+         *     a `records_export` job whose result names the file to download from
+         *     /api/records/exports/{id}.
          */
         post: operations["export_api_records_export_post"];
         delete?: never;

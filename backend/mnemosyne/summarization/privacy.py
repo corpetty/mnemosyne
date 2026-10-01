@@ -34,7 +34,7 @@ def _is_phone(candidate: str) -> bool:
     return 9 <= digits <= 15 and not _DATE.match(c) and not _GROUPED.match(c)
 
 
-# Financial identifiers: Social Security, account, routing and card numbers, dates of birth.
+# Identifiers: Social Security, account, routing and card numbers, dates of birth.
 # Transcripts come from speech recognition, so a number may be written in digits
 # ("123-45-6789") or spelled out ("four five six, seven eight, ..."). A spelled number only
 # counts after a cue word ("my social is ..."); a digit run of 6 to 17 digits counts on its own
@@ -261,7 +261,7 @@ def _join_groups(text: str, candidates: list[tuple[int, int, bool]]) -> list[tup
 
 
 def _find_identifiers(text: str, start_at: int = 0) -> list[tuple[int, int, str, str]]:
-    """(start, end, kind, digits) of the financial identifiers in text, in order. Text before
+    """(start, end, kind, digits) of the identifiers in text, in order. Text before
     `start_at` is only context: what was said just before, e.g. the previous transcript line."""
     dobs = [
         (m.start("date"), m.end("date"), "dob", "")
@@ -396,8 +396,8 @@ _PLACEHOLDER_KINDS = {
 
 
 class Redactor:
-    """Swap emails, phone numbers, financial identifiers and known names for placeholders, and
-    back again.
+    """Swap emails, phone numbers, identifiers (ID, account, card numbers) and known names for
+    placeholders, and back again.
 
     One Redactor covers one exchange (prompt out, reply in) so the placeholders in the reply
     map to the same values."""

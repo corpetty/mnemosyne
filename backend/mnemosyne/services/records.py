@@ -1,16 +1,15 @@
-"""Meeting records a firm can rely on, when Mnemosyne is its own system of record (advisory
-pilot, item 8).
+"""Meeting records a team can rely on, when Mnemosyne is where its meetings are kept.
 
 - Versions: a replaced transcript or summary is kept (storage/sqlite.py keep_version).
 - Seals: after a transcription, a summary or an edit, a SHA-256 of the meeting's content and of
   each audio file, chained to the previous seal. `verify` recomputes the chain and compares the
   last seal with what is there now, so a change made outside the app (a row edited in the
   database, a file swapped) shows. Someone able to rewrite the whole database could rewrite the
-  chain too: the chain head goes into exam exports and backups, which live elsewhere.
+  chain too: the chain head goes into exports and backups, which live elsewhere.
 - Retention: `records_retention_years` after a meeting, deleting it or its audio needs an admin
   and a reason; a legal hold refuses it to everyone. Every deletion is logged (`deletions`),
   and that log outlives the meeting.
-- Exam export: meetings (one, or a date range) as a zip with audio, transcript, summary,
+- Export: meetings (one, or a date range) as a zip with audio, transcript, summary,
   versions, history, seals and SHA256SUMS.
 """
 
@@ -176,7 +175,7 @@ def automatic_deletion_allowed(app: AppContext, session: Session) -> bool:
     return until is None or date.today() >= until
 
 
-# ---- exam export ---------------------------------------------------------------------------
+# ---- export -------------------------------------------------------------------------------
 
 README = """Mnemosyne meeting records
 =========================

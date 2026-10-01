@@ -67,7 +67,8 @@ def _one_line(session: Session, limit: int = 160, clean=lambda t: t) -> str:
 
 def entry(session: Session, link: str, me: str, redact: bool = False) -> list[str]:
     """The lines for one meeting: `- 14:00 [[note|Title]]: one line`, then your open tasks.
-    `redact`: financial identifiers in the text become markers (privacy.redact_identifiers)."""
+    `redact`: ID, account and card numbers in the text become markers
+    (privacy.redact_identifiers)."""
     from ..summarization.privacy import redact_identifiers
 
     clean = redact_identifiers if redact else (lambda t: t)

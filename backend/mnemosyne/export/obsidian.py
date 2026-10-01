@@ -47,7 +47,7 @@ class ObsidianExporter:
         self.tags = tags
         self.link_people = link_people
         self.include_transcript = include_transcript
-        self.redact = redact  # financial identifiers, see privacy.redact_identifiers
+        self.redact = redact  # ID, account and card numbers, see privacy.redact_identifiers
 
     def render(self, session: Session, resources: list[str] | None = None) -> str:
         transcript = session.transcript

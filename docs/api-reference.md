@@ -455,9 +455,9 @@ the names of known people (participants, invitees, owners, saved voices) replace
 `[PHONE_n]`, `[PERSON_n]`, and the reply is restored before it is parsed. Full multi-word names match
 in any case; single-word names and the parts of full names match only as written ("Will" but not
 "will"). Phone numbers are 9 to 15 digits that are not dates or thousands-grouped amounts.
-Financial identifiers become `[SSN_n]`, `[ACCOUNT_n]`, `[ROUTING_n]`, `[CARD_n]`, `[DOB_n]` first.
+Identifiers become `[SSN_n]`, `[ACCOUNT_n]`, `[ROUTING_n]`, `[CARD_n]`, `[DOB_n]` first.
 
-Financial identifiers (summarization/privacy.py): Social Security numbers (123-45-6789, or 9 digits
+Identifiers (summarization/privacy.py): Social Security numbers (123-45-6789, or 9 digits
 after "social"/"SSN"), account numbers (6 to 17 digits that are not money, dates, years, times or
 phone numbers; "account ending 1234"), routing numbers (9 digits passing the ABA checksum), card
 numbers (13 to 19 digits passing Luhn) and dates of birth introduced as such ("born on", "DOB").

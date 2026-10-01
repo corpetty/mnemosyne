@@ -925,7 +925,7 @@
 					</label>
 					<label class="flex items-center gap-2 col-span-2">
 						<input type="checkbox" bind:checked={form.cloud_redaction} disabled={locked('cloud_redaction')} class="rounded border-gray-600 bg-gray-800" />
-						<span class="text-sm text-gray-300">Hide names, emails, phone numbers and financial identifiers from OpenAI and Anthropic (swapped for placeholders, restored in the reply)</span>
+						<span class="text-sm text-gray-300">Hide names, emails, phone numbers and ID, account and card numbers from OpenAI and Anthropic (swapped for placeholders, restored in the reply)</span>
 					</label>
 					<p class="col-span-2 text-[11px] text-gray-600 -mt-1">Meetings marked local-only (lock in the meeting header) are never sent to them at all.</p>
 					<label class="flex items-center gap-2 col-span-2">

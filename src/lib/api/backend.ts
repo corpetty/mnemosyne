@@ -781,7 +781,7 @@ export async function markReviewed(sessionId: string, note: string): Promise<Mee
   return request(`/api/sessions/${sessionId}/supervision/review`, { method: 'POST', body: JSON.stringify({ note }) });
 }
 
-export async function scanForCompliancePhrases(): Promise<Job> {
+export async function scanForFlaggedPhrases(): Promise<Job> {
   return request('/api/supervision/scan', { method: 'POST' });
 }
 

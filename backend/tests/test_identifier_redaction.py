@@ -1,4 +1,4 @@
-"""Financial identifiers (SSN, account, routing and card numbers, dates of birth): redacted in
+"""Identifiers (SSN, account, routing and card numbers, dates of birth): redacted in
 exports, optionally in stored transcripts, and hidden from cloud LLMs."""
 
 from datetime import datetime

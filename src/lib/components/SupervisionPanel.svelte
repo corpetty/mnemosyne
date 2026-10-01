@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getSupervisionQueue, scanForCompliancePhrases } from '$lib/api/backend.js';
+	import { getSupervisionQueue, scanForFlaggedPhrases } from '$lib/api/backend.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -41,7 +41,7 @@
 	async function scan() {
 		scanning = true;
 		try {
-			await scanForCompliancePhrases();
+			await scanForFlaggedPhrases();
 		} catch (e) {
 			scanning = false;
 			toastState.error(e instanceof Error ? e.message : 'Could not start the check');
