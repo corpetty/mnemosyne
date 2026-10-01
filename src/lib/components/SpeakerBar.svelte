@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getSessionSpeakers, listSpeakers, renameSessionSpeaker } from '$lib/api/backend.js';
+	import { canChange } from '$lib/app/access.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -99,6 +100,7 @@
 			{:else}
 				<button
 					onclick={() => startEdit(s)}
+					disabled={!canChange(sessionState.activeSession)}
 					title="Rename this speaker"
 					class="px-2 py-0.5 rounded border border-gray-800 bg-gray-900 hover:border-gray-600 font-medium {transcriptState.getSpeakerColor(s.label)}"
 				>

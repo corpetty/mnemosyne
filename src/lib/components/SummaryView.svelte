@@ -174,6 +174,7 @@
 	}
 	import type { ProviderModels, SummaryStyle } from '$lib/types/index.js';
 	import { groupFacts } from '$lib/app/facts.js';
+	import { canChange } from '$lib/app/access.js';
 
 	let providers = $state<ProviderModels[]>(cachedProviders ?? []);
 	let styles = $state<SummaryStyle[]>(cachedStyles ?? []);
@@ -257,6 +258,8 @@
 
 	const data = $derived(sessionState.activeSession?.summary_data ?? null);
 	const factGroups = $derived(groupFacts(data?.client_facts ?? []));
+	// Someone else's meeting (a reviewer reading an advisor's): no controls the server refuses.
+	const mine = $derived(canChange(sessionState.activeSession));
 	const liveNotes = $derived(sessionState.activeSession?.copilot_notes ?? null);
 	const activeJob = $derived(
 		sessionState.activeSession ? jobsState.active(sessionState.activeSession.id, 'summarize') : null
@@ -308,11 +311,12 @@
 									<li class="flex gap-2 items-start">
 										{#if a.issue_url}
 											<a href={a.issue_url} target="_blank" rel="noopener noreferrer" onclick={(e) => { e.preventDefault(); openLink(a.issue_url!); }} class="text-green-500 hover:text-green-300 text-xs mt-0.5" title="Open the GitHub issue">✓ issue</a>
-										{:else}
+										{:else if mine}
 											<input type="checkbox" checked={selected.has(i)} onchange={() => toggle(i)} class="mt-1 rounded border-gray-600 bg-gray-800" title="Select to create a GitHub issue" />
 										{/if}
 										<button
 											onclick={() => toggleDone(i, !a.done)}
+											disabled={!mine}
 											title={a.done ? 'Done · click to reopen' : 'Mark done'}
 											aria-label={a.done ? `Reopen: ${a.text}` : `Mark done: ${a.text}`}
 											class="text-xs mt-0.5 {a.done ? 'text-emerald-400' : 'text-gray-600 hover:text-gray-300'}"
@@ -375,7 +379,8 @@
 					{/if}
 				</div>
 				<p class="text-[11px] text-gray-600">{data.style} summary · {data.provider}/{data.model}</p>
-				{#if hubspot}<HubSpotCard />{/if}
+				{#if hubspot && mine}<HubSpotCard />{/if}
+				{#if mine}
 				<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 space-y-2">
 					<div class="flex flex-wrap items-center gap-2">
 						<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mr-auto">Follow-up</h4>
@@ -412,6 +417,7 @@
 						<p class="text-[11px] text-gray-600">An email or chat message recapping decisions and next steps, ready to paste.</p>
 					{/if}
 				</section>
+				{/if}
 			{/if}
 			<button
 				onclick={copyToClipboard}
@@ -423,6 +429,7 @@
 		</div>
 	{/if}
 
+	{#if mine}
 	<div class="flex flex-wrap items-center gap-3">
 		<select bind:value={selectedStyle} class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200" title="Summary style">
 			{#each styles as s}
@@ -453,6 +460,7 @@
 			{activeJob ? 'Summarizing...' : sessionState.activeSession?.summary ? 'Re-summarize' : 'Summarize'}
 		</button>
 	</div>
+	{/if}
 
 	{#if sessionState.activeSession?.summary_stale && !activeJob}
 		<p class="text-xs text-yellow-500">

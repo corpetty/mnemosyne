@@ -18,6 +18,7 @@
 	import JobProgress from './JobProgress.svelte';
 	import AudioPlayer from './AudioPlayer.svelte';
 	import SpeakerNamingCard from './SpeakerNamingCard.svelte';
+	import { canChange } from '$lib/app/access.js';
 	import BookmarksBar from './BookmarksBar.svelte';
 	import QuoteBar from './QuoteBar.svelte';
 	import { playerState } from '$lib/stores/player.svelte.js';
@@ -94,8 +95,10 @@
 		});
 	});
 
+	// Someone else's meeting (a reviewer reading an advisor's): read, play and quote only.
+	const mine = $derived(canChange(sessionState.activeSession));
 	const canTranscribe = $derived(
-		!!sessionState.activeSession?.audio_file && !transcriptState.isProcessing
+		mine && !!sessionState.activeSession?.audio_file && !transcriptState.isProcessing
 	);
 	/** Transcript line index -> chapter title, for headings inside the transcript. */
 	const chapterAt = $derived.by(() => {
@@ -107,7 +110,7 @@
 		}
 		return map;
 	});
-	const canEdit = $derived(!!sessionState.activeSession && !transcriptState.isProcessing);
+	const canEdit = $derived(mine && !transcriptState.isProcessing);
 	/** The line being played, found once per time update (not tested on every line). */
 	const playingIdx = $derived.by(() => {
 		if (!playerState.playing) return -1;
@@ -281,7 +284,7 @@
 		<LiveTranscript />
 	{:else}
 		<AudioPlayer />
-		<SpeakerNamingCard />
+		{#if mine}<SpeakerNamingCard />{/if}
 		<TalkTime />
 		<SpeakerBar />
 		<BookmarksBar />

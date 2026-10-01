@@ -3,6 +3,7 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import type { SessionSummary } from '$lib/types/index.js';
 	import SearchBox from './SearchBox.svelte';
+	import { canChange } from '$lib/app/access.js';
 	import JobProgress from './JobProgress.svelte';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { importAudio } from '$lib/api/backend.js';
@@ -146,7 +147,7 @@
 			>
 				<div class="flex items-center justify-between">
 					<span class="text-sm font-medium text-gray-200 truncate">{#if session.local_only}<span title="Local only" class="mr-1">🔒</span>{/if}{session.name}</span>
-					<button
+					{#if canChange(session)}<button
 						onclick={(e) => handleDelete(e, session)}
 						onkeydown={(e) => e.stopPropagation()}
 						class="shrink-0 text-xs px-1 rounded transition-colors {confirming === session.id
@@ -156,7 +157,7 @@
 						aria-label={confirming === session.id ? `Confirm deleting ${session.name}` : `Delete ${session.name}`}
 					>
 						{confirming === session.id ? 'Delete?' : '✕'}
-					</button>
+					</button>{/if}
 				</div>
 				<div class="flex items-center gap-2 mt-1">
 					<span class="text-xs px-1.5 py-0.5 rounded {statusBadge[session.status] ?? statusBadge.created}">

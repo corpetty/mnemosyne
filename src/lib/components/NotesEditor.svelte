@@ -1,12 +1,16 @@
 <script lang="ts">
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import Markdown from './Markdown.svelte';
+	import { canChange } from '$lib/app/access.js';
 
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
 	let pending: { sessionId: string; notes: string } | null = null;
 	let localNotes = $state('');
 	let lastSavedSessionId = $state<string | null>(null);
-	let mode = $state<'edit' | 'preview'>('edit');
+	let chosen = $state<'edit' | 'preview'>('edit');
+	// Someone else's meeting: its notes to read, not to edit.
+	const mine = $derived(canChange(sessionState.activeSession));
+	const mode = $derived(mine ? chosen : 'preview');
 	let saveState = $state<'saved' | 'typing' | 'saving' | 'failed'>('saved');
 	let failed: { sessionId: string; notes: string } | null = null;
 
@@ -38,7 +42,7 @@
 			localNotes = session.notes;
 			lastSavedSessionId = session.id;
 			saveState = 'saved';
-			mode = session.notes ? 'preview' : 'edit';
+			chosen = session.notes ? 'preview' : 'edit';
 		}
 	});
 
@@ -60,13 +64,14 @@
 	<div class="flex items-center justify-between">
 		<div class="flex rounded border border-gray-700 overflow-hidden text-xs">
 			<button
-				onclick={() => (mode = 'edit')}
+				onclick={() => (chosen = 'edit')}
+				disabled={!mine}
 				class="px-3 py-1 {mode === 'edit' ? 'bg-gray-700 text-gray-100' : 'bg-gray-900 text-gray-400 hover:text-gray-200'}"
 			>
 				Edit
 			</button>
 			<button
-				onclick={() => { flush(); mode = 'preview'; }}
+				onclick={() => { flush(); chosen = 'preview'; }}
 				class="px-3 py-1 {mode === 'preview' ? 'bg-gray-700 text-gray-100' : 'bg-gray-900 text-gray-400 hover:text-gray-200'}"
 			>
 				Preview
@@ -98,7 +103,7 @@
 		<div
 			role="presentation"
 			class="min-h-32 px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg"
-			ondblclick={() => (mode = 'edit')}
+			ondblclick={() => mine && (chosen = 'edit')}
 			title="Double-click to edit"
 		>
 			{#if localNotes.trim()}

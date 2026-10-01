@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { deleteBookmark, updateBookmark } from '$lib/api/backend.js';
 	import { playerState } from '$lib/stores/player.svelte.js';
+	import { canChange } from '$lib/app/access.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 
@@ -48,8 +49,10 @@
 				<button onclick={() => open(b.at)} class="flex items-center gap-1 hover:text-amber-100" title="Go to this moment">
 					🔖 <span class="font-mono">{clock(b.at)}</span>{#if b.note}<span class="text-amber-100/90">{b.note}</span>{/if}
 				</button>
+				{#if canChange(sessionState.activeSession)}
 				<button onclick={() => edit(b.id, b.note)} class="px-1 text-amber-500/70 hover:text-amber-200" title="Edit the note" aria-label="Edit the note">✎</button>
 				<button onclick={() => remove(b.id)} class="px-1 text-amber-500/70 hover:text-amber-200" title="Remove" aria-label="Remove the bookmark">✕</button>
+				{/if}
 			</span>
 		{/each}
 	</div>

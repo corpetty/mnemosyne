@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { addExternalNotes, deleteExternalNotes, uploadExternalNotes } from '$lib/api/backend.js';
+	import { canChange } from '$lib/app/access.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 
@@ -49,7 +50,7 @@
 	<section class="rounded-lg border border-gray-800 bg-gray-900/40 p-3 space-y-2" aria-label="Notes from other assistants">
 		<header class="flex items-baseline gap-2">
 			<h4 class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Notes from other assistants</h4>
-			{#if !adding}
+			{#if !adding && canChange(session)}
 				<button onclick={() => (adding = true)} class="ml-auto text-xs text-blue-400 hover:text-blue-300">Add notes…</button>
 			{/if}
 		</header>
@@ -58,14 +59,14 @@
 				<summary class="flex cursor-pointer items-center gap-2 text-gray-300">
 					<span class="rounded bg-gray-800 px-1.5 text-xs text-gray-300">{n.source}</span>
 					<span class="truncate text-xs text-gray-500">{n.filename ?? n.text.slice(0, 80)}</span>
-					<button
+					{#if canChange(session)}<button
 						onclick={(e) => {
 							e.preventDefault();
 							run(() => deleteExternalNotes(session.id, n.id), 'Removed');
 						}}
 						class="ml-auto px-1 text-gray-500 hover:text-gray-200"
 						aria-label={`Remove the ${n.source} notes`}
-					>✕</button>
+					>✕</button>{/if}
 				</summary>
 				<pre class="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap font-sans text-xs text-gray-400">{n.text}</pre>
 			</details>

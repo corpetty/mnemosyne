@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { markMoment, startRecording, stopAndTranscribe } from '$lib/app/controller.svelte.js';
 	import { setLocalOnly } from '$lib/api/backend.js';
+	import { canChange } from '$lib/app/access.js';
+	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -29,6 +31,8 @@
 		Math.max(0, ...(sessionState.activeSession?.recordings ?? []).map((r) => r.part)) + 2
 	);
 
+	// Someone else's meeting (a reviewer reading an advisor's): no controls the server refuses.
+	const mine = $derived(canChange(sessionState.activeSession));
 	// This meeting is being recorded right now.
 	const recordingHere = $derived(
 		audioState.isRecording && audioState.activeSessionId === sessionState.activeSession?.id
@@ -61,8 +65,12 @@
 	<div class="flex items-center justify-between mb-3">
 		<h2 class="text-xl font-semibold truncate">{sessionState.activeSession.name}</h2>
 		<span class="flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
-			<MeetingTypePicker />
-			<MeetingActions />
+			{#if mine}
+				<MeetingTypePicker />
+				<MeetingActions />
+			{/if}
+			<!-- A firm's server never uses a cloud model: nothing to choose. -->
+			{#if mine && !connectionState.me?.firm_mode}
 			<button
 				onclick={toggleLocalOnly}
 				aria-pressed={sessionState.activeSession.local_only}
@@ -75,9 +83,13 @@
 			>
 				{sessionState.activeSession.local_only ? '🔒 Local only' : '🔓 Cloud allowed'}
 			</button>
+			{/if}
 			{new Date(sessionState.activeSession.created_at).toLocaleString()}
 		</span>
 	</div>
+	{#if !mine}
+		<p class="-mt-2 mb-2 text-xs text-amber-300/80">Someone else's meeting: you can read, play and export it, not change it.</p>
+	{/if}
 	{#if sessionState.activeSession.attendees.length}
 		<p class="-mt-2 mb-2 text-xs text-gray-500 truncate">Invited: {sessionState.activeSession.attendees.join(', ')}</p>
 	{/if}
@@ -130,9 +142,11 @@
 			{:else}
 				<div class="space-y-4">
 					<CopilotPanel />
-					<CalendarCard />
-					<AgendaCard />
-					<ResourcesCard />
+					{#if mine}
+						<CalendarCard />
+						<AgendaCard />
+						<ResourcesCard />
+					{/if}
 					{#if sessionState.activeSession.name !== 'Untitled Session' || sessionState.activeSession.attendees.length}
 						<MeetingBrief
 							title={sessionState.activeSession.name}
@@ -140,16 +154,18 @@
 							exclude={sessionState.activeSession.id}
 						/>
 					{/if}
-					{#if audioState.inBrowser}
-						<BrowserSources />
-					{:else}
-						<DeviceSelector />
+					{#if mine}
+						{#if audioState.inBrowser}
+							<BrowserSources />
+						{:else}
+							<DeviceSelector />
+						{/if}
+						<AudioControls
+							onStartOverride={() => startRecording()}
+							onStopOverride={stopAndTranscribe}
+						/>
 					{/if}
-					<AudioControls
-						onStartOverride={() => startRecording()}
-						onStopOverride={stopAndTranscribe}
-					/>
-					{#if sessionState.activeSession.audio_file}
+					{#if mine && sessionState.activeSession.audio_file}
 						<p class="text-xs text-gray-500">
 							Recording again adds to this meeting (part {nextPart}); what is already recorded, transcribed and summarized
 							is kept.
