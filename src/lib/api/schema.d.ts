@@ -2851,8 +2851,8 @@ export interface components {
         };
         /**
          * ClientFact
-         * @description Something said about a client in an advisory meeting (the `advisory` summary style):
-         *     recorded as said, never the model's own advice.
+         * @description Something a client or customer said about themselves in a meeting (the `client`
+         *     summary style), recorded as said.
          */
         ClientFact: {
             /** At */
@@ -2862,7 +2862,7 @@ export interface components {
              * @default other
              * @enum {string}
              */
-            kind: "goal" | "life_event" | "income_change" | "risk_tolerance" | "account" | "beneficiary" | "insurance" | "estate" | "next_review" | "other";
+            kind: "goal" | "concern" | "preference" | "context" | "next_meeting" | "other";
             /** Text */
             text: string;
         };
@@ -3340,7 +3340,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "goal" | "life_event" | "income_change" | "risk_tolerance" | "account" | "beneficiary" | "insurance" | "estate" | "next_review" | "other";
+            kind: "goal" | "concern" | "preference" | "context" | "next_meeting" | "other";
             /** Session Id */
             session_id: string;
             /** Session Name */
@@ -4434,8 +4434,6 @@ export interface components {
         };
         /** SettingsUpdate */
         SettingsUpdate: {
-            /** Advisor Meeting Types */
-            advisor_meeting_types?: boolean | null;
             /** Anthropic Api Key */
             anthropic_api_key?: string | null;
             /** Api Token */
@@ -4667,8 +4665,6 @@ export interface components {
         };
         /** SettingsValues */
         SettingsValues: {
-            /** Advisor Meeting Types */
-            advisor_meeting_types: boolean;
             /** Anthropic Api Key */
             anthropic_api_key: string;
             /** Api Token */

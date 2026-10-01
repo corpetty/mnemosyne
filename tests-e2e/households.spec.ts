@@ -20,7 +20,7 @@ test('a household collects facts and briefs the next meeting', async ({ page, re
   });
   const sid = (await imported.json()).session.id as string;
   await expect.poll(async () => (await (await request.get(`${BACKEND}/api/sessions/${sid}`)).json()).transcript.length).toBeGreaterThan(0);
-  await request.post(`${BACKEND}/api/sessions/${sid}/summarize`, { data: { style: 'advisory' } });
+  await request.post(`${BACKEND}/api/sessions/${sid}/summarize`, { data: { style: 'client' } });
   await expect
     .poll(async () => (await (await request.get(`${BACKEND}/api/sessions/${sid}`)).json()).summary_data?.client_facts?.length ?? 0)
     .toBeGreaterThan(0);
@@ -34,11 +34,11 @@ test('a household collects facts and briefs the next meeting', async ({ page, re
   await page.getByPlaceholder('Maria Lopez <maria@example.com>').fill('Maria Lopez\nDavid Lopez');
   await page.getByRole('button', { name: 'Save household' }).click();
   const household = page.getByRole('article', { name: 'Household Lopez household' });
-  await expect(household.getByText('Client said they want to retire at 62.')).toBeVisible();
+  await expect(household.getByText('Client said they want it shipped in October.')).toBeVisible();
   await expect(household.getByText('Maria Lopez, David Lopez · 2 meetings')).toBeVisible();
 
   await page.getByText(NAMES[1]).first().click();
   const brief = page.getByLabel('Household brief');
   await expect(brief).toContainText('Lopez household, last time:');
-  await expect(brief).toContainText('Client said their daughter starts college in fall 2027.');
+  await expect(brief).toContainText('Client said nobody owns the mobile regression.');
 });

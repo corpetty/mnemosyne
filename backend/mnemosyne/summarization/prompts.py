@@ -35,11 +35,10 @@ STYLES: dict[str, str] = {
         "You are summarizing a brainstorming session. List every distinct idea raised, group "
         "related ones, and note which got traction or objections."
     ),
-    "advisory": (
-        "You are writing the record of a meeting between a financial advisor and their client "
-        "for the advisory firm. Capture what the client and the advisor said: the client's "
-        "goals and situation, what changed since last time, what was agreed and when they "
-        "meet next. You report what was said; you are not an advisor."
+    "client": (
+        "You are summarizing a meeting with a client or customer. Capture what the client said "
+        "about their goals, concerns, preferences and situation, what each side agreed to do, "
+        "and when they meet next."
     ),
 }
 
@@ -63,40 +62,36 @@ Rules:
   of the transcript line where the item comes up, exactly as it appears in brackets.
 - Chapters split the conversation by topic in time order, 3 to 8 of them (1 or 2 for a short
   one); the first starts at the first line. Use timestamps exactly as they appear in brackets.
+- Plain, short sentences in the words the people used; do not rephrase into formal language.
+  Never add a detail that was not said: no deadlines, weekdays, documents, steps or reasons of
+  your own. An action item is what someone promised to do, with the deadline exactly as said
+  ("by the end of the month", "this week") or none.
 - Output must be valid JSON (escape quotes and newlines inside strings).
 """
 
 
 CLIENT_FACT_KINDS: tuple[str, ...] = get_args(ClientFactKind)
 
-ADVISORY_FORMAT = """\
+CLIENT_FORMAT = """\
 Also include the key "client_facts" in the JSON object:
   "client_facts": [{"kind": "<one of: KINDS>",
-                    "text": "<the fact, attributed: Client said ... / Advisor said ...>",
+                    "text": "<the fact, attributed: Client said ... / Name said ...>",
                     "at": "<MM:SS>"}]
-Rules for this record (a financial advisory firm keeps it):
-- Record only what the client and the advisor actually said. Never add recommendations,
-  opinions on investments or products, suitability judgements or any advice of your own,
-  in the summary or in any other field.
-- Attribute every client fact to who said it ("Client said ...", "Advisor said ...") and keep
-  amounts, dates and names as they were said; do not estimate, calculate or fill in anything.
-- Everywhere (summary, decisions, action items, facts): plain, short sentences in the words the
-  people used. Do not rephrase into formal or legal language. Never add a detail that was not
-  said: no deadlines, weekdays, documents, signatures, steps or reasons of your own. An action
-  item is what someone promised to do, with the deadline exactly as said ("by the end of the
-  month", "this week") or none.
-- One fact per item. goal: what the client wants to achieve; life_event: a marriage, birth,
-  death, move, retirement, college...; income_change: a raise, job loss, bonus, pension;
-  risk_tolerance: how the client describes their comfort with risk or losses; account: an
-  account mentioned (never a full account number); beneficiary; insurance; estate: wills,
-  trusts, powers of attorney; next_review: when the next review or meeting is; other.
+Rules for the client facts:
+- Only what was actually said, attributed to who said it; keep amounts, dates and names as
+  they were said, do not estimate, calculate or fill in anything, and add no advice or
+  opinions of your own.
+- One fact per item. goal: what the client wants to achieve; concern: a problem, worry or
+  objection they raised; preference: how they want things done, what they will or will not
+  accept; context: their situation (team, budget, timeline, tools, what changed since last
+  time); next_meeting: when the next meeting or check-in is; other.
 - client_facts may be an empty list; each "at" is the timestamp of the line where it was
   said. When merging parts, keep every distinct fact with its earliest "at".
 """.replace("KINDS", ", ".join(CLIENT_FACT_KINDS))
 
 
 def format_instructions(style: str) -> str:
-    return FORMAT_INSTRUCTIONS + (ADVISORY_FORMAT if style == "advisory" else "")
+    return FORMAT_INSTRUCTIONS + (CLIENT_FORMAT if style == "client" else "")
 
 
 def get_system_prompt(segment_count: int, style: str = "meeting", extra: str = "") -> str:
@@ -270,16 +265,22 @@ def _action_items(value) -> list[ActionItem]:
 _KIND_ALIASES = {
     "goals": "goal",
     "objective": "goal",
-    "life": "life_event",
-    "event": "life_event",
-    "income": "income_change",
-    "risk": "risk_tolerance",
-    "accounts": "account",
-    "beneficiaries": "beneficiary",
-    "estate_planning": "estate",
-    "review": "next_review",
-    "next_meeting": "next_review",
-    "next_review_date": "next_review",
+    "concerns": "concern",
+    "problem": "concern",
+    "pain_point": "concern",
+    "worry": "concern",
+    "objection": "concern",
+    "risk": "concern",
+    "preferences": "preference",
+    "requirement": "preference",
+    "situation": "context",
+    "background": "context",
+    "budget": "context",
+    "timeline": "context",
+    "next_review": "next_meeting",
+    "next_call": "next_meeting",
+    "follow_up_meeting": "next_meeting",
+    "review": "next_meeting",
 }
 
 

@@ -30,7 +30,7 @@ class SettingsResponse(ApiModel):
     env_overrides: list[str]
     config_file: str
     obsidian_vault_exists: bool
-    # Every type a meeting can be given: meeting_types plus the advisor pack when it is on.
+    # Every type a meeting can be given (meeting_types).
     meeting_type_names: list[str]
 
 

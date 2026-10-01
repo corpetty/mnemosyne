@@ -100,25 +100,12 @@ DEMO_SUMMARY = {
 }
 
 
-# Added to the summary for the advisory style (its prompt asks for "client_facts").
+# Added to the summary for the client style (its prompt asks for "client_facts").
 DEMO_CLIENT_FACTS = [
-    {"kind": "goal", "text": "Client said they want to retire at 62.", "at": "00:00"},
-    {
-        "kind": "life_event",
-        "text": "Client said their daughter starts college in fall 2027.",
-        "at": "00:03",
-    },
-    {
-        "kind": "risk_tolerance",
-        "text": "Client said they would not be comfortable with a 20% drop.",
-        "at": "00:07",
-    },
-    {
-        "kind": "beneficiary",
-        "text": "Client said they want to add their spouse as beneficiary of the 401(k).",
-        "at": "00:10",
-    },
-    {"kind": "next_review", "text": "Advisor said the next review is in March.", "at": "00:16"},
+    {"kind": "goal", "text": "Client said they want it shipped in October.", "at": "00:07"},
+    {"kind": "concern", "text": "Client said nobody owns the mobile regression.", "at": "00:16"},
+    {"kind": "context", "text": "Client said the Waku migration is code complete.", "at": "00:03"},
+    {"kind": "next_meeting", "text": "Client said they will decide on Friday.", "at": "00:16"},
 ]
 
 

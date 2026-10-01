@@ -177,7 +177,6 @@
 				summary_style: v.summary_style,
 				summary_instructions: v.summary_instructions,
 				summary_chunk_chars: v.summary_chunk_chars,
-				advisor_meeting_types: v.advisor_meeting_types,
 				semantic_search: v.semantic_search,
 				embedding_model: v.embedding_model,
 				obsidian_tags: v.obsidian_tags,
@@ -942,17 +941,6 @@
 			</section>
 
 			<MeetingTypesSettings />
-			<div class="space-y-1">
-				<label class="flex items-center gap-2">
-					<input type="checkbox" bind:checked={form.advisor_meeting_types} disabled={locked('advisor_meeting_types')} class="rounded border-gray-600 bg-gray-800" />
-					<span class="text-sm text-gray-300">Also offer the financial advisor meeting types</span>
-				</label>
-				<p class="text-[11px] text-gray-600">
-					Discovery meeting, annual review, onboarding, plan presentation and service call, summarized in the advisory style
-					with the client's facts (goals, life events, accounts, next review). A type of your own with the same name replaces
-					the built-in one. Saved with the other settings.
-				</p>
-			</div>
 
 			<!-- Search -->
 			<section>

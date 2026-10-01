@@ -1,16 +1,12 @@
 import type { ClientFact } from '$lib/types/index.js';
 
-/** Client facts (advisory summaries) by kind, in the order they are shown. */
+/** Client facts (client-style summaries) by kind, in the order they are shown. */
 export const FACT_HEADINGS: [ClientFact['kind'], string][] = [
   ['goal', 'Goals'],
-  ['life_event', 'Life events'],
-  ['income_change', 'Income changes'],
-  ['risk_tolerance', 'Risk tolerance'],
-  ['account', 'Accounts'],
-  ['beneficiary', 'Beneficiaries'],
-  ['insurance', 'Insurance'],
-  ['estate', 'Estate'],
-  ['next_review', 'Next review'],
+  ['concern', 'Concerns'],
+  ['preference', 'Preferences'],
+  ['context', 'Context'],
+  ['next_meeting', 'Next meeting'],
   ['other', 'Other']
 ];
 

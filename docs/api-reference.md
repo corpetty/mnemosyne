@@ -514,11 +514,7 @@ local_only, auto_record}]`, `match` being comma-separated words found in a title
 unless one was chosen; `{name}` chooses one (`"none"` for none). The type sets the summary style
 and adds its instructions, chooses the Obsidian folder, makes the meeting local-only, and
 `auto_record` makes the UI record such a calendar meeting when it starts.
-With `advisor_meeting_types` on, a built-in pack for financial advisors is offered after the
-user's own types (services/meeting_types.py `ADVISOR_MEETING_TYPES`: Discovery meeting, Annual
-review, Onboarding, Plan presentation, Service call, all in the `advisory` summary style); a user
-type with the same name (any case) replaces the built-in one. The pack is never written into
-`meeting_types`. `GET /api/settings` lists every type a meeting can have in `meeting_type_names`.
+`GET /api/settings` lists every type a meeting can have in `meeting_type_names`.
 
 ### Glossary from corrections: `POST /api/glossary/suggest` · `POST /api/glossary/corrections`
 `suggest {before, after}` → `[{heard, correct}]`: short phrases a transcript edit replaced with one
@@ -963,7 +959,7 @@ Cloud providers appear only when their API key is set. Embedding-only Ollama mod
 ### `GET /api/summary-styles`
 
 `[{ "id": "meeting", "description": "..." }, ...]` — `meeting`, `standup`, `interview`, `lecture`, `brainstorm`,
-`advisory`.
+`client`.
 
 ### `POST /api/sessions/{session_id}/summarize`
 
@@ -1004,12 +1000,11 @@ decision, action item and open question gets the time of the line where it came 
 `action_items[].at`, snapped to a line start, or `null` when the model gave none or it was more
 than 20 s from any line.
 
-The `advisory` style (financial advisor meetings) also fills `client_facts: [{kind, text, at}]`,
-`kind` one of `goal`, `life_event`, `income_change`, `risk_tolerance`, `account`, `beneficiary`,
-`insurance`, `estate`, `next_review`, `other` (anything else the model writes becomes `other`),
-`at` resolved like `action_items[].at`. Its prompt tells the model to record only what was said,
-attributed ("Client said ..."), and never to add recommendations or advice. Other styles leave the
-list empty. The Obsidian and Markdown exports have a "Client Facts" section grouped by kind.
+The `client` style (meetings with a client or customer) also fills `client_facts: [{kind, text,
+at}]`, `kind` one of `goal`, `concern`, `preference`, `context`, `next_meeting`, `other` (anything
+else the model writes becomes `other`), `at` resolved like `action_items[].at`. Its prompt tells
+the model to record only what was said, attributed ("Client said ..."), with no advice of its own.
+Other styles leave the list empty. The Obsidian and Markdown exports have a "Client Facts" section grouped by kind.
 
 **Errors:** `400` no transcript or unknown style, `404` session, `409` a summary is already running for
 the session.

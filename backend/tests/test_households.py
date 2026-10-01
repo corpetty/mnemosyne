@@ -21,7 +21,7 @@ def _meeting(ctx, name, facts=(), participants=(), attendees=(), days_ago=0, tas
             ((datetime.now() - timedelta(days=days_ago)).isoformat(), session.id),
         )
     data = SummaryData(
-        style="advisory",
+        style="client",
         client_facts=[ClientFact(kind=k, text=t) for k, t in facts],
         action_items=[ActionItem(text=t) for t in tasks],
     )
@@ -48,7 +48,7 @@ def test_a_households_meetings_and_facts(client, ctx):
     new = _meeting(
         ctx,
         "Annual review",
-        [("goal", "Retire at 62"), ("life_event", "Emma starts college in 2027")],
+        [("goal", "Retire at 62"), ("context", "Emma starts college in 2027")],
         attendees=["d@x.com"],
         days_ago=2,
         tasks=["Send the beneficiary form"],
@@ -107,7 +107,7 @@ def test_members_see_facts_only_from_their_own_meetings(settings, keystore):
         client.headers.update(tokens["Ann"])
         h = _lopez(client)
         sid = client.post("/api/sessions", json={"name": "Review with Maria Lopez"}).json()["id"]
-        data = SummaryData(style="advisory", client_facts=[ClientFact(kind="goal", text="Ann's")])
+        data = SummaryData(style="client", client_facts=[ClientFact(kind="goal", text="Ann's")])
         ctx.repo.update_fields(sid, summary_data=data)
         assert len(client.get(f"/api/households/{h['id']}").json()["facts"]) == 1
         client.headers.update(tokens["Bob"])
