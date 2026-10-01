@@ -268,8 +268,8 @@ services/users.py: advisor sees own meetings, reviewer reads all, admin; invite 
 each recording (`require_consent`). Identifier redaction (summarization/privacy.py). HubSpot push
 (services/hubspot.py). `advisory` summary style with `client_facts`. Records (services/records.py:
 versions, chained seals, `records_retention_years`, legal hold, deletions log, exam export zip).
-Pilot kit: scripts/make-demo-meeting.py (espeak-ng, two voices), docs/security-overview.md,
-docs/pilot-checklist.md, scripts/docs-to-pdf.mjs. Mnemosyne never gives financial advice.
+The pilot was dropped 2026-10-01 (the firm declined); docs/plans/2026-10-01-teams.md turns it into
+team features.
 Phase B (same day): supervision (services/supervision.py, `supervision`/`compliance_phrases`,
 `supervision_flags`/`supervision_reviews`, Review view; a new transcription replaces flags, edits
 only add); households (services/households.py, People > Households, `household` in the brief,

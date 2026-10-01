@@ -1,5 +1,8 @@
 # A pilot for a financial advisory firm
 
+**Closed 2026-10-01**: the firm is not piloting. What is useful to any team carries on in
+docs/plans/2026-10-01-teams.md.
+
 Drafted 2026-09-30; Corey: "office box, 2-3 advisors, local only, start phase A" (same day).
 Softphone/phone-system (question 4) and the HubSpot test account (question 5) are still open:
 item 3 treats phone calls as in the plan, item 7 is built against a mock until the account exists.
