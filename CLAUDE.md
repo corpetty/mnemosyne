@@ -272,7 +272,13 @@ style with `client_facts`. Records (services/records.py: versions, chained seals
 `records_retention_years`, legal hold, deletions log, export zip). Flagged phrases
 (services/supervision.py, `review_phrases`, `supervision_flags`/`supervision_reviews`, Review view;
 a new transcription replaces flags, edits only add). Organizations (services/organizations.py,
-People > Organizations, `organization` in the brief).
+People > Organizations, `organization` in the brief). Released as 0.12.0.
+After it (docs/plans/2026-10-01-team-sharing.md, unreleased): sharing (services/sharing.py,
+`session_shares`, "*" = everyone; read access plus ticking action items; SessionRepository `_SEES`;
+`share_with_invitees`; ShareMenu.svelte), per-person preferences (services/prefs.py, `user_prefs`,
+`effective`/`for_meeting`: a meeting's work uses its owner's; `/api/users/me/prefs`,
+MyPreferences.svelte; `calendar_for`), your tasks (`TaskItem.mine`, `mine_matcher`) and a weekly
+digest per person on a team server (`maybe_schedule_digest`).
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

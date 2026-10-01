@@ -8,7 +8,7 @@ from ... import access
 from ...models.base import ApiModel
 from ...services import history, organizations
 from ...services.brief import Brief, build_brief
-from ...services.tasks import TaskItem, filter_tasks
+from ...services.tasks import TaskItem, filter_tasks, mine_matcher
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["tasks"])
@@ -19,11 +19,28 @@ async def list_action_items(
     status: Literal["open", "done", "all"] = "open",
     owner: str | None = None,
     due: Literal["overdue", "week"] | None = None,
+    mine: bool = False,
     ctx: AppContext = Depends(get_ctx),
 ):
-    """Action items from every summarized meeting, newest meeting first (open ones with a
-    deadline first, soonest first)."""
-    return filter_tasks(ctx.repo.list_action_items(), status, owner, due)
+    """Action items from every meeting the caller can read, newest meeting first (open ones
+    with a deadline first, soonest first). `mine`: only those whose owner is the caller."""
+    tasks = ctx.repo.list_action_items()
+    is_mine = _mine(ctx)
+    for t in tasks:
+        t.mine = is_mine(t.owner)
+    return filter_tasks(tasks, status, owner, due, mine=mine)
+
+
+def _mine(ctx: AppContext):
+    """Whose action items are the caller's: on a team server by their name and email, on the
+    desktop app by the name on the microphone (local_speaker_name)."""
+    p = access.principal()
+    if p is None or not p.user_id:
+        return mine_matcher([ctx.settings.local_speaker_name], [])
+    me = ctx.users.get(p.user_id)
+    names = [p.name] + ([me.email] if me and me.email else [])
+    others = [u.name for u in ctx.users.list() if u.id != p.user_id]
+    return mine_matcher(names, others)
 
 
 class ActionItemUpdate(ApiModel):

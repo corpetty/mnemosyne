@@ -134,7 +134,8 @@ calendar is shared with the team members invited to it (by email), unless an adm
 Everyone sets their own preferences at the top of Settings → General: the summary style and
 instructions for their meetings, words to be alerted about while recording, their calendar's ICS
 link, their HubSpot email, whether to share every new meeting with the team, and their weekly
-digest. The rest of Settings is the admins'.
+digest. The rest of Settings is the admins'. Tasks opens on "Mine": the action items given to
+you in your meetings and in those shared with you, ticked off right there.
 Opening, playing and exporting a meeting is noted in that meeting's history with who did it.
 "Disable" and "Sign out everywhere" take effect at once. The people list lives in
 `/srv/mnemosyne/data/users.json` (tokens as hashes only).

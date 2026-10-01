@@ -21,6 +21,7 @@ class TaskItem(ApiModel):
     done: bool
     issue_url: str | None
     due: date | None = None
+    mine: bool = False  # its owner is whoever asks (mine_matcher)
 
 
 def _norm(text: str) -> str:
@@ -60,12 +61,29 @@ def add_live_todos(notes: CopilotNotes | None, data: SummaryData) -> SummaryData
     return data
 
 
+def mine_matcher(names: list[str], others: list[str]):
+    """Is an action item's owner this person? Their full name or email (`names`), or their
+    first name when nobody else (`others`: everyone else's names) has it. Owners are written
+    as people said them, so "Ann" is Ann Lee unless there is also an Ann Ortiz."""
+    full = {n.strip().casefold() for n in names if n.strip()}
+    taken = {o.split()[0].casefold() for o in others if o.split()}
+    first = {n.split()[0].casefold() for n in names if n.split() and "@" not in n}
+    short = first - taken
+
+    def mine(owner: str | None) -> bool:
+        o = (owner or "").strip().casefold()
+        return bool(o) and (o in full or o in short)
+
+    return mine
+
+
 def filter_tasks(
     tasks: list[TaskItem],
     status: str = "open",
     owner: str | None = None,
     due: str | None = None,
     today: date | None = None,
+    mine: bool = False,
 ) -> list[TaskItem]:
     """Filter by done state, owner and deadline (`due`: "overdue" or "week", i.e. due by the
     end of the next seven days). Open tasks with a deadline come first, soonest first."""
@@ -76,6 +94,8 @@ def filter_tasks(
     if owner:
         want = owner.casefold()
         tasks = [t for t in tasks if (t.owner or "").casefold() == want]
+    if mine:
+        tasks = [t for t in tasks if t.mine]
     today = today or date.today()
     if due == "overdue":
         tasks = [t for t in tasks if t.due and t.due < today]

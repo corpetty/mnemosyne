@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import Request, WebSocket
 
+from .. import access
 from ..audio.capture import RecordingSession
 from ..audio.echo_cancel import EchoCancelManager
 from ..config import Settings
@@ -264,19 +265,39 @@ class AppContext:
             await asyncio.sleep(interval_seconds)
 
     def maybe_schedule_digest(self, now: datetime | None = None):
-        """Queue this week's digest if the schedule says it is due and none exists yet."""
+        """Queue this week's digest if the schedule says it is due and none exists yet. On a
+        team server, each person's own (their schedule, their meetings and those shared with
+        them, saved as theirs); returns the jobs queued."""
+        if not self.settings.team_mode:
+            return self._schedule_digest(self.settings, now)
+        jobs = []
+        for user in self.users.list():
+            if user.disabled:
+                continue
+            reset = access.current.set(access.Principal(user.id, user.name, user.role))
+            try:
+                from ..services.prefs import effective
+
+                if job := self._schedule_digest(effective(self, user.id), now):
+                    jobs.append(job)
+            finally:
+                access.current.reset(reset)
+        return jobs
+
+    def _schedule_digest(self, st: Settings, now: datetime | None):
+        """As whoever is current (access.py): the jobs it queues and the digests it checks."""
         from ..services.digest_service import due_week, range_label
         from ..services.pipeline import make_digest
 
-        st = self.settings
         week = due_week(now or datetime.now(), st.digest_weekday, st.digest_hour)
         if week is None or self.repo.has_digest(range_label(*week)):
             return None
-        if any(j.kind == "digest" for j in self.jobs.list(active_only=True)):
+        me = access.user_id()
+        if any(j.kind == "digest" and j.owner_id == me for j in self.jobs.list(active_only=True)):
             return None
         if not any(s.summary.strip() for s in self.repo.sessions_between(*week)):
             return None
-        logger.info("Scheduled digest for %s", range_label(*week))
+        logger.info("Scheduled digest for %s %s", range_label(*week), me)
         return self.jobs.submit("digest", make_digest(self, *week))
 
     def poll_capture_apps(self, dump: list | None = None) -> None:

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { listActionItems, setActionItemDone } from '$lib/api/backend.js';
+	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
@@ -10,7 +11,9 @@
 	let items = $state<TaskItem[]>([]);
 	let loaded = $state(false);
 	let status = $state<'open' | 'done' | 'all'>('open');
-	let owner = $state('');
+	// Yours first on a team server (the backend marks the items whose owner is you).
+	const MINE = '__mine__';
+	let owner = $state(connectionState.me?.team_mode ? MINE : '');
 	let query = $state('');
 	let dueFilter = $state<'' | 'overdue' | 'week'>('');
 
@@ -74,7 +77,7 @@
 		items.filter(
 			(t) =>
 				(status === 'all' || (status === 'done') === t.done) &&
-				(!owner || (owner === '—' ? !t.owner : t.owner === owner)) &&
+				(!owner || (owner === MINE ? t.mine : owner === '—' ? !t.owner : t.owner === owner)) &&
 				(!query.trim() || t.text.toLowerCase().includes(query.trim().toLowerCase())) &&
 				(!dueFilter || (!!t.due && (dueFilter === 'overdue' ? t.due < today : t.due <= weekOut)))
 		)
@@ -125,6 +128,7 @@
 		</div>
 		<select bind:value={owner} class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Owner">
 			<option value="">Anyone</option>
+			<option value={MINE}>Mine</option>
 			{#each owners as o}<option value={o}>{o}</option>{/each}
 			<option value="—">No owner</option>
 		</select>
@@ -187,7 +191,11 @@
 
 	{#if loaded && shown.length === 0}
 		<p class="text-sm text-gray-600">
-			{items.length === 0 ? 'No action items yet. They come from meeting summaries.' : 'Nothing matches.'}
+			{items.length === 0
+				? 'No action items yet. They come from meeting summaries.'
+				: owner === MINE
+					? 'Nothing is given to you. Choose Anyone to see every action item.'
+					: 'Nothing matches.'}
 		</p>
 	{/if}
 </div>

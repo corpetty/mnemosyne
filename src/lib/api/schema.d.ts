@@ -13,8 +13,8 @@ export interface paths {
         };
         /**
          * List Action Items
-         * @description Action items from every summarized meeting, newest meeting first (open ones with a
-         *     deadline first, soonest first).
+         * @description Action items from every meeting the caller can read, newest meeting first (open ones
+         *     with a deadline first, soonest first). `mine`: only those whose owner is the caller.
          */
         get: operations["list_action_items_api_action_items_get"];
         put?: never;
@@ -5222,6 +5222,11 @@ export interface components {
             idx: number;
             /** Issue Url */
             issue_url: string | null;
+            /**
+             * Mine
+             * @default false
+             */
+            mine: boolean;
             /** Owner */
             owner: string | null;
             /** Session Id */
@@ -5522,6 +5527,7 @@ export interface operations {
                 status?: "open" | "done" | "all";
                 owner?: string | null;
                 due?: ("overdue" | "week") | null;
+                mine?: boolean;
             };
             header?: never;
             path?: never;

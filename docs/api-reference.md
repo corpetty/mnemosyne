@@ -720,7 +720,9 @@ Digest: `{id, label, start, end, markdown, session_ids, provider, model, path, c
 
 Scheduled digests: settings `digest_weekday` (0 = Monday .. 6 = Sunday, -1 = off) and
 `digest_hour`. The backend checks every 15 minutes and queues the current week's digest
-once it is due, unless that week already has one or has no summarized meetings.
+once it is due, unless that week already has one or has no summarized meetings. On a team server
+each person gets their own, on their schedule (their `digest_weekday`/`digest_hour` preferences,
+else the server's), from the meetings they can read, saved as theirs.
 
 ## Storage
 
@@ -785,10 +787,12 @@ links in Obsidian frontmatter.
 
 ## Action items across meetings
 
-### `GET /api/action-items?status=open|done|all&owner=&due=overdue|week`
-Every action item of every summarized meeting, newest meeting first (default `status=open`; `owner`
-matches case-insensitively): `[{session_id, session_name, created_at, idx, text, owner, done,
-issue_url, due}]`. `idx` is the item's position in that session's `summary_data.action_items`.
+### `GET /api/action-items?status=open|done|all&owner=&due=overdue|week&mine=`
+Every action item of every summarized meeting the caller can read, newest meeting first (default
+`status=open`; `owner` matches case-insensitively): `[{session_id, session_name, created_at, idx,
+text, owner, done, issue_url, due, mine}]`. `mine`: the owner is the caller (their full name or
+email, or their first name when no one else on the server has it; on the desktop app,
+`local_speaker_name`); `mine=true` keeps only those. `idx` is the item's position in that session's `summary_data.action_items`.
 `due` (`YYYY-MM-DD` or null) is a deadline named in the meeting: the summary prompt gives the model
 the meeting's date and weekday so "by Friday" becomes a date; anything that is not an ISO date is
 dropped. Open items with a deadline come first, soonest first; `due=overdue` keeps those past due,
@@ -797,7 +801,8 @@ dropped. Open items with a deadline come first, soonest first; `due=overdue` kee
 
 ### `PATCH /api/sessions/{session_id}/action-items/{idx}`
 Body `{"done": true}`. Returns the updated item and publishes a `session` event; 404 for an unknown
-session or index. Re-summarizing a meeting keeps `done` and `issue_url` on items whose text matches
+session or index. Anyone who can read the meeting may tick its items (someone it is shared with
+ticks off theirs); when it is not the owner, `task_done` / `task_reopened` goes into its history. Re-summarizing a meeting keeps `done` and `issue_url` on items whose text matches
 the previous summary's (same words, or at least 85% similar), and their `due` when the new summary
 names none.
 
