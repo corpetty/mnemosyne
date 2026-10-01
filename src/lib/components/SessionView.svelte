@@ -16,6 +16,8 @@
 	import CalendarCard from './CalendarCard.svelte';
 	import CopilotPanel from './CopilotPanel.svelte';
 	import MeetingActions from './MeetingActions.svelte';
+	import ShareMenu from './ShareMenu.svelte';
+	import { teamState } from '$lib/stores/team.svelte.js';
 	import MeetingTypePicker from './MeetingTypePicker.svelte';
 	import MeetingBrief from './MeetingBrief.svelte';
 	import DeviceSelector from './DeviceSelector.svelte';
@@ -65,6 +67,7 @@
 	<div class="flex items-center justify-between mb-3">
 		<h2 class="text-xl font-semibold truncate">{sessionState.activeSession.name}</h2>
 		<span class="flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
+			<ShareMenu />
 			{#if mine}
 				<MeetingTypePicker />
 				<MeetingActions />
@@ -88,7 +91,9 @@
 		</span>
 	</div>
 	{#if !mine}
-		<p class="-mt-2 mb-2 text-xs text-amber-300/80">Someone else's meeting: you can read, play and export it, not change it.</p>
+		<p class="-mt-2 mb-2 text-xs text-amber-300/80">
+			{teamState.name(sessionState.activeSession.owner_id) || 'Someone else'}'s meeting: you can read, play and export it and tick off its action items, not change it.
+		</p>
 	{/if}
 	{#if sessionState.activeSession.attendees.length}
 		<p class="-mt-2 mb-2 text-xs text-gray-500 truncate">Invited: {sessionState.activeSession.attendees.join(', ')}</p>

@@ -4,6 +4,8 @@
 	import type { SessionSummary } from '$lib/types/index.js';
 	import SearchBox from './SearchBox.svelte';
 	import { canChange } from '$lib/app/access.js';
+	import { connectionState } from '$lib/stores/connection.svelte.js';
+	import { teamState } from '$lib/stores/team.svelte.js';
 	import JobProgress from './JobProgress.svelte';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { importAudio } from '$lib/api/backend.js';
@@ -164,6 +166,9 @@
 						{statusLabel[session.status] ?? session.status}
 					</span>
 					<span class="text-xs text-gray-500">{formatDate(session.created_at)}</span>
+					{#if connectionState.me?.team_mode && session.owner_id && session.owner_id !== connectionState.me.id}
+						<span class="truncate text-xs text-blue-300/70" title="Shared with you">{teamState.name(session.owner_id) || 'shared'}</span>
+					{/if}
 				</div>
 				{#if jobsState.active(session.id, 'transcribe')}
 					{@const busy = jobsState.active(session.id, 'transcribe')!}

@@ -36,6 +36,7 @@ from .routes.search import router as search_router
 from .routes.segments import router as segments_router
 from .routes.sessions import router as sessions_router
 from .routes.settings import router as settings_router
+from .routes.sharing import router as sharing_router
 from .routes.speakers import router as speakers_router
 from .routes.storage import router as storage_router
 from .routes.supervision import router as supervision_router
@@ -79,6 +80,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(audio_router)
     app.include_router(record_router)
     app.include_router(records_router)
+    app.include_router(sharing_router)
     app.include_router(organizations_router)
     app.include_router(supervision_router)
     app.include_router(sessions_router)

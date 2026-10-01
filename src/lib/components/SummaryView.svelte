@@ -316,7 +316,6 @@
 										{/if}
 										<button
 											onclick={() => toggleDone(i, !a.done)}
-											disabled={!mine}
 											title={a.done ? 'Done · click to reopen' : 'Mark done'}
 											aria-label={a.done ? `Reopen: ${a.text}` : `Mark done: ${a.text}`}
 											class="text-xs mt-0.5 {a.done ? 'text-emerald-400' : 'text-gray-600 hover:text-gray-300'}"

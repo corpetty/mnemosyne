@@ -1,12 +1,14 @@
 """WebSocket event stream.
 
 Clients receive every backend event (jobs, sessions, transcription segments), except that on a
-team server a member only hears about their own meetings (access.py): a live transcript is
-as private as the meeting. The only client-to-server message is `ping`. Work is started over HTTP.
+team server a member only hears about meetings they may read, their own and those shared with
+them (access.py): a live transcript is as private as the meeting. The only client-to-server
+message is `ping`. Work is started over HTTP.
 """
 
 import asyncio
 import logging
+import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -22,15 +24,17 @@ def visibility(ctx: AppContext):
     """For this connection's user: may they see an event (or job)? Jobs are theirs when they
     started them or when they are about one of their meetings."""
     only = access.read_owner()
-    known: dict[str, bool] = {}
+    known: dict[str, tuple[bool, float]] = {}  # session id -> (visible, when looked up)
 
     def meeting(sid: str | None) -> bool:
         if only is None or not sid:
             return True
-        if sid not in known:
-            # A meeting's owner never changes; a new meeting is looked up on first sight.
-            known[sid] = ctx.repo.owner_of(sid) == only
-        return known[sid]
+        # Sharing changes who may see a meeting during a connection: look again now and then.
+        now = time.monotonic()
+        seen = known.get(sid)
+        if seen is None or now - seen[1] > 10:
+            seen = known[sid] = (ctx.repo.exists(sid), now)
+        return seen[0]
 
     def visible(event: dict) -> bool:
         job = event.get("job")

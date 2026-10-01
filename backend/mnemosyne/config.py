@@ -215,6 +215,9 @@ class Settings(BaseSettings):
     # Team mode: this backend is a team server, used by several people from their browsers
     # (docs/team-server.md): everyone signs in and has their own meetings (access.py).
     team_mode: bool = False
+    # On a team server, share a meeting with the team members invited to it (their calendar
+    # email matches theirs), so everyone in the meeting can read it (services/sharing.py).
+    share_with_invitees: bool = True
     # Serve the web app from this folder (the `build/` of `pnpm build`), so browsers need
     # nothing installed. Blank: only the desktop app's own copy of the UI.
     web_dir: str = ""

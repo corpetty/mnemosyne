@@ -25,6 +25,7 @@ import { connectionState, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
 import { jobsState } from '$lib/stores/jobs.svelte.js';
 import { sessionState } from '$lib/stores/session.svelte.js';
 import { toastState } from '$lib/stores/toast.svelte.js';
+import { teamState } from '$lib/stores/team.svelte.js';
 import { transcriptState } from '$lib/stores/transcript.svelte.js';
 import { uiState, type ShellStage, type View } from '$lib/stores/ui.svelte.js';
 import { updateState } from '$lib/stores/update.svelte.js';
@@ -599,6 +600,11 @@ function onConnected(): () => void {
       announceRecovered(msg);
       return;
     }
+    if (msg.type === 'shares') {
+      // Some meeting was shared or unshared: what this person may see may have changed.
+      sessionState.loadSessions();
+      return;
+    }
     if (msg.type !== 'session') return;
     sessionState.loadSessions();
     // Keep the open session's status (footer, badges) in step without a refetch.
@@ -684,6 +690,7 @@ async function signedIn(): Promise<boolean> {
   }
   try {
     connectionState.me = await getMe();
+    if (connectionState.me.team_mode) void teamState.load();
     return true;
   } catch (e) {
     if (e instanceof Error && e.message.startsWith('401')) return false;

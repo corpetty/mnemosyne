@@ -177,6 +177,9 @@ async def _apply_calendar(ctx: AppContext, session: Session) -> Session:
         fields["agenda"] = [AgendaItem(text=p) for p in points]
     ctx.repo.update_fields(session.id, **fields)
     ctx.repo.set_attendee_emails(session.id, event.attendee_emails)
+    from ...services.sharing import share_with_invitees
+
+    share_with_invitees(ctx, session.id)
     from ...services.assets import attach_calendar_links
 
     attach_calendar_links(ctx, session.id, event.description)

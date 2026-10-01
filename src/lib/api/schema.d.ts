@@ -1851,6 +1851,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Shares */
+        get: operations["get_shares_api_sessions__session_id__shares_get"];
+        /**
+         * Put Shares
+         * @description Share with exactly these people (and everyone, with `team`). The owner or an admin.
+         */
+        put: operations["put_shares_api_sessions__session_id__shares_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/speakers": {
         parameters: {
             query?: never;
@@ -4635,6 +4656,8 @@ export interface components {
             semantic_search?: boolean | null;
             /** Setup Complete */
             setup_complete?: boolean | null;
+            /** Share With Invitees */
+            share_with_invitees?: boolean | null;
             /** Slack Webhook Url */
             slack_webhook_url?: string | null;
             /** Speaker Match Threshold */
@@ -4872,6 +4895,8 @@ export interface components {
             semantic_search: boolean;
             /** Setup Complete */
             setup_complete: boolean;
+            /** Share With Invitees */
+            share_with_invitees: boolean;
             /** Slack Webhook Url */
             slack_webhook_url: string;
             /** Speaker Match Threshold */
@@ -4900,6 +4925,35 @@ export interface components {
             whisper_model_size: string;
             /** Whisper Vad */
             whisper_vad: string;
+        };
+        /** SharePerson */
+        SharePerson: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** Shares */
+        Shares: {
+            /** Can Change */
+            can_change: boolean;
+            /** People */
+            people: components["schemas"]["SharePerson"][];
+            /** Team */
+            team: boolean;
+        };
+        /** SharesUpdate */
+        SharesUpdate: {
+            /**
+             * Team
+             * @default false
+             */
+            team: boolean;
+            /**
+             * User Ids
+             * @default []
+             */
+            user_ids: string[];
         };
         /**
          * SpeakerProfileSummary
@@ -8746,6 +8800,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_shares_api_sessions__session_id__shares_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Shares"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_shares_api_sessions__session_id__shares_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SharesUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Shares"];
                 };
             };
             /** @description Validation Error */

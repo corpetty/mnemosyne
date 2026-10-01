@@ -74,7 +74,7 @@ in. `cloud_models` false: no OpenAI or Anthropic provider exists, whatever else 
 ### People on a team server
 With `team_mode` on, every `/api` request needs a person's token (or `api_token`, which acts as an
 admin). The request then runs as that person (`access.py`): a **member** sees only meetings they
-own (`Session.owner_id`, set when they create one), a **reviewer** reads all and changes only their
+own (`Session.owner_id`, set when they create one) or that are shared with them, a **reviewer** reads all and changes only their
 own, an **admin** does everything. Someone else's meeting answers 404 to a member and 403 to a
 reviewer who tries to change it. Lists, search, Ask, tasks, people, topics, digests, jobs
 (`Job.owner_id`) and the WebSocket stream are filtered the same way; saved questions and digests are
@@ -93,6 +93,18 @@ history (at most once per person per half hour).
 | POST | `/api/users/me/signout` | forget this token |
 
 The web app turns `<address>/?invite=<code>` into a token for that browser.
+
+**Sharing** (`services/sharing.py`): a meeting's owner or an admin shares it with people or with
+everyone (`session_shares`, `"*"`). Sharing gives read access (and ticking action items done);
+the meeting stays its owner's to change. Each change goes into its history (`shared`,
+`unshared`) and a `{type: "shares"}` event (no id) tells clients to reload their lists. With
+`share_with_invitees` (on by default), a meeting named from the calendar is shared with team
+members whose email is among its invitees.
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/sessions/{id}/shares` | `{team, people: [{id, name}], can_change}` |
+| PUT | `/api/sessions/{id}/shares` | owner or admin: `{team, user_ids}` → the same; exactly these from now on |
 `mnemosyne-backend users add|invite|list` does the same from the server's shell (for the first admin).
 Admin-only elsewhere: `PUT /api/settings`, storage report and cleanup, backups, turning encryption
 on or off, rebuilding the search index, pairing devices, editing voice profiles, diagnostics.
@@ -1131,6 +1143,7 @@ Then every backend event, in order:
 | `mention` | `session_id`, `keyword`, `speaker`, `text`, `start` | A live line contained one of `mention_keywords` (whole words, any case; not from your own mic when it is recorded separately; each keyword at most once per 20 s of recording) |
 | `meeting_app` | `status` (`started`/`stopped`), `app` | Another app started or stopped recording audio (auto-record) |
 | `copilot_notes` | `session_id`, `notes` | The live copilot's running notes were updated |
+| `shares` | — | A meeting was shared or unshared; reload the meeting list |
 | `live_partial` | `session_id`, `source`, `speaker`, `text` | The still-changing tail for that source; replaces the previous partial (may be empty) |
 | `recovered` | `RecoveredRecording` fields | An interrupted recording was recovered (also listed in the next `hello`) |
 | `pong` | | Reply to `ping` |

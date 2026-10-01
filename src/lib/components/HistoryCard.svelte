@@ -155,6 +155,14 @@
 				return `HubSpot${d.auto ? ' (after the summary)' : ''}: ${d.error}`;
 			case 'audio_deleted':
 				return `Audio deleted${d.reason === 'retention' ? ' by the retention rule' : ''}`;
+			case 'task_done':
+				return `${d.by || 'Someone'} ticked off “${d.task}”`;
+			case 'task_reopened':
+				return `${d.by || 'Someone'} reopened “${d.task}”`;
+			case 'shared':
+				return `Shared with ${(d.people as string[] | undefined)?.join(', ')}${d.by ? ` by ${d.by}` : ''}`;
+			case 'unshared':
+				return `No longer shared with ${(d.people as string[] | undefined)?.join(', ')}${d.by ? ` (${d.by})` : ''}`;
 			case 'legal_hold':
 				return `Put on legal hold (${d.reason})${d.by ? ` by ${d.by}` : ''}`;
 			case 'legal_hold_lifted':

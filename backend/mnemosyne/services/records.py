@@ -183,7 +183,8 @@ README = """Mnemosyne meeting records
 Exported {at} by {by} from {host}.
 
 One folder per meeting:
-  meeting.json       name, dates, owner, participants, attendees, legal hold, retention
+  meeting.json       name, dates, owner, who it is shared with, participants, attendees, legal
+                     hold, retention
   transcript.txt     who said what, when
   transcript.json    the same, with word times when available
   summary.md         the summary as shown in the app
@@ -257,6 +258,13 @@ def export_zip(app: AppContext, request: ExportRequest, dest: Path, progress=Non
                 "meeting_type": session.meeting_type,
                 "legal_hold": session.legal_hold,
                 "kept_until": until.isoformat() if until else None,
+                "shared_with": [
+                    {
+                        **r,
+                        "name": "everyone" if r["user_id"] == "*" else owners.get(r["user_id"], ""),
+                    }
+                    for r in app.repo.shares(session.id)
+                ],
             }
             put(f"{folder}/meeting.json", json.dumps(meta, indent=2, default=str).encode())
             put(f"{folder}/transcript.txt", _transcript_text(session).encode())

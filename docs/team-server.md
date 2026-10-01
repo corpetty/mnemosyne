@@ -128,6 +128,9 @@ signs in as them). Someone on a second computer gets a second link.
 - **Reviewer**: reads every meeting, changes only their own.
 - **Admin**: everything, including people and settings.
 
+A meeting's owner shares it from its header (Share): with everyone, or with chosen people, who
+can then read it, listen to it and tick off its action items. A meeting named from someone's
+calendar is shared with the team members invited to it (by email), unless an admin turns that off.
 Opening, playing and exporting a meeting is noted in that meeting's history with who did it.
 "Disable" and "Sign out everywhere" take effect at once. The people list lives in
 `/srv/mnemosyne/data/users.json` (tokens as hashes only).

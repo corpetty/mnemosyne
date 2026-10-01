@@ -33,6 +33,7 @@ export type Deletion = S['Deletion'];
 export type SupervisionQueueItem = S['QueueItem'];
 export type MeetingSupervision = S['MeetingSupervision'];
 export type UserInfo = S['UserInfo'];
+export type Shares = S['Shares'];
 export type UserInvite = S['Invite'];
 export type Recording = S['Recording'];
 export type ActionItem = S['ActionItem'];
@@ -133,6 +134,7 @@ export type BackendEvent =
   | { type: 'bookmarks'; session_id: string } // a meeting's bookmarks changed
   | { type: 'assets'; session_id: string } // a meeting's resources changed
   | { type: 'history'; session_id: string } // something was added to a meeting's history
+  | { type: 'shares' } // a meeting was shared or unshared (which one is not said: it may no longer be yours)
   | {
       // A source stopped being captured, or is captured again (backend audio/health.py).
       type: 'capture_health';

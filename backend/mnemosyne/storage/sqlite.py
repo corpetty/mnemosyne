@@ -261,6 +261,15 @@ CREATE TABLE IF NOT EXISTS supervision_reviews (
     note TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS supervision_reviews_session ON supervision_reviews(session_id);
+-- Meetings shared on a team server (access.py): read access for user_id, or everyone ("*").
+CREATE TABLE IF NOT EXISTS session_shares (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    by TEXT NOT NULL DEFAULT '',
+    at TEXT NOT NULL,
+    PRIMARY KEY (session_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS session_shares_user ON session_shares(user_id);
 -- Organizations (services/organizations.py): people grouped by who they are with. Members are
 -- people by name (as in transcripts and calendars), with an email when known.
 CREATE TABLE IF NOT EXISTS organizations (
@@ -561,9 +570,22 @@ class SessionRepository:
             ).fetchone()
         return None if row is None else row["owner_id"]
 
+    # A member reads their own meetings and those shared with them, alone or with everyone.
+    _SEES = (
+        "(owner_id=? OR id IN (SELECT session_id FROM session_shares WHERE user_id IN (?, '*')))"
+    )
+    _SEES_S = _SEES.replace("(owner_id", "(s.owner_id").replace(" id IN", " s.id IN")  # sessions s
+
     def _readable(self, session_id: str) -> bool:
         only = access.read_owner()
-        return only is None or self._owner(session_id) in (None, only)
+        if only is None:
+            return True
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT {self._SEES} AS ok FROM sessions WHERE id=?",
+                (only, only, session_id),
+            ).fetchone()
+        return row is None or bool(row["ok"])
 
     def _check_write(self, session_id: str) -> None:
         owner = self._owner(session_id)
@@ -578,7 +600,7 @@ class SessionRepository:
         if only is None:
             return None
         with self._lock:
-            rows = self._conn.execute("SELECT id FROM sessions WHERE owner_id=?", (only,))
+            rows = self._conn.execute(f"SELECT id FROM sessions WHERE {self._SEES}", (only, only))
             return {r["id"] for r in rows}
 
     def owner_of(self, session_id: str) -> str | None:
@@ -603,7 +625,7 @@ class SessionRepository:
                 rows = self._conn.execute(sql.format(where="")).fetchall()
             else:
                 rows = self._conn.execute(
-                    sql.format(where="WHERE s.owner_id=?"), (only,)
+                    sql.format(where="WHERE " + self._SEES_S), (only, only)
                 ).fetchall()
         return [
             SessionSummary(
@@ -627,8 +649,11 @@ class SessionRepository:
         only = access.read_owner()
         with self._lock:
             row = self._conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
-            if row is None or (only is not None and row["owner_id"] != only):
+            if row is None:
                 return None
+        if only is not None and row["owner_id"] != only and not self._readable(session_id):
+            return None
+        with self._lock:
             seg_rows = self._conn.execute(
                 "SELECT * FROM segments WHERE session_id=? ORDER BY idx", (session_id,)
             ).fetchall()
@@ -1388,6 +1413,59 @@ class SessionRepository:
         with self._lock:
             rows = self._conn.execute(sql).fetchall()
         return [dict(r) for r in rows if visible is None or r["id"] in visible]
+
+    def set_action_item_done(self, session_id: str, idx: int, done: bool) -> bool:
+        """Tick an action item done (or not). Anyone who can read the meeting may: someone it
+        is shared with ticks off what they were asked to do. False: no such meeting or item."""
+        if not self._readable(session_id):
+            return False
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT summary_data FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+            if row is None or not row["summary_data"]:
+                return False
+            data = SummaryData.model_validate_json(row["summary_data"])
+            if not 0 <= idx < len(data.action_items):
+                return False
+            data.action_items[idx].done = done
+            self._conn.execute(
+                "UPDATE sessions SET summary_data=?, updated_at=? WHERE id=?",
+                (data.model_dump_json(), datetime.now().isoformat(), session_id),
+            )
+        return True
+
+    # ---- sharing (services/sharing.py) -------------------------------------
+
+    def shares(self, session_id: str) -> list[dict]:
+        """Who a meeting is shared with: user ids, "*" for everyone; with who shared and when."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT user_id, by, at FROM session_shares WHERE session_id=? ORDER BY at",
+                (session_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_shares(self, session_id: str, user_ids: set[str], by: str) -> tuple[set, set]:
+        """Share with exactly these (user ids, "*"); returns (added, removed)."""
+        now = datetime.now().isoformat()
+        with self._lock, self._conn:
+            have = {
+                r["user_id"]
+                for r in self._conn.execute(
+                    "SELECT user_id FROM session_shares WHERE session_id=?", (session_id,)
+                )
+            }
+            added, removed = user_ids - have, have - user_ids
+            self._conn.executemany(
+                "DELETE FROM session_shares WHERE session_id=? AND user_id=?",
+                [(session_id, u) for u in removed],
+            )
+            self._conn.executemany(
+                "INSERT INTO session_shares (session_id, user_id, by, at) VALUES (?,?,?,?)",
+                [(session_id, u, by, now) for u in added],
+            )
+        return added, removed
 
     # ---- organizations (services/organizations.py) ---------------------------
 

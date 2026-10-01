@@ -4,8 +4,9 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ... import access
 from ...models.base import ApiModel
-from ...services import organizations
+from ...services import history, organizations
 from ...services.brief import Brief, build_brief
 from ...services.tasks import TaskItem, filter_tasks
 from ..context import AppContext, get_ctx
@@ -40,7 +41,13 @@ async def update_action_item(
     if not 0 <= idx < len(items):
         raise HTTPException(status_code=404, detail="No such action item")
     items[idx].done = request.done
-    ctx.repo.update_fields(session_id, summary_data=session.summary_data)
+    ctx.repo.set_action_item_done(session_id, idx, request.done)  # readers may tick too
+    if session.owner_id != access.user_id():
+        who = access.principal()
+        history.log(
+            ctx, session_id, "task_done" if request.done else "task_reopened",
+            task=items[idx].text, by=who.name if who else "",
+        )  # fmt: skip
     ctx.bus.publish({"type": "session", "session_id": session_id, "status": session.status.value})
     a = items[idx]
     return TaskItem(
