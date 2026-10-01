@@ -103,7 +103,7 @@ def test_changing_the_phrases_rescans_every_meeting(client, ctx, fake_engine, tm
     assert client.get("/api/users/me").json()["supervision"] is True
 
 
-def test_advisors_have_no_queue_and_reviewers_see_everyone(
+def test_members_have_no_queue_and_reviewers_see_everyone(
     settings, keystore, tmp_path, fake_engine
 ):
     settings.team_mode = True
@@ -112,7 +112,7 @@ def test_advisors_have_no_queue_and_reviewers_see_everyone(
     ctx = app.state.ctx
     ctx.models._engine = fake_engine
     tokens = {}
-    for name, role in [("Ann", "advisor"), ("Rev", "reviewer")]:
+    for name, role in [("Ann", "member"), ("Rev", "reviewer")]:
         user = ctx.users.add(name, "", role)
         code, _ = ctx.users.invite(user.id)
         tokens[name] = {"Authorization": f"Bearer {ctx.users.redeem(code, 'x')[1]}"}

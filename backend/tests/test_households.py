@@ -94,13 +94,13 @@ def test_a_person_is_in_one_household(client, ctx):
     assert client.get(f"/api/households/{first['id']}").status_code == 404
 
 
-def test_advisors_see_facts_only_from_their_own_meetings(settings, keystore):
+def test_members_see_facts_only_from_their_own_meetings(settings, keystore):
     settings.team_mode = True
     app = create_app(settings, keystore=keystore)
     ctx = app.state.ctx
     tokens = {}
     for name in ("Ann", "Bob"):
-        user = ctx.users.add(name, "", "advisor")
+        user = ctx.users.add(name, "", "member")
         code, _ = ctx.users.invite(user.id)
         tokens[name] = {"Authorization": f"Bearer {ctx.users.redeem(code, 'x')[1]}"}
     with TestClient(app) as client:

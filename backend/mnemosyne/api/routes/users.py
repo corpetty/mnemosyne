@@ -50,7 +50,7 @@ class UserInfo(ApiModel):
 class NewUser(BaseModel):
     name: str
     email: str = ""
-    role: str = access.ADVISOR
+    role: str = access.MEMBER
 
 
 class UserChange(BaseModel):

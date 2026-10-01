@@ -258,7 +258,7 @@
 
 	const data = $derived(sessionState.activeSession?.summary_data ?? null);
 	const factGroups = $derived(groupFacts(data?.client_facts ?? []));
-	// Someone else's meeting (a reviewer reading an advisor's): no controls the server refuses.
+	// Someone else's meeting (a reviewer reading a member's): no controls the server refuses.
 	const mine = $derived(canChange(sessionState.activeSession));
 	const liveNotes = $derived(sessionState.activeSession?.copilot_notes ?? null);
 	const activeJob = $derived(

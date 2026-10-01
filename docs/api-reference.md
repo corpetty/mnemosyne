@@ -73,9 +73,9 @@ in. `cloud_models` false: no OpenAI or Anthropic provider exists, whatever else 
 
 ### People on a team server
 With `team_mode` on, every `/api` request needs a person's token (or `api_token`, which acts as an
-admin). The request then runs as that person (`access.py`): an **advisor** sees only meetings they
+admin). The request then runs as that person (`access.py`): a **member** sees only meetings they
 own (`Session.owner_id`, set when they create one), a **reviewer** reads all and changes only their
-own, an **admin** does everything. Someone else's meeting answers 404 to an advisor and 403 to a
+own, an **admin** does everything. Someone else's meeting answers 404 to a member and 403 to a
 reviewer who tries to change it. Lists, search, Ask, tasks, people, topics, digests, jobs
 (`Job.owner_id`) and the WebSocket stream are filtered the same way; saved questions and digests are
 personal. Opening, playing and exporting a meeting adds `viewed` / `played` / `exported` to its
@@ -141,7 +141,7 @@ phrase from `compliance_phrases` are flagged (`supervision_flags`). A new transc
 meeting's flags; edits, speaker renames and combining only add, so editing a line never removes its
 flag. Changing the phrases (or turning supervision on) starts a `supervision_scan` job over every
 meeting. A meeting is `reviewed` when its last review is newer than its newest flag. All of these are
-for reviewers and admins (403 for advisors); `/api/users/me` has `supervision`.
+for reviewers and admins (403 for members); `/api/users/me` has `supervision`.
 
 | Method | Path | |
 |---|---|---|

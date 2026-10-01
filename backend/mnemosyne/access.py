@@ -1,11 +1,11 @@
-"""Who is asking, for a team server where each advisor sees their own meetings.
+"""Who is asking, for a team server where each member sees their own meetings.
 
 The auth middleware (api/auth.py) puts the signed-in user in `current` for the request; it
 follows the request into threads, background tasks and the jobs it starts (they copy the
 context when created). `None` means unrestricted: the desktop app, the admin token, and work
 the backend starts on its own (retention, auto-record, the weekly digest).
 
-Roles: an advisor sees and changes only their own meetings; a reviewer (compliance) sees every
+Roles: a member sees and changes only their own meetings; a reviewer sees every
 meeting but changes only their own; an admin does everything, including users and settings.
 The session repository applies this (storage/sqlite.py), so every route and search gets it.
 """
@@ -15,8 +15,8 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-ADVISOR, REVIEWER, ADMIN = "advisor", "reviewer", "admin"
-ROLES = (ADVISOR, REVIEWER, ADMIN)
+MEMBER, REVIEWER, ADMIN = "member", "reviewer", "admin"
+ROLES = (MEMBER, REVIEWER, ADMIN)
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class Forbidden(PermissionError):
 
 class Hidden(Forbidden):
     """Someone else's meeting the user may not even see (answered 404, as if it were not
-    there, so ids of other advisors' meetings reveal nothing)."""
+    there, so ids of other people's meetings reveal nothing)."""
 
 
 def principal() -> Principal | None:
@@ -51,7 +51,7 @@ def user_id() -> str:
 def read_owner() -> str | None:
     """Only meetings of this owner are visible, or None for all."""
     p = current.get()
-    return p.user_id if p is not None and p.role == ADVISOR else None
+    return p.user_id if p is not None and p.role == MEMBER else None
 
 
 def can_write(owner_id: str) -> bool:

@@ -20,7 +20,7 @@
 	import RecordsSettings from './RecordsSettings.svelte';
 	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
-	// a team server: settings belong to its admins (advisors and reviewers only read them).
+	// a team server: settings belong to its admins (members and reviewers only read them).
 	const readOnly = $derived(!!connectionState.me?.id && connectionState.me.role !== 'admin');
 	const teamAdmin = $derived(!!connectionState.me?.team_mode && connectionState.me.role === 'admin');
 	let settings = $state<SettingsResponse | null>(null);

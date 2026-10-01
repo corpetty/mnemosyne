@@ -167,7 +167,7 @@
 			case 'played':
 			case 'exported':
 				// a team server notes who looked at a meeting (backend services/history.py).
-				return `${ACCESS[e.kind]} by ${d.by}${d.role && d.role !== 'advisor' ? ` (${d.role})` : ''}`;
+				return `${ACCESS[e.kind]} by ${d.by}${d.role && d.role !== 'member' ? ` (${d.role})` : ''}`;
 			default:
 				return e.kind.replaceAll('_', ' ');
 		}

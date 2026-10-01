@@ -11,12 +11,12 @@
 	let people = $state<UserInfo[]>([]);
 	let name = $state('');
 	let email = $state('');
-	let role = $state('advisor');
+	let role = $state('member');
 	let busy = $state(false);
 	let invite = $state<{ name: string; link: string; until: string } | null>(null);
 
 	const ROLES: [string, string][] = [
-		['advisor', 'Advisor: their own meetings'],
+		['member', 'Member: their own meetings'],
 		['reviewer', 'Reviewer: reads every meeting'],
 		['admin', 'Admin: everything, people and settings']
 	];
@@ -43,7 +43,7 @@
 		try {
 			showInvite(await addUser(name.trim(), email.trim(), role));
 			name = email = '';
-			role = 'advisor';
+			role = 'member';
 			await load();
 		} catch (e) {
 			toastState.error(e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not add them');
@@ -86,7 +86,7 @@
 <section aria-label="People and access">
 	<h3 class="text-lg font-semibold text-gray-200 mb-1">People and access</h3>
 	<p class="text-xs text-gray-500 mb-3">
-		Everyone who uses this server. Advisors see only their own meetings, reviewers read all of them, admins also manage
+		Everyone who uses this server. Members see only their own meetings, reviewers read all of them, admins also manage
 		people and settings. Nobody has a password: each invite link signs one browser in, works once and expires after a
 		week. Opening, playing and exporting a meeting is noted in its history.
 	</p>

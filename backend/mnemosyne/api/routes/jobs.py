@@ -1,4 +1,4 @@
-"""Background job inspection. On a team server an advisor sees the jobs they started and
+"""Background job inspection. On a team server a member sees the jobs they started and
 the jobs about their meetings (api/websocket.py `visibility`)."""
 
 from fastapi import APIRouter, Depends, HTTPException

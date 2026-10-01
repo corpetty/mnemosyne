@@ -1,4 +1,4 @@
-"""The people who use a team server (access.py): advisors, reviewers and admins.
+"""The people who use a team server (access.py): members, reviewers and admins.
 
 Nobody has a password. An admin adds a person and sends them an invite link; opening it once
 (within INVITE_TTL) gives that browser its own token. Someone on a second computer gets a second

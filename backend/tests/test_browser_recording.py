@@ -98,7 +98,7 @@ def test_only_the_meetings_owner_can_send_audio(settings, keystore, fake_pipewir
     ctx = app.state.ctx
     tokens = {}
     for name in ("Ann", "Bob"):
-        user = ctx.users.add(name, "", "advisor" if name != "Ann" else "admin")
+        user = ctx.users.add(name, "", "member" if name != "Ann" else "admin")
         code, _ = ctx.users.invite(user.id)
         tokens[name] = ctx.users.redeem(code, "x")[1]
     with TestClient(app) as client:

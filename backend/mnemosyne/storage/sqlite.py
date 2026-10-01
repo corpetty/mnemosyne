@@ -1899,7 +1899,7 @@ class SessionRepository:
 
     def save_digest(self, digest: Digest) -> Digest:
         """Save, replacing any earlier digest of the same range (label) and owner: on a team
-        server each advisor has their own (access.py)."""
+        server each person has their own (access.py)."""
         owner = access.user_id()
         with self._lock, self._conn:
             self._conn.execute(

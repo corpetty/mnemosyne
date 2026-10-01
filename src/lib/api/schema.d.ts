@@ -3729,7 +3729,7 @@ export interface components {
             name: string;
             /**
              * Role
-             * @default advisor
+             * @default member
              */
             role: string;
         };

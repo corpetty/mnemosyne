@@ -34,7 +34,7 @@ def test_invites_expire_and_disabled_people_are_out(tmp_path):
     clock = [1000.0]
     users = UserService(tmp_path / "users.json", clock=lambda: clock[0])
     users.add("Admin", "", "admin")
-    sam = users.add("Sam", "sam@team.test", "advisor")
+    sam = users.add("Sam", "sam@team.test", "member")
     old, _ = users.invite(sam.id)
     clock[0] += 8 * 24 * 3600
     with pytest.raises(InvalidInvite):
@@ -53,15 +53,15 @@ def test_the_last_admin_cannot_be_removed(tmp_path):
     users = UserService(tmp_path / "users.json")
     pat = users.add("Pat", "", "admin")
     with pytest.raises(ValueError):
-        users.update(pat.id, role="advisor")
+        users.update(pat.id, role="member")
     with pytest.raises(ValueError):
         users.update(pat.id, disabled=True)
     assert users.get(pat.id).role == "admin"
     with pytest.raises(ValueError):
         users.add("Twin", "", "boss")
-    users.add("Sam", "sam@x.test", "advisor")
+    users.add("Sam", "sam@x.test", "member")
     with pytest.raises(ValueError):
-        users.add("Sam again", "SAM@x.test", "advisor")
+        users.add("Sam again", "SAM@x.test", "member")
 
 
 def test_changes_from_another_process_are_picked_up(tmp_path):
@@ -83,8 +83,8 @@ def team(settings, keystore):
     people = {}
     for name, role in [
         ("Admin", "admin"),
-        ("Ann", "advisor"),
-        ("Bob", "advisor"),
+        ("Ann", "member"),
+        ("Bob", "member"),
         ("Rev", "reviewer"),
     ]:
         user = ctx.users.add(name, f"{name.lower()}@team.test", role)
@@ -115,7 +115,7 @@ def test_team_mode_needs_someone_signed_in(team):
     client, _, people = team
     assert client.get("/api/sessions").status_code == 401
     assert client.get("/health").json()["auth_required"] is True
-    assert client.get("/api/users/me", headers=_h(people, "Ann")).json()["role"] == "advisor"
+    assert client.get("/api/users/me", headers=_h(people, "Ann")).json()["role"] == "member"
     assert client.get("/api/users/me", headers=_h(people, "Ann")).json()["name"] == "Ann"
 
 
@@ -141,7 +141,7 @@ def test_meetings_belong_to_whoever_creates_them(team):
     assert created.json()["owner_id"] == people["Ann"][0].id
 
 
-def test_advisors_see_only_their_own_meetings(team):
+def test_members_see_only_their_own_meetings(team):
     client, ctx, people = team
     a = _meeting(ctx, people, "Ann", "Ann's client", "the Roth conversion for Dana")
     b = _meeting(ctx, people, "Bob", "Bob's client", "Bob talks about the Roth ladder")
@@ -198,7 +198,7 @@ def test_only_admins_change_settings_and_people(team):
         assert client.get("/api/settings", headers=h).status_code == 200  # reading is fine
     h = _h(people, "Admin")
     assert client.put("/api/settings", json={"language": "fr"}, headers=h).status_code == 200
-    added = client.post("/api/users", json={"name": "Eve", "role": "advisor"}, headers=h).json()
+    added = client.post("/api/users", json={"name": "Eve", "role": "member"}, headers=h).json()
     assert added["code"] and added["user"]["name"] == "Eve"
     listed = client.get("/api/users", headers=_h(people, "Ann")).json()
     assert {u["name"] for u in listed} >= {"Ann", "Bob", "Eve"}
@@ -232,7 +232,7 @@ def test_jobs_are_visible_to_their_starter_and_the_meetings_owner(team):
     assert {ask.id, summarize.id} <= mine
 
 
-def test_the_event_stream_keeps_other_advisors_meetings_out(team):
+def test_the_event_stream_keeps_other_members_meetings_out(team):
     client, ctx, people = team
     a = _meeting(ctx, people, "Ann", "Ann's client")
     b = _meeting(ctx, people, "Bob", "Bob's client")

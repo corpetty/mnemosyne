@@ -31,7 +31,7 @@
 		Math.max(0, ...(sessionState.activeSession?.recordings ?? []).map((r) => r.part)) + 2
 	);
 
-	// Someone else's meeting (a reviewer reading an advisor's): no controls the server refuses.
+	// Someone else's meeting (a reviewer reading a member's): no controls the server refuses.
 	const mine = $derived(canChange(sessionState.activeSession));
 	// This meeting is being recorded right now.
 	const recordingHere = $derived(

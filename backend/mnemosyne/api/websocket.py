@@ -1,7 +1,7 @@
 """WebSocket event stream.
 
 Clients receive every backend event (jobs, sessions, transcription segments), except that on a
-team server an advisor only hears about their own meetings (access.py): a live transcript is
+team server a member only hears about their own meetings (access.py): a live transcript is
 as private as the meeting. The only client-to-server message is `ping`. Work is started over HTTP.
 """
 

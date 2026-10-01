@@ -124,8 +124,8 @@ expires after a week. From then on the admin adds everyone else in Settings → 
 access, and sends each their own link (directly, not in a shared channel: whoever opens it first
 signs in as them). Someone on a second computer gets a second link.
 
-- **Advisor**: sees and changes only their own meetings (the ones they recorded or imported).
-- **Reviewer** (compliance): reads every meeting, changes only their own.
+- **Member**: sees and changes only their own meetings (the ones they recorded or imported).
+- **Reviewer**: reads every meeting, changes only their own.
 - **Admin**: everything, including people and settings.
 
 Opening, playing and exporting a meeting is noted in that meeting's history with who did it.

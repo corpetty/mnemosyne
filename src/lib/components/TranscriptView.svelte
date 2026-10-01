@@ -95,7 +95,7 @@
 		});
 	});
 
-	// Someone else's meeting (a reviewer reading an advisor's): read, play and quote only.
+	// Someone else's meeting (a reviewer reading a member's): read, play and quote only.
 	const mine = $derived(canChange(sessionState.activeSession));
 	const canTranscribe = $derived(
 		mine && !!sessionState.activeSession?.audio_file && !transcriptState.isProcessing

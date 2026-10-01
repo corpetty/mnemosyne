@@ -135,12 +135,12 @@ def test_an_exam_export_holds_everything_and_checks_out(client, ctx, fake_engine
     assert client.get(f"/api/records/exports/{export_id}").status_code == 404
 
 
-def test_advisors_hold_nothing_and_export_only_their_own(settings, keystore, tmp_path):
+def test_members_hold_nothing_and_export_only_their_own(settings, keystore, tmp_path):
     settings.team_mode = True
     app = create_app(settings, keystore=keystore)
     ctx = app.state.ctx
     tokens = {}
-    for name, role in [("Ann", "advisor"), ("Bob", "advisor"), ("Rev", "reviewer")]:
+    for name, role in [("Ann", "member"), ("Bob", "member"), ("Rev", "reviewer")]:
         user = ctx.users.add(name, "", role)
         code, _ = ctx.users.invite(user.id)
         tokens[name] = {"Authorization": f"Bearer {ctx.users.redeem(code, 'x')[1]}"}
