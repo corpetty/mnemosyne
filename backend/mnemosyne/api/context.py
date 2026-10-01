@@ -65,6 +65,8 @@ class AppContext:
     # voices, so the next part of a meeting gives the same person the same live label.
     live_voices: dict = field(default_factory=dict)
     copilot_notes: dict = field(default_factory=dict)  # session id -> CopilotNotes
+    # A team server's per-person calendars (calendar_for), by ICS link.
+    person_calendars: dict = field(default_factory=dict)
     recovered: list = field(default_factory=list)  # RecoveredRecording, since this start
     # Encryption at rest: where the master key lives, the key once known, and whether the
     # meetings are encrypted but the key is missing (then only the recovery code gets in).
@@ -79,6 +81,29 @@ class AppContext:
         self.summarizer.name_source = self.known_names
         self.sessions.type_source = lambda: available_types(self.settings)
         self.sessions.is_recording = lambda sid: sid in self.active_recordings
+        self.repo.on_new_session = self._new_session
+
+    def calendar_for(self, user_id: str) -> CalendarService:
+        """Whose calendar: on a team server, a person's own ICS feed (services/prefs.py),
+        else the server's."""
+        if self.settings.team_mode and user_id:
+            from ..services.prefs import get
+
+            url = (get(self, user_id).calendar_ics_url or "").strip()
+            if url:
+                if url not in self.person_calendars:
+                    self.person_calendars[url] = CalendarService(url)
+                return self.person_calendars[url]
+        return self.calendar
+
+    def _new_session(self, session_id: str, owner_id: str) -> None:
+        """A meeting was just created: share it when its owner always shares. Never raises."""
+        from ..services.prefs import share_if_wanted
+
+        try:
+            share_if_wanted(self, session_id, owner_id)
+        except Exception:
+            logger.warning("Could not apply sharing preferences to %s", session_id, exc_info=True)
 
     def known_names(self) -> list[str]:
         """People's names, for redaction before cloud calls."""

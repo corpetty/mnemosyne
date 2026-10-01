@@ -30,6 +30,7 @@ from ..transcription.glossary import (
 )
 from . import history
 from .copilot import agenda_hint, bookmark_hint, copilot_hint
+from .prefs import for_meeting
 from .tasks import add_live_todos, carry_over
 
 if TYPE_CHECKING:
@@ -101,7 +102,7 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
         session = app.sessions.get_session(session_id)
         if session is None:
             raise ValueError(f"Session {session_id} not found")
-        settings = app.settings
+        settings = for_meeting(app, session)  # the owner's name on the mic on a team server
         starts = offsets(session)
         todo = sorted(starts) if parts is None else [p for p in sorted(starts) if p in parts]
         kept = [s for s in session.transcript if part_of(s.start, starts) not in todo]
@@ -325,7 +326,7 @@ def summarize_session(
         if not session.transcript and not notes_only:
             raise ValueError("Session has no transcript")
         segments = notes_as_transcript(session.external_notes) if notes_only else session.transcript
-        st = app.settings
+        st = for_meeting(app, session)  # the owner's summary style and instructions
         prov = provider or st.default_provider
         mdl = model or st.default_model
         from .meeting_types import summary_instructions, summary_style
@@ -536,7 +537,7 @@ def live_transcribe(app: AppContext, session_id: str, recording):
     from ..transcription.live import LiveSource, LiveTranscriber
     from ..transcription.mentions import MentionSpotter, parse_keywords
 
-    settings = app.settings
+    settings = for_meeting(app, app.repo.get(session_id))  # the owner's name, mention keywords
     multi = len(recording.processes) > 1
 
     def prepare():

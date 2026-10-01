@@ -17,6 +17,7 @@
 	import ReportProblem from './ReportProblem.svelte';
 	import EncryptionSettings from './EncryptionSettings.svelte';
 	import TeamPeopleSettings from './TeamPeopleSettings.svelte';
+	import MyPreferences from './MyPreferences.svelte';
 	import RecordsSettings from './RecordsSettings.svelte';
 	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
@@ -368,6 +369,9 @@
 		<button onclick={openSetup} class="ml-auto px-3 py-1 text-xs rounded text-gray-500 hover:text-gray-300">Run setup again</button>
 	</nav>
 
+	{#if tab === 'general' && connectionState.me?.team_mode && connectionState.me.id}
+		<MyPreferences />
+	{/if}
 	{#if readOnly}
 		<p class="rounded border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-400">
 			Settings on this server are managed by your administrator.
@@ -1261,7 +1265,7 @@
 						<span class="text-xs text-gray-600">iroh-relay servers you run, e.g. <code>https://relay.example.org</code> (docs/remote-access.md). Paired computers follow this; after changing it, pair them again.</span>
 					</label>
 				{/if}
-				<RemoteAccessHome enabled={settings.values.remote_access} relays={settings.values.remote_relays} tokenSet={settings.secrets_set.api_token} />
+				{#if !readOnly}<RemoteAccessHome enabled={settings.values.remote_access} relays={settings.values.remote_relays} tokenSet={settings.secrets_set.api_token} />{/if}
 				<label class="block max-w-md mt-3">
 					<span class={labelClass}>Phone address</span>
 					<input type="text" bind:value={form.phone_url} disabled={locked('phone_url')} placeholder="blank: this computer's network address" class={inputClass} />
@@ -1297,8 +1301,11 @@
 				</section>
 			{/if}
 
-			<StorageSettings locked={locked('audio_retention_days')} />
-			<BackupSettings />
+			{#if !readOnly}
+				<!-- An admin's: their data comes from admin-only routes. -->
+				<StorageSettings locked={locked('audio_retention_days')} />
+				<BackupSettings />
+			{/if}
 
 			<div class="flex items-center gap-3">
 				<button

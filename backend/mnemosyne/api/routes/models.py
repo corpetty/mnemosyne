@@ -26,7 +26,7 @@ class ProviderModels(ApiModel):
 class SummarizeRequest(ApiModel):
     provider: str = ""
     model: str = ""
-    style: str = ""  # blank = settings.summary_style
+    style: str = ""  # blank = the meeting type's, else the owner's (services/prefs.py) or settings'
     instructions: str | None = None  # None = settings.summary_instructions
 
 
@@ -85,8 +85,9 @@ async def summarize_session(
     prov = request.provider or ctx.settings.default_provider
     if session.local_only and is_cloud(prov):
         raise HTTPException(status_code=400, detail=LOCAL_ONLY_ERROR.format(provider=prov))
-    style = request.style or ctx.settings.summary_style
-    if style not in STYLES:
+    # Blank: the job picks (the meeting type's, else the owner's or the server's default).
+    style = request.style
+    if style and style not in STYLES:
         raise HTTPException(status_code=400, detail=f"Unknown style; choose one of {list(STYLES)}")
     if any(j.kind == "summarize" for j in ctx.jobs.list(session_id=session_id, active_only=True)):
         raise HTTPException(status_code=409, detail="A summary is already being generated")

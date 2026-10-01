@@ -105,6 +105,19 @@ members whose email is among its invitees.
 |---|---|---|
 | GET | `/api/sessions/{id}/shares` | `{team, people: [{id, name}], can_change}` |
 | PUT | `/api/sessions/{id}/shares` | owner or admin: `{team, user_ids}` → the same; exactly these from now on |
+
+**Preferences** (`services/prefs.py`): on a team server each person has their own
+`summary_style`, `summary_instructions`, `mention_keywords`, `calendar_ics_url`,
+`hubspot_owner_email`, `share_new_meetings` (`"team"` shares everything they create with everyone),
+`digest_weekday` and `digest_hour`; unset (null) means the server's setting. Work on a meeting uses
+its owner's (summaries, mention alerts, the HubSpot owner of automatic pushes), and the mic channel
+of their recordings carries their name; `/api/calendar` and recording-start naming use the
+caller's calendar.
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/users/me/prefs` | your preferences (400 on the desktop app: it has settings) |
+| PUT | `/api/users/me/prefs` | replace them (null for the server's) |
 `mnemosyne-backend users add|invite|list` does the same from the server's shell (for the first admin).
 Admin-only elsewhere: `PUT /api/settings`, storage report and cleanup, backups, turning encryption
 on or off, rebuilding the search index, pairing devices, editing voice profiles, diagnostics.
@@ -980,8 +993,9 @@ Cloud providers appear only when their API key is set. Embedding-only Ollama mod
 { "provider": "ollama", "model": "llama3.1:latest", "style": "meeting", "instructions": null }
 ```
 
-All fields optional: blanks fall back to `default_provider`, `default_model`, `summary_style` and
-`summary_instructions` from settings. Queues a `summarize` **Job** and returns it immediately; the
+All fields optional: blanks fall back to `default_provider` and `default_model`, and the style and
+instructions to the meeting type's, else the owner's preferences on a team server, else
+`summary_style` and `summary_instructions` from settings. Queues a `summarize` **Job** and returns it immediately; the
 LLM call runs in the background (up to two summaries at once). When it finishes the session's
 `summary` (markdown) and `summary_data` are saved, a `session` event fires, and the job completes
 with `result: { "provider", "model", "title" }`. Provider errors (unknown provider, no models,

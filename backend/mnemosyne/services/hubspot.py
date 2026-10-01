@@ -591,8 +591,13 @@ class HubSpotClient:
         return first
 
 
-def client_for(app: AppContext) -> HubSpotClient:
-    st = app.settings
+def client_for(app: AppContext, user_id: str | None = None) -> HubSpotClient:
+    """Tasks are assigned to the HubSpot owner of whoever pushes (their preference on a team
+    server, services/prefs.py), else of `user_id` (a meeting's owner, for automatic pushes)."""
+    from .. import access
+    from .prefs import effective
+
+    st = effective(app, access.user_id() or user_id or "")
     return HubSpotClient(st.hubspot_token, st.hubspot_owner_email, app.http_transport)
 
 
@@ -657,7 +662,7 @@ async def push_session(
     ids = contact_ids if contact_ids is not None else [x.id for x in state.contacts]
     outgoing = redacted(session) if app.settings.redact_exports else session
     try:
-        created = await client_for(app).push(outgoing, ids, state)
+        created = await client_for(app, session.owner_id).push(outgoing, ids, state)
     except Exception as e:
         history.log(app, session.id, "hubspot_failed", error=str(e), auto=auto)
         raise

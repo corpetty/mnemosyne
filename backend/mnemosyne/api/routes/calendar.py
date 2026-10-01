@@ -4,6 +4,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ... import access
 from ...models.base import ApiModel
 from ...models.session import Session
 from ...services.calendar_service import CalendarEvent
@@ -22,7 +23,7 @@ class CalendarResponse(ApiModel):
 
 @router.get("/calendar", response_model=CalendarResponse)
 async def calendar(hours: float = 12, refresh: bool = False, ctx: AppContext = Depends(get_ctx)):
-    cal = ctx.calendar
+    cal = ctx.calendar_for(access.user_id())  # yours on a team server
     if not cal.configured:
         return CalendarResponse(configured=False, error=None, current=None, upcoming=[])
     upcoming = await cal.upcoming(hours=hours) if not refresh else []

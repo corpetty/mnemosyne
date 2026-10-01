@@ -2351,6 +2351,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/me/prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My Prefs
+         * @description Your own preferences on a team server (services/prefs.py); unset fields are the server's.
+         */
+        get: operations["my_prefs_api_users_me_prefs_get"];
+        /**
+         * Set My Prefs
+         * @description Replace your preferences: send every field, null (or leaving it out) for the server's.
+         */
+        put: operations["set_my_prefs_api_users_me_prefs_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/me/signout": {
         parameters: {
             query?: never;
@@ -5338,6 +5362,44 @@ export interface components {
             name: string;
             /** Role */
             role: string;
+        };
+        /** UserPrefs */
+        "UserPrefs-Input": {
+            /** Calendar Ics Url */
+            calendar_ics_url?: string | null;
+            /** Digest Hour */
+            digest_hour?: number | null;
+            /** Digest Weekday */
+            digest_weekday?: number | null;
+            /** Hubspot Owner Email */
+            hubspot_owner_email?: string | null;
+            /** Mention Keywords */
+            mention_keywords?: string | null;
+            /** Share New Meetings */
+            share_new_meetings?: ("private" | "team") | null;
+            /** Summary Instructions */
+            summary_instructions?: string | null;
+            /** Summary Style */
+            summary_style?: string | null;
+        };
+        /** UserPrefs */
+        "UserPrefs-Output": {
+            /** Calendar Ics Url */
+            calendar_ics_url: string | null;
+            /** Digest Hour */
+            digest_hour: number | null;
+            /** Digest Weekday */
+            digest_weekday: number | null;
+            /** Hubspot Owner Email */
+            hubspot_owner_email: string | null;
+            /** Mention Keywords */
+            mention_keywords: string | null;
+            /** Share New Meetings */
+            share_new_meetings: ("private" | "team") | null;
+            /** Summary Instructions */
+            summary_instructions: string | null;
+            /** Summary Style */
+            summary_style: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -9663,6 +9725,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+        };
+    };
+    my_prefs_api_users_me_prefs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPrefs-Output"];
+                };
+            };
+        };
+    };
+    set_my_prefs_api_users_me_prefs_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserPrefs-Input"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPrefs-Output"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -57,6 +57,7 @@ import type {
   Deletion,
   MeetingSupervision,
   Shares,
+  UserPrefs,
   Organization,
   OrganizationDetail,
   OrganizationSummary,
@@ -436,6 +437,14 @@ export async function redeemInvite(code: string, device: string): Promise<{ toke
 
 export async function signOut(): Promise<void> {
   await request('/api/users/me/signout', { method: 'POST' });
+}
+
+export async function getMyPrefs(): Promise<UserPrefs> {
+  return request('/api/users/me/prefs');
+}
+
+export async function setMyPrefs(prefs: UserPrefs): Promise<UserPrefs> {
+  return request('/api/users/me/prefs', { method: 'PUT', body: JSON.stringify(prefs) });
 }
 
 export async function getShares(sessionId: string): Promise<Shares> {

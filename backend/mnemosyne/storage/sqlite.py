@@ -261,6 +261,11 @@ CREATE TABLE IF NOT EXISTS supervision_reviews (
     note TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS supervision_reviews_session ON supervision_reviews(session_id);
+-- A team server's per-person preferences (services/prefs.py), as JSON.
+CREATE TABLE IF NOT EXISTS user_prefs (
+    user_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL DEFAULT '{}'
+);
 -- Meetings shared on a team server (access.py): read access for user_id, or everyone ("*").
 CREATE TABLE IF NOT EXISTS session_shares (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -394,6 +399,8 @@ def _asset(r) -> Asset:
 class SessionRepository:
     def __init__(self, db_path: Path, key: bytes | None = None):
         self._lock = threading.RLock()
+        # Called with (session id, owner id) after a new meeting is saved (services/prefs.py).
+        self.on_new_session: Callable[[str, str], None] | None = None
         self._open(db_path, key)
 
     def reopen(self, db_path: Path, key: bytes | None = None) -> None:
@@ -797,6 +804,8 @@ class SessionRepository:
             )
             self._write_segments(session.id, session.transcript)
             self._write_recordings(session.id, session.recordings)
+        if owner is None and self.on_new_session is not None:
+            self.on_new_session(session.id, session.owner_id)
         return session
 
     def update_fields(self, session_id: str, **fields) -> Session | None:
@@ -1434,6 +1443,23 @@ class SessionRepository:
                 (data.model_dump_json(), datetime.now().isoformat(), session_id),
             )
         return True
+
+    # ---- per-person preferences (services/prefs.py) ------------------------
+
+    def user_prefs(self, user_id: str) -> dict:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT data FROM user_prefs WHERE user_id=?", (user_id,)
+            ).fetchone()
+        return json.loads(row["data"]) if row else {}
+
+    def set_user_prefs(self, user_id: str, data: dict) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO user_prefs (user_id, data) VALUES (?,?)"
+                " ON CONFLICT(user_id) DO UPDATE SET data=excluded.data",
+                (user_id, json.dumps(data)),
+            )
 
     # ---- sharing (services/sharing.py) -------------------------------------
 

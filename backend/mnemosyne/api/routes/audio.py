@@ -157,13 +157,14 @@ def _report_health(ctx: AppContext, session_id: str, recording, health, change) 
 async def _apply_calendar(ctx: AppContext, session: Session) -> Session:
     """Name an untitled session after the meeting in progress and keep its attendees.
     Calendar problems never block recording."""
-    if not (ctx.calendar.configured and ctx.settings.calendar_auto_name):
+    calendar = ctx.calendar_for(session.owner_id)  # the recorder's on a team server
+    if not (calendar.configured and ctx.settings.calendar_auto_name):
         return session
     if session.name != DEFAULT_SESSION_NAME:
         return session
     try:
         # A stale copy of the feed is fine for "what is on now"; never wait for the network.
-        event = await asyncio.wait_for(ctx.calendar.current(stale_ok=True), timeout=5)
+        event = await asyncio.wait_for(calendar.current(stale_ok=True), timeout=5)
     except Exception:
         logger.warning("Calendar lookup failed at recording start", exc_info=True)
         return session

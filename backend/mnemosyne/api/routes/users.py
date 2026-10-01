@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from ... import access
 from ...models.base import ApiModel
-from ...services import supervision
+from ...services import prefs, supervision
 from ...services.users import InvalidInvite, User
 from ..context import AppContext, get_ctx
 
@@ -117,6 +117,27 @@ async def me(ctx: AppContext = Depends(get_ctx)):
         cloud_models=ctx.settings.cloud_models,
         supervision=supervision.enabled(ctx.settings),
     )
+
+
+def _signed_in() -> str:
+    p = access.principal()
+    if p is None or not p.user_id:
+        raise HTTPException(
+            status_code=400, detail="Preferences are per person, on a team server; use Settings"
+        )
+    return p.user_id
+
+
+@router.get("/me/prefs", response_model=prefs.UserPrefs)
+async def my_prefs(ctx: AppContext = Depends(get_ctx)):
+    """Your own preferences on a team server (services/prefs.py); unset fields are the server's."""
+    return prefs.get(ctx, _signed_in())
+
+
+@router.put("/me/prefs", response_model=prefs.UserPrefs)
+async def set_my_prefs(body: prefs.UserPrefs, ctx: AppContext = Depends(get_ctx)):
+    """Replace your preferences: send every field, null (or leaving it out) for the server's."""
+    return prefs.save(ctx, _signed_in(), body)
 
 
 @router.get("", response_model=list[UserInfo])
