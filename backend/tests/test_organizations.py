@@ -1,4 +1,4 @@
-"""Households (services/households.py): grouping, meetings and facts, the brief, HubSpot sync."""
+"""Organizations (services/organizations.py): grouping, meetings, facts, the brief, HubSpot."""
 
 import json
 from datetime import datetime, timedelta
@@ -29,11 +29,11 @@ def _meeting(ctx, name, facts=(), participants=(), attendees=(), days_ago=0, tas
     return session.id
 
 
-def _lopez(client):
+def _acme(client):
     r = client.post(
-        "/api/households",
+        "/api/organizations",
         json={
-            "name": "Lopez household",
+            "name": "Acme",
             "members": [{"name": "Maria  Lopez"}, {"name": "David Lopez", "email": "D@x.com"}],
         },
     )
@@ -41,8 +41,8 @@ def _lopez(client):
     return r.json()
 
 
-def test_a_households_meetings_and_facts(client, ctx):
-    h = _lopez(client)
+def test_a_organizations_meetings_and_facts(client, ctx):
+    h = _acme(client)
     assert [m["name"] for m in h["members"]] == ["Maria Lopez", "David Lopez"]
     old = _meeting(ctx, "Annual review", [("goal", "Retire at 65")], ["Maria Lopez"], days_ago=365)
     new = _meeting(
@@ -56,9 +56,9 @@ def test_a_households_meetings_and_facts(client, ctx):
     titled = _meeting(ctx, "Call with Maria Lopez", days_ago=30)
     _meeting(ctx, "Someone else", [("goal", "Buy a boat")], ["Maria Smith"], days_ago=1)
 
-    [summary] = client.get("/api/households").json()
+    [summary] = client.get("/api/organizations").json()
     assert summary["meetings"] == 3 and summary["facts"] == 3
-    detail = client.get(f"/api/households/{h['id']}").json()
+    detail = client.get(f"/api/organizations/{h['id']}").json()
     assert [m["id"] for m in detail["meetings"]] == [new, titled, old]
     assert [f["text"] for f in detail["facts"]] == [
         "Retire at 62",
@@ -69,29 +69,29 @@ def test_a_households_meetings_and_facts(client, ctx):
 
 
 def test_the_brief_shows_the_last_reviews_facts(client, ctx):
-    _lopez(client)
+    _acme(client)
     _meeting(ctx, "Annual review", [("goal", "Retire at 65")], ["Maria Lopez"], days_ago=365)
     _meeting(ctx, "Annual review", [("goal", "Retire at 62")], ["Maria Lopez"], days_ago=180)
     _meeting(ctx, "Quick call", [], ["Maria Lopez"], days_ago=10)  # no facts: skipped
     brief = client.get("/api/brief", params={"title": "Review with Maria Lopez"}).json()
-    household = brief["household"]
-    assert household["name"] == "Lopez household"
-    assert [f["text"] for f in household["facts"]] == ["Retire at 62"]
-    assert household["earlier_facts"] == 1
+    organization = brief["organization"]
+    assert organization["name"] == "Acme"
+    assert [f["text"] for f in organization["facts"]] == ["Retire at 62"]
+    assert organization["earlier_facts"] == 1
     by_email = client.get("/api/brief", params={"attendees": ["d@x.com"]}).json()
-    assert by_email["household"]["name"] == "Lopez household"
-    assert client.get("/api/brief", params={"title": "Maria"}).json()["household"] is None
+    assert by_email["organization"]["name"] == "Acme"
+    assert client.get("/api/brief", params={"title": "Maria"}).json()["organization"] is None
 
 
-def test_a_person_is_in_one_household(client, ctx):
-    first = _lopez(client)
-    client.post("/api/households", json={"name": "Other", "members": [{"name": "maria lopez"}]})
-    left = client.get(f"/api/households/{first['id']}").json()
+def test_a_person_is_in_one_organization(client, ctx):
+    first = _acme(client)
+    client.post("/api/organizations", json={"name": "Other", "members": [{"name": "maria lopez"}]})
+    left = client.get(f"/api/organizations/{first['id']}").json()
     assert [m["name"] for m in left["members"]] == ["David Lopez"]
-    r = client.put(f"/api/households/{first['id']}", json={"name": "Lopez", "members": []})
+    r = client.put(f"/api/organizations/{first['id']}", json={"name": "Lopez", "members": []})
     assert r.json()["name"] == "Lopez" and r.json()["members"] == []
-    assert client.delete(f"/api/households/{first['id']}").status_code == 200
-    assert client.get(f"/api/households/{first['id']}").status_code == 404
+    assert client.delete(f"/api/organizations/{first['id']}").status_code == 200
+    assert client.get(f"/api/organizations/{first['id']}").status_code == 404
 
 
 def test_members_see_facts_only_from_their_own_meetings(settings, keystore):
@@ -105,17 +105,17 @@ def test_members_see_facts_only_from_their_own_meetings(settings, keystore):
         tokens[name] = {"Authorization": f"Bearer {ctx.users.redeem(code, 'x')[1]}"}
     with TestClient(app) as client:
         client.headers.update(tokens["Ann"])
-        h = _lopez(client)
+        h = _acme(client)
         sid = client.post("/api/sessions", json={"name": "Review with Maria Lopez"}).json()["id"]
         data = SummaryData(style="client", client_facts=[ClientFact(kind="goal", text="Ann's")])
         ctx.repo.update_fields(sid, summary_data=data)
-        assert len(client.get(f"/api/households/{h['id']}").json()["facts"]) == 1
+        assert len(client.get(f"/api/organizations/{h['id']}").json()["facts"]) == 1
         client.headers.update(tokens["Bob"])
-        detail = client.get(f"/api/households/{h['id']}").json()
+        detail = client.get(f"/api/organizations/{h['id']}").json()
         assert detail["members"] and detail["facts"] == [] and detail["meetings"] == []
 
 
-def test_hubspot_companies_become_households(client, ctx):
+def test_hubspot_companies_become_organizations(client, ctx):
     contacts = [
         {"id": "1", "firstname": "Maria", "lastname": "Lopez", "email": "m@x.com", "co": "900"},
         {"id": "2", "firstname": "David", "lastname": "Lopez", "email": "", "co": "900"},
@@ -161,16 +161,18 @@ def test_hubspot_companies_become_households(client, ctx):
     ctx.http_transport = httpx.MockTransport(fake)
     ctx.settings.hubspot_token = TOKEN
     manual = client.post(
-        "/api/households", json={"name": "Mine", "members": [{"name": "Neighbor Joe"}]}
+        "/api/organizations", json={"name": "Mine", "members": [{"name": "Neighbor Joe"}]}
     ).json()
-    r = client.post("/api/households/sync-hubspot").json()
-    assert r == {"created": 2, "updated": 0, "households": 2}
+    r = client.post("/api/organizations/sync-hubspot").json()
+    assert r == {"created": 2, "updated": 0, "organizations": 2}
     # Again, with a member added by hand to a synced one: updated, the hand-added member stays.
-    lopez = next(h for h in client.get("/api/households").json() if h["name"] == "Lopez Family")
+    lopez = next(h for h in client.get("/api/organizations").json() if h["name"] == "Lopez Family")
     members = [*lopez["members"], {"name": "Emma Lopez"}]
-    client.put(f"/api/households/{lopez['id']}", json={"name": "Lopez Family", "members": members})
-    assert client.post("/api/households/sync-hubspot").json()["updated"] == 2
-    found = {h["name"]: h for h in client.get("/api/households").json()}
+    client.put(
+        f"/api/organizations/{lopez['id']}", json={"name": "Lopez Family", "members": members}
+    )
+    assert client.post("/api/organizations/sync-hubspot").json()["updated"] == 2
+    found = {h["name"]: h for h in client.get("/api/organizations").json()}
     assert [(m["name"], m["source"]) for m in found["Lopez Family"]["members"]] == [
         ("Maria Lopez", "hubspot"),
         ("David Lopez", "hubspot"),

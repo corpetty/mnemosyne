@@ -27,7 +27,7 @@ class FakeHubSpot:
             "104": {"firstname": "Tom", "lastname": "Jones", "email": "tj@x.com",
                     "company": "", "associatedcompanyid": None},
         }  # fmt: skip
-        self.companies = {"900": {"name": "Client Household"}}
+        self.companies = {"900": {"name": "Client Organization"}}
         self.owners = [{"id": "77", "email": "owner@example.com", "firstName": "Ann",
                         "lastName": "Advisor", "userId": 5}]  # fmt: skip
         self.objects: dict[str, dict[str, dict]] = {"meetings": {}, "notes": {}, "tasks": {}}
@@ -195,9 +195,9 @@ def test_matches_by_email_then_name(client, ctx):
     r = client.get(f"/api/sessions/{s.id}/crm/hubspot/matches").json()
     got = [(c["id"], c["matched_by"], c["matched_on"], c["company"]) for c in r["candidates"]]
     assert got == [
-        ("101", "email", "jane@client.com", "Client Household"),  # the calendar's address
+        ("101", "email", "jane@client.com", "Client Organization"),  # the calendar's address
         ("102", "email", "bob@x.com", "Bob's own text"),  # an attendee written as an email
-        ("103", "name", "Tom Smith", "Client Household"),  # a speaker; Tom Jones is not him
+        ("103", "name", "Tom Smith", "Client Organization"),  # a speaker; Tom Jones is not him
     ]
     # generic speakers ("Speaker 1", "Me") are never searched; Jane was found by email
     assert r["searched"] == ["jane@client.com", "bob@x.com", "Ann Advisor", "Tom Smith"]
@@ -228,7 +228,7 @@ def test_push_creates_then_updates(client, ctx):
     end = datetime.fromisoformat(meeting["hs_meeting_end_time"])
     assert (end - start).total_seconds() == 1800
     assert meeting["hs_timestamp"] == meeting["hs_meeting_start_time"]
-    # one company for both contacts (the household), each association with its default type
+    # one company for both contacts (the organization), each association with its default type
     assert fake.assoc("meetings", st["meeting_id"]) == {("101", 200), ("103", 200), ("900", 188)}
     note = fake.objects["notes"][st["note_id"]]
     assert "Keep the allocation" in note["hs_note_body"]

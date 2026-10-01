@@ -91,5 +91,5 @@ def test_brief_route(client, ctx):
         "open_items": [],
         "open_questions": [],
         "last_summary": "",
-        "household": None,
+        "organization": None,
     }

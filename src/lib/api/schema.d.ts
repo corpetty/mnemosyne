@@ -480,7 +480,7 @@ export interface paths {
         /**
          * Get Brief
          * @description What is still open from earlier meetings with this title or these people, and what the
-         *     household the meeting is with said last time.
+         *     organization the meeting is with said last time.
          */
         get: operations["get_brief_api_brief_get"];
         put?: never;
@@ -701,66 +701,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/households": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Households */
-        get: operations["list_households_api_households_get"];
-        put?: never;
-        /** Create Household */
-        post: operations["create_household_api_households_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/households/sync-hubspot": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Sync Hubspot
-         * @description HubSpot companies and their contacts as households (reads HubSpot, writes nothing).
-         */
-        post: operations["sync_hubspot_api_households_sync_hubspot_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/households/{household_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Household */
-        get: operations["get_household_api_households__household_id__get"];
-        /** Update Household */
-        put: operations["update_household_api_households__household_id__put"];
-        post?: never;
-        /**
-         * Delete Household
-         * @description The grouping only: its people and meetings stay.
-         */
-        delete: operations["delete_household_api_households__household_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/integrations": {
         parameters: {
             query?: never;
@@ -878,6 +818,66 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Organizations */
+        get: operations["list_organizations_api_organizations_get"];
+        put?: never;
+        /** Create Organization */
+        post: operations["create_organization_api_organizations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/sync-hubspot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync Hubspot
+         * @description HubSpot companies and their contacts as organizations (reads HubSpot, writes nothing).
+         */
+        post: operations["sync_hubspot_api_organizations_sync_hubspot_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{organization_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Organization */
+        get: operations["get_organization_api_organizations__organization_id__get"];
+        /** Update Organization */
+        put: operations["update_organization_api_organizations__organization_id__put"];
+        post?: never;
+        /**
+         * Delete Organization
+         * @description The grouping only: its people and meetings stay.
+         */
+        delete: operations["delete_organization_api_organizations__organization_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2751,7 +2751,6 @@ export interface components {
         };
         /** Brief */
         Brief: {
-            household: components["schemas"]["HouseholdBrief"] | null;
             /** Last Summary */
             last_summary: string;
             /** Meetings */
@@ -2760,6 +2759,7 @@ export interface components {
             open_items: components["schemas"]["TaskItem"][];
             /** Open Questions */
             open_questions: components["schemas"]["OpenQuestion"][];
+            organization: components["schemas"]["OrganizationBrief"] | null;
         };
         /** CalendarEvent */
         CalendarEvent: {
@@ -3284,138 +3284,6 @@ export interface components {
             /** Started At */
             started_at: string | null;
         };
-        /** Household */
-        Household: {
-            /** Hubspot Company Id */
-            hubspot_company_id: string;
-            /** Id */
-            id: string;
-            /** Members */
-            members: components["schemas"]["HouseholdMember-Output"][];
-            /** Name */
-            name: string;
-        };
-        /**
-         * HouseholdBrief
-         * @description For the next meeting: what the household said at the last one that recorded facts.
-         */
-        HouseholdBrief: {
-            /** Earlier Facts */
-            earlier_facts: number;
-            /** Facts */
-            facts: components["schemas"]["HouseholdFact"][];
-            /** Id */
-            id: string;
-            last_meeting: components["schemas"]["HouseholdMeeting"] | null;
-            /** Name */
-            name: string;
-        };
-        /** HouseholdDetail */
-        HouseholdDetail: {
-            /** Facts */
-            facts: components["schemas"]["HouseholdFact"][];
-            /** Hubspot Company Id */
-            hubspot_company_id: string;
-            /** Id */
-            id: string;
-            /** Meetings */
-            meetings: components["schemas"]["HouseholdMeeting"][];
-            /** Members */
-            members: components["schemas"]["HouseholdMember-Output"][];
-            /** Name */
-            name: string;
-            /** Open Tasks */
-            open_tasks: components["schemas"]["TaskItem"][];
-        };
-        /** HouseholdFact */
-        HouseholdFact: {
-            /** At */
-            at: number | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "goal" | "concern" | "preference" | "context" | "next_meeting" | "other";
-            /** Session Id */
-            session_id: string;
-            /** Session Name */
-            session_name: string;
-            /** Text */
-            text: string;
-        };
-        /** HouseholdInput */
-        HouseholdInput: {
-            /** Members */
-            members: components["schemas"]["HouseholdMember-Input"][];
-            /** Name */
-            name: string;
-        };
-        /** HouseholdMeeting */
-        HouseholdMeeting: {
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Id */
-            id: string;
-            /** Name */
-            name: string;
-        };
-        /** HouseholdMember */
-        "HouseholdMember-Input": {
-            /**
-             * Email
-             * @default
-             */
-            email: string;
-            /** Name */
-            name: string;
-            /**
-             * Source
-             * @default manual
-             * @enum {string}
-             */
-            source: "manual" | "hubspot";
-        };
-        /** HouseholdMember */
-        "HouseholdMember-Output": {
-            /**
-             * Email
-             * @default
-             */
-            email: string;
-            /** Name */
-            name: string;
-            /**
-             * Source
-             * @default manual
-             * @enum {string}
-             */
-            source: "manual" | "hubspot";
-        };
-        /** HouseholdSummary */
-        HouseholdSummary: {
-            /** Facts */
-            facts: number;
-            /** Hubspot Company Id */
-            hubspot_company_id: string;
-            /** Id */
-            id: string;
-            /** Last Meeting */
-            last_meeting: string | null;
-            /** Meetings */
-            meetings: number;
-            /** Members */
-            members: components["schemas"]["HouseholdMember-Output"][];
-            /** Name */
-            name: string;
-        };
         /** HubSpotContact */
         HubSpotContact: {
             /**
@@ -3498,8 +3366,8 @@ export interface components {
         HubSpotSync: {
             /** Created */
             created: number;
-            /** Households */
-            households: number;
+            /** Organizations */
+            organizations: number;
             /** Updated */
             updated: number;
         };
@@ -3756,6 +3624,138 @@ export interface components {
             session_name: string;
             /** Text */
             text: string;
+        };
+        /** Organization */
+        Organization: {
+            /** Hubspot Company Id */
+            hubspot_company_id: string;
+            /** Id */
+            id: string;
+            /** Members */
+            members: components["schemas"]["OrganizationMember-Output"][];
+            /** Name */
+            name: string;
+        };
+        /**
+         * OrganizationBrief
+         * @description For the next meeting: what the organization said at the last one that recorded facts.
+         */
+        OrganizationBrief: {
+            /** Earlier Facts */
+            earlier_facts: number;
+            /** Facts */
+            facts: components["schemas"]["OrganizationFact"][];
+            /** Id */
+            id: string;
+            last_meeting: components["schemas"]["OrganizationMeeting"] | null;
+            /** Name */
+            name: string;
+        };
+        /** OrganizationDetail */
+        OrganizationDetail: {
+            /** Facts */
+            facts: components["schemas"]["OrganizationFact"][];
+            /** Hubspot Company Id */
+            hubspot_company_id: string;
+            /** Id */
+            id: string;
+            /** Meetings */
+            meetings: components["schemas"]["OrganizationMeeting"][];
+            /** Members */
+            members: components["schemas"]["OrganizationMember-Output"][];
+            /** Name */
+            name: string;
+            /** Open Tasks */
+            open_tasks: components["schemas"]["TaskItem"][];
+        };
+        /** OrganizationFact */
+        OrganizationFact: {
+            /** At */
+            at: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "goal" | "concern" | "preference" | "context" | "next_meeting" | "other";
+            /** Session Id */
+            session_id: string;
+            /** Session Name */
+            session_name: string;
+            /** Text */
+            text: string;
+        };
+        /** OrganizationInput */
+        OrganizationInput: {
+            /** Members */
+            members: components["schemas"]["OrganizationMember-Input"][];
+            /** Name */
+            name: string;
+        };
+        /** OrganizationMeeting */
+        OrganizationMeeting: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** OrganizationMember */
+        "OrganizationMember-Input": {
+            /**
+             * Email
+             * @default
+             */
+            email: string;
+            /** Name */
+            name: string;
+            /**
+             * Source
+             * @default manual
+             * @enum {string}
+             */
+            source: "manual" | "hubspot";
+        };
+        /** OrganizationMember */
+        "OrganizationMember-Output": {
+            /**
+             * Email
+             * @default
+             */
+            email: string;
+            /** Name */
+            name: string;
+            /**
+             * Source
+             * @default manual
+             * @enum {string}
+             */
+            source: "manual" | "hubspot";
+        };
+        /** OrganizationSummary */
+        OrganizationSummary: {
+            /** Facts */
+            facts: number;
+            /** Hubspot Company Id */
+            hubspot_company_id: string;
+            /** Id */
+            id: string;
+            /** Last Meeting */
+            last_meeting: string | null;
+            /** Meetings */
+            meetings: number;
+            /** Members */
+            members: components["schemas"]["OrganizationMember-Output"][];
+            /** Name */
+            name: string;
         };
         /** PairedDeviceInfo */
         PairedDeviceInfo: {
@@ -6605,176 +6605,6 @@ export interface operations {
             };
         };
     };
-    list_households_api_households_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HouseholdSummary"][];
-                };
-            };
-        };
-    };
-    create_household_api_households_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["HouseholdInput"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Household"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    sync_hubspot_api_households_sync_hubspot_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HubSpotSync"];
-                };
-            };
-        };
-    };
-    get_household_api_households__household_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                household_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HouseholdDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_household_api_households__household_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                household_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["HouseholdInput"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Household"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_household_api_households__household_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                household_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     configured_api_integrations_get: {
         parameters: {
             query?: never;
@@ -6956,6 +6786,176 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderModels"][];
+                };
+            };
+        };
+    };
+    list_organizations_api_organizations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationSummary"][];
+                };
+            };
+        };
+    };
+    create_organization_api_organizations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sync_hubspot_api_organizations_sync_hubspot_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HubSpotSync"];
+                };
+            };
+        };
+    };
+    get_organization_api_organizations__organization_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_organization_api_organizations__organization_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_organization_api_organizations__organization_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

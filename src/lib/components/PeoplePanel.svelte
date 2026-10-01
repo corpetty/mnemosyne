@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { uiState } from '$lib/stores/ui.svelte.js';
-	import { getPerson, listHouseholds, listPeople, setActionItemDone } from '$lib/api/backend.js';
-	import HouseholdsPanel from './HouseholdsPanel.svelte';
+	import { getPerson, listOrganizations, listPeople, setActionItemDone } from '$lib/api/backend.js';
+	import OrganizationsPanel from './OrganizationsPanel.svelte';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
-	import type { HouseholdSummary, PersonDetail, PersonSummary, TaskItem } from '$lib/types/index.js';
+	import type { OrganizationSummary, PersonDetail, PersonSummary, TaskItem } from '$lib/types/index.js';
 
 	let { onOpenSession }: { onOpenSession?: () => void } = $props();
 
@@ -13,22 +13,22 @@
 	let filter = $state('');
 	let selected = $state<string | null>(null);
 	let detail = $state<PersonDetail | null>(null);
-	let mode = $state<'people' | 'households'>('people');
-	let households = $state<HouseholdSummary[]>([]);
-	let householdRequest = $state<string | null>(null);
+	let mode = $state<'people' | 'organizations'>('people');
+	let organizations = $state<OrganizationSummary[]>([]);
+	let organizationRequest = $state<string | null>(null);
 
 	$effect(() => {
-		void mode; // the households tab may have changed them
-		listHouseholds()
-			.then((h) => (households = h))
-			.catch(() => (households = []));
+		void mode; // the organizations tab may have changed them
+		listOrganizations()
+			.then((h) => (organizations = h))
+			.catch(() => (organizations = []));
 	});
-	const householdOf = (name: string) =>
-		households.find((h) => h.members.some((m) => m.name.toLowerCase() === name.toLowerCase())) ?? null;
+	const organizationOf = (name: string) =>
+		organizations.find((h) => h.members.some((m) => m.name.toLowerCase() === name.toLowerCase())) ?? null;
 
-	function showHousehold(id: string) {
-		householdRequest = id;
-		mode = 'households';
+	function showOrganization(id: string) {
+		organizationRequest = id;
+		mode = 'organizations';
 	}
 
 	$effect(() => {
@@ -91,9 +91,9 @@
 		<div class="flex items-center gap-3 mb-1">
 			<h2 class="text-xl font-semibold text-gray-100">People</h2>
 			<div class="flex rounded-lg border border-gray-800 bg-gray-900 p-0.5" role="group" aria-label="Show">
-				{#each [['people', 'People'], ['households', 'Households']] as [value, label] (value)}
+				{#each [['people', 'People'], ['organizations', 'Organizations']] as [value, label] (value)}
 					<button
-						onclick={() => ((mode = value as typeof mode), (householdRequest = null))}
+						onclick={() => ((mode = value as typeof mode), (organizationRequest = null))}
 						aria-pressed={mode === value}
 						class="px-3 py-0.5 rounded-md text-xs {mode === value ? 'bg-gray-700 text-gray-100' : 'text-gray-400 hover:text-gray-200'}"
 					>{label}</button>
@@ -105,13 +105,13 @@
 				Everyone named in your meetings: speakers you have named, invitees from the calendar, action item owners and saved
 				voices.
 			{:else}
-				Clients grouped as you serve them, with what they told you across their meetings.
+				The people you meet grouped by who they are with, and what was said across their meetings.
 			{/if}
 		</p>
 	</div>
 
-	{#if mode === 'households'}
-		{#key householdRequest}<HouseholdsPanel {onOpenSession} initial={householdRequest} />{/key}
+	{#if mode === 'organizations'}
+		{#key organizationRequest}<OrganizationsPanel {onOpenSession} initial={organizationRequest} />{/key}
 	{:else if loaded && people.length === 0}
 		<p class="text-sm text-gray-600">Nobody yet. Name speakers in a transcript, or connect a calendar, and people show up here.</p>
 	{:else}
@@ -148,9 +148,9 @@
 							{detail.meetings.length} meetings{#if detail.total_talk_seconds} · talked {dur(detail.total_talk_seconds)} in total{/if}
 							{#if detail.has_voice} · voice saved{/if}
 						</p>
-						{#if householdOf(detail.name)}
-							{@const h = householdOf(detail.name)!}
-							<button onclick={() => showHousehold(h.id)} class="mt-1 text-xs text-blue-400 hover:text-blue-300">Household: {h.name}</button>
+						{#if organizationOf(detail.name)}
+							{@const h = organizationOf(detail.name)!}
+							<button onclick={() => showOrganization(h.id)} class="mt-1 text-xs text-blue-400 hover:text-blue-300">Organization: {h.name}</button>
 						{/if}
 					</header>
 

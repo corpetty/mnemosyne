@@ -1,11 +1,11 @@
-"""HubSpot: a meeting's record in the CRM, for firms that keep their clients there.
+"""HubSpot: a meeting's record in the CRM, for teams that keep their clients there.
 
 A meeting is matched to HubSpot contacts (calendar attendees by email, then speaker names), the
 user confirms which contacts it belongs to, and a push writes one meeting engagement (the
 summary), one note (decisions, open questions, client facts) and one task per action item, all
-associated with those contacts and each contact's primary company (how firms usually model a
-household). The ids of what was created are kept per session (sessions.crm), so pushing again
-updates the same records instead of duplicating them.
+associated with those contacts and each contact's primary company. The ids of what was created
+are kept per session (sessions.crm), so pushing again updates the same records instead of
+duplicating them.
 
 Auth is a private app's access token with the scopes crm.objects.contacts.read and .write
 (meetings, notes and tasks come under the contacts scopes), crm.objects.companies.read and
@@ -338,7 +338,7 @@ class HubSpotClient:
         self, limit: int = 5000
     ) -> list[tuple[str, str, list[tuple[str, str]]]]:
         """(company id, name, [(contact name, email)]) for every company with contacts, from
-        each contact's primary company (households, services/households.py). Reads only."""
+        each contact's primary company (organizations, services/organizations.py). Reads only."""
         if problem := self.validate():
             raise HubSpotError(problem)
         by_company: dict[str, list[tuple[str, str]]] = {}

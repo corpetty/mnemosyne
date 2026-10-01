@@ -1,30 +1,30 @@
 <script lang="ts">
-	import { deleteHousehold, getHousehold, listHouseholds, saveHousehold, syncHouseholdsFromHubSpot } from '$lib/api/backend.js';
+	import { deleteOrganization, getOrganization, listOrganizations, saveOrganization, syncOrganizationsFromHubSpot } from '$lib/api/backend.js';
 	import { groupFacts } from '$lib/app/facts.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
-	import type { HouseholdDetail, HouseholdMember, HouseholdSummary } from '$lib/types/index.js';
+	import type { OrganizationDetail, OrganizationMember, OrganizationSummary } from '$lib/types/index.js';
 
-	// Households (backend services/households.py): clients grouped as the firm serves them, with
+	// Organizations (backend services/organizations.py): people grouped by who they are with, with
 	// what they said across their meetings.
 	let { onOpenSession, initial = null }: { onOpenSession?: () => void; initial?: string | null } = $props();
 
-	let households = $state<HouseholdSummary[]>([]);
+	let organizations = $state<OrganizationSummary[]>([]);
 	let loaded = $state(false);
 	let selected = $state<string | null>(null);
-	let detail = $state<HouseholdDetail | null>(null);
+	let detail = $state<OrganizationDetail | null>(null);
 	let editing = $state<{ id: string | null; name: string; members: string } | null>(null);
 	let syncing = $state(false);
 	const isAdmin = $derived(connectionState.me?.role === 'admin');
 
 	async function load() {
 		try {
-			households = await listHouseholds();
+			organizations = await listOrganizations();
 			loaded = true;
-			if (!selected && households.length) selected = initial ?? households[0].id;
+			if (!selected && organizations.length) selected = initial ?? organizations[0].id;
 		} catch (e) {
-			toastState.error(e instanceof Error ? e.message : 'Could not load households');
+			toastState.error(e instanceof Error ? e.message : 'Could not load organizations');
 		}
 	}
 
@@ -38,17 +38,17 @@
 			detail = null;
 			return;
 		}
-		getHousehold(id)
+		getOrganization(id)
 			.then((d) => {
 				if (selected === id) detail = d;
 			})
 			.catch(() => (detail = null));
 	});
 
-	// Members as lines: "Maria Lopez" or "Maria Lopez <maria@example.com>".
-	const asLines = (members: HouseholdMember[]) => members.map((m) => (m.email ? `${m.name} <${m.email}>` : m.name)).join('\n');
+	// Members as lines: "Dana Reyes" or "Dana Reyes <dana@example.com>".
+	const asLines = (members: OrganizationMember[]) => members.map((m) => (m.email ? `${m.name} <${m.email}>` : m.name)).join('\n');
 
-	function parse(text: string, before: HouseholdMember[]) {
+	function parse(text: string, before: OrganizationMember[]) {
 		return text
 			.split('\n')
 			.map((line) => line.match(/^\s*([^<]+?)\s*(?:<\s*([^>]*?)\s*>)?\s*$/))
@@ -64,31 +64,31 @@
 		if (!editing) return;
 		try {
 			const before = editing.id && detail ? detail.members : [];
-			const saved = await saveHousehold({ name: editing.name, members: parse(editing.members, before) }, editing.id ?? undefined);
+			const saved = await saveOrganization({ name: editing.name, members: parse(editing.members, before) }, editing.id ?? undefined);
 			editing = null;
 			selected = saved.id;
 			await load();
-			detail = await getHousehold(saved.id);
+			detail = await getOrganization(saved.id);
 		} catch (e) {
-			toastState.error(e instanceof Error ? e.message : 'Could not save the household');
+			toastState.error(e instanceof Error ? e.message : 'Could not save the organization');
 		}
 	}
 
 	async function remove() {
-		if (!detail || !confirm(`Remove the household “${detail.name}”? Its people and meetings stay.`)) return;
+		if (!detail || !confirm(`Remove the organization “${detail.name}”? Its people and meetings stay.`)) return;
 		try {
-			await deleteHousehold(detail.id);
+			await deleteOrganization(detail.id);
 			selected = null;
 			await load();
 		} catch (e) {
-			toastState.error(e instanceof Error ? e.message : 'Could not remove the household');
+			toastState.error(e instanceof Error ? e.message : 'Could not remove the organization');
 		}
 	}
 
 	async function sync() {
 		syncing = true;
 		try {
-			const r = await syncHouseholdsFromHubSpot();
+			const r = await syncOrganizationsFromHubSpot();
 			toastState.success(`HubSpot: ${r.created} new, ${r.updated} updated`);
 			await load();
 		} catch (e) {
@@ -112,19 +112,19 @@
 	<div class="space-y-2">
 		<div class="flex flex-wrap gap-2">
 			<button onclick={() => (editing = { id: null, name: '', members: '' })} class="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700">
-				New household
+				New organization
 			</button>
 			{#if isAdmin}
-				<button onclick={sync} disabled={syncing} class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50" title="Companies and their contacts become households; nothing is written to HubSpot">
+				<button onclick={sync} disabled={syncing} class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50" title="Companies and their contacts become organizations; nothing is written to HubSpot">
 					{syncing ? 'Reading HubSpot…' : 'From HubSpot'}
 				</button>
 			{/if}
 		</div>
-		{#if loaded && households.length === 0}
-			<p class="text-xs text-gray-600">No households yet. Group the people you meet together (a couple, a family).</p>
+		{#if loaded && organizations.length === 0}
+			<p class="text-xs text-gray-600">No organizations yet. Group the people you meet by who they are with (a client, a customer, a partner).</p>
 		{/if}
 		<ul class="space-y-0.5 max-h-[60vh] overflow-y-auto">
-			{#each households as h (h.id)}
+			{#each organizations as h (h.id)}
 				<li>
 					<button
 						onclick={() => ((selected = h.id), (editing = null))}
@@ -141,22 +141,22 @@
 	</div>
 
 	{#if editing}
-		<form class="space-y-3" onsubmit={(e) => (e.preventDefault(), save())} aria-label="Household">
+		<form class="space-y-3" onsubmit={(e) => (e.preventDefault(), save())} aria-label="Organization">
 			<label class="block text-xs text-gray-400">
 				Name
-				<input bind:value={editing.name} required placeholder="Lopez household" class="mt-1 block w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-sm text-gray-100" />
+				<input bind:value={editing.name} required placeholder="Acme Corp" class="mt-1 block w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-sm text-gray-100" />
 			</label>
 			<label class="block text-xs text-gray-400">
 				People, one per line, as they are named in meetings (an email helps match calendar invites)
-				<textarea bind:value={editing.members} rows="5" placeholder={'Maria Lopez <maria@example.com>\nDavid Lopez'} class="mt-1 block w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-sm text-gray-100"></textarea>
+				<textarea bind:value={editing.members} rows="5" placeholder={'Dana Reyes <dana@acme.example>\nSam Ortiz'} class="mt-1 block w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-sm text-gray-100"></textarea>
 			</label>
 			<div class="flex gap-2">
-				<button type="submit" class="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500">Save household</button>
+				<button type="submit" class="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500">Save organization</button>
 				<button type="button" onclick={() => (editing = null)} class="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200">Cancel</button>
 			</div>
 		</form>
 	{:else if detail}
-		<article class="space-y-4" aria-label="Household {detail.name}">
+		<article class="space-y-4" aria-label="Organization {detail.name}">
 			<header>
 				<div class="flex flex-wrap items-baseline gap-2">
 					<h3 class="text-lg font-semibold text-gray-100">{detail.name}</h3>

@@ -1,15 +1,15 @@
-"""Households (advisory pilot, item 11): clients grouped the way a firm serves them (a couple, a
-family), with what they said in meetings collected across all of the household's meetings.
+"""Organizations: the people you meet grouped by who they are with (a client, a customer, a
+partner), with what was said across all of the organization's meetings.
 
-A household is a name and its members (people by name, as transcripts and calendars name them,
-with an email when known). A meeting is the household's when a member spoke in it or was
+An organization is a name and its members (people by name, as transcripts and calendars name
+them, with an email when known). A meeting is the organization's when a member spoke in it or was
 invited (by name or email), when its title names a member (first and last name) or the
-household, or when it was sent to the household's HubSpot company. Its client facts (the
-`advisory` summary style) add up per household, newest first, and the pre-meeting brief shows
-the last review's. Facts come only from meetings the caller may see (access.py).
+organization, or when it was sent to the organization's HubSpot company. Its client facts (the
+`client` summary style) add up per organization, newest first, and the pre-meeting brief shows
+the last meeting's. Facts come only from meetings the caller may see (access.py).
 
-With HubSpot connected, companies (how firms usually model households there) and their
-contacts become households; members added by hand stay.
+With HubSpot connected, companies and their contacts become organizations; members added by hand
+stay.
 """
 
 from __future__ import annotations
@@ -30,37 +30,37 @@ if TYPE_CHECKING:
     from ..api.context import AppContext
 
 
-class HouseholdMember(ApiModel):
+class OrganizationMember(ApiModel):
     name: str
     email: str = ""
     source: Literal["manual", "hubspot"] = "manual"
 
 
-class Household(ApiModel):
+class Organization(ApiModel):
     id: str
     name: str
     hubspot_company_id: str
-    members: list[HouseholdMember]
+    members: list[OrganizationMember]
 
 
-class HouseholdInput(ApiModel):
+class OrganizationInput(ApiModel):
     name: str
-    members: list[HouseholdMember]
+    members: list[OrganizationMember]
 
 
-class HouseholdSummary(Household):
+class OrganizationSummary(Organization):
     meetings: int
     last_meeting: datetime | None
     facts: int
 
 
-class HouseholdMeeting(ApiModel):
+class OrganizationMeeting(ApiModel):
     id: str
     name: str
     created_at: datetime
 
 
-class HouseholdFact(ApiModel):
+class OrganizationFact(ApiModel):
     kind: ClientFactKind
     text: str
     at: float | None  # seconds into the meeting
@@ -69,41 +69,41 @@ class HouseholdFact(ApiModel):
     created_at: datetime
 
 
-class HouseholdDetail(Household):
-    meetings: list[HouseholdMeeting]  # newest first
-    facts: list[HouseholdFact]  # newest meeting first, in the order said
+class OrganizationDetail(Organization):
+    meetings: list[OrganizationMeeting]  # newest first
+    facts: list[OrganizationFact]  # newest meeting first, in the order said
     open_tasks: list[TaskItem]
 
 
-class HouseholdBrief(ApiModel):
-    """For the next meeting: what the household said at the last one that recorded facts."""
+class OrganizationBrief(ApiModel):
+    """For the next meeting: what the organization said at the last one that recorded facts."""
 
     id: str
     name: str
-    last_meeting: HouseholdMeeting | None
-    facts: list[HouseholdFact]
-    earlier_facts: int  # in meetings before that one (on the household's page)
+    last_meeting: OrganizationMeeting | None
+    facts: list[OrganizationFact]
+    earlier_facts: int  # in meetings before that one (on the organization's page)
 
 
 class HubSpotSync(ApiModel):
     created: int
     updated: int
-    households: int
+    organizations: int
 
 
 def _key(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
-def load(app: AppContext) -> list[Household]:
-    return [Household(**h) for h in app.repo.households()]
+def load(app: AppContext) -> list[Organization]:
+    return [Organization(**h) for h in app.repo.organizations()]
 
 
-def get(app: AppContext, household_id: str) -> Household | None:
-    return next((h for h in load(app) if h.id == household_id), None)
+def get(app: AppContext, organization_id: str) -> Organization | None:
+    return next((h for h in load(app) if h.id == organization_id), None)
 
 
-def _clean(members: list[HouseholdMember]) -> list[dict]:
+def _clean(members: list[OrganizationMember]) -> list[dict]:
     seen: set[str] = set()
     out = []
     for m in members:
@@ -114,12 +114,14 @@ def _clean(members: list[HouseholdMember]) -> list[dict]:
     return out
 
 
-def save(app: AppContext, data: HouseholdInput, household_id: str | None = None) -> Household:
-    old = get(app, household_id) if household_id else None
+def save(
+    app: AppContext, data: OrganizationInput, organization_id: str | None = None
+) -> Organization:
+    old = get(app, organization_id) if organization_id else None
     hid = old.id if old else uuid4().hex[:8]
-    app.repo.save_household(
+    app.repo.save_organization(
         hid,
-        " ".join(data.name.split()) or "Household",
+        " ".join(data.name.split()) or "Organization",
         _clean(data.members),
         old.hubspot_company_id if old else "",
     )
@@ -128,7 +130,7 @@ def save(app: AppContext, data: HouseholdInput, household_id: str | None = None)
 
 @dataclass
 class _Row:
-    """A meeting as matching needs it, parsed once for every household."""
+    """A meeting as matching needs it, parsed once for every organization."""
 
     id: str
     name: str
@@ -168,13 +170,13 @@ def _load_rows(app: AppContext, exclude: str | None = None) -> list[_Row]:
 
 
 class _Matcher:
-    """Does a meeting (its people, emails, title, CRM links) belong to this household?"""
+    """Does a meeting (its people, emails, title, CRM links) belong to this organization?"""
 
-    def __init__(self, h: Household):
-        self.household = h
+    def __init__(self, h: Organization):
+        self.organization = h
         self.names = {_key(m.name) for m in h.members}
         self.emails = {m.email for m in h.members if m.email}
-        # Titles: full names only ("Maria Lopez", not "Maria"), and the household's name.
+        # Titles: full names only ("Dana Reyes", not "Dana"), and the organization's name.
         titled = [m.name for m in h.members if len(m.name.split()) >= 2] + [h.name]
         self.titles = [keyword_pattern(t) for t in titled if t.strip()]
         self.company = f"companies:{h.hubspot_company_id}" if h.hubspot_company_id else ""
@@ -196,13 +198,13 @@ class _Matcher:
         )
 
 
-def _meeting(r: _Row) -> HouseholdMeeting:
-    return HouseholdMeeting(id=r.id, name=r.name, created_at=r.created_at)
+def _meeting(r: _Row) -> OrganizationMeeting:
+    return OrganizationMeeting(id=r.id, name=r.name, created_at=r.created_at)
 
 
-def _facts(r: _Row) -> list[HouseholdFact]:
+def _facts(r: _Row) -> list[OrganizationFact]:
     return [
-        HouseholdFact(
+        OrganizationFact(
             kind=f.kind,
             text=f.text,
             at=f.at,
@@ -214,20 +216,20 @@ def _facts(r: _Row) -> list[HouseholdFact]:
     ]
 
 
-def _rows(app: AppContext, h: Household, exclude: str | None = None) -> list[_Row]:
-    """The household's meetings the caller may see, newest first."""
+def _rows(app: AppContext, h: Organization, exclude: str | None = None) -> list[_Row]:
+    """The organization's meetings the caller may see, newest first."""
     match = _Matcher(h)
     return [r for r in _load_rows(app, exclude) if match.row(r)]
 
 
-def summaries(app: AppContext) -> list[HouseholdSummary]:
+def summaries(app: AppContext) -> list[OrganizationSummary]:
     rows = _load_rows(app)
     out = []
     for h in load(app):
         match = _Matcher(h)
         mine = [r for r in rows if match.row(r)]
         out.append(
-            HouseholdSummary(
+            OrganizationSummary(
                 **h.model_dump(),
                 meetings=len(mine),
                 last_meeting=mine[0].created_at if mine else None,
@@ -237,8 +239,8 @@ def summaries(app: AppContext) -> list[HouseholdSummary]:
     return out
 
 
-def detail(app: AppContext, household_id: str) -> HouseholdDetail | None:
-    h = get(app, household_id)
+def detail(app: AppContext, organization_id: str) -> OrganizationDetail | None:
+    h = get(app, organization_id)
     if h is None:
         return None
     rows = _rows(app, h)
@@ -258,7 +260,7 @@ def detail(app: AppContext, household_id: str) -> HouseholdDetail | None:
         for i, a in enumerate(r.data.action_items if r.data else [])
         if not a.done
     ]
-    return HouseholdDetail(
+    return OrganizationDetail(
         **h.model_dump(),
         meetings=[_meeting(r) for r in rows],
         facts=[f for r in rows for f in _facts(r)],
@@ -266,8 +268,8 @@ def detail(app: AppContext, household_id: str) -> HouseholdDetail | None:
     )
 
 
-def for_meeting(app: AppContext, title: str, attendees: list[str]) -> Household | None:
-    """The household a coming meeting is with: the most members among its attendees, else one
+def for_meeting(app: AppContext, title: str, attendees: list[str]) -> Organization | None:
+    """The organization a coming meeting is with: the most members among its attendees, else one
     its title names."""
     emails = [a for a in attendees if "@" in a]
     best, score = None, 0
@@ -281,14 +283,14 @@ def for_meeting(app: AppContext, title: str, attendees: list[str]) -> Household 
 
 def brief(
     app: AppContext, title: str, attendees: list[str], exclude: str | None = None
-) -> HouseholdBrief | None:
+) -> OrganizationBrief | None:
     h = for_meeting(app, title, attendees)
     if h is None:
         return None
     rows = _rows(app, h, exclude)
     with_facts = [r for r in rows if r.data and r.data.client_facts]
     last = with_facts[0] if with_facts else None
-    return HouseholdBrief(
+    return OrganizationBrief(
         id=h.id,
         name=h.name,
         last_meeting=_meeting(last) if last else None,
@@ -298,7 +300,7 @@ def brief(
 
 
 async def sync_hubspot(app: AppContext) -> HubSpotSync:
-    """HubSpot companies with contacts become households (matched by company id); their
+    """HubSpot companies with contacts become organizations (matched by company id); their
     HubSpot members are replaced, members added by hand stay. Nothing is written to HubSpot."""
     from .hubspot import client_for
 
@@ -307,13 +309,13 @@ async def sync_hubspot(app: AppContext) -> HubSpotSync:
     created = updated = 0
     for company_id, name, contacts in companies:
         old = existing.get(company_id)
-        hubspot = [HouseholdMember(name=n, email=e, source="hubspot") for n, e in contacts]
+        hubspot = [OrganizationMember(name=n, email=e, source="hubspot") for n, e in contacts]
         manual = [m for m in (old.members if old else []) if m.source == "manual"]
         taken = {_key(m.name) for m in hubspot}
         members = _clean(hubspot + [m for m in manual if _key(m.name) not in taken])
-        app.repo.save_household(old.id if old else uuid4().hex[:8], name, members, company_id)
+        app.repo.save_organization(old.id if old else uuid4().hex[:8], name, members, company_id)
         if old:
             updated += 1
         else:
             created += 1
-    return HubSpotSync(created=created, updated=updated, households=len(companies))
+    return HubSpotSync(created=created, updated=updated, organizations=len(companies))

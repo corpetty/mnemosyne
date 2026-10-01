@@ -782,9 +782,9 @@ matches `title` (ignoring case, punctuation, numbers and dates; generic names su
 Session" never match) or that share at least two `attendees` (or the same one or two people).
 Returns `{meetings: [{id, name, created_at, match: "title"|"people"|"both"}], open_items: [TaskItem],
 open_questions: [{session_id, session_name, text}], last_summary}`; questions and summary come from
-the most recent matching meeting that has a summary. `household`: the household the meeting is with
-(see Households), `{id, name, last_meeting, facts, earlier_facts}` with the client facts of its last
-meeting that has any, or null. Used by the calendar banner and the Recording tab.
+the most recent matching meeting that has a summary. `organization`: the organization the meeting
+is with (see Organizations), `{id, name, last_meeting, facts, earlier_facts}` with the client facts
+of its last meeting that has any, or null. Used by the calendar banner and the Recording tab.
 
 ## People
 
@@ -804,22 +804,23 @@ With `obsidian_people_notes` on, exporting a meeting also writes `<subfolder>/pe
 its people (meetings, open and done tasks). A person who already has a note of that name anywhere
 in the vault is skipped, and notes without the `mnemosyne: person` frontmatter are never overwritten.
 
-## Households
+## Organizations
 
-`services/households.py`: people grouped as a firm serves them, with the client facts (`advisory`
-summaries) of their meetings. A meeting is a household's when a member spoke in it or was invited
-(name or email), when its title names a member by first and last name or names the household, or
-when it was pushed to the household's HubSpot company. A person is in one household at most.
+`services/organizations.py`: people grouped by who they are with (a client, a customer, a partner),
+with the client facts (`client` summaries) of their meetings. A meeting is an organization's when a
+member spoke in it or was invited
+(name or email), when its title names a member by first and last name or names the organization, or
+when it was pushed to the organization's HubSpot company. A person is in one organization at most.
 Facts and meetings come only from meetings the caller may see.
 
 | Method | Path | |
 |---|---|---|
-| GET | `/api/households` | `[{id, name, hubspot_company_id, members: [{name, email, source}], meetings, last_meeting, facts}]` |
-| POST | `/api/households` | `{name, members: [{name, email?}]}` → the household |
-| GET | `/api/households/{id}` | the household with `meetings`, `facts` (newest meeting first) and `open_tasks` |
-| PUT | `/api/households/{id}` | `{name, members}` (replaces them) |
-| DELETE | `/api/households/{id}` | the grouping only; people and meetings stay |
-| POST | `/api/households/sync-hubspot` | admin: HubSpot companies and their contacts (each contact's primary company) become households, matched by company id; HubSpot members are replaced, hand-added ones kept. Reads only. `{created, updated, households}`; 502 on a HubSpot error |
+| GET | `/api/organizations` | `[{id, name, hubspot_company_id, members: [{name, email, source}], meetings, last_meeting, facts}]` |
+| POST | `/api/organizations` | `{name, members: [{name, email?}]}` → the organization |
+| GET | `/api/organizations/{id}` | the organization with `meetings`, `facts` (newest meeting first) and `open_tasks` |
+| PUT | `/api/organizations/{id}` | `{name, members}` (replaces them) |
+| DELETE | `/api/organizations/{id}` | the grouping only; people and meetings stay |
+| POST | `/api/organizations/sync-hubspot` | admin: HubSpot companies and their contacts (each contact's primary company) become organizations, matched by company id; HubSpot members are replaced, hand-added ones kept. Reads only. `{created, updated, organizations}`; 502 on a HubSpot error |
 
 ## Topics
 

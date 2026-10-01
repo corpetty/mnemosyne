@@ -14,7 +14,7 @@ from typing import Literal
 
 from ..models.base import ApiModel
 from ..models.session import DEFAULT_SESSION_NAME, SummaryData
-from .households import HouseholdBrief
+from .organizations import OrganizationBrief
 from .tasks import TaskItem
 
 
@@ -46,8 +46,8 @@ class Brief(ApiModel):
     open_items: list[TaskItem]  # not done, from those meetings
     open_questions: list[OpenQuestion]  # from the most recent summarized one
     last_summary: str  # of the most recent summarized one
-    # The household the meeting is with, and what it said last time (services/households.py).
-    household: HouseholdBrief | None = None
+    # The organization the meeting is with, and what it said last time (services/organizations.py).
+    organization: OrganizationBrief | None = None
 
 
 _DATEISH = re.compile(r"\b\d{1,4}([-/.]\d{1,2}){1,2}\b|\b\d+\b")
