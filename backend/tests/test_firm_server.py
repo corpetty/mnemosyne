@@ -1,6 +1,7 @@
 """A firm's server: the web app served by the backend, firm mode, and a key from systemd."""
 
 import base64
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -40,6 +41,17 @@ def test_the_web_app_is_served_with_its_backend_marker(settings, keystore, web_d
         assert c.get("/api/nope").status_code == 404
         assert c.get("/api/nope").headers["content-type"].startswith("application/json")
         assert c.get("/health").json()["status"] == "ok"  # other routes still win
+
+
+def test_a_rebuilt_web_app_is_served_without_a_restart(settings, keystore, web_dir):
+
+    with _client(settings, keystore, web_dir=str(web_dir)) as c:
+        assert "<title>M</title>" in c.get("/").text
+        index = web_dir / "index.html"
+        index.write_text("<!doctype html><html><head><title>New</title></head></html>")
+        os.utime(index, (1, 2_000_000_000))  # a different mtime, however fast the test runs
+        text = c.get("/").text
+        assert "<title>New</title>" in text and MARKER in text
 
 
 def test_the_web_app_opens_without_a_token_but_the_api_does_not(settings, keystore, web_dir):

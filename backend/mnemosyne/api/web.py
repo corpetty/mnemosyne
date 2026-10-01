@@ -24,7 +24,20 @@ def mount_web(app: FastAPI, web_dir: str) -> None:
     if not index_file.is_file():
         logger.error("web_dir %s has no index.html (run `pnpm build`); not serving the app", root)
         return
-    index = index_file.read_text(encoding="utf-8").replace("<head>", "<head>\n\t\t" + MARKER, 1)
+    cached: dict[str, object] = {"mtime": None, "html": ""}
+
+    def index() -> str:
+        """index.html with the marker, read again when it changes: a rebuilt web app (an update)
+        names new asset files, and the old index would point at ones that are gone."""
+        try:
+            mtime = index_file.stat().st_mtime
+        except OSError:
+            return str(cached["html"])
+        if mtime != cached["mtime"]:
+            html = index_file.read_text(encoding="utf-8")
+            cached["html"] = html.replace("<head>", "<head>\n\t\t" + MARKER, 1)
+            cached["mtime"] = mtime
+        return str(cached["html"])
 
     @app.get("/{path:path}", include_in_schema=False)
     async def web(path: str):
@@ -39,4 +52,4 @@ def mount_web(app: FastAPI, web_dir: str) -> None:
                     headers["Cache-Control"] = "public, max-age=31536000, immutable"
                 return FileResponse(f, headers=headers)
         # The SPA routes itself: any other path is the app.
-        return HTMLResponse(index, headers={"Cache-Control": "no-cache"})
+        return HTMLResponse(index(), headers={"Cache-Control": "no-cache"})
