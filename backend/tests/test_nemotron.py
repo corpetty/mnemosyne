@@ -106,7 +106,10 @@ async def test_diarize_without_embedder_has_no_embeddings(tmp_path):
     assert len(result.turns) == 1 and result.embeddings == {}
 
 
-def test_registry_builds_nemotron_without_loading_nemo(tmp_path):
+def test_registry_builds_nemotron_without_loading_nemo(tmp_path, monkeypatch):
+    from mnemosyne.transcription import registry
+
+    monkeypatch.setattr(registry, "nemotron_available", lambda: True)  # the GPU stack is here
     diarizer = build_diarizer(Settings(data_dir=tmp_path, diarizer="nemotron"))
     assert diarizer.name == "nemotron" and not diarizer.is_loaded()
 
@@ -124,7 +127,8 @@ def test_auto_prefers_nemotron_when_available(tmp_path, monkeypatch, setting, av
     from mnemosyne.transcription import registry
 
     monkeypatch.setattr(registry, "nemotron_available", lambda: available)
-    s = Settings(data_dir=tmp_path, diarizer=setting)
+    monkeypatch.setattr(registry, "installed", lambda *m: True)  # pyannote and torch are here
+    s = Settings(data_dir=tmp_path, diarizer=setting, hf_token="hf_x")
     assert registry.resolve_diarizer(s) == expected
 
 
