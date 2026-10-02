@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import time
 import zipfile
 
 from fastapi.testclient import TestClient
@@ -53,7 +54,10 @@ def test_seals_chain_and_catch_changes_made_outside_the_app(client, ctx, fake_en
     check = record["verification"]
     assert check["ok"] and check["seals"] == 1 and len(check["chain_head"]) == 64
     client.patch(f"/api/sessions/{sid}/segments/0", json={"text": "An edit in the app"})
-    records.seal(ctx, sid, "edited")  # what the route does in the background
+    # The route seals in the background: wait for it (a slow machine takes a moment).
+    deadline = time.monotonic() + 10
+    while records.verify(ctx, sid).seals < 2 and time.monotonic() < deadline:
+        time.sleep(0.05)
     check = records.verify(ctx, sid)
     assert check.ok and check.seals == 2
     # A row changed behind the app's back.
