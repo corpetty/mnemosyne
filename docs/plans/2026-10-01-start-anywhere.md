@@ -40,7 +40,7 @@ Downloads (models, llama.cpp) are pinned by version and checked by SHA-256.
 
 ## 3. A team from one desktop install
 
-- **Settings → Team → "Share this computer with my team".** The backend opens a second listener on
+- **Settings → General → "Share this computer with my team".** The backend opens a second listener on
   the local network (`team_port`, default 8443) with HTTPS from a certificate it makes for this
   machine's addresses (browsers ask once to accept it; recording in the browser needs HTTPS), and
   serves the web app there. The desktop app keeps using 127.0.0.1:8008.
@@ -52,6 +52,6 @@ Downloads (models, llama.cpp) are pinned by version and checked by SHA-256.
   address and a QR code. The Team section shows the address, whether the port is reachable, and what
   to do when a firewall blocks it.
 - **The web app ships with the desktop app.** The built web app is bundled as a resource (`web/`),
-  and the Rust shell tells the backend where it is (`MNEMOSYNE_WEB_DIR`).
+  and the Rust shell tells the backend where it is (`WEB_DIR`).
 - docs/team-server.md gains a short "From your desktop" section; the full server setup stays for
   machines that must run unattended.

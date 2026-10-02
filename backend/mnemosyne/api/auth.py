@@ -31,6 +31,8 @@ OPEN_PATHS = {
     "/api/users/redeem",
 }
 DEVICE_PATHS = {"/api/audio/import", "/api/pairing/me"}
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
+PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip")
 
 
 def is_open(path: str) -> bool:
@@ -76,6 +78,13 @@ class TokenAuthMiddleware:
         if device is not None and (device.kind == DESKTOP or path in DEVICE_PATHS):
             scope.setdefault("state", {})["device_id"] = device.id
             return await self.app(scope, receive, send)
+        owner = self._desktop_owner(scope, presented, headers)
+        if owner is not None:
+            reset = access.current.set(owner)
+            try:
+                return await self.app(scope, receive, send)
+            finally:
+                access.current.reset(reset)
 
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 4401})
@@ -93,6 +102,28 @@ class TokenAuthMiddleware:
             }
         )
         await send({"type": "http.response.body", "body": body})
+
+    def _desktop_owner(
+        self, scope: Scope, presented: str, headers: dict[str, str]
+    ) -> access.Principal | None:
+        """A team shared from this desktop (services/team_host.py): the desktop app's own
+        requests, on 127.0.0.1 and not on the network listener's port, run as its owner.
+        Not when a proxy on this machine passed them on (`tailscale serve`, Caddy): those come
+        from 127.0.0.1 too, but name another host or say whom they forward."""
+        st = self.ctx.settings
+        if presented or not (st.team_mode and st.team_owner_id):
+            return None
+        server, client = scope.get("server") or ("", 0), scope.get("client") or ("", 0)
+        if server[1] == st.team_port or client[0] not in ("127.0.0.1", "::1"):
+            return None
+        host = headers.get("host", "")
+        host = host[: host.find("]") + 1] if host.startswith("[") else host.rsplit(":", 1)[0]
+        if host not in LOOPBACK_HOSTS or any(h in headers for h in PROXY_HEADERS):
+            return None
+        user = self.ctx.users.get(st.team_owner_id)
+        if user is None or user.disabled:
+            return None
+        return access.Principal(user.id, user.name, user.role)
 
 
 LOCKED_OPEN = ("/api/encryption", "/api/system")

@@ -17,6 +17,7 @@
 	import ReportProblem from './ReportProblem.svelte';
 	import EncryptionSettings from './EncryptionSettings.svelte';
 	import TeamPeopleSettings from './TeamPeopleSettings.svelte';
+	import TeamHostSettings from './TeamHostSettings.svelte';
 	import MyPreferences from './MyPreferences.svelte';
 	import LocalModelCard from './LocalModelCard.svelte';
 	import RecordsSettings from './RecordsSettings.svelte';
@@ -377,6 +378,9 @@
 		<p class="rounded border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-400">
 			Settings on this server are managed by your administrator.
 		</p>
+	{/if}
+	{#if tab === 'general'}
+		<TeamHostSettings />
 	{/if}
 	{#if tab === 'general' && teamAdmin}
 		<TeamPeopleSettings />

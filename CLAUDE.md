@@ -65,9 +65,12 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   `WEBKIT_DISABLE_COMPOSITING_MODE=1` when /proc/driver/nvidia exists (2026-09-29).
 - System Python is 3.14; the backend pins 3.13 via `backend/.python-version`. WhisperX
   does not support 3.14 yet.
-- Diarizer `auto` (the default) is Nemotron when NeMo is installed and CUDA works, else pyannote.
-  pyannote needs `HF_TOKEN` with its model license accepted; Nemotron does not, but voice
-  profiles and live speaker labels still use pyannote's embedding model, so they do.
+- Diarizer `auto` (the default) is Nemotron when NeMo is installed and CUDA works, else pyannote
+  when it is installed and `HF_TOKEN` is set, else `onnx` (sherpa-onnx on the CPU, onnx extra),
+  else none. Transcriber `auto` is WhisperX with working CUDA, else Parakeet. pyannote needs
+  `HF_TOKEN` with its model license accepted; Nemotron and onnx do not, but voice profiles and live
+  speaker labels still use pyannote's embedding model, so they do. CI has no ML packages: tests
+  that assume one monkeypatch `registry.installed`.
 - NeMo (for Nemotron) is in the gpu extra as a pinned GitHub source tarball of NVIDIA-NeMo/Speech
   main (PyPI 3.0.0 cannot load the model; a tarball so installs need no git). It pins
   lightning<=2.4, omegaconf<=2.3 and packaging<25, which pyannote and WhisperX accept. When
@@ -279,6 +282,16 @@ After it (docs/plans/2026-10-01-team-sharing.md, released as 0.13.0): sharing (s
 `effective`/`for_meeting`: a meeting's work uses its owner's; `/api/users/me/prefs`,
 MyPreferences.svelte; `calendar_for`), your tasks (`TaskItem.mine`, `mine_matcher`) and a weekly
 digest per person on a team server (`maybe_schedule_digest`).
+
+Start anywhere (docs/plans/2026-10-01-start-anywhere.md, unreleased): engines that fit the machine
+(`resolve_transcriber`/`resolve_diarizer` in transcription/registry.py), a CPU diarizer
+(transcription/diarizers/onnx.py, models fetched with pinned SHA-256s by services/downloads.py),
+a sample meeting (`POST /api/audio/sample`, backend/mnemosyne/samples/, AMI CC BY 4.0); a built-in
+summary model (services/local_llm.py: pinned llama.cpp `llama-server`, Vulkan or CPU, pinned Qwen3
+GGUFs; provider "local", not retried, stopped when idle) and Ollama pulls (routes/local_model.py);
+"Share this computer with my team" (services/team_host.py, routes/team.py: a second HTTPS listener
+on `team_port` with a self-signed cert in <data_dir>/tls, the owner is `team_owner_id` and the
+desktop's tokenless loopback requests run as them, the web app is bundled as resources/web).
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

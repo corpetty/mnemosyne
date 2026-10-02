@@ -3,6 +3,7 @@
 	import { addUser, changeUser, inviteUser, listUsers, signOutUser } from '$lib/api/backend.js';
 	import { copyText } from '$lib/app/clipboard.js';
 	import { connectionState, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
+	import { teamState } from '$lib/stores/team.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import type { UserInfo, UserInvite } from '$lib/types/index.js';
 
@@ -22,7 +23,8 @@
 	];
 
 	function linkFor(i: UserInvite): string {
-		const base = SAME_ORIGIN ? location.origin : connectionState.url;
+		// The desktop app sharing this computer: the network address, not its own 127.0.0.1.
+		const base = SAME_ORIGIN ? location.origin : teamState.address || connectionState.url;
 		return `${base}/?invite=${encodeURIComponent(i.code)}`;
 	}
 

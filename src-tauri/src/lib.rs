@@ -275,6 +275,13 @@ fn dev_command() -> StdCommand {
         "--reload",
     ])
     .current_dir(&backend_dir);
+    // The web app for sharing on the network, when it has been built (pnpm build).
+    if let Some(root) = backend_dir.parent() {
+        let web = root.join("build");
+        if web.join("index.html").is_file() {
+            cmd.env("WEB_DIR", web);
+        }
+    }
     cmd
 }
 
@@ -289,6 +296,9 @@ struct ReleaseLayout {
     python_dir: PathBuf,
     /// The offline AppImage's bundled uv cache and Python (build-offline-appimage.sh).
     offline: Option<PathBuf>,
+    /// The built web app, which the backend serves to a team on the network
+    /// (services/team_host.py) when this computer is shared.
+    web_dir: Option<PathBuf>,
 }
 
 impl ReleaseLayout {
@@ -318,7 +328,8 @@ impl ReleaseLayout {
         fs::create_dir_all(&data_dir).map_err(|e| format!("create {:?}: {e}", data_dir))?;
         let offline = Some(resource_dir.join("offline")).filter(|d| d.join("uv-cache").is_dir());
         let python_dir = local.join("python");
-        Ok(Self { backend_dir, uv, venv, data_dir, python_dir, offline })
+        let web_dir = Some(resource_dir.join("web")).filter(|d| d.join("index.html").is_file());
+        Ok(Self { backend_dir, uv, venv, data_dir, python_dir, offline, web_dir })
     }
 
     fn python(&self) -> PathBuf {
@@ -505,6 +516,9 @@ fn release_command(layout: &ReleaseLayout) -> StdCommand {
         .env("MNEMOSYNE_LINK_BIN", layout.uv.with_file_name("mnemosyne-link"))
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("PYTHONUNBUFFERED", "1");
+    if let Some(web) = &layout.web_dir {
+        cmd.env("WEB_DIR", web);
+    }
     cmd
 }
 

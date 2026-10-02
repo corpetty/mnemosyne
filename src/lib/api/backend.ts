@@ -58,6 +58,7 @@ import type {
   MeetingSupervision,
   Shares,
   LocalModelStatus,
+  TeamStatus,
   UserPrefs,
   Organization,
   OrganizationDetail,
@@ -557,6 +558,15 @@ export async function search(q: string, limit = 20): Promise<SearchHit[]> {
 export function audioUrl(sessionId: string, recordingId?: string): string {
   const q = recordingId ? `?recording=${encodeURIComponent(recordingId)}` : '';
   return connectionState.withToken(`${base()}/api/audio/file/${sessionId}${q}`);
+}
+
+export async function getTeam(): Promise<TeamStatus> {
+  return request('/api/team');
+}
+
+/** Share this computer with a team (only from the desktop app on this computer). */
+export async function setTeam(enabled: boolean, name = ''): Promise<TeamStatus> {
+  return request('/api/team', { method: 'PUT', body: JSON.stringify({ enabled, name }) });
 }
 
 export async function getLocalModel(): Promise<LocalModelStatus> {

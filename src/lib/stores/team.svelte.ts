@@ -4,6 +4,8 @@ import type { UserInfo } from '$lib/types/index.js';
 /** Everyone on a team server (names and roles), for whose a meeting is and whom to share it with. */
 class TeamState {
   people = $state<UserInfo[]>([]);
+  /** Where others reach this computer when it is shared (routes/team.py), for invite links. */
+  address = $state('');
 
   async load() {
     try {

@@ -702,6 +702,7 @@ async function signedIn(): Promise<boolean> {
 export async function refreshMe(): Promise<void> {
   try {
     connectionState.me = await getMe();
+    if (connectionState.me.team_mode) void teamState.load();
   } catch {
     // An older backend without /api/users/me: nothing role-dependent to show.
   }

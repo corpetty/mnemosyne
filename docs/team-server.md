@@ -8,6 +8,20 @@ providers are not even created.
 
 This page is for whoever sets the machine up. `scripts/team-server-check.sh` checks the result.
 
+## From your desktop
+
+The quickest team needs no server: in the desktop app, Settings → General → **Share this computer
+with my team**. You become the first admin, the meetings you have stay yours, and the app shows the
+address others open (`https://<this computer>:8443`, with a QR code). Add people under **People**
+and send each their invite link. Browsers warn once about the certificate, which this computer made
+for itself: they continue past it (Advanced → Accept), and recording in a browser works over that
+HTTPS address. If the others cannot connect, open the port in the firewall; the app shows the
+command (`firewall-cmd` or `ufw`). The computer has to be on while they use it, and their meetings
+are transcribed on it. **Stop sharing** closes the address; accounts and meetings stay.
+
+The rest of this page is for a dedicated machine, which can run while nobody is at it, encrypts with
+a TPM-sealed key and has its own backups.
+
 ## The machine
 
 - An NVIDIA GPU with **16 GB** of memory holds the speech models and a 14B-class summary model at

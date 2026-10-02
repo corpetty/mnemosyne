@@ -28,6 +28,7 @@ from ..services.session_service import SessionService
 from ..services.speaker_service import SpeakerService
 from ..services.storage_service import StorageService
 from ..services.summarization_service import SummarizationService
+from ..services.team_host import TeamHost
 from ..services.users import UserService
 from ..storage.sqlite import SessionRepository, import_json_sessions
 
@@ -68,6 +69,8 @@ class AppContext:
     copilot_notes: dict = field(default_factory=dict)  # session id -> CopilotNotes
     # A team server's per-person calendars (calendar_for), by ICS link.
     person_calendars: dict = field(default_factory=dict)
+    team_host: TeamHost = field(default_factory=lambda: TeamHost())
+    app: Any = None  # the FastAPI app, for the team listener (set by api/app.py)
     recovered: list = field(default_factory=list)  # RecoveredRecording, since this start
     # Encryption at rest: where the master key lives, the key once known, and whether the
     # meetings are encrypted but the key is missing (then only the recovery code gets in).
@@ -393,6 +396,8 @@ class AppContext:
         await self._try("Cleaning temporary copies", clean_scratch)
         # Also while locked: a paired computer can unlock.
         await self._try("Remote access", self.apply_remote_access)
+        if self.settings.share_on_network and self.app is not None:
+            await self._try("Sharing on the network", lambda: self.team_host.start(self.app, self))
         if self.locked:
             logger.warning("Waiting for the recovery code before starting")
             return
@@ -446,6 +451,8 @@ class AppContext:
 
     async def shutdown(self) -> None:
         from ..services.local_llm import manager
+
+        await self.team_host.stop()
 
         manager(self.settings.models_dir).stop()  # the built-in model's server, if it runs
         # Recordings still running end here, their files closed properly; the next start

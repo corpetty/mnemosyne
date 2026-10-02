@@ -43,6 +43,7 @@ from .routes.storage import router as storage_router
 from .routes.supervision import router as supervision_router
 from .routes.system import router as system_router
 from .routes.tasks import router as tasks_router
+from .routes.team import router as team_router
 from .routes.topics import router as topics_router
 from .routes.users import router as users_router
 from .websocket import router as ws_router
@@ -53,6 +54,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        ctx.app = app  # the team listener serves this same app (services/team_host.py)
         await ctx.startup()
         watching = watch_app(ctx)
         yield
@@ -81,6 +83,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(audio_router)
     app.include_router(record_router)
     app.include_router(records_router)
+    app.include_router(team_router)
     app.include_router(local_model_router)
     app.include_router(sharing_router)
     app.include_router(organizations_router)

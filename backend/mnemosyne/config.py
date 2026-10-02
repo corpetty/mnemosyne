@@ -216,6 +216,12 @@ class Settings(BaseSettings):
     # Team mode: this backend is a team server, used by several people from their browsers
     # (docs/team-server.md): everyone signs in and has their own meetings (access.py).
     team_mode: bool = False
+    # A team from this desktop install (services/team_host.py): a second listener on the local
+    # network, HTTPS with a certificate made for this machine, on team_port. team_owner_id is the
+    # person at this computer, whose requests on 127.0.0.1 need no token.
+    share_on_network: bool = False
+    team_port: int = 8443
+    team_owner_id: str = ""
     # On a team server, share a meeting with the team members invited to it (their calendar
     # email matches theirs), so everyone in the meeting can read it (services/sharing.py).
     share_with_invitees: bool = True

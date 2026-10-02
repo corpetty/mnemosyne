@@ -181,6 +181,22 @@ outside `/api/`, `/ws`, `/health`, `/m` and the docs, without a token (the data 
 needs one). Its `index.html` carries `<meta name="mnemosyne-backend" content="same-origin">`, so the
 app talks to the server it was loaded from.
 
+### Sharing this computer: `GET|PUT /api/team`
+The desktop app can make its own computer the team's server (`services/team_host.py`). `PUT
+/api/team {enabled: true, name}` makes `name` (default: the system account's) the first admin
+(`team_owner_id`, kept when turned on again), gives them the meetings without an owner, turns on
+`team_mode` and `share_on_network`, and opens a second listener on all interfaces at `team_port`
+(8443) with HTTPS from a self-signed certificate for this machine's names and addresses
+(`<data_dir>/tls`, made again when they change). That listener is the same app: it serves the web
+app (`web_dir`, bundled with the desktop app as `resources/web`) and needs sign-in like any team
+server. On the main port, requests from 127.0.0.1 or ::1 without a token run as the owner, so the
+desktop app keeps working without signing in; not when a proxy on this machine passed them on
+(another `Host`, or `Forwarded`/`X-Forwarded-*`/`X-Real-IP`, as `tailscale serve` and Caddy send). `{enabled: false}` closes the listener and team mode;
+people and meetings stay. Changing it needs an admin on 127.0.0.1 on the main port (else 403); a
+port in use answers 409. `GET` returns `enabled`, `running`, `port`, `addresses` (the likeliest
+first), `owner`, `firewall_hint` (a firewall-cmd or ufw command, "" when neither is installed),
+`error` and `can_change`.
+
 ### Backend lifetime (desktop app)
 The shell passes its pid in `MNEMOSYNE_APP_PID`; the backend watches it (`api/app_watch.py`). When
 the app is gone the backend shuts down, after finishing running jobs. During a recording it keeps

@@ -1444,6 +1444,13 @@ class SessionRepository:
             )
         return True
 
+    def adopt_unowned(self, owner_id: str) -> int:
+        """Meetings that belong to nobody (made before team mode) become this person's."""
+        with self._lock, self._conn:
+            return self._conn.execute(
+                "UPDATE sessions SET owner_id=? WHERE owner_id=''", (owner_id,)
+            ).rowcount
+
     # ---- per-person preferences (services/prefs.py) ------------------------
 
     def user_prefs(self, user_id: str) -> dict:

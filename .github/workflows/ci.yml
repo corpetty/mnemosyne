@@ -96,6 +96,8 @@ jobs:
         run: |
           bash scripts/stage-backend.sh
           bash scripts/fetch-uv.sh
+          # The web app is bundled too (build-all.sh copies build/); an empty one does here.
+          mkdir -p src-tauri/resources/web
           # The link sidecar only has to exist here; its own job builds and tests it.
           touch "src-tauri/binaries/mnemosyne-link-$(rustc -vV | sed -n 's/^host: //p')"
       - run: cargo check --manifest-path src-tauri/Cargo.toml

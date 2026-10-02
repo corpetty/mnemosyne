@@ -2353,6 +2353,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/team": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["status_api_team_get"];
+        /** Change */
+        put: operations["change_api_team_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/topics": {
         parameters: {
             query?: never;
@@ -4822,6 +4840,8 @@ export interface components {
             semantic_search?: boolean | null;
             /** Setup Complete */
             setup_complete?: boolean | null;
+            /** Share On Network */
+            share_on_network?: boolean | null;
             /** Share With Invitees */
             share_with_invitees?: boolean | null;
             /** Slack Webhook Url */
@@ -4836,6 +4856,10 @@ export interface components {
             summary_style?: string | null;
             /** Team Mode */
             team_mode?: boolean | null;
+            /** Team Owner Id */
+            team_owner_id?: string | null;
+            /** Team Port */
+            team_port?: number | null;
             /** Transcriber */
             transcriber?: string | null;
             /** Unload Models After Minutes */
@@ -5061,6 +5085,8 @@ export interface components {
             semantic_search: boolean;
             /** Setup Complete */
             setup_complete: boolean;
+            /** Share On Network */
+            share_on_network: boolean;
             /** Share With Invitees */
             share_with_invitees: boolean;
             /** Slack Webhook Url */
@@ -5075,6 +5101,10 @@ export interface components {
             summary_style: string;
             /** Team Mode */
             team_mode: boolean;
+            /** Team Owner Id */
+            team_owner_id: string;
+            /** Team Port */
+            team_port: number;
             /** Transcriber */
             transcriber: string;
             /** Unload Models After Minutes */
@@ -5383,6 +5413,35 @@ export interface components {
             session_name: string;
             /** Text */
             text: string;
+        };
+        /** TeamChange */
+        TeamChange: {
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+        };
+        /** TeamStatus */
+        TeamStatus: {
+            /** Addresses */
+            addresses: string[];
+            /** Can Change */
+            can_change: boolean;
+            /** Enabled */
+            enabled: boolean;
+            /** Error */
+            error: string;
+            /** Firewall Hint */
+            firewall_hint: string;
+            /** Owner */
+            owner: string;
+            /** Port */
+            port: number;
+            /** Running */
+            running: boolean;
         };
         /** Thread */
         Thread: {
@@ -9848,6 +9907,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Diagnostics"];
+                };
+            };
+        };
+    };
+    status_api_team_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamStatus"];
+                };
+            };
+        };
+    };
+    change_api_team_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

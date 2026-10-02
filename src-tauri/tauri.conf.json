@@ -39,7 +39,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "resources/backend": "backend"
+      "resources/backend": "backend",
+      "resources/web": "web"
     },
     "linux": {
       "deb": {

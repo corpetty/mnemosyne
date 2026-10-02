@@ -7,6 +7,10 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 echo "--- Frontend ---"
 (cd "$PROJECT_ROOT" && pnpm build)
+# The same web app, served by the backend to a team on the network (services/team_host.py).
+rm -rf "$PROJECT_ROOT/src-tauri/resources/web"
+mkdir -p "$PROJECT_ROOT/src-tauri/resources"
+cp -r "$PROJECT_ROOT/build" "$PROJECT_ROOT/src-tauri/resources/web"
 
 echo "--- Backend sources ---"
 bash "$SCRIPT_DIR/stage-backend.sh"
