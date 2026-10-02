@@ -59,7 +59,10 @@ def test_a_model_already_here_is_not_a_download(tmp_path):
     assert seen == []
 
 
-def test_the_expected_size_follows_the_engines(settings):
+def test_the_expected_size_follows_the_engines(settings, monkeypatch):
+    from mnemosyne.transcription import registry
+
+    monkeypatch.setattr(registry, "installed", lambda *modules: True)  # CI has no ML packages
     settings.transcriber, settings.diarizer = "parakeet", "onnx"
     assert model_downloads.speech_mb(settings) == 690 + 45
     settings.diarizer = "none"
