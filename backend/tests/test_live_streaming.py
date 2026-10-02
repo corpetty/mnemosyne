@@ -1,5 +1,6 @@
 """Live speaker labels from Nemotron streaming, with a scripted fake stream (no NeMo)."""
 
+import time
 import wave
 from pathlib import Path
 
@@ -576,6 +577,10 @@ def test_the_live_job_streams_the_remote_channel(
 
     monkeypatch.setattr(LiveTranscriber, "tick", tick)
     started = client.post("/api/audio/start", json={"device_ids": [1, 2]}).json()
+    # The live job loads the model as it starts; a stop before that would end it first.
+    deadline = time.monotonic() + 10
+    while model.loads == 0 and time.monotonic() < deadline:
+        time.sleep(0.02)
     with client.websocket_connect("/ws") as ws:
         ws.receive_json()
         stopped = client.post(f"/api/audio/stop/{started['session_id']}").json()
