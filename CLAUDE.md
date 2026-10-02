@@ -139,6 +139,11 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   Triton for 80 KB of shared memory on the streaming shapes, more than Turing (RTX 20xx) has.
   `MNEMOSYNE_GPU_TESTS=1 uv run pytest tests/test_nemotron_stream.py -s` checks it against NeMo's own
   chunked pass (needs the AMI files); re-run it when bumping NeMo.
+- The AppImage runs the backend, web app and link sidecar from a copy in
+  `<app data>/runtime/<version>` (lib.rs `runtime_copy`): its own mount vanishes when it exits, and
+  the backend may outlive it. Edit the bundled sources, never that copy.
+- Tests never touch the machine: conftest stubs the sleep inhibitor (`awake._spawn`), Tailscale
+  (`team_host.tailscale_name`) and points `HF_HUB_CACHE` at a temp dir. Keep it that way.
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.
@@ -283,7 +288,7 @@ After it (docs/plans/2026-10-01-team-sharing.md, released as 0.13.0): sharing (s
 MyPreferences.svelte; `calendar_for`), your tasks (`TaskItem.mine`, `mine_matcher`) and a weekly
 digest per person on a team server (`maybe_schedule_digest`).
 
-Start anywhere (docs/plans/2026-10-01-start-anywhere.md, unreleased): engines that fit the machine
+Start anywhere (docs/plans/2026-10-01-start-anywhere.md, released as 0.14.0): engines that fit the machine
 (`resolve_transcriber`/`resolve_diarizer` in transcription/registry.py), a CPU diarizer
 (transcription/diarizers/onnx.py, models fetched with pinned SHA-256s by services/downloads.py),
 a sample meeting (`POST /api/audio/sample`, backend/mnemosyne/samples/, AMI CC BY 4.0); a built-in
@@ -292,6 +297,14 @@ GGUFs; provider "local", not retried, stopped when idle) and Ollama pulls (route
 "Share this computer with my team" (services/team_host.py, routes/team.py: a second HTTPS listener
 on `team_port` with a self-signed cert in <data_dir>/tls, the owner is `team_owner_id` and the
 desktop's tokenless loopback requests run as them, the web app is bundled as resources/web).
+After it (docs/plans/2026-10-02-shared-desktop-and-first-run.md, unreleased): close to the tray
+(src-tauri/src/shell_prefs.rs, `<app config>/shell.json`); `keep_sharing_after_quit` (`/health`
+`outlives_app`, app_watch keeps serving); sleep inhibitor while recording (services/awake.py,
+`keep_awake_while_sharing`); `tailscale cert` served by SNI (`team_tailscale_cert`) and the
+self-signed cert reloaded in place when addresses change; download progress and a setup
+`prepare_models` job (services/model_downloads.py, `POST /api/system/prepare`); GPU support a setup
+choice (`gpu_support`, Tauri `start_gpu_install`); the offline AppImage carries the CPU models
+(`mnemosyne-backend prefetch`). Windows/macOS: planned only, docs/plans/2026-10-02-windows-and-macos.md.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
