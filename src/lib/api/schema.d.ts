@@ -827,6 +827,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/local-model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["status_api_local_model_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-model/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Download
+         * @description Download the built-in model (and its server, the first time): a `model_download` job
+         *     whose progress is the share of bytes fetched. When it finishes, summaries use it unless
+         *     another provider was already chosen and works.
+         */
+        post: operations["download_api_local_model_download_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-model/{model_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove
+         * @description Free the disk space a downloaded model takes.
+         */
+        delete: operations["remove_api_local_model__model_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/models": {
         parameters: {
             query?: never;
@@ -838,6 +897,27 @@ export interface paths {
         get: operations["list_models_api_models_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ollama/pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ollama Pull
+         * @description Pull a model into the Ollama this backend talks to: an `ollama_pull` job with Ollama's
+         *     own progress.
+         */
+        post: operations["ollama_pull_api_ollama_pull_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3554,6 +3634,33 @@ export interface components {
             /** Source */
             source: string;
         };
+        /** LocalModelInfo */
+        LocalModelInfo: {
+            /** Downloaded */
+            downloaded: boolean;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Recommended */
+            recommended: boolean;
+            /** Size */
+            size: number;
+        };
+        /** LocalModelStatus */
+        LocalModelStatus: {
+            /** Models */
+            models: components["schemas"]["LocalModelInfo"][];
+            ollama: components["schemas"]["OllamaInfo"];
+            /** Ram Gb */
+            ram_gb: number;
+            /** Running */
+            running: string | null;
+            /** Server Installed */
+            server_installed: boolean;
+            /** Vulkan */
+            vulkan: boolean;
+        };
         /** LocalOnlyRequest */
         LocalOnlyRequest: {
             /** Local Only */
@@ -3653,6 +3760,11 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** ModelRequest */
+        ModelRequest: {
+            /** Model */
+            model: string;
+        };
         /** NewUser */
         NewUser: {
             /**
@@ -3682,6 +3794,15 @@ export interface components {
         NotesRequest: {
             /** Notes */
             notes: string;
+        };
+        /** OllamaInfo */
+        OllamaInfo: {
+            /** Models */
+            models: string[];
+            /** Reachable */
+            reachable: boolean;
+            /** Suggested */
+            suggested: string;
         };
         /** OpenQuestion */
         OpenQuestion: {
@@ -6940,6 +7061,90 @@ export interface operations {
             };
         };
     };
+    status_api_local_model_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalModelStatus"];
+                };
+            };
+        };
+    };
+    download_api_local_model_download_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_api_local_model__model_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_models_api_models_get: {
         parameters: {
             query?: never;
@@ -6956,6 +7161,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderModels"][];
+                };
+            };
+        };
+    };
+    ollama_pull_api_ollama_pull_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

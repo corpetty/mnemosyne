@@ -34,6 +34,7 @@ export type SupervisionQueueItem = S['QueueItem'];
 export type MeetingSupervision = S['MeetingSupervision'];
 export type UserInfo = S['UserInfo'];
 export type Shares = S['Shares'];
+export type LocalModelStatus = S['LocalModelStatus'];
 export type UserPrefs = S['UserPrefs-Output'];
 export type UserInvite = S['Invite'];
 export type Recording = S['Recording'];

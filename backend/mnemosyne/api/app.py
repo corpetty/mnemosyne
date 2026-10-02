@@ -25,6 +25,7 @@ from .routes.glossary import router as glossary_router
 from .routes.history import router as history_router
 from .routes.integrations import router as integrations_router
 from .routes.jobs import router as jobs_router
+from .routes.local_model import router as local_model_router
 from .routes.mobile import router as mobile_router
 from .routes.models import router as models_router
 from .routes.organizations import router as organizations_router
@@ -80,6 +81,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(audio_router)
     app.include_router(record_router)
     app.include_router(records_router)
+    app.include_router(local_model_router)
     app.include_router(sharing_router)
     app.include_router(organizations_router)
     app.include_router(supervision_router)

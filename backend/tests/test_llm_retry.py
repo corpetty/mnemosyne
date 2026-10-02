@@ -68,5 +68,7 @@ def test_providers_are_wrapped(settings):
     from mnemosyne.services.summarization_service import SummarizationService
 
     svc = SummarizationService(settings)
-    assert all(isinstance(p, RetryingProvider) for p in svc.providers.values())
+    # The built-in model is not retried: one CPU request can run for minutes.
+    wrapped = {n: isinstance(p, RetryingProvider) for n, p in svc.providers.items()}
+    assert wrapped.pop("local") is False and all(wrapped.values())
     assert svc.providers["ollama"].name == "ollama"

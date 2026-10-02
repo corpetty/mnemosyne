@@ -339,6 +339,11 @@ class AppContext:
             await asyncio.sleep(interval_seconds)
             try:
                 await self.models.unload_if_idle(busy=self.busy())
+                from ..services.local_llm import manager
+
+                idle = self.settings.unload_models_after_minutes * 60
+                if not self.jobs.list(active_only=True):
+                    manager(self.settings.models_dir).stop_if_idle(idle)
             except Exception:
                 logger.exception("Unloading idle models failed")
 
@@ -440,6 +445,9 @@ class AppContext:
             logger.warning("Echo cancellation not started: %s", status.reason)
 
     async def shutdown(self) -> None:
+        from ..services.local_llm import manager
+
+        manager(self.settings.models_dir).stop()  # the built-in model's server, if it runs
         # Recordings still running end here, their files closed properly; the next start
         # recovers them into their meetings (services/recovery.py). Left running, pw-record
         # would outlive the backend and record on with nobody to save it.

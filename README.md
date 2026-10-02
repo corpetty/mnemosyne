@@ -46,7 +46,7 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Identifier redaction**: Social Security, account, routing and card numbers and dates of birth masked in exports and CRM pushes, optionally in stored transcripts
 - **Echo-safe**: mic segments that merely repeat what came out of the speakers are dropped, so no-headphones calls still attribute correctly
 - **Per-source attribution**: mic and system audio are captured separately, so your own speech is labelled with your name and only the remote side is diarized
-- **Pluggable summarization** via Ollama (LAN default), vLLM, OpenAI, or Anthropic
+- **Summaries with nothing else installed**: a built-in model (Qwen3 via llama.cpp, downloaded once, on your GPU through Vulkan or on the CPU), or Ollama, vLLM, OpenAI or Anthropic
 - **Multiple audio sources** — capture system audio and microphone simultaneously via PipeWire
 - **Session management** — SQLite-backed sessions; transcription runs as background jobs with live progress
 - **Settings UI** — engine, models, providers and keys are configured in-app and persisted to `~/.config/mnemosyne/config.toml`

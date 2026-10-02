@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getSettings, getSystemInfo, importSample, listModels, updateSettings } from '$lib/api/backend.js';
+	import { getLocalModel, getSettings, getSystemInfo, importSample, listModels, updateSettings } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { startRecording } from '$lib/app/controller.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
@@ -8,6 +8,7 @@
 	import type { ProviderModels, SettingsUpdate, SystemInfo } from '$lib/types/index.js';
 	import DeviceSelector from './DeviceSelector.svelte';
 	import BrowserSources from './BrowserSources.svelte';
+	import LocalModelCard from './LocalModelCard.svelte';
 
 	const STEPS = ['Welcome', 'Audio', 'Transcription', 'Summaries', 'Notes & calendar', 'Done'] as const;
 	let step = $state(0);
@@ -21,7 +22,8 @@
 	let savedTranscriber = $state<string | null>(null); // as saved: may be "auto"
 	let hfToken = $state('');
 	// Summaries
-	let provider = $state<'ollama' | 'vllm' | 'openai' | 'anthropic' | 'none'>('ollama');
+	let provider = $state<'local' | 'ollama' | 'vllm' | 'openai' | 'anthropic' | 'none'>('ollama');
+	let savedProvider = $state<string | null>(null);
 	let ollamaUrl = $state('http://localhost:11434');
 	let vllmUrl = $state('http://localhost:8000');
 	let apiKey = $state('');
@@ -47,7 +49,8 @@
 				ollamaUrl = v.ollama_url || ollamaUrl;
 				vllmUrl = v.vllm_url || vllmUrl;
 				vaultPath = v.obsidian_vault_path || '';
-				if (['ollama', 'vllm', 'openai', 'anthropic'].includes(v.default_provider)) {
+				savedProvider = v.default_provider;
+				if (['local', 'ollama', 'vllm', 'openai', 'anthropic'].includes(v.default_provider)) {
 					provider = v.default_provider as typeof provider;
 				}
 				model = v.default_model || '';
@@ -63,6 +66,24 @@
 		if (wanted === 'remote') transcriber = 'remote';
 		else transcriber = wanted === 'whisperx' && system.gpu_stack ? 'whisperx' : 'parakeet';
 	});
+
+	// A fresh install points at Ollama; without an Ollama that has a model, the built-in model is
+	// what will work, so it is offered first.
+	$effect(() => {
+		if (savedProvider !== 'ollama') return;
+		getLocalModel()
+			.then((s) => {
+				if (!(s.ollama.reachable && s.ollama.models.length)) provider = 'local';
+				if (provider === 'local') model = s.models.find((m) => m.downloaded)?.id ?? '';
+			})
+			.catch(() => {});
+	});
+
+	function modelReady(p: 'local' | 'ollama', m: string) {
+		provider = p;
+		model = m;
+		if (p === 'ollama') void checkProvider();
+	}
 
 	const speakerHow = $derived(
 		system?.diarizer_in_use === 'nemotron'
@@ -252,21 +273,24 @@
 			<h2 class="text-xl font-semibold text-gray-100">Which model writes summaries?</h2>
 			<p class="text-sm text-gray-400">Local servers keep everything on your network. Cloud models are optional; meetings you mark local-only never go to them.</p>
 			<div class="grid gap-2 sm:grid-cols-2">
-				{#each [['ollama', 'Ollama', 'local'], ['vllm', 'vLLM', 'local or LAN'], ['openai', 'OpenAI', 'cloud'], ['anthropic', 'Anthropic', 'cloud'], ['none', 'Not now', 'summaries off']] as [id, label, hint]}
+				{#each [['local', 'Built in', 'this computer, nothing to install'], ['ollama', 'Ollama', 'local'], ['vllm', 'vLLM', 'local or LAN'], ['openai', 'OpenAI', 'cloud'], ['anthropic', 'Anthropic', 'cloud'], ['none', 'Not now', 'summaries off']] as [id, label, hint]}
 					<label class={option(provider === id)}>
 						<input type="radio" bind:group={provider} value={id} class="mt-1" onchange={() => (models = null)} />
 						<span><span class="text-gray-100 font-medium">{label}</span> <span class="text-xs text-gray-500">{hint}</span></span>
 					</label>
 				{/each}
 			</div>
-			{#if provider === 'ollama'}
+			{#if provider === 'local'}
+				<LocalModelCard onReady={modelReady} />
+			{:else if provider === 'ollama'}
 				<input bind:value={ollamaUrl} class={input} aria-label="Ollama URL" />
+				<LocalModelCard ollama builtin={false} onReady={modelReady} />
 			{:else if provider === 'vllm'}
 				<input bind:value={vllmUrl} class={input} aria-label="vLLM URL" />
 			{:else if provider === 'openai' || provider === 'anthropic'}
 				<input type="password" bind:value={apiKey} placeholder={provider === 'openai' ? 'sk-…' : 'sk-ant-…'} class={input} aria-label="API key" />
 			{/if}
-			{#if provider !== 'none'}
+			{#if provider !== 'none' && provider !== 'local'}
 				<div class="flex items-center gap-3">
 					<button onclick={checkProvider} disabled={checking || saving} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50">
 						{checking ? 'Checking…' : 'Check connection'}

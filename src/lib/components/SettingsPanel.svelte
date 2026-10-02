@@ -18,6 +18,7 @@
 	import EncryptionSettings from './EncryptionSettings.svelte';
 	import TeamPeopleSettings from './TeamPeopleSettings.svelte';
 	import MyPreferences from './MyPreferences.svelte';
+	import LocalModelCard from './LocalModelCard.svelte';
 	import RecordsSettings from './RecordsSettings.svelte';
 	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
 
@@ -869,6 +870,19 @@
 		{/if}
 
 		{#if tab === 'ai'}
+			{#if !readOnly}
+				<section aria-label="Built-in model">
+					<h3 class="text-lg font-semibold text-gray-200 mb-1">Built-in model</h3>
+					<LocalModelCard
+						ollama
+						onReady={(p, m) => {
+							form.default_provider = p;
+							form.default_model = m;
+							void listModels().then((v) => (providers = v));
+						}}
+					/>
+				</section>
+			{/if}
 			<!-- LLM providers -->
 			<section>
 				<h3 class="text-lg font-semibold text-gray-200 mb-3">Summarization</h3>

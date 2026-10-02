@@ -63,6 +63,12 @@ class SummarizationService:
 
         for name in list(self.providers):
             self.providers[name] = RetryingProvider(self.providers[name])
+        # The built-in model (services/local_llm.py). Not retried: on a CPU one request can run
+        # for minutes, and a retry would start it over.
+        from ..services.local_llm import manager
+        from ..summarization.local import LocalProvider
+
+        self.providers["local"] = LocalProvider(manager(settings.models_dir))
         if settings.cloud_redaction:
             from ..summarization.privacy import CLOUD_PROVIDERS, RedactingProvider
 

@@ -57,6 +57,7 @@ import type {
   Deletion,
   MeetingSupervision,
   Shares,
+  LocalModelStatus,
   UserPrefs,
   Organization,
   OrganizationDetail,
@@ -556,6 +557,22 @@ export async function search(q: string, limit = 20): Promise<SearchHit[]> {
 export function audioUrl(sessionId: string, recordingId?: string): string {
   const q = recordingId ? `?recording=${encodeURIComponent(recordingId)}` : '';
   return connectionState.withToken(`${base()}/api/audio/file/${sessionId}${q}`);
+}
+
+export async function getLocalModel(): Promise<LocalModelStatus> {
+  return request('/api/local-model');
+}
+
+export async function downloadLocalModel(model: string): Promise<Job> {
+  return request('/api/local-model/download', { method: 'POST', body: JSON.stringify({ model }) });
+}
+
+export async function removeLocalModel(model: string): Promise<void> {
+  await request(`/api/local-model/${model}`, { method: 'DELETE' });
+}
+
+export async function pullOllamaModel(model: string): Promise<Job> {
+  return request('/api/ollama/pull', { method: 'POST', body: JSON.stringify({ model }) });
 }
 
 /** A short real meeting (AMI corpus) imported, transcribed and summarized: try the app first. */

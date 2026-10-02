@@ -997,6 +997,22 @@ diarized speaker's embedding is compared (cosine) against all profiles and assig
 ```
 
 Cloud providers appear only when their API key is set. Embedding-only Ollama models are filtered out.
+`local` (the built-in model, below) lists the models downloaded.
+
+### The built-in model: `GET /api/local-model` · `POST /api/local-model/download` · `DELETE /api/local-model/{id}` · `POST /api/ollama/pull`
+`services/local_llm.py`: provider `local` runs llama.cpp's `llama-server` (build b11323, Vulkan build
+when libvulkan loads, else the CPU build) with a GGUF model, both downloaded into
+`<data_dir>/models/llm` and checked by SHA-256. The server starts on 127.0.0.1 (a free port) on
+the first request, fits the model into free GPU memory (the rest on the CPU), and stops after
+`unload_models_after_minutes` idle and with the backend. Requests may take up to 30 minutes (a CPU)
+and are not retried. Models: `qwen3-4b` (Qwen3-4B-Instruct-2507 Q4_K_M, 2.5 GB) and
+`qwen3-30b-a3b` (Qwen3-30B-A3B-Instruct-2507 Q4_K_M, 18.6 GB, recommended from ~30 GB of RAM).
+
+GET → `{ram_gb, vulkan, server_installed, running, models: [{id, label, size, downloaded,
+recommended}], ollama: {reachable, models, suggested}}`. Admin: `download {model}` → a
+`model_download` job (progress = share of bytes; the server too, the first time), `DELETE` frees the
+model's disk, `ollama/pull {model}` → an `ollama_pull` job that pulls into the Ollama at
+`ollama_url` with its progress (`suggested` is the same model in Ollama's library).
 
 ### `GET /api/summary-styles`
 
