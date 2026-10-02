@@ -68,10 +68,48 @@ def users_command(argv: list[str]) -> None:
     print(f"  {args.address.rstrip('/')}/?invite={code}")
 
 
+def prefetch_command(argv: list[str]) -> None:
+    """Download the CPU engines' models (Parakeet, the speaker models, the search model) into a
+    folder laid out for the offline AppImage (scripts/build-offline-appimage.sh): <dest>/hf is a
+    Hugging Face cache, <dest>/data/models is a `models_dir`. The shell copies them into place on
+    first launch (install_offline in src-tauri/src/lib.rs)."""
+    import asyncio
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(prog="mnemosyne-backend prefetch")
+    parser.add_argument("dest", help="the folder to fill")
+    dest = Path(parser.parse_args(argv).dest).resolve()
+    # Before anything imports huggingface_hub, which reads these once.
+    os.environ["HF_HUB_CACHE"] = str(dest / "hf")
+    os.environ["MNEMOSYNE_CONFIG_FILE"] = str(dest / "unused-config.toml")  # not this user's
+    from .config import Settings
+    from .search.embeddings import build_embedder
+    from .transcription.registry import build_diarizer, build_transcriber
+
+    settings = Settings(data_dir=dest / "data", transcriber="parakeet", diarizer="onnx")
+
+    async def fetch() -> None:
+        await build_transcriber(settings, "parakeet").load()
+        diarizer = build_diarizer(settings)
+        if diarizer is not None:
+            await diarizer.load()
+
+    asyncio.run(fetch())
+    build_embedder(settings)
+    for folder in (dest / "hf", settings.models_dir):
+        size = sum(
+            f.stat().st_size for f in folder.rglob("*") if f.is_file() and not f.is_symlink()
+        )
+        print(f"{folder}: {size / 1e6:.0f} MB")
+
+
 def main() -> None:
     quiet_known_warnings()
     if sys.argv[1:2] == ["users"]:
         users_command(sys.argv[2:])
+        return
+    if sys.argv[1:2] == ["prefetch"]:
+        prefetch_command(sys.argv[2:])
         return
     import uvicorn
 

@@ -403,7 +403,14 @@ Consequences:
 - Bundles are tens of MB instead of 7 GB, and a release does not have to embed CUDA libraries.
 - The same bundle works on CPU-only machines (Parakeet) and GPU machines (WhisperX + pyannote).
 - Updating the app re-runs `uv sync` only when `uv.lock` changed.
-- The install needs network once. An offline installer would pre-seed uv's cache; not done yet.
+- The install needs network once, except with the offline AppImage, which carries uv's cache, the
+  managed Python and the CPU engines' models (`mnemosyne-backend prefetch`); the shell copies the
+  models into the Hugging Face cache and `<data>/models` on first launch (`install_offline_models`).
+- On NVIDIA machines the GPU extra waits for the setup wizard's answer (`gpu_support`,
+  `start_gpu_install`); setup's last step downloads the chosen models (`POST /api/system/prepare`).
+- The AppImage runs the backend from a copy in `<app data>/runtime/<version>`: its own files vanish
+  when it exits, and the backend may outlive it (a recording after a crash, a shared computer with
+  `keep_sharing_after_quit`).
 
 The AppImage runtime's AppRun exports `PYTHONHOME`, `PYTHONPATH`, `LD_LIBRARY_PATH` and GTK/GIO
 paths for the GUI process. `lib.rs::scrub_runtime_env` removes them from the uv and Python child

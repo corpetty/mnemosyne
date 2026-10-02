@@ -298,21 +298,29 @@ installs in the background after the first start, like the other builds. Build o
 
 The app installs its own backend into `~/.local/share/com.corpetty.mnemosyne/`:
 
-1. `uv sync` creates a venv with a managed Python 3.13, the API and the CPU engines (`onnx` extra).
-   Progress is shown in the window. Needs internet once; later launches reuse it until an update
-   changes `uv.lock`.
-2. The backend starts from that venv (Parakeet works from here on). With an NVIDIA driver
-   (`nvidia-smi` on the PATH, or a loadable `libcuda.so.1`), the `gpu` extra (torch, WhisperX,
-   pyannote) then installs in the background, shown in the status bar, and the backend restarts
-   by itself once nothing is recording or running. Session data lives in `.../data/`, settings in
-   `~/.config/mnemosyne/config.toml`.
-3. ML models download from HuggingFace on first use (Parakeet int8 ~0.6 GB; WhisperX + pyannote 3 to 5 GB).
+1. `uv sync` creates a venv with a managed Python 3.13, the API and the CPU engines (`onnx` extra):
+   about 0.4 GB, under a minute on a good connection, shown in the window. Later launches reuse it
+   until an update changes `uv.lock`.
+2. The backend starts from that venv and the setup wizard opens. Its last step downloads the
+   models your choices use, with progress, so the first recording starts at once: Parakeet int8
+   (0.67 GB), the CPU speaker models (45 MB) and the search model (0.13 GB). Session data lives in
+   `.../data/`, settings in `~/.config/mnemosyne/config.toml`.
+3. With an NVIDIA driver (`nvidia-smi` on the PATH, or a loadable `libcuda.so.1`), setup offers GPU
+   support (the `gpu` extra: torch, WhisperX, NeMo; about 7 GB), ticked by default. It installs in
+   the background, shown in the status bar, and the backend restarts by itself once nothing is
+   recording or running; untick it on a slow or metered connection and install it later from
+   Settings → Transcription. WhisperX's model (1.5 GB for medium.en) and Nemotron (0.2 GB) then
+   download on their first use.
+4. The built-in summary model is a separate, optional download (2.5 GB or 18.6 GB).
+
+The **offline AppImage** carries steps 1 and 2 (about 1.1 GB): it installs and transcribes with no
+network at all. GPU support and the built-in summary model still download when chosen.
 
 ### System Requirements (Target Machine)
 
 - **PipeWire tools** (`pw-record`, `pw-dump`, `pw-cli`) and **ffmpeg**, declared as package dependencies (Fedora: `pipewire-utils`, `ffmpeg-free` or `ffmpeg`; Debian/Ubuntu: `pipewire-bin`, `ffmpeg`)
 - **NVIDIA drivers** if you want the GPU engines; CPU-only machines run Parakeet
-- Internet on first launch and first transcription
+- Internet on first launch (not with the offline AppImage)
 
 ## Obsidian Export Format
 

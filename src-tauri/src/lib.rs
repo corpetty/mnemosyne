@@ -539,7 +539,49 @@ fn install_offline(app: &AppHandle, layout: &ReleaseLayout, offline: &Path) -> R
     let result =
         uv_sync(layout, false, true, Some(&cache), |line| emit_status(app, "installing", line));
     let _ = fs::remove_dir_all(&cache);
-    result.map(|_| ())
+    result?;
+    install_offline_models(app, layout, &offline.join("models"));
+    Ok(())
+}
+
+/// Where Hugging Face downloads go, by huggingface_hub's own rules.
+fn hf_cache_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("HF_HUB_CACHE") {
+        return Some(PathBuf::from(dir));
+    }
+    if let Some(home) = std::env::var_os("HF_HOME") {
+        return Some(PathBuf::from(home).join("hub"));
+    }
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
+    Some(cache.join("huggingface").join("hub"))
+}
+
+/// The offline AppImage's models (`mnemosyne-backend prefetch`): the Hugging Face cache part
+/// and the `models_dir` part, copied where the backend looks, keeping anything already there.
+/// Best effort: a model that is missing is downloaded on first use as usual.
+fn install_offline_models(app: &AppHandle, layout: &ReleaseLayout, models: &Path) {
+    if !models.is_dir() {
+        return;
+    }
+    emit_status(app, "installing", "Copying the speech models (no download needed).");
+    let targets = [
+        (models.join("hf"), hf_cache_dir()),
+        (models.join("data").join("models"), Some(layout.data_dir.join("models"))),
+    ];
+    for (from, to) in targets {
+        let Some(to) = to else { continue };
+        if !from.is_dir() || fs::create_dir_all(&to).is_err() {
+            continue;
+        }
+        // -n: never overwrite (a newer download, or the user's own cache).
+        match StdCommand::new("cp").arg("-a").arg("-n").arg(from.join(".")).arg(&to).status() {
+            Ok(status) if status.success() => info!("Models copied to {to:?}"),
+            Ok(status) => warn!("Copying models to {to:?} ended with {status}"),
+            Err(e) => warn!("Could not copy models to {to:?}: {e}"),
+        }
+    }
 }
 
 #[derive(Clone, serde::Serialize)]

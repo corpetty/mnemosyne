@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Build the offline flavour of the AppImage: the normal one plus the packages and Python its
-# first launch would otherwise download (the base install; the GPU extra is still downloaded on
-# machines with an NVIDIA driver, and models on first use).
+# Build the offline flavour of the AppImage: the normal one plus what its first launch and first
+# meeting would otherwise download: the base install (packages and Python) and the CPU engines'
+# models (Parakeet, the speaker models, the search model; about 0.9 GB). The GPU extra is still
+# downloaded on machines with an NVIDIA driver, and the built-in summary model when chosen.
 #
 # The shell (lib.rs) sees usr/lib/Mnemosyne/offline/ and installs from it with `uv sync
-# --offline`, copying the cache and Python out of the read-only AppImage first.
+# --offline`, copying the cache and Python out of the read-only AppImage first, and the models
+# into the Hugging Face cache and <data>/models.
 #
 # Usage: scripts/build-offline-appimage.sh dist/Mnemosyne_<v>_amd64.AppImage [out-dir]
 # Needs the pinned uv sidecar (scripts/fetch-uv.sh) and appimagetool (downloaded if missing).
@@ -23,8 +25,10 @@ UV_PYTHON_INSTALL_DIR="$work/offline/python" \
 UV_PYTHON_DOWNLOADS=automatic UV_PYTHON_PREFERENCE=only-managed \
 UV_PROJECT_ENVIRONMENT="$work/venv" UV_NO_PROGRESS=1 \
   "$uv" sync --frozen --no-dev --extra onnx --project "$root/backend"
-rm -rf "$work/venv"
-du -sh "$work/offline/uv-cache" "$work/offline/python"
+echo "== Models"
+"$work/venv/bin/mnemosyne-backend" prefetch "$work/offline/models"
+rm -rf "$work/venv" "$work/offline/models/unused-config.toml"
+du -sh "$work/offline/uv-cache" "$work/offline/python" "$work/offline/models"
 
 echo "== Repack"
 (cd "$work" && "$appimage" --appimage-extract >/dev/null)

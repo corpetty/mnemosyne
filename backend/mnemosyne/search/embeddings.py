@@ -26,6 +26,18 @@ def _normalize(m: np.ndarray) -> np.ndarray:
     return m / norms
 
 
+def _fetch(model: str) -> str:
+    """The model's folder: a local path as is, else only the files model2vec loads from the
+    Hugging Face repo (its repos also carry an ONNX copy, 120 MB more, that it never reads)."""
+    from pathlib import Path
+
+    if Path(model).is_dir():
+        return model
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(model, allow_patterns=["*.json", "*.safetensors", "*.txt"])
+
+
 class Model2VecEmbedder:
     def __init__(self, model: str):
         from model2vec import StaticModel
@@ -33,7 +45,7 @@ class Model2VecEmbedder:
         self.name = model
         # Measured on real meetings: right answers 0.15-0.35, unrelated text 0.12 or less.
         self.min_score = 0.14
-        self._model = StaticModel.from_pretrained(model)
+        self._model = StaticModel.from_pretrained(_fetch(model))
 
     def embed(self, texts: list[str]) -> np.ndarray:
         if not texts:
