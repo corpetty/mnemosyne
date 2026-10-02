@@ -1,8 +1,11 @@
 """A team from one desktop install (services/team_host.py, routes/team.py): the owner, the
 network listener with its own certificate, and who may turn it on."""
 
+import shutil
 import socket
 import ssl
+import subprocess
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -122,3 +125,89 @@ def test_options_are_saved_and_health_says_whether_it_outlives_the_app(desktop):
     assert ctx.settings.keep_awake_while_sharing and ctx.settings.share_on_network
     client.put("/api/team", json={"enabled": False})
     assert client.get("/health").json()["outlives_app"] is False
+
+
+def _served_cert(port: int, name: str | None = None):
+    """The certificate the listener answers with, asked for `name` by SNI (None: none sent)."""
+    from cryptography import x509
+
+    tls = ssl.create_default_context()
+    tls.check_hostname, tls.verify_mode = False, ssl.CERT_NONE
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        with tls.wrap_socket(sock, server_hostname=name) as s:
+            der = s.getpeercert(binary_form=True)
+    cert = x509.load_der_x509_certificate(der)
+    san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    return [str(v) for v in san.get_values_for_type(x509.DNSName)] + [
+        str(v) for v in san.get_values_for_type(x509.IPAddress)
+    ]
+
+
+def test_a_laptop_on_another_network_gets_a_certificate_for_it(desktop, monkeypatch):
+    client, ctx = desktop
+    monkeypatch.setattr(team_host, "lan_addresses", lambda: ["192.168.1.20"])
+    client.put("/api/team", json={"enabled": True, "name": "Corey"})
+    port = ctx.settings.team_port
+    assert "192.168.1.20" in _served_cert(port)
+    assert client.portal.call(ctx.team_host.check_addresses) is False  # nothing changed
+    monkeypatch.setattr(team_host, "lan_addresses", lambda: ["10.9.8.7"])
+    assert client.portal.call(ctx.team_host.check_addresses) is True
+    names = _served_cert(port)  # the running listener, no restart
+    assert "10.9.8.7" in names and "192.168.1.20" not in names
+    client.put("/api/team", json={"enabled": False})
+
+
+@pytest.fixture
+def tailnet(monkeypatch, tmp_path):
+    """A Tailscale that gives certificates for bean.tail1234.ts.net (or refuses)."""
+    name = "bean.tail1234.ts.net"
+    issued, _ = team_host.ensure_certificate(tmp_path / "issuer", [name])
+    calls = []
+    state = {"refuse": False}
+
+    def run(args, timeout):
+        calls.append(args)
+        assert args[:2] == ["tailscale", "cert"] and args[-1] == name
+        if state["refuse"]:
+            return subprocess.CompletedProcess(args, 1, "", "Access denied: cert access denied")
+        cert, key = args[args.index("--cert-file") + 1], args[args.index("--key-file") + 1]
+        shutil.copy(issued, cert)
+        shutil.copy(tmp_path / "issuer" / "team.key", key)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(team_host, "tailscale_name", lambda: name)
+    monkeypatch.setattr(team_host, "_run", run)
+    return SimpleNamespace(name=name, calls=calls, state=state)
+
+
+def test_the_tailscale_name_gets_its_real_certificate(desktop, tailnet, monkeypatch):
+    client, ctx = desktop
+    client.put("/api/team", json={"enabled": True, "name": "Corey"})
+    status = client.get("/api/team").json()
+    assert status["tailscale_name"] == tailnet.name and status["tailscale_cert"] is False
+    r = client.put("/api/team", json={"tailscale_cert": True})
+    assert r.status_code == 200, r.text
+    port = ctx.settings.team_port
+    assert r.json()["addresses"][0] == f"https://{tailnet.name}:{port}"
+    assert ctx.settings.team_tailscale_cert is True
+    assert _served_cert(port, tailnet.name) == [tailnet.name]  # by SNI
+    assert tailnet.name not in _served_cert(port)  # by address: the self-signed one
+    # Fresh: not fetched again. With under 30 days left: renewed.
+    client.portal.call(ctx.team_host.use_tailscale)
+    assert len(tailnet.calls) == 1
+    monkeypatch.setattr(team_host, "days_left", lambda cert: 10)
+    client.portal.call(ctx.team_host.use_tailscale)
+    assert len(tailnet.calls) == 2
+    client.put("/api/team", json={"tailscale_cert": False})
+    assert tailnet.name not in _served_cert(port, tailnet.name)
+    client.put("/api/team", json={"enabled": False})
+
+
+def test_tailscale_refusing_says_what_to_do(desktop, tailnet):
+    client, ctx = desktop
+    tailnet.state["refuse"] = True
+    client.put("/api/team", json={"enabled": True, "name": "Corey"})
+    r = client.put("/api/team", json={"tailscale_cert": True})
+    assert r.status_code == 409 and "tailscale set --operator=" in r.json()["detail"]
+    assert ctx.settings.team_tailscale_cert is False
+    client.put("/api/team", json={"enabled": False})

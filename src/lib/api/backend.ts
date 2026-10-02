@@ -570,6 +570,7 @@ export async function setTeam(change: {
   name?: string;
   keep_sharing_after_quit?: boolean;
   keep_awake_while_sharing?: boolean;
+  tailscale_cert?: boolean;
 }): Promise<TeamStatus> {
   return request('/api/team', { method: 'PUT', body: JSON.stringify(change) });
 }

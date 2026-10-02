@@ -5439,6 +5439,8 @@ export interface components {
              * @default
              */
             name: string;
+            /** Tailscale Cert */
+            tailscale_cert?: boolean | null;
         };
         /** TeamStatus */
         TeamStatus: {
@@ -5464,6 +5466,12 @@ export interface components {
             port: number;
             /** Running */
             running: boolean;
+            /** Tailscale Cert */
+            tailscale_cert: boolean;
+            /** Tailscale Error */
+            tailscale_error: string;
+            /** Tailscale Name */
+            tailscale_name: string;
         };
         /** Thread */
         Thread: {

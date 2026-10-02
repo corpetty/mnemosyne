@@ -69,6 +69,14 @@ def no_sleep_inhibitor(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_tailscale(monkeypatch):
+    """Never ask the machine's own Tailscale (services/team_host.py); tests stand one in."""
+    from mnemosyne.services import team_host
+
+    monkeypatch.setattr(team_host, "tailscale_name", lambda: "")
+
+
+@pytest.fixture(autouse=True)
 def fake_embedder(monkeypatch):
     """Never download an embedding model: hashed embeddings with a few synonyms."""
     from mnemosyne.search import embeddings

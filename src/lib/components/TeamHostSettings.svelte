@@ -39,12 +39,18 @@
 		);
 	});
 
-	async function setOption(option: 'keep_sharing_after_quit' | 'keep_awake_while_sharing', value: boolean) {
+	async function setOption(
+		option: 'keep_sharing_after_quit' | 'keep_awake_while_sharing' | 'tailscale_cert',
+		value: boolean
+	) {
 		error = '';
+		busy = true;
 		try {
 			show(await setTeam({ [option]: value }));
 		} catch (e) {
 			error = e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not change that';
+		} finally {
+			busy = false;
 		}
 	}
 
@@ -109,9 +115,36 @@
 						{#if qr}<img src={qr} alt="QR code for {url}" width="160" height="160" class="rounded" />{/if}
 					</div>
 					<p class="text-xs text-gray-500">
-						The certificate is made by this computer, so browsers warn the first time: choose to continue (Advanced →
-						Accept). Recording in a browser needs that HTTPS address. Add people below and send each their invite link.
+						{#if status.tailscale_cert && status.addresses[0]?.includes(status.tailscale_name)}
+							On your tailnet, the first address has a real certificate: no browser warning. The others have a certificate
+							this computer made, so browsers warn the first time: choose to continue (Advanced → Accept).
+						{:else}
+							The certificate is made by this computer, so browsers warn the first time: choose to continue (Advanced →
+							Accept).
+						{/if}
+						Recording in a browser needs an HTTPS address. Add people below and send each their invite link.
 					</p>
+					{#if status.tailscale_name}
+						<div class="text-xs text-gray-400 space-y-1">
+							{#if status.tailscale_cert}
+								<p>
+									Tailscale: <span class="font-mono">{status.tailscale_name}</span> uses its own certificate, renewed by itself.
+									<button onclick={() => setOption('tailscale_cert', false)} disabled={busy} class="text-gray-500 hover:text-gray-300 underline">Stop using it</button>
+								</p>
+							{:else}
+								<button
+									onclick={() => setOption('tailscale_cert', true)}
+									disabled={busy}
+									class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50"
+								>Use my Tailscale name (no browser warning)</button>
+								<p class="text-gray-500">
+									Teammates on your tailnet then open <span class="font-mono">{status.tailscale_name}</span>, from the office or
+									from home. Getting the certificate publishes that name in public certificate logs.
+								</p>
+							{/if}
+							{#if status.tailscale_error}<p class="text-amber-400">{status.tailscale_error}</p>{/if}
+						</div>
+					{/if}
 					{#if status.firewall_hint}
 						<p class="text-xs text-gray-500">
 							If others cannot connect, open the port in the firewall:

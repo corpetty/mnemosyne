@@ -15,8 +15,13 @@ with my team**. You become the first admin, the meetings you have stay yours, an
 address others open (`https://<this computer>:8443`, with a QR code). Add people under **People**
 and send each their invite link. Browsers warn once about the certificate, which this computer made
 for itself: they continue past it (Advanced → Accept), and recording in a browser works over that
-HTTPS address. If the others cannot connect, open the port in the firewall; the app shows the
-command (`firewall-cmd` or `ufw`). The computer has to be on while they use it, and their meetings
+HTTPS address. With Tailscale (HTTPS certificates turned on for your tailnet), **Use my Tailscale
+name** gives the tailnet address a real certificate instead: no warning, and teammates working from
+home can join too. Tailscale only gives certificates to root or its operator: run
+`sudo tailscale set --operator=$USER` once. The certificate publishes the name in public
+certificate logs. If the others cannot connect, open the port in the firewall; the app shows the
+command (`firewall-cmd` or `ufw`). A laptop that moves to another network keeps working: the
+certificate follows its new address. The computer has to be on while they use it, and their meetings
 are transcribed on it: it does not go to sleep while anyone records, and **Keep this computer awake
 while it is shared** keeps it awake all day. **Keep sharing when I quit Mnemosyne** leaves the
 backend serving them after you quit (until you log out); Settings → General → Window can also make

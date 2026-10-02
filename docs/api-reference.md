@@ -195,9 +195,18 @@ desktop app keeps working without signing in; not when a proxy on this machine p
 people and meetings stay. Changing it needs an admin on 127.0.0.1 on the main port (else 403); a
 port in use answers 409. `GET` returns `enabled`, `running`, `port`, `addresses` (the likeliest
 first), `owner`, `firewall_hint` (a firewall-cmd or ufw command, "" when neither is installed),
-`error`, `can_change`, `keep_sharing_after_quit`, `keep_awake_while_sharing` and
-`keep_awake_available`. `PUT` takes any of `enabled`, `name`, `keep_sharing_after_quit` and
-`keep_awake_while_sharing` (left out: unchanged).
+`error`, `can_change`, `keep_sharing_after_quit`, `keep_awake_while_sharing`,
+`keep_awake_available`, `tailscale_name` (this machine's tailnet name when Tailscale runs with
+HTTPS certificates on, else ""), `tailscale_cert` and `tailscale_error`. `PUT` takes any of
+`enabled`, `name`, `keep_sharing_after_quit`, `keep_awake_while_sharing` and `tailscale_cert`
+(left out: unchanged).
+
+`tailscale_cert` (setting `team_tailscale_cert`) fetches a real certificate for the tailnet name
+with `tailscale cert` into `<data_dir>/tls/tailscale.{crt,key}` (409 with what to do when Tailscale
+refuses: it needs root or `tailscale set --operator=<user>`), serves it to connections that ask for
+that name (SNI), lists that address first, and renews it when under 30 days are left. Other
+addresses keep the self-signed certificate. While shared, the addresses are checked every 30 s; when
+they change, the self-signed certificate is made again and loaded into the running listener.
 
 With `keep_sharing_after_quit`, `/health` says `outlives_app: true` while it is shared: the shell
 then leaves the backend running when the app quits, and `api/app_watch.py` keeps serving instead of
