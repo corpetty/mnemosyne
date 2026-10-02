@@ -27,7 +27,7 @@
 {:else}
 	<div class="space-y-1">
 		<div class="flex justify-between text-xs text-gray-400">
-			<span>{job.status === 'queued' ? 'Waiting for another transcription to finish…' : job.message || 'Working…'}</span>
+			<span>{job.status === 'queued' ? (job.kind === 'transcribe' ? 'Waiting for another transcription to finish…' : 'Waiting for other work to finish…') : job.message || 'Working…'}</span>
 			<span class="font-mono text-gray-500">{pct}%{#if eta}&nbsp;· {eta}{/if}</span>
 		</div>
 		<div class="h-1.5 w-full rounded-full bg-gray-800 overflow-hidden">
