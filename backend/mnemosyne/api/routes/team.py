@@ -22,11 +22,16 @@ class TeamStatus(ApiModel):
     firewall_hint: str  # a command that lets others reach the port, "" when no firewall tool
     error: str
     can_change: bool  # this request comes from the desktop app
+    keep_sharing_after_quit: bool  # the backend keeps serving when the app quits
+    keep_awake_while_sharing: bool  # a sleep inhibitor all the time it is shared
+    keep_awake_available: bool  # systemd-inhibit is there (not in the Flatpak)
 
 
 class TeamChange(ApiModel):
-    enabled: bool
+    enabled: bool | None = None  # None: leave sharing as it is, change only the options
     name: str = ""  # the owner's name the first time (default: the system account's)
+    keep_sharing_after_quit: bool | None = None
+    keep_awake_while_sharing: bool | None = None
 
 
 def _local(request: Request, ctx: AppContext) -> bool:
@@ -49,6 +54,9 @@ def _status(request: Request, ctx: AppContext) -> TeamStatus:
         firewall_hint=team_host.firewall_hint(port),
         error=ctx.team_host.error,
         can_change=_local(request, ctx) and access.is_admin(),
+        keep_sharing_after_quit=st.keep_sharing_after_quit,
+        keep_awake_while_sharing=st.keep_awake_while_sharing,
+        keep_awake_available=ctx.awake.available,
     )
 
 
@@ -61,10 +69,19 @@ async def status(request: Request, ctx: AppContext = Depends(get_ctx)):
 async def change(body: TeamChange, request: Request, ctx: AppContext = Depends(get_ctx)):
     if not (_local(request, ctx) and access.is_admin()):
         raise access.Forbidden("Sharing is turned on and off in the desktop app on this computer")
+    options = {
+        k: v
+        for k, v in body.model_dump(
+            include={"keep_sharing_after_quit", "keep_awake_while_sharing"}
+        ).items()
+        if v is not None
+    }
     try:
-        if body.enabled:
+        if options:
+            await team_host.set_options(ctx, **options)
+        if body.enabled is True:
             await team_host.turn_on(ctx, request.app, body.name)
-        else:
+        elif body.enabled is False:
             await team_host.turn_off(ctx)
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e

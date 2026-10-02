@@ -153,3 +153,48 @@ def test_recovery_leaves_a_live_backends_recorders_alone(tmp_path):
         _gone(backend)
     assert recorder_owner([wav]) is None  # orphaned now
     assert stop_orphan_recorders([wav]) == 1
+
+
+def test_a_shared_computer_keeps_serving_after_the_app_quits(client, ctx, watched, monkeypatch):
+    from mnemosyne.api import app_watch
+
+    monkeypatch.setattr(app_watch, "outlives_app", lambda c: True)
+    _gone(watched.app)
+    client.portal.call(watched.watch.check)
+    client.portal.call(watched.watch.check)
+    assert watched.events.exits == 0 and not watched.watch.done
+    assert watched.events.notes == ["Mnemosyne is still shared with your team"]  # once
+    # The app comes back and quits again: told again.
+    again = _app()
+    client.post("/api/system/attach", json={"pid": again.pid})
+    client.portal.call(watched.watch.check)
+    _gone(again)
+    client.portal.call(watched.watch.check)
+    assert watched.events.notes.count("Mnemosyne is still shared with your team") == 2
+    # Sharing stopped (from the app, or settings changed): ends with the app as before.
+    monkeypatch.setattr(app_watch, "outlives_app", lambda c: False)
+    client.portal.call(watched.watch.check)
+    assert watched.events.exits == 1
+
+
+def test_a_teammates_browser_recording_goes_on_while_serving(client, ctx, watched, monkeypatch):
+    from mnemosyne.api import app_watch
+    from mnemosyne.audio.capture import BrowserProcess, RecordingProcess, RecordingSession
+
+    monkeypatch.setattr(app_watch, "outlives_app", lambda c: True)
+    rec = RecordingSession(session_id="s1", output_dir=ctx.settings.data_dir, is_recording=True)
+    rec.processes.append(
+        RecordingProcess(
+            device_id=-1, output_path=ctx.settings.data_dir / "x", process=BrowserProcess()
+        )
+    )
+    ctx.active_recordings["s1"] = rec
+    try:
+        _gone(watched.app)
+        watched.clock[0] = 10_000
+        client.portal.call(watched.watch.check)
+        client.portal.call(watched.watch.check)
+        assert "s1" in ctx.active_recordings and watched.events.exits == 0
+        assert "Mnemosyne closed while recording" not in watched.events.notes
+    finally:
+        ctx.active_recordings.pop("s1", None)

@@ -58,6 +58,17 @@ def client(app):
 
 
 @pytest.fixture(autouse=True)
+def no_sleep_inhibitor(monkeypatch):
+    """Never hold a real sleep inhibitor on the machine running the tests (services/awake.py)."""
+    from mnemosyne.services import awake
+
+    def spawn(reason):
+        raise OSError("no systemd-inhibit in tests")
+
+    monkeypatch.setattr(awake, "_spawn", spawn)
+
+
+@pytest.fixture(autouse=True)
 def fake_embedder(monkeypatch):
     """Never download an embedding model: hashed embeddings with a few synonyms."""
     from mnemosyne.search import embeddings

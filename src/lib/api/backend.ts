@@ -564,9 +564,14 @@ export async function getTeam(): Promise<TeamStatus> {
   return request('/api/team');
 }
 
-/** Share this computer with a team (only from the desktop app on this computer). */
-export async function setTeam(enabled: boolean, name = ''): Promise<TeamStatus> {
-  return request('/api/team', { method: 'PUT', body: JSON.stringify({ enabled, name }) });
+/** Share this computer with a team, or change how (only from the desktop app on this computer). */
+export async function setTeam(change: {
+  enabled?: boolean;
+  name?: string;
+  keep_sharing_after_quit?: boolean;
+  keep_awake_while_sharing?: boolean;
+}): Promise<TeamStatus> {
+  return request('/api/team', { method: 'PUT', body: JSON.stringify(change) });
 }
 
 export async function getLocalModel(): Promise<LocalModelStatus> {

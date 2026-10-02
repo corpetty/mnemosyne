@@ -17,7 +17,11 @@ and send each their invite link. Browsers warn once about the certificate, which
 for itself: they continue past it (Advanced → Accept), and recording in a browser works over that
 HTTPS address. If the others cannot connect, open the port in the firewall; the app shows the
 command (`firewall-cmd` or `ufw`). The computer has to be on while they use it, and their meetings
-are transcribed on it. **Stop sharing** closes the address; accounts and meetings stay.
+are transcribed on it: it does not go to sleep while anyone records, and **Keep this computer awake
+while it is shared** keeps it awake all day. **Keep sharing when I quit Mnemosyne** leaves the
+backend serving them after you quit (until you log out); Settings → General → Window can also make
+closing the window keep Mnemosyne in the tray. **Stop sharing** closes the address; accounts and
+meetings stay.
 
 The rest of this page is for a dedicated machine, which can run while nobody is at it, encrypts with
 a TPM-sealed key and has its own backups.

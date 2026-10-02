@@ -25,13 +25,21 @@ pub struct ShellPrefsState {
 
 impl ShellPrefsState {
     pub fn load(app: &AppHandle) -> Self {
-        let path = app.path().app_config_dir().ok().map(|d| d.join("shell.json"));
+        let path = app
+            .path()
+            .app_config_dir()
+            .ok()
+            .map(|d| d.join("shell.json"));
         let prefs = path
             .as_ref()
             .and_then(|p| fs::read_to_string(p).ok())
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        Self { prefs: Mutex::new(prefs), path, tray: AtomicBool::new(false) }
+        Self {
+            prefs: Mutex::new(prefs),
+            path,
+            tray: AtomicBool::new(false),
+        }
     }
 
     /// Close hides the window instead: asked for, and there is a tray to come back from.

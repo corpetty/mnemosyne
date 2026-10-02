@@ -11,6 +11,9 @@ watch it:
   picks the recording up (it attaches with POST /api/system/attach and shows it), and say so in
   a desktop notification: nothing records unseen. When nobody comes back, stop and save the
   recording the way Stop does, then shut down.
+- The computer is shared with a team and `keep_sharing_after_quit` is on (`outlives_app`): keep
+  serving them, say so in a notification, and never shut down. Teammates' browser recordings go
+  on; the desktop's own recording is still saved after ORPHAN_GRACE.
 
 Without MNEMOSYNE_APP_PID (server mode, `uvicorn main:app`, tests) nothing is watched.
 """
@@ -30,6 +33,13 @@ if TYPE_CHECKING:
     from .context import AppContext
 
 logger = logging.getLogger(__name__)
+
+
+def outlives_app(ctx: AppContext) -> bool:
+    """Whether this backend keeps serving a team when the desktop app quits (team_host.py)."""
+    st = ctx.settings
+    return st.share_on_network and st.keep_sharing_after_quit and ctx.team_host.running
+
 
 ORPHAN_GRACE = 15 * 60.0  # seconds a recording goes on without the app
 # Jobs that belong to a recording and end with it; anything else is work to finish first.
@@ -101,6 +111,7 @@ class AppWatch:
         self._clock = clock
         self.pid, self._started = pid, start_time(pid)
         self.orphaned_since: float | None = None
+        self.told_serving = False  # the "still shared" notification was shown
         self.done = False
 
     @classmethod
@@ -124,6 +135,7 @@ class AppWatch:
             logger.info("The app is back (pid %d)", pid)
         self.pid, self._started = pid, started
         self.orphaned_since = None
+        self.told_serving = False
         return True
 
     def app_alive(self) -> bool:
@@ -144,8 +156,16 @@ class AppWatch:
             if self.orphaned_since is not None:
                 logger.info("The app is back")
             self.orphaned_since = None
+            self.told_serving = False
             return
-        recording = [s for s, r in self.ctx.active_recordings.items() if r.is_recording]
+        from ..audio.capture import is_browser
+
+        serving = outlives_app(self.ctx)
+        recording = [
+            s
+            for s, r in self.ctx.active_recordings.items()
+            if r.is_recording and not (serving and is_browser(r))  # a teammate's goes on
+        ]
         now = self._clock()
         if recording:
             if self.orphaned_since is None:
@@ -172,6 +192,17 @@ class AppWatch:
                 "Mnemosyne saved the recording",
                 "It was stopped because the app was closed. Open Mnemosyne to transcribe it.",
             )
+            self.orphaned_since = None
+        if serving:
+            if not self.told_serving:
+                self.told_serving = True
+                logger.info("The app is gone; still sharing this computer with the team")
+                await asyncio.to_thread(
+                    self._notify,
+                    "Mnemosyne is still shared with your team",
+                    "It keeps serving them after quitting. Open Mnemosyne to stop sharing.",
+                )
+            return
         busy = [
             j
             for j in self.ctx.jobs.list(active_only=True)

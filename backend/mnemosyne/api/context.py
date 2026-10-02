@@ -19,6 +19,7 @@ from ..config import Settings
 from ..events import EventBus
 from ..jobs import JobManager
 from ..search.index import VectorIndex
+from ..services.awake import KeepAwake
 from ..services.calendar_service import CalendarService, calendar_source
 from ..services.link import LinkService
 from ..services.meeting_types import available_types
@@ -60,6 +61,7 @@ class AppContext:
     _apps_task: asyncio.Task | None = None
     _backup_task: asyncio.Task | None = None
     _idle_task: asyncio.Task | None = None
+    _awake_task: asyncio.Task | None = None
     _intervals: tuple[float, float] = (6 * 3600, 900)
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     live: dict = field(default_factory=dict)  # session id -> running LiveTranscriber
@@ -70,6 +72,7 @@ class AppContext:
     # A team server's per-person calendars (calendar_for), by ICS link.
     person_calendars: dict = field(default_factory=dict)
     team_host: TeamHost = field(default_factory=lambda: TeamHost())
+    awake: KeepAwake = field(default_factory=lambda: KeepAwake())  # services/awake.py
     app: Any = None  # the FastAPI app, for the team listener (set by api/app.py)
     recovered: list = field(default_factory=list)  # RecoveredRecording, since this start
     # Encryption at rest: where the master key lives, the key once known, and whether the
@@ -350,6 +353,16 @@ class AppContext:
             except Exception:
                 logger.exception("Unloading idle models failed")
 
+    async def _awake_loop(self, interval_seconds: float) -> None:
+        from ..services.awake import reason
+
+        while True:
+            try:
+                self.awake.want(reason(self))
+            except Exception:
+                logger.exception("Keeping the computer awake failed")
+            await asyncio.sleep(interval_seconds)
+
     def busy(self) -> bool:
         """Recording, or any job running: models may be in use."""
         return bool(self.active_recordings) or bool(self.jobs.list(active_only=True))
@@ -439,6 +452,7 @@ class AppContext:
         self._apps_task = asyncio.create_task(self._apps_loop(5.0))
         self._backup_task = asyncio.create_task(self._backup_loop(3600.0))
         self._idle_task = asyncio.create_task(self._idle_loop(60.0))
+        self._awake_task = asyncio.create_task(self._awake_loop(5.0))
 
     async def _start_echo(self) -> None:
         try:
@@ -453,6 +467,7 @@ class AppContext:
         from ..services.local_llm import manager
 
         await self.team_host.stop()
+        self.awake.release()
 
         manager(self.settings.models_dir).stop()  # the built-in model's server, if it runs
         # Recordings still running end here, their files closed properly; the next start
@@ -484,6 +499,7 @@ class AppContext:
             self._apps_task,
             self._backup_task,
             self._idle_task,
+            self._awake_task,
         ):
             if task is not None:
                 task.cancel()

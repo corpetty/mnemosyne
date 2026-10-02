@@ -222,6 +222,12 @@ class Settings(BaseSettings):
     share_on_network: bool = False
     team_port: int = 8443
     team_owner_id: str = ""
+    # Quitting the app leaves the backend serving the team (api/app_watch.py, /health).
+    keep_sharing_after_quit: bool = False
+    # Stay awake all the time it is shared, not only while recording (services/awake.py).
+    keep_awake_while_sharing: bool = False
+    # Serve the Tailscale name with a real certificate from `tailscale cert` (no browser warning).
+    team_tailscale_cert: bool = False
     # On a team server, share a meeting with the team members invited to it (their calendar
     # email matches theirs), so everyone in the meeting can read it (services/sharing.py).
     share_with_invitees: bool = True

@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 
 from .. import access
 from ..config import Settings, load_settings
-from .app_watch import watch_app
+from .app_watch import outlives_app, watch_app
 from .auth import LockedMiddleware, TokenAuthMiddleware
 from .context import AppContext
 from .routes.ask import router as ask_router
@@ -135,6 +135,8 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
             # For the desktop shell, which finds this backend already running after a crash.
             "pid": os.getpid(),
             "recording": any(r.is_recording for r in ctx.active_recordings.values()),
+            # The shell leaves this backend running when the app quits (api/app_watch.py).
+            "outlives_app": outlives_app(ctx),
         }
 
     if ctx.settings.web_dir:

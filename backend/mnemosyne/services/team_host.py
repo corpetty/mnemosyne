@@ -199,6 +199,15 @@ async def turn_on(ctx: AppContext, app, name: str = "") -> str:
     return owner.id
 
 
+async def set_options(ctx: AppContext, **options: bool) -> None:
+    """keep_sharing_after_quit, keep_awake_while_sharing: saved, and in effect at once."""
+    from ..config import save_settings
+
+    settings = ctx.settings.model_copy(update=options)
+    save_settings(settings)
+    await ctx.apply_settings(settings)
+
+
 async def turn_off(ctx: AppContext) -> None:
     from ..config import save_settings
 

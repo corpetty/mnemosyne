@@ -129,6 +129,13 @@ fn backend_request(method: &str, path: &str, body: &str) -> Option<serde_json::V
     serde_json::from_str(body).ok()
 }
 
+/// The backend keeps serving a team after the app quits (`keep_sharing_after_quit`).
+fn backend_outlives_app() -> bool {
+    backend_request("GET", "/health", "")
+        .and_then(|h| h.get("outlives_app").and_then(|v| v.as_bool()))
+        .unwrap_or(false)
+}
+
 /// What holds the backend port when the app starts.
 enum Existing {
     Free,
@@ -302,6 +309,57 @@ struct ReleaseLayout {
     /// The built web app, which the backend serves to a team on the network
     /// (services/team_host.py) when this computer is shared.
     web_dir: Option<PathBuf>,
+    /// The remote-access sidecar (services/link.py).
+    link: PathBuf,
+}
+
+/// An AppImage's files vanish when it exits (its mount goes away), but the backend may outlive
+/// the app: a recording after a crash, a team it keeps serving (api/app_watch.py). So the
+/// AppImage runs the backend, the web app and the link sidecar from a copy in
+/// `<app data>/runtime/<version>`, made once per version; older versions' copies are removed.
+fn runtime_copy(
+    resource_dir: &Path,
+    link: &Path,
+    local: &Path,
+    version: &str,
+) -> Result<PathBuf, String> {
+    let root = local.join("runtime");
+    let dir = root.join(version);
+    if !dir.join("backend").join("uv.lock").is_file() {
+        let tmp = root.join(format!("{version}.partial"));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).map_err(|e| format!("create {tmp:?}: {e}"))?;
+        for name in ["backend", "web"] {
+            let from = resource_dir.join(name);
+            if !from.is_dir() {
+                continue;
+            }
+            let status = StdCommand::new("cp")
+                .arg("-a")
+                .arg(&from)
+                .arg(tmp.join(name))
+                .status()
+                .map_err(|e| format!("cp: {e}"))?;
+            if !status.success() {
+                return Err(format!("copying {from:?} failed"));
+            }
+        }
+        if link.is_file() {
+            fs::copy(link, tmp.join("mnemosyne-link"))
+                .map_err(|e| format!("copy {link:?}: {e}"))?;
+        }
+        let _ = fs::remove_dir_all(&dir);
+        fs::rename(&tmp, &dir).map_err(|e| format!("rename {tmp:?}: {e}"))?;
+        info!("Backend files copied out of the AppImage to {dir:?}");
+    }
+    if let Ok(entries) = fs::read_dir(&root) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy() != version {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    Ok(dir)
 }
 
 impl ReleaseLayout {
@@ -310,9 +368,8 @@ impl ReleaseLayout {
             .path()
             .resource_dir()
             .map_err(|e| format!("resource dir: {e}"))?;
-        let backend_dir = resource_dir.join("backend");
-        if !backend_dir.join("uv.lock").is_file() {
-            return Err(format!("bundled backend not found at {:?}", backend_dir));
+        if !resource_dir.join("backend").join("uv.lock").is_file() {
+            return Err(format!("bundled backend not found in {:?}", resource_dir));
         }
         let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
         let uv = exe
@@ -326,13 +383,27 @@ impl ReleaseLayout {
             .path()
             .app_local_data_dir()
             .map_err(|e| format!("app local data dir: {e}"))?;
+        let bundled_link = uv.with_file_name("mnemosyne-link");
+        // The files the backend runs from: the AppImage's own vanish when it exits.
+        let files = if std::env::var_os("APPIMAGE").is_some() {
+            let version = app.package_info().version.to_string();
+            runtime_copy(&resource_dir, &bundled_link, &local, &version)?
+        } else {
+            resource_dir.clone()
+        };
+        let backend_dir = files.join("backend");
+        let link = if files == resource_dir {
+            bundled_link
+        } else {
+            files.join("mnemosyne-link")
+        };
         let venv = local.join("venv");
         let data_dir = local.join("data");
         fs::create_dir_all(&data_dir).map_err(|e| format!("create {:?}: {e}", data_dir))?;
         let offline = Some(resource_dir.join("offline")).filter(|d| d.join("uv-cache").is_dir());
         let python_dir = local.join("python");
-        let web_dir = Some(resource_dir.join("web")).filter(|d| d.join("index.html").is_file());
-        Ok(Self { backend_dir, uv, venv, data_dir, python_dir, offline, web_dir })
+        let web_dir = Some(files.join("web")).filter(|d| d.join("index.html").is_file());
+        Ok(Self { backend_dir, uv, venv, data_dir, python_dir, offline, web_dir, link })
     }
 
     fn python(&self) -> PathBuf {
@@ -516,7 +587,7 @@ fn release_command(layout: &ReleaseLayout) -> StdCommand {
         // The backend ends when this app does (after saving a recording it was making).
         .env("MNEMOSYNE_APP_PID", std::process::id().to_string())
         // Remote access: the link sidecar ships next to the app binary, like uv.
-        .env("MNEMOSYNE_LINK_BIN", layout.uv.with_file_name("mnemosyne-link"))
+        .env("MNEMOSYNE_LINK_BIN", &layout.link)
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("PYTHONUNBUFFERED", "1");
     if let Some(web) = &layout.web_dir {
@@ -977,6 +1048,12 @@ pub fn run() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {
+            if !cfg!(debug_assertions) && backend_outlives_app() {
+                // Shared with a team and asked to keep sharing after quitting: the backend
+                // goes on (it runs in a session of its own) and a relaunch takes it over.
+                info!("App exiting; the backend keeps serving the team");
+                return;
+            }
             info!("App exiting, shutting down backend...");
             let state = app_handle.state::<BackendState>();
             let child = state.child.lock().unwrap().take();

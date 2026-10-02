@@ -195,7 +195,17 @@ desktop app keeps working without signing in; not when a proxy on this machine p
 people and meetings stay. Changing it needs an admin on 127.0.0.1 on the main port (else 403); a
 port in use answers 409. `GET` returns `enabled`, `running`, `port`, `addresses` (the likeliest
 first), `owner`, `firewall_hint` (a firewall-cmd or ufw command, "" when neither is installed),
-`error` and `can_change`.
+`error`, `can_change`, `keep_sharing_after_quit`, `keep_awake_while_sharing` and
+`keep_awake_available`. `PUT` takes any of `enabled`, `name`, `keep_sharing_after_quit` and
+`keep_awake_while_sharing` (left out: unchanged).
+
+With `keep_sharing_after_quit`, `/health` says `outlives_app: true` while it is shared: the shell
+then leaves the backend running when the app quits, and `api/app_watch.py` keeps serving instead of
+shutting down (teammates' browser recordings go on; the desktop's own recording is still saved after
+15 minutes). The AppImage runs the backend from a copy in `<app data>/runtime/<version>`, since its
+own files vanish when it exits. While anything records, the backend holds a logind sleep inhibitor
+(`services/awake.py`, `systemd-inhibit`); with `keep_awake_while_sharing`, all the time it is
+shared.
 
 ### Backend lifetime (desktop app)
 The shell passes its pid in `MNEMOSYNE_APP_PID`; the backend watches it (`api/app_watch.py`). When

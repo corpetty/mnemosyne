@@ -39,12 +39,21 @@
 		);
 	});
 
+	async function setOption(option: 'keep_sharing_after_quit' | 'keep_awake_while_sharing', value: boolean) {
+		error = '';
+		try {
+			show(await setTeam({ [option]: value }));
+		} catch (e) {
+			error = e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not change that';
+		}
+	}
+
 	async function toggle(enabled: boolean) {
 		if (!enabled && !confirm('Stop sharing? People on your team can no longer reach this computer. Their accounts and meetings stay.')) return;
 		busy = true;
 		error = '';
 		try {
-			show(await setTeam(enabled, name.trim()));
+			show(await setTeam({ enabled, name: name.trim() }));
 			await refreshMe();
 			if (enabled) await teamState.load();
 		} catch (e) {
@@ -113,6 +122,37 @@
 					<p class="text-amber-400">Sharing is on but not listening{status.error ? `: ${status.error}` : ''}.</p>
 					<button onclick={() => toggle(true)} disabled={busy} class="text-sm text-blue-400 hover:text-blue-300">Try again</button>
 				{/if}
+				<label class="flex items-start gap-2 text-sm text-gray-300 pt-1">
+					<input
+						type="checkbox"
+						class="mt-1"
+						checked={status.keep_sharing_after_quit}
+						onchange={(e) => setOption('keep_sharing_after_quit', e.currentTarget.checked)}
+					/>
+					<span>
+						Keep sharing when I quit Mnemosyne
+						<span class="block text-xs text-gray-500">Your team can go on using this computer until you log out or open Mnemosyne and stop sharing.</span>
+					</span>
+				</label>
+				<label class="flex items-start gap-2 text-sm text-gray-300">
+					<input
+						type="checkbox"
+						class="mt-1"
+						checked={status.keep_awake_while_sharing}
+						disabled={!status.keep_awake_available}
+						onchange={(e) => setOption('keep_awake_while_sharing', e.currentTarget.checked)}
+					/>
+					<span>
+						Keep this computer awake while it is shared
+						<span class="block text-xs text-gray-500">
+							{#if status.keep_awake_available}
+								It never sleeps while someone records here, either way; this keeps it awake all the time it is shared.
+							{:else}
+								Not available here (no systemd-inhibit, as in the Flatpak).
+							{/if}
+						</span>
+					</span>
+				</label>
 				<button onclick={() => toggle(false)} disabled={busy} class="text-sm text-gray-400 hover:text-red-400">Stop sharing</button>
 			</div>
 		{/if}

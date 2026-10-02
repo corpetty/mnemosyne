@@ -4738,6 +4738,10 @@ export interface components {
             jira_project?: string | null;
             /** Jira Url */
             jira_url?: string | null;
+            /** Keep Awake While Sharing */
+            keep_awake_while_sharing?: boolean | null;
+            /** Keep Sharing After Quit */
+            keep_sharing_after_quit?: boolean | null;
             /** Language */
             language?: string | null;
             /** Linear Api Key */
@@ -4860,6 +4864,8 @@ export interface components {
             team_owner_id?: string | null;
             /** Team Port */
             team_port?: number | null;
+            /** Team Tailscale Cert */
+            team_tailscale_cert?: boolean | null;
             /** Transcriber */
             transcriber?: string | null;
             /** Unload Models After Minutes */
@@ -4983,6 +4989,10 @@ export interface components {
             jira_project: string;
             /** Jira Url */
             jira_url: string;
+            /** Keep Awake While Sharing */
+            keep_awake_while_sharing: boolean;
+            /** Keep Sharing After Quit */
+            keep_sharing_after_quit: boolean;
             /** Language */
             language: string;
             /** Linear Api Key */
@@ -5105,6 +5115,8 @@ export interface components {
             team_owner_id: string;
             /** Team Port */
             team_port: number;
+            /** Team Tailscale Cert */
+            team_tailscale_cert: boolean;
             /** Transcriber */
             transcriber: string;
             /** Unload Models After Minutes */
@@ -5417,7 +5429,11 @@ export interface components {
         /** TeamChange */
         TeamChange: {
             /** Enabled */
-            enabled: boolean;
+            enabled?: boolean | null;
+            /** Keep Awake While Sharing */
+            keep_awake_while_sharing?: boolean | null;
+            /** Keep Sharing After Quit */
+            keep_sharing_after_quit?: boolean | null;
             /**
              * Name
              * @default
@@ -5436,6 +5452,12 @@ export interface components {
             error: string;
             /** Firewall Hint */
             firewall_hint: string;
+            /** Keep Awake Available */
+            keep_awake_available: boolean;
+            /** Keep Awake While Sharing */
+            keep_awake_while_sharing: boolean;
+            /** Keep Sharing After Quit */
+            keep_sharing_after_quit: boolean;
             /** Owner */
             owner: string;
             /** Port */

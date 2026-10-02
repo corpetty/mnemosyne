@@ -108,3 +108,17 @@ def test_a_port_in_use_is_reported(desktop):
         busy.listen()
         r = client.put("/api/team", json={"enabled": True})
     assert r.status_code == 409 and str(ctx.settings.team_port) in r.json()["detail"]
+
+
+def test_options_are_saved_and_health_says_whether_it_outlives_the_app(desktop):
+    client, ctx = desktop
+    assert client.get("/health").json()["outlives_app"] is False
+    r = client.put("/api/team", json={"keep_sharing_after_quit": True})
+    assert r.json()["keep_sharing_after_quit"] is True and r.json()["enabled"] is False
+    assert client.get("/health").json()["outlives_app"] is False  # not shared
+    client.put("/api/team", json={"enabled": True, "name": "Corey"})
+    assert client.get("/health").json()["outlives_app"] is True
+    client.put("/api/team", json={"keep_awake_while_sharing": True})
+    assert ctx.settings.keep_awake_while_sharing and ctx.settings.share_on_network
+    client.put("/api/team", json={"enabled": False})
+    assert client.get("/health").json()["outlives_app"] is False
