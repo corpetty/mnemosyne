@@ -29,6 +29,8 @@ def anyio_backend():
 @pytest.fixture
 def settings(tmp_path, monkeypatch) -> Settings:
     monkeypatch.setenv("MNEMOSYNE_CONFIG_FILE", str(tmp_path / "config.toml"))
+    # Model downloads are watched in this cache (services/model_downloads.py): not the real one.
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hf"))
     # backup_dir: never the real ~/Documents/Mnemosyne backups
     return Settings(data_dir=tmp_path / "data", backup_dir=str(tmp_path / "backups"))
 

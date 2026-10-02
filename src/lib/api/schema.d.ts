@@ -2353,6 +2353,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prepare Models
+         * @description Download the speech and search models now (a `prepare_models` job), so the first
+         *     recording, transcription and search do not wait for them: what setup does at the end.
+         */
+        post: operations["prepare_models_api_system_prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/team": {
         parameters: {
             query?: never;
@@ -4720,6 +4741,8 @@ export interface components {
             glossary?: string | null;
             /** Glossary Llm Correct */
             glossary_llm_correct?: boolean | null;
+            /** Gpu Support */
+            gpu_support?: string | null;
             /** Hf Token */
             hf_token?: string | null;
             /** Hubspot Auto Push */
@@ -4971,6 +4994,8 @@ export interface components {
             glossary: string;
             /** Glossary Llm Correct */
             glossary_llm_correct: boolean;
+            /** Gpu Support */
+            gpu_support: string;
             /** Hf Token */
             hf_token: string;
             /** Hubspot Auto Push */
@@ -5382,6 +5407,8 @@ export interface components {
             gpu_driver: boolean;
             /** Gpu Stack */
             gpu_stack: boolean;
+            /** Gpu Support */
+            gpu_support: string;
             /** Hf Token */
             hf_token: boolean;
             /** Onnx Diarizer */
@@ -5394,6 +5421,8 @@ export interface components {
             platform: string;
             /** Problems */
             problems: string[];
+            /** Setup Complete */
+            setup_complete: boolean;
             /** Transcriber In Use */
             transcriber_in_use: string;
         };
@@ -9937,6 +9966,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Diagnostics"];
+                };
+            };
+        };
+    };
+    prepare_models_api_system_prepare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
         };

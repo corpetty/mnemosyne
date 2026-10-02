@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     # Transcription pipeline
     # The first-run setup wizard has been completed or skipped.
     setup_complete: bool = False
+    # The desktop app installs GPU support (the gpu extra, ~7 GB) in the background on NVIDIA
+    # machines: "auto", or "off" when setup or Settings said not now.
+    gpu_support: str = "auto"
 
     # auto: WhisperX with a working GPU, else Parakeet (registry.resolve_transcriber).
     transcriber: str = "auto"  # auto | whisperx | parakeet | remote

@@ -122,7 +122,16 @@ def transcribe_session(
         try:
             ctx.update("Loading models...")
             ctx.emit({"type": "status", "session_id": session_id, "message": "Loading models..."})
-            engine = await app.models.ensure_loaded()
+
+            def downloading(done: int, total: int) -> None:
+                message = (
+                    "Downloading the speech models (first time only): "
+                    f"{done} of about {total} MB..."
+                )
+                ctx.update(message)
+                ctx.emit({"type": "status", "session_id": session_id, "message": message})
+
+            engine = await app.models.ensure_loaded(on_download=downloading)
 
             ctx.update("Transcribing...")
             ctx.emit({"type": "status", "session_id": session_id, "message": "Transcribing..."})

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from ..config import Settings
@@ -28,6 +30,8 @@ class ModelService:
         self._live_stream = None
         self._live_stream_built = False
         self.last_used = time.monotonic()  # for unloading idle models (unload_if_idle)
+        # One load at a time: setup's prepare job and a first transcription may both ask.
+        self._load_lock = asyncio.Lock()
 
     @property
     def loaded(self) -> bool:
@@ -120,11 +124,28 @@ class ModelService:
             self._live_stream_built = True
         return self._live_stream
 
-    async def ensure_loaded(self) -> TranscriptionEngine:
+    async def ensure_loaded(
+        self, on_download: Callable[[int, int], None] | None = None
+    ) -> TranscriptionEngine:
+        """The engine, loaded. `on_download(done_mb, total_mb)` hears about a first download of
+        its models while it loads (services/model_downloads.py)."""
+        async with self._load_lock:
+            return await self._ensure_loaded(on_download)
+
+    async def _ensure_loaded(
+        self, on_download: Callable[[int, int], None] | None
+    ) -> TranscriptionEngine:
         engine = self.engine
         if not engine.is_loaded():
             try:
-                await engine.load()
+                if on_download is None:
+                    await engine.load()
+                else:
+                    from .model_downloads import hf_cache, speech_mb, watched
+
+                    expected = await asyncio.to_thread(speech_mb, self.settings)
+                    folders = [hf_cache(), self.settings.models_dir]
+                    await watched(engine.load(), folders, expected, on_download)
             except ModuleNotFoundError as e:
                 if e.name and e.name.split(".")[0] in GPU_MODULES:
                     # Release builds install the GPU extra in the background after the

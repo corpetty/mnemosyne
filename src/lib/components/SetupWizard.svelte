@@ -1,5 +1,15 @@
 <script lang="ts">
-	import { getLocalModel, getSettings, getSystemInfo, importSample, listModels, updateSettings } from '$lib/api/backend.js';
+	import {
+		getLocalModel,
+		getSettings,
+		getSystemInfo,
+		importSample,
+		listModels,
+		prepareModels,
+		updateSettings
+	} from '$lib/api/backend.js';
+	import { jobsState } from '$lib/stores/jobs.svelte.js';
+	import JobProgress from './JobProgress.svelte';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { startRecording } from '$lib/app/controller.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
@@ -21,6 +31,13 @@
 	let identifySpeakers = $state(false);
 	let savedTranscriber = $state<string | null>(null); // as saved: may be "auto"
 	let hfToken = $state('');
+	// GPU support (the desktop app installs it in the background): offered on NVIDIA machines.
+	let desktop = $state(false);
+	let installGpu = $state(true);
+	const offerGpu = $derived(desktop && !!system?.gpu_driver && !system.gpu_stack);
+	// The models, fetched while the last step is read (POST /api/system/prepare).
+	let prepareId = $state<string | null>(null);
+	const prepareJob = $derived(prepareId ? (jobsState.jobs[prepareId] ?? null) : null);
 	// Summaries
 	let provider = $state<'local' | 'ollama' | 'vllm' | 'openai' | 'anthropic' | 'none'>('ollama');
 	let savedProvider = $state<string | null>(null);
@@ -34,6 +51,30 @@
 	let vaultPath = $state('');
 	let calendarUrl = $state('');
 	let calendarSource = $state<'off' | 'desktop' | 'ics'>('off');
+
+	$effect(() => {
+		import('@tauri-apps/api/core').then((c) => (desktop = c.isTauri())).catch(() => {});
+	});
+
+	async function startGpuInstall() {
+		try {
+			const { invoke, isTauri } = await import('@tauri-apps/api/core');
+			if (isTauri()) await invoke('start_gpu_install');
+		} catch {
+			/* an older shell: it installs at its next start */
+		}
+	}
+
+	async function prepare() {
+		if (prepareId) return;
+		try {
+			const job = await prepareModels();
+			jobsState.track(job);
+			prepareId = job.id;
+		} catch {
+			/* already preparing, or an older backend: the first transcription downloads them */
+		}
+	}
 
 	$effect(() => {
 		// Start from the current configuration; the system probe only adds hints.
@@ -127,6 +168,7 @@
 
 	function transcriptionUpdate(): SettingsUpdate {
 		const u: SettingsUpdate = { transcriber, diarizer: identifySpeakers ? 'auto' : 'none' };
+		if (offerGpu) u.gpu_support = installGpu ? 'auto' : 'off';
 		if (transcriber === 'remote') u.remote_stt_url = remoteUrl.trim();
 		if (hfToken.trim()) u.hf_token = hfToken.trim();
 		return u;
@@ -161,7 +203,10 @@
 
 	async function next() {
 		let ok = true;
-		if (STEPS[step] === 'Transcription') ok = await save(transcriptionUpdate());
+		if (STEPS[step] === 'Transcription') {
+			ok = await save(transcriptionUpdate());
+			if (ok && offerGpu && installGpu) void startGpuInstall();
+		}
 		if (STEPS[step] === 'Summaries') ok = await save(providerUpdate());
 		if (STEPS[step] === 'Notes & calendar') {
 			const u: SettingsUpdate = { obsidian_vault_path: vaultPath.trim(), calendar_source: calendarSource };
@@ -169,10 +214,12 @@
 			ok = await save(u);
 		}
 		if (ok) step = Math.min(step + 1, STEPS.length - 1);
+		if (STEPS[step] === 'Done') void prepare();
 	}
 
 	async function finish(record = false) {
 		await save({ setup_complete: true });
+		if (!(offerGpu && !installGpu)) void startGpuInstall(); // skipped setup: the default
 		uiState.view = 'home';
 		if (record) startRecording(true);
 	}
@@ -244,7 +291,7 @@
 				<span><span class="text-gray-100 font-medium">WhisperX</span> <span class="text-xs text-gray-500">NVIDIA GPU</span><br />
 					<span class="text-sm text-gray-400">
 						Whisper large on the GPU, many languages.
-						{#if system && !system.gpu_driver}No NVIDIA driver found on this machine.{:else if system && !system.gpu_stack}GPU support is still installing; Parakeet works meanwhile.{/if}
+						{#if system && !system.gpu_driver}No NVIDIA driver found on this machine.{:else if system && !system.gpu_stack}Needs GPU support{offerGpu ? ' (below)' : ''}; Parakeet works meanwhile.{/if}
 					</span></span>
 			</label>
 			<label class={option(transcriber === 'remote')}>
@@ -261,6 +308,18 @@
 					<span class="block text-xs text-gray-500">{speakerHow}</span>
 				</span>
 			</label>
+			{#if offerGpu}
+				<label class="flex items-start gap-2 rounded-lg border border-gray-800 p-3">
+					<input type="checkbox" bind:checked={installGpu} class="mt-1 rounded border-gray-600 bg-gray-800" />
+					<span class="text-sm text-gray-300">
+						Install GPU support for your NVIDIA card
+						<span class="block text-xs text-gray-500">
+							WhisperX and Nemotron (better, faster speaker labels). About 7 GB, downloaded in the background while
+							Parakeet works; untick on a slow or metered connection and install it later from Settings → Transcription.
+						</span>
+					</span>
+				</label>
+			{/if}
 			{#if identifySpeakers && system?.gpu_stack && !system.hf_token}
 				<label class="block text-xs text-gray-500">
 					Optional: a Hugging Face token (with speaker-diarization-community-1 accepted) lets Mnemosyne recognise voices across meetings.
@@ -343,6 +402,18 @@
 				<li>Summaries: {provider === 'none' ? 'off for now' : `${provider}${model ? ` · ${model}` : ''}`}</li>
 				<li>Obsidian: {vaultPath || 'not connected'}</li>
 			</ul>
+			{#if prepareJob}
+				<div class="rounded-lg border border-gray-800 p-3 text-sm">
+					{#if prepareJob.status === 'completed'}
+						<span class="text-green-400">✓ The speech models are ready.</span>
+					{:else if prepareJob.status === 'failed'}
+						<span class="text-amber-400">The models could not be fetched now ({prepareJob.error}); the first transcription tries again.</span>
+					{:else}
+						<p class="text-gray-300 mb-2">Getting the speech models ready, so your first recording starts at once. You can go on meanwhile.</p>
+						<JobProgress job={prepareJob} />
+					{/if}
+				</div>
+			{/if}
 			<p class="text-sm text-gray-500">Tip: Settings → Recording can start recordings automatically when a meeting app uses your microphone.</p>
 			<div class="rounded-lg border border-gray-800 bg-gray-900/60 p-3 text-sm text-gray-300">
 				Not in a meeting right now? Try it on a sample: 70 seconds of a real four-person meeting (from the AMI corpus),

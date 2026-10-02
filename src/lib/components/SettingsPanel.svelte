@@ -19,6 +19,7 @@
 	import TeamPeopleSettings from './TeamPeopleSettings.svelte';
 	import TeamHostSettings from './TeamHostSettings.svelte';
 	import WindowSettings from './WindowSettings.svelte';
+	import GpuSupportCard from './GpuSupportCard.svelte';
 	import MyPreferences from './MyPreferences.svelte';
 	import LocalModelCard from './LocalModelCard.svelte';
 	import RecordsSettings from './RecordsSettings.svelte';
@@ -714,6 +715,7 @@
 		{/if}
 
 		{#if tab === 'transcription'}
+			<GpuSupportCard />
 			<!-- Transcription -->
 			<section>
 				<h3 class="text-lg font-semibold text-gray-200 mb-3">Transcription</h3>

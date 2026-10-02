@@ -62,7 +62,7 @@ took 18 s. The weight is elsewhere:
 | Search model (potion-retrieval-32M) | 0.13 GB | first index |
 | Speaker models (onnx diarizer) | 45 MB | first transcription without NVIDIA |
 | GPU extra (torch, WhisperX, NeMo) | about 7.5 GB | right after the first start, NVIDIA only |
-| WhisperX large-v3 + Nemotron | about 3.2 GB | first transcription on NVIDIA |
+| WhisperX medium.en (default) + Nemotron | about 1.7 GB | first transcription on NVIDIA |
 
 ### 2a. Downloads say so
 - `ModelService.ensure_loaded` reports download progress while a model loads (bytes added to the

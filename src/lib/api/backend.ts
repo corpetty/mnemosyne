@@ -591,6 +591,11 @@ export async function pullOllamaModel(model: string): Promise<Job> {
   return request('/api/ollama/pull', { method: 'POST', body: JSON.stringify({ model }) });
 }
 
+/** Download the speech and search models now (a `prepare_models` job), as setup does. */
+export async function prepareModels(): Promise<Job> {
+  return request('/api/system/prepare', { method: 'POST' });
+}
+
 /** A short real meeting (AMI corpus) imported, transcribed and summarized: try the app first. */
 export async function importSample(): Promise<StopRecordingResponse> {
   return request('/api/audio/sample', { method: 'POST' });

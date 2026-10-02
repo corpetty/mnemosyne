@@ -246,7 +246,18 @@ when it is installed and `hf_token` is set, else `onnx` (pyannote segmentation +
 the CPU via sherpa-onnx, ~50 MB downloaded into `<data_dir>/models/diarization` on first use), else
 none. A saved engine whose packages are not installed falls back the same way. The setting
 `setup_complete` records that the first-run wizard was finished or skipped; the app opens the wizard
-when it is false and there are no meetings yet.
+when it is false and there are no meetings yet. The answer also carries `setup_complete` and
+`gpu_support` (`auto` | `off`) for the desktop shell: on an NVIDIA machine it installs the gpu extra
+(about 7 GB) in the background only after setup, and not when it was declined; setup and Settings →
+Transcription start it with the Tauri command `start_gpu_install`.
+
+### `POST /api/system/prepare`
+Admin. A `prepare_models` job that downloads the models the current settings use: the transcriber
+and diarizer (by loading the engine), the live transcript's model when it is another, and the search
+model. Its messages say "Downloading …: N of about M MB" (services/model_downloads.py adds up how
+much the Hugging Face cache and `<data_dir>/models` grew, against the expected size per engine);
+409 while one runs. Setup starts it on its last step. A transcription that loads the engine for the
+first time reports its download the same way.
 
 ## Devices
 

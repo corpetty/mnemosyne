@@ -558,6 +558,42 @@ fn emit_gpu(app: &AppHandle, state: &str, message: impl Into<String>, restart: b
     );
 }
 
+/// The GPU extra waiting for a word from the user: on the first run until setup answers, and
+/// when Settings or setup said not now (`gpu_support = "off"`). `start_gpu_install` starts it.
+struct PendingGpu(Mutex<Option<ReleaseLayout>>);
+
+/// Whether to install the GPU extra now: after setup, and unless it was declined. A backend
+/// that cannot be asked (an API token) is taken as yes, as before.
+fn gpu_install_wanted() -> bool {
+    match backend_request("GET", "/api/system", "") {
+        Some(info) => {
+            let setup_done = info.get("setup_complete").and_then(|v| v.as_bool()).unwrap_or(true);
+            let off = info.get("gpu_support").and_then(|v| v.as_str()) == Some("off");
+            setup_done && !off
+        }
+        None => true,
+    }
+}
+
+/// Setup's "Install GPU support", or Settings → Transcription's button. Returns whether an
+/// install started (false: nothing waiting, e.g. already installed or not an NVIDIA machine).
+#[tauri::command]
+fn start_gpu_install(app: AppHandle) -> bool {
+    let layout = app
+        .try_state::<PendingGpu>()
+        .and_then(|p| p.0.lock().unwrap().take());
+    match layout {
+        Some(layout) => {
+            let app2 = app.clone();
+            std::thread::Builder::new()
+                .name("gpu-install".into())
+                .spawn(move || install_gpu(&app2, &layout))
+                .is_ok()
+        }
+        None => false,
+    }
+}
+
 /// Phase 2 (in the background, while the backend already runs on CPU engines): the GPU
 /// extra. The UI restarts the backend once nothing is recording or running.
 fn install_gpu(app: &AppHandle, layout: &ReleaseLayout) {
@@ -679,10 +715,15 @@ fn start_backend(app: AppHandle) {
         let _ = app2.emit("backend-ready", healthy);
         if healthy {
             if let Some(layout) = gpu_layout {
-                let app3 = app2.clone();
-                let _ = std::thread::Builder::new()
-                    .name("gpu-install".into())
-                    .spawn(move || install_gpu(&app3, &layout));
+                if gpu_install_wanted() {
+                    let app3 = app2.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("gpu-install".into())
+                        .spawn(move || install_gpu(&app3, &layout));
+                } else if let Some(pending) = app2.try_state::<PendingGpu>() {
+                    info!("GPU support waits for setup, or was declined");
+                    *pending.0.lock().unwrap() = Some(layout);
+                }
             }
         }
     });
@@ -965,6 +1006,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(BackendState { child: Mutex::new(None), adopted: Mutex::new(None) })
         .manage(Recording(AtomicBool::new(false)))
+        .manage(PendingGpu(Mutex::new(None)))
         .manage(remote::RemoteState::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -1001,6 +1043,7 @@ pub fn run() {
             remote::remote_start,
             remote::remote_pair,
             remote::remote_forget,
+            start_gpu_install,
             shell_prefs::shell_prefs,
             shell_prefs::set_close_to_tray
         ])
