@@ -95,7 +95,10 @@
 			<span class="hidden md:flex items-center gap-2 text-gray-400" title="Signed in as {connectionState.me.name} ({connectionState.me.role})">
 				<span class="text-gray-300">{connectionState.me.name}</span>
 				{#if connectionState.me.role !== 'member'}<span class="text-gray-500">{connectionState.me.role}</span>{/if}
-				<button onclick={signOutHere} class="text-gray-500 hover:text-gray-300 underline-offset-2 hover:underline">Sign out</button>
+				<!-- The owner at a shared desktop has no token to forget (backend api/auth.py). -->
+				{#if connectionState.token}
+					<button onclick={signOutHere} class="text-gray-500 hover:text-gray-300 underline-offset-2 hover:underline">Sign out</button>
+				{/if}
 			</span>
 		{/if}
 		<button

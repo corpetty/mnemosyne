@@ -23,8 +23,8 @@
 	];
 
 	function linkFor(i: UserInvite): string {
-		// The desktop app sharing this computer: the network address, not its own 127.0.0.1.
-		const base = SAME_ORIGIN ? location.origin : teamState.address || connectionState.url;
+		// This computer shared with a team: its network address, not 127.0.0.1.
+		const base = teamState.address || (SAME_ORIGIN ? location.origin : connectionState.url);
 		return `${base}/?invite=${encodeURIComponent(i.code)}`;
 	}
 
