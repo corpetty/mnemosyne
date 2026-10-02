@@ -18,6 +18,7 @@
 	import EncryptionSettings from './EncryptionSettings.svelte';
 	import TeamPeopleSettings from './TeamPeopleSettings.svelte';
 	import TeamHostSettings from './TeamHostSettings.svelte';
+	import WindowSettings from './WindowSettings.svelte';
 	import MyPreferences from './MyPreferences.svelte';
 	import LocalModelCard from './LocalModelCard.svelte';
 	import RecordsSettings from './RecordsSettings.svelte';
@@ -1291,6 +1292,8 @@
 				</label>
 				<PhoneLink phoneUrl={settings.values.phone_url} tokenSet={settings.secrets_set.api_token} />
 			</section>
+
+			<WindowSettings />
 
 			{#if updateState.supported}
 				<!-- Updates -->

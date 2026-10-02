@@ -19,6 +19,9 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 mod remote;
+mod shell_prefs;
+
+use shell_prefs::ShellPrefsState;
 
 const BACKEND_PORT: u16 = 8008;
 
@@ -894,7 +897,16 @@ pub fn run() {
         .manage(remote::RemoteState::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if is_recording(window.app_handle()) {
+                let hides = window
+                    .app_handle()
+                    .try_state::<ShellPrefsState>()
+                    .map(|s| s.close_hides())
+                    .unwrap_or(false);
+                if hides {
+                    // Close minimizes to the tray (Settings → General); a recording goes on.
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else if is_recording(window.app_handle()) {
                     api.prevent_close();
                     quit_or_ask(window.app_handle());
                 }
@@ -917,7 +929,9 @@ pub fn run() {
             remote::remote_status,
             remote::remote_start,
             remote::remote_pair,
-            remote::remote_forget
+            remote::remote_forget,
+            shell_prefs::shell_prefs,
+            shell_prefs::set_close_to_tray
         ])
         .setup(|app| {
             app.handle().plugin(
@@ -939,10 +953,13 @@ pub fn run() {
             // A missing tray host (e.g. GNOME without the AppIndicator extension) must
             // not stop the app. Without the appindicator library the tray crate panics,
             // so check for it first.
+            app.manage(ShellPrefsState::load(app.handle()));
             if !appindicator_available() {
                 warn!("System tray unavailable: no libayatana-appindicator3 or libappindicator3");
             } else if let Err(e) = build_tray(app.handle()) {
                 warn!("System tray unavailable: {e}");
+            } else {
+                app.state::<ShellPrefsState>().tray.store(true, Ordering::Relaxed);
             }
 
             let handle = app.handle().clone();
