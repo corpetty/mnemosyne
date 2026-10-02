@@ -23,6 +23,11 @@ class SystemInfo(ApiModel):
     pipewire: bool  # pw-record and pw-dump are available
     ffmpeg: bool
     hf_token: bool  # needed for speaker identification (pyannote)
+    onnx_diarizer: bool  # sherpa-onnx is installed: speakers told apart on the CPU
+    # What this machine runs for the current settings (registry.resolve_*): "auto" and choices
+    # whose packages are missing resolve to what works here.
+    transcriber_in_use: str
+    diarizer_in_use: str
     platform: str
     problems: list[str]  # what went wrong when the backend started (config, recovery, ...)
 
@@ -46,7 +51,15 @@ def _gpu_driver() -> bool:
 
 @router.get("/system", response_model=SystemInfo)
 async def system_info(ctx: AppContext = Depends(get_ctx)):
+    from ...transcription.registry import resolve_diarizer, resolve_transcriber
+
+    # May import torch to see whether CUDA works: not on the event loop.
+    transcriber = await asyncio.to_thread(resolve_transcriber, ctx.settings)
+    diarizer = await asyncio.to_thread(resolve_diarizer, ctx.settings)
     return SystemInfo(
+        onnx_diarizer=_has("sherpa_onnx"),
+        transcriber_in_use=transcriber,
+        diarizer_in_use=diarizer,
         gpu_driver=_gpu_driver(),
         gpu_stack=_has("torch") and _has("whisperx"),
         parakeet=_has("onnx_asr"),

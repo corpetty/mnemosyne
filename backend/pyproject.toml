@@ -41,6 +41,8 @@ gpu = [
 # Parakeet via ONNX Runtime (CPU). No torch. Add onnxruntime-gpu yourself for CUDA.
 onnx = [
     "onnx-asr[cpu,hub]>=0.12",
+    "sherpa-onnx>=1.13.8",
+    "sherpa-onnx-core>=1.13.8",
 ]
 
 [dependency-groups]

@@ -334,6 +334,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audio/sample": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Sample
+         * @description A short real meeting (AMI corpus) imported like any file, transcribed and then summarized
+         *     when a summary model is set up: what Mnemosyne does, before recording anything.
+         */
+        post: operations["import_sample_api_audio_sample_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audio/self-test": {
         parameters: {
             query?: never;
@@ -5190,6 +5211,8 @@ export interface components {
         };
         /** SystemInfo */
         SystemInfo: {
+            /** Diarizer In Use */
+            diarizer_in_use: string;
             /** Ffmpeg */
             ffmpeg: boolean;
             /** Gpu Driver */
@@ -5198,6 +5221,8 @@ export interface components {
             gpu_stack: boolean;
             /** Hf Token */
             hf_token: boolean;
+            /** Onnx Diarizer */
+            onnx_diarizer: boolean;
             /** Parakeet */
             parakeet: boolean;
             /** Pipewire */
@@ -5206,6 +5231,8 @@ export interface components {
             platform: string;
             /** Problems */
             problems: string[];
+            /** Transcriber In Use */
+            transcriber_in_use: string;
         };
         /** TaskItem */
         TaskItem: {
@@ -6096,6 +6123,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_sample_api_audio_sample_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StopRecordingResponse"];
                 };
             };
         };

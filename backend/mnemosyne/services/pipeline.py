@@ -92,9 +92,15 @@ def _part_sources(session, part: int, starts: dict[int, float], settings, stack)
     return [AudioSource(path=str(out), kind="mixed")]
 
 
-def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None = None):
+def transcribe_session(
+    app: AppContext,
+    session_id: str,
+    parts: list[int] | None = None,
+    summarize: bool | None = None,
+):
     """Build the transcription job runner for a session: every part of it, or only `parts`
-    (a part recorded after the rest was transcribed), keeping the other parts' lines."""
+    (a part recorded after the rest was transcribed), keeping the other parts' lines.
+    `summarize`: queue a summary afterwards (None: when `auto_summarize` is on)."""
 
     async def run(ctx: JobContext) -> dict:
         from .parts import match_speakers, offsets, part_of, shift
@@ -257,7 +263,7 @@ def transcribe_session(app: AppContext, session_id: str, parts: list[int] | None
 
             supervision.scan(app, session_id, replace=True)  # a new transcript: its own flags
             app.repo.update_fields(session_id, speakers_reviewed=False)  # new labels to name
-            if settings.auto_summarize and segments:
+            if (settings.auto_summarize if summarize is None else summarize) and segments:
                 app.jobs.submit(
                     "summarize", summarize_session(app, session_id), session_id=session_id
                 )

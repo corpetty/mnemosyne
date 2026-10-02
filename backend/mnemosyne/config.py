@@ -97,9 +97,10 @@ class Settings(BaseSettings):
     # The first-run setup wizard has been completed or skipped.
     setup_complete: bool = False
 
-    transcriber: str = "whisperx"  # whisperx | parakeet | remote
-    # auto = nemotron when NeMo and a CUDA GPU are available, else pyannote.
-    diarizer: str = "auto"  # auto | nemotron | pyannote | none
+    # auto: WhisperX with a working GPU, else Parakeet (registry.resolve_transcriber).
+    transcriber: str = "auto"  # auto | whisperx | parakeet | remote
+    # auto: Nemotron with a GPU, else pyannote (with its token), else ONNX on the CPU.
+    diarizer: str = "auto"  # auto | nemotron | pyannote | onnx | none (registry.resolve_diarizer)
     language: str = ""  # blank = auto-detect
     min_speakers: int | None = None
     max_speakers: int | None = 10
@@ -364,6 +365,11 @@ class Settings(BaseSettings):
     @property
     def recordings_dir(self) -> Path:
         return self.data_dir / "recordings"
+
+    @property
+    def models_dir(self) -> Path:
+        """Models Mnemosyne downloads itself (ONNX diarization, the built-in summary model)."""
+        return self.data_dir / "models"
 
     @property
     def assets_dir(self) -> Path:

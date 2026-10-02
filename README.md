@@ -12,7 +12,8 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 
 - **Live transcript while recording** (a few seconds behind speech, Parakeet on CPU) with **live speaker labels**: voices are told apart as they speak and people with a saved voice are named on the spot; replaced by the full diarized transcript after stop
 - **Pluggable transcription**: WhisperX (GPU), NVIDIA Parakeet TDT via ONNX (CPU, no torch), or any OpenAI-compatible speech server
-- **Speaker diarization** using NVIDIA Nemotron-3-Diarization on NVIDIA GPUs, otherwise pyannote.audio (community-1), or none
+- **Speaker diarization** using NVIDIA Nemotron-3-Diarization on NVIDIA GPUs, pyannote.audio (community-1) with a Hugging Face token, or on any CPU a small ONNX model (pyannote segmentation + TitaNet, via sherpa-onnx) with no account; the engines that fit the machine are picked by default
+- **Try it on a sample**: the setup wizard can open a short real meeting (from the AMI corpus, CC BY 4.0), transcribed, before you record anything
 - **Structured summaries**: decisions, action items with owners, open questions and topics as data, with styles (meeting, standup, interview, lecture, brainstorm, client) and your own standing instructions; the client style also keeps what the client said about their goals, concerns and situation
 - **Obsidian-native export**: `[[people]]` links, tags, topics in frontmatter, action items as tasks, optional transcript
 - **Playback synced to the transcript**: click any timestamp to hear that moment; the line being played is highlighted

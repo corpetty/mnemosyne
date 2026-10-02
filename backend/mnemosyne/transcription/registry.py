@@ -6,19 +6,52 @@ imports torch.
 
 from __future__ import annotations
 
+import functools
+
 from ..config import Settings
 from .composed import ComposedEngine
 from .engine import Diarizer, Transcriber
 from .glossary import initial_prompt, parse_glossary
 
-TRANSCRIBERS = ("whisperx", "parakeet", "remote")
-DIARIZERS = ("auto", "nemotron", "pyannote", "none")
+TRANSCRIBERS = ("auto", "whisperx", "parakeet", "remote")
+DIARIZERS = ("auto", "nemotron", "pyannote", "onnx", "none")
+
+
+def installed(*modules: str) -> bool:
+    """These modules can be imported (without importing them)."""
+    import importlib.util
+
+    try:
+        return all(importlib.util.find_spec(m) is not None for m in modules)
+    except (ImportError, ValueError):
+        return False
+
+
+@functools.cache
+def cuda_works() -> bool:
+    """torch is installed and sees a CUDA GPU (imported once, when an engine is built)."""
+    if not installed("torch"):
+        return False
+    import torch
+
+    return torch.cuda.is_available()
+
+
+def resolve_transcriber(settings: Settings, kind: str | None = None) -> str:
+    """The transcriber this machine runs: `auto` is WhisperX with a working GPU, else Parakeet;
+    a saved WhisperX whose packages are not installed (the GPU extra) runs Parakeet instead."""
+    kind = kind or settings.transcriber
+    if kind == "auto":
+        return "whisperx" if installed("whisperx") and cuda_works() else "parakeet"
+    if kind == "whisperx" and not installed("whisperx", "torch") and installed("onnx_asr"):
+        return "parakeet"
+    return kind
 
 
 def build_transcriber(
     settings: Settings, kind: str | None = None, threads: int | None = None
 ) -> Transcriber:
-    kind = kind or settings.transcriber
+    kind = resolve_transcriber(settings, kind)
     if kind == "whisperx":
         from .transcribers.whisperx import WhisperXTranscriber
 
@@ -75,10 +108,27 @@ def nemotron_available() -> bool:
 
 
 def resolve_diarizer(settings: Settings) -> str:
-    """The diarizer `auto` stands for on this machine."""
-    if settings.diarizer != "auto":
-        return settings.diarizer
-    return "nemotron" if nemotron_available() else "pyannote"
+    """The diarizer this machine runs. `auto`: Nemotron with a GPU, else pyannote when it is
+    installed and has its token, else the ONNX diarizer (CPU, no token), else none. A saved
+    choice whose packages are not installed falls back the same way."""
+    kind = settings.diarizer
+    if kind not in DIARIZERS:
+        return kind  # "demo", or a name build_diarizer rejects
+    if kind in ("none", "onnx"):
+        return kind if kind != "onnx" or installed("sherpa_onnx") else _cpu_fallback()
+    if kind == "nemotron" and nemotron_available():
+        return kind
+    if kind == "pyannote" and installed("pyannote.audio", "torch"):
+        return kind
+    if kind == "auto" and nemotron_available():
+        return "nemotron"
+    if kind == "auto" and installed("pyannote.audio", "torch") and settings.hf_token:
+        return "pyannote"
+    return _cpu_fallback()
+
+
+def _cpu_fallback() -> str:
+    return "onnx" if installed("sherpa_onnx") else "none"
 
 
 def build_live_embedder(settings: Settings):
@@ -153,6 +203,10 @@ def build_diarizer(settings: Settings) -> Diarizer | None:
 
         # Nemotron has no speaker embeddings; voice profiles use pyannote's embedder.
         return NemotronDiarizer(embedder=build_live_embedder(settings))
+    if kind == "onnx":
+        from .diarizers.onnx import OnnxDiarizer
+
+        return OnnxDiarizer(models_dir=settings.models_dir / "diarization")
     raise ValueError(f"Unknown diarizer '{kind}'. Choose one of {DIARIZERS}")
 
 

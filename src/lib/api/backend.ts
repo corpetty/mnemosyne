@@ -558,6 +558,11 @@ export function audioUrl(sessionId: string, recordingId?: string): string {
   return connectionState.withToken(`${base()}/api/audio/file/${sessionId}${q}`);
 }
 
+/** A short real meeting (AMI corpus) imported, transcribed and summarized: try the app first. */
+export async function importSample(): Promise<StopRecordingResponse> {
+  return request('/api/audio/sample', { method: 'POST' });
+}
+
 export async function importAudio(
   file: File,
   opts: { name?: string; transcribe?: boolean; sessionId?: string } = {}

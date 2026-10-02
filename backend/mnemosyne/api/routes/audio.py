@@ -750,6 +750,46 @@ async def import_audio(
     )
 
 
+SAMPLE = Path(__file__).resolve().parents[2] / "samples" / "sample-meeting.ogg"
+SAMPLE_CREDIT = (
+    "A sample: 70 seconds of meeting ES2004c from the AMI Meeting Corpus "
+    "(https://groups.inf.ed.ac.uk/ami/corpus/), licensed CC BY 4.0. Four people designing a "
+    "remote control discuss how to power it."
+)
+
+
+@router.post("/sample", response_model=StopRecordingResponse)
+async def import_sample(ctx: AppContext = Depends(get_ctx)):
+    """A short real meeting (AMI corpus) imported like any file, transcribed and then summarized
+    when a summary model is set up: what Mnemosyne does, before recording anything."""
+    from fastapi import UploadFile
+
+    if not SAMPLE.is_file():
+        raise HTTPException(status_code=404, detail="The sample is not part of this install")
+    with SAMPLE.open("rb") as f:
+        result = await import_audio(
+            UploadFile(file=f, filename=SAMPLE.name),
+            name="Sample meeting (AMI corpus)",
+            transcribe=False,
+            session_id=None,
+            ctx=ctx,
+        )
+    sid = result.session.id
+    ctx.repo.update_fields(sid, notes=SAMPLE_CREDIT)
+    try:  # summarized only when a model answers: a sample should not end on an error
+        await asyncio.wait_for(
+            ctx.summarizer.resolve_model(ctx.settings.default_provider, ctx.settings.default_model),
+            timeout=5,
+        )
+        can_summarize = True
+    except Exception:
+        can_summarize = False
+    job = ctx.jobs.submit("transcribe", transcribe_session(ctx, sid, summarize=can_summarize), sid)
+    return result.model_copy(
+        update={"session": ctx.sessions.get_session(sid), "job_id": job.id, "will_transcribe": True}
+    )
+
+
 async def _import_part(ctx: AppContext, session_id: str, file, original: Path, transcribe: bool):
     """An audio file added to a meeting as its next part (after what it has)."""
     session = ctx.sessions.get_session(session_id)

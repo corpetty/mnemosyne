@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { getSettings, getSystemInfo, listModels, updateSettings } from '$lib/api/backend.js';
+	import { getSettings, getSystemInfo, importSample, listModels, updateSettings } from '$lib/api/backend.js';
+	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { startRecording } from '$lib/app/controller.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -17,6 +18,7 @@
 	let transcriber = $state<'parakeet' | 'whisperx' | 'remote'>('parakeet');
 	let remoteUrl = $state('');
 	let identifySpeakers = $state(false);
+	let savedTranscriber = $state<string | null>(null); // as saved: may be "auto"
 	let hfToken = $state('');
 	// Summaries
 	let provider = $state<'ollama' | 'vllm' | 'openai' | 'anthropic' | 'none'>('ollama');
@@ -39,9 +41,7 @@
 		getSettings()
 			.then((st) => {
 				const v = st.values;
-				if (v.transcriber === 'parakeet' || v.transcriber === 'whisperx' || v.transcriber === 'remote') {
-					transcriber = v.transcriber;
-				}
+				savedTranscriber = v.transcriber;
 				remoteUrl = v.remote_stt_url || '';
 				identifySpeakers = v.diarizer !== 'none';
 				ollamaUrl = v.ollama_url || ollamaUrl;
@@ -54,6 +54,42 @@
 			})
 			.catch(() => {});
 	});
+
+	// Only what works on this machine is pre-selected: "auto", or WhisperX without its GPU
+	// packages, becomes what the backend would run (Parakeet on a laptop without NVIDIA).
+	$effect(() => {
+		if (savedTranscriber === null || system === null) return;
+		const wanted = savedTranscriber === 'auto' ? system.transcriber_in_use : savedTranscriber;
+		if (wanted === 'remote') transcriber = 'remote';
+		else transcriber = wanted === 'whisperx' && system.gpu_stack ? 'whisperx' : 'parakeet';
+	});
+
+	const speakerHow = $derived(
+		system?.diarizer_in_use === 'nemotron'
+			? 'Uses NVIDIA Nemotron on your GPU; no account needed.'
+			: system?.diarizer_in_use === 'pyannote'
+				? 'Uses pyannote with your Hugging Face token.'
+				: system?.onnx_diarizer
+					? 'Uses a small model on the CPU (about 50 MB, downloaded the first time it runs); no account needed. With an NVIDIA GPU, Nemotron is used instead.'
+					: 'Not available on this install: lines are labelled by channel (you vs. everyone else).'
+	);
+
+	let sampling = $state(false);
+	async function trySample() {
+		sampling = true;
+		try {
+			const r = await importSample();
+			await save({ setup_complete: true });
+			uiState.view = 'home';
+			await sessionState.selectSession(r.session.id);
+			uiState.activeTab = 'transcript'; // where its progress and result show
+			toastState.info('Transcribing the sample, then summarizing it: about a minute');
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not open the sample');
+		} finally {
+			sampling = false;
+		}
+	}
 
 	async function save(update: SettingsUpdate) {
 		saving = true;
@@ -201,11 +237,14 @@
 				<input type="checkbox" bind:checked={identifySpeakers} class="mt-1 rounded border-gray-600 bg-gray-800" />
 				<span class="text-sm text-gray-300">
 					Tell speakers apart
-					<span class="block text-xs text-gray-500">On an NVIDIA GPU this uses Nemotron and needs no account. Otherwise it uses pyannote, which needs a free Hugging Face token with speaker-diarization-community-1 accepted; the token also lets Mnemosyne recognise voices across meetings. Without either, lines are labelled by channel (you vs. everyone else).</span>
+					<span class="block text-xs text-gray-500">{speakerHow}</span>
 				</span>
 			</label>
-			{#if identifySpeakers && !system?.hf_token}
-				<input type="password" bind:value={hfToken} placeholder="hf_…" class={input} aria-label="Hugging Face token" />
+			{#if identifySpeakers && system?.gpu_stack && !system.hf_token}
+				<label class="block text-xs text-gray-500">
+					Optional: a Hugging Face token (with speaker-diarization-community-1 accepted) lets Mnemosyne recognise voices across meetings.
+					<input type="password" bind:value={hfToken} placeholder="hf_…" class="{input} mt-1" aria-label="Hugging Face token" />
+				</label>
 			{/if}
 		</section>
 	{:else if STEPS[step] === 'Summaries'}
@@ -281,6 +320,13 @@
 				<li>Obsidian: {vaultPath || 'not connected'}</li>
 			</ul>
 			<p class="text-sm text-gray-500">Tip: Settings → Recording can start recordings automatically when a meeting app uses your microphone.</p>
+			<div class="rounded-lg border border-gray-800 bg-gray-900/60 p-3 text-sm text-gray-300">
+				Not in a meeting right now? Try it on a sample: 70 seconds of a real four-person meeting (from the AMI corpus),
+				transcribed, with speakers, then summarized{provider === 'none' ? ' once a summary model is set up' : ''}.
+				<button onclick={trySample} disabled={sampling} class="mt-2 block px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white text-sm">
+					{sampling ? 'Opening the sample…' : 'Try it on a sample'}
+				</button>
+			</div>
 			<div class="flex gap-3 pt-2">
 				<button onclick={() => finish(true)} disabled={audioState.selectedDeviceIds.size === 0} class="px-4 py-2 rounded bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium">Start a recording</button>
 				<button onclick={() => finish(false)} class="px-4 py-2 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200">Go to the app</button>

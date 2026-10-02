@@ -202,8 +202,14 @@ the port is an error.
 
 ### `GET /api/system`
 What this machine can do, for the setup wizard: `{gpu_driver, gpu_stack, parakeet, pipewire, ffmpeg,
-hf_token, platform}`. `gpu_driver` is an NVIDIA driver (nvidia-smi or a loadable libcuda);
-`gpu_stack` means torch and WhisperX are installed; `parakeet` means onnx-asr is. The setting
+hf_token, onnx_diarizer, transcriber_in_use, diarizer_in_use, platform}`. `gpu_driver` is an NVIDIA
+driver (nvidia-smi or a loadable libcuda); `gpu_stack` means torch and WhisperX are installed;
+`parakeet` means onnx-asr is; `onnx_diarizer` means sherpa-onnx is. `*_in_use` is what runs for the
+current settings (`transcription/registry.py`): `transcriber = "auto"` (the default) is WhisperX
+with a working CUDA GPU, else Parakeet; `diarizer = "auto"` is Nemotron with a GPU, else pyannote
+when it is installed and `hf_token` is set, else `onnx` (pyannote segmentation + TitaNet-small on
+the CPU via sherpa-onnx, ~50 MB downloaded into `<data_dir>/models/diarization` on first use), else
+none. A saved engine whose packages are not installed falls back the same way. The setting
 `setup_complete` records that the first-run wizard was finished or skipped; the app opens the wizard
 when it is false and there are no meetings yet.
 
@@ -291,6 +297,11 @@ optional `name` (defaults to the file stem) and `transcribe` (default true). Cre
 stores the upload as a `Recording` with `source: import`, transcodes it to the mixed Opus file, and
 queues transcription. Response is the same shape as stop-recording (`session`, `job_id`, `message`).
 `400` for unsupported, empty, or undecodable files.
+
+### `POST /api/audio/sample`
+Imports the bundled sample (70 seconds of AMI meeting ES2004c, CC BY 4.0, credited in the meeting's
+notes) as "Sample meeting (AMI corpus)", transcribes it, and summarizes it when the default provider
+answers with a model. Same response shape as import.
 
 ### `GET /api/audio/level/{device_id}?seconds=1`
 
