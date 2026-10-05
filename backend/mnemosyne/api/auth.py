@@ -3,7 +3,10 @@
 Off unless `api_token` is set or `team_mode` is on. Then every /api path and /ws needs a token in
 `Authorization: Bearer <token>` or `?token=` (for <audio> elements and the
 WebSocket, which cannot set headers). /health, /docs, /openapi.json, the phone page, the web
-app's files and redeeming a pairing code stay open. A paired phone's own token
+app's files and redeeming a pairing code stay open, and so does the desktop app's attach
+(LOCAL_PATHS) when it comes from this machine: the shell does not know the token, and a
+relaunched app that cannot attach loses the recording its crashed predecessor left running
+(api/app_watch.py). A paired phone's own token
 (services/pairing.py) opens only DEVICE_PATHS, what the phone page needs; a paired computer's
 opens everything. A person's token (services/users.py) opens the API as that person: the request
 runs with them in `access.current`, which decides what they see (access.py).
@@ -31,6 +34,7 @@ OPEN_PATHS = {
     "/api/users/redeem",
 }
 DEVICE_PATHS = {"/api/audio/import", "/api/pairing/me"}
+LOCAL_PATHS = {"/api/system/attach"}
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip")
 
@@ -57,6 +61,8 @@ class TokenAuthMiddleware:
 
         presented = ""
         headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+        if path in LOCAL_PATHS and self._from_desktop_app(scope, headers):
+            return await self.app(scope, receive, send)
         auth = headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
             presented = auth[7:].strip()
@@ -113,17 +119,21 @@ class TokenAuthMiddleware:
         st = self.ctx.settings
         if presented or not (st.team_mode and st.team_owner_id):
             return None
-        server, client = scope.get("server") or ("", 0), scope.get("client") or ("", 0)
-        if server[1] == st.team_port or client[0] not in ("127.0.0.1", "::1"):
-            return None
-        host = headers.get("host", "")
-        host = host[: host.find("]") + 1] if host.startswith("[") else host.rsplit(":", 1)[0]
-        if host not in LOOPBACK_HOSTS or any(h in headers for h in PROXY_HEADERS):
+        if not self._from_desktop_app(scope, headers):
             return None
         user = self.ctx.users.get(st.team_owner_id)
         if user is None or user.disabled:
             return None
         return access.Principal(user.id, user.name, user.role)
+
+    def _from_desktop_app(self, scope: Scope, headers: dict[str, str]) -> bool:
+        """On 127.0.0.1, not on the network listener's port, and not passed on by a proxy."""
+        server, client = scope.get("server") or ("", 0), scope.get("client") or ("", 0)
+        if server[1] == self.ctx.settings.team_port or client[0] not in ("127.0.0.1", "::1"):
+            return False
+        host = headers.get("host", "")
+        host = host[: host.find("]") + 1] if host.startswith("[") else host.rsplit(":", 1)[0]
+        return host in LOOPBACK_HOSTS and not any(h in headers for h in PROXY_HEADERS)
 
 
 LOCKED_OPEN = ("/api/encryption", "/api/system")

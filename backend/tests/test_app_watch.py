@@ -103,6 +103,35 @@ def test_attach_without_a_watch_leaves_the_backend_independent(client):
     assert client.post("/api/system/attach", json={"pid": 1}).json() == {"watching": False}
 
 
+def test_the_app_attaches_without_the_api_token(settings, keystore):
+    """The shell does not know `api_token` (pairing, remote access): without this, a relaunched
+    app got a 401, the backend thought nobody came back and stopped the recording."""
+    from fastapi.testclient import TestClient
+
+    from mnemosyne.api.app import create_app
+
+    settings.api_token = "s3cret"
+    app = create_app(settings, keystore=keystore)
+    old, again = _app(), _app()
+    try:
+        body = {"pid": again.pid}
+        with TestClient(app, base_url="http://127.0.0.1:8008", client=("127.0.0.1", 50000)) as c:
+            watch = app.state.ctx.app_watch = AppWatch(app.state.ctx, old.pid, exit=lambda: None)
+            assert c.post("/api/system/attach", json=body).json() == {"watching": True}
+            assert watch.pid == again.pid
+            # The rest of the API still wants the token, and a proxy on this machine is not the app.
+            assert c.get("/api/sessions").status_code == 401
+            proxied = {"X-Forwarded-For": "100.64.0.7"}
+            assert c.post("/api/system/attach", json=body, headers=proxied).status_code == 401
+            # Someone else's process (init) does not get to end this backend.
+            assert c.post("/api/system/attach", json={"pid": 1}).json() == {"watching": False}
+            elsewhere = TestClient(app)  # not from 127.0.0.1 (no `with`: the app is running)
+            assert elsewhere.post("/api/system/attach", json=body).status_code == 401
+    finally:
+        _gone(old)
+        _gone(again)
+
+
 def test_a_reconnecting_ui_finds_the_recording(client, fake_pipewire):
     assert client.get("/api/audio/active").json() == []
     before = time.time()

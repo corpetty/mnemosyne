@@ -361,12 +361,18 @@ export async function restartBackendForRestore(): Promise<boolean> {
 // ---- quitting while recording ------------------------------------------------------
 
 /** The quit dialog: stop, wait until the recording is saved (not transcribed: quitting would
- *  cut that off), then quit. */
+ *  cut that off), then quit. When the backend is gone there is nothing to stop here: it saved
+ *  the recording before it went, or the next one recovers it on startup (services/recovery.py),
+ *  so quit rather than keep a window that cannot close. */
 export async function stopSaveAndQuit() {
   uiState.quitSaving = true;
   try {
     const res = await audioState.stopRecording(false);
     if (!res) {
+      if (!(await getHealth().then(() => true).catch(() => false))) {
+        await invokeShell('quit_app');
+        return;
+      }
       toastState.error(audioState.error ?? 'Could not stop the recording');
       return;
     }

@@ -61,6 +61,14 @@ def start_time(pid: int) -> int | None:
         return None
 
 
+def _ours(pid: int) -> bool:
+    """Whether the process runs as the user this backend runs as."""
+    try:
+        return Path(f"/proc/{pid}").stat().st_uid == os.getuid()
+    except OSError:
+        return False
+
+
 def notify(summary: str, body: str) -> None:
     """A desktop notification (org.freedesktop.Notifications). Best effort."""
     try:
@@ -127,9 +135,10 @@ class AppWatch:
         return watch
 
     def attach(self, pid: int) -> bool:
-        """A (re)started app takes over this backend. False when there is no such process."""
+        """A (re)started app takes over this backend. False when there is no such process, or
+        it is someone else's (attach needs no token from this machine: api/auth.py)."""
         started = start_time(pid)
-        if started is None:
+        if started is None or not _ours(pid):
             return False
         if self.orphaned_since is not None:
             logger.info("The app is back (pid %d)", pid)
