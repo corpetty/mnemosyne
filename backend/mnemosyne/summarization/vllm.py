@@ -34,7 +34,9 @@ class VLLMProvider:
     async def summarize(self, transcript: str, model: str, system_prompt: str) -> str:
         return await self.complete(system_prompt, summarize_user_prompt(transcript), model)
 
-    async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
+    async def complete(
+        self, system_prompt: str, user_prompt: str, model: str, think: bool = True
+    ) -> str:
         """One chat turn: system + user message, returns the assistant text."""
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
@@ -48,6 +50,8 @@ class VLLMProvider:
                             "content": user_prompt,
                         },
                     ],
+                    # Qwen3-style templates; ignored by templates without the switch.
+                    **({} if think else {"chat_template_kwargs": {"enable_thinking": False}}),
                 },
             )
             resp.raise_for_status()

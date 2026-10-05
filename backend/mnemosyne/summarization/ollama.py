@@ -52,23 +52,24 @@ class OllamaProvider:
     async def summarize(self, transcript: str, model: str, system_prompt: str) -> str:
         return await self.complete(system_prompt, summarize_user_prompt(transcript), model)
 
-    async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
+    async def complete(
+        self, system_prompt: str, user_prompt: str, model: str, think: bool = True
+    ) -> str:
         """One chat turn: system + user message, returns the assistant text."""
+        body = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": False,
+        }
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
-                f"{self.base_url}/api/chat",
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": user_prompt,
-                        },
-                    ],
-                    "stream": False,
-                },
+                f"{self.base_url}/api/chat", json=body | ({} if think else {"think": False})
             )
+            if resp.status_code == 400 and not think:  # an older Ollama, or a model without it
+                resp = await client.post(f"{self.base_url}/api/chat", json=body)
             resp.raise_for_status()
             data = resp.json()
             return data.get("message", {}).get("content", "")

@@ -117,7 +117,9 @@ class DemoProvider:
     async def list_models(self) -> list[str]:
         return ["demo-model"]
 
-    async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
+    async def complete(
+        self, system_prompt: str, user_prompt: str, model: str, think: bool = True
+    ) -> str:
         if "Respond with ONLY a JSON object" in system_prompt:
             if '"client_facts"' in system_prompt:
                 return json.dumps({**DEMO_SUMMARY, "client_facts": DEMO_CLIENT_FACTS})

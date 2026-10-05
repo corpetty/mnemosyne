@@ -9,6 +9,8 @@ import random
 
 import httpx
 
+from .provider import think_kwargs
+
 logger = logging.getLogger(__name__)
 
 # 408 timeout, 409/425 try again, 429 rate limited, 5xx server trouble, 529 overloaded.
@@ -60,9 +62,11 @@ class RetryingProvider:
     async def list_models(self) -> list[str]:
         return await self.inner.list_models()
 
-    async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
+    async def complete(
+        self, system_prompt: str, user_prompt: str, model: str, think: bool = True
+    ) -> str:
         return await with_retries(
-            lambda: self.inner.complete(system_prompt, user_prompt, model),
+            lambda: self.inner.complete(system_prompt, user_prompt, model, **think_kwargs(think)),
             f"{self.name} {model}",
             self._delays,
         )

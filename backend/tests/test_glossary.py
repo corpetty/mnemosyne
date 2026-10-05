@@ -130,3 +130,113 @@ def test_glossary_reaches_summary_and_ask(client, ctx, fake_provider, transcribe
         ).json()
         drain_until_job(ws, job["id"])
     assert "exactly as written: Waku" in fake_provider.calls[-1]["system_prompt"]
+
+
+@pytest.mark.anyio
+async def test_llm_correct_asks_batches_side_by_side_and_counts_them():
+    import asyncio
+
+    g = parse_glossary("Waku")
+    running, most, progress = 0, 0, []
+
+    async def complete(system, user):
+        nonlocal running, most
+        running += 1
+        most = max(most, running)
+        await asyncio.sleep(0.01)
+        running -= 1
+        return "[]"
+
+    segs = [seg(f"line {i}") for i in range(10)]
+    out, n = await llm_correct(
+        segs, g, complete, batch_size=2, parallel=3, on_batch=lambda d, t: progress.append((d, t))
+    )
+    assert out == segs and n == 0
+    assert most == 3  # 5 batches, 3 at a time
+    assert progress == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]
+
+
+def test_pipeline_asks_for_no_thinking(client, ctx, fake_provider):
+    """A reasoning model took 20-150 s a glossary batch thinking first; 1-3 s without."""
+    ctx.settings.glossary = "Nimbus"
+    ctx.settings.glossary_llm_correct = True
+    ctx.settings.default_provider = "fake"
+    fake_provider.reply = "[]"
+    ctx.models._engine = FakeEngine(
+        segments=[TranscriptSegment(text="nimbus", speaker="SPEAKER_00", start=0, end=1)]
+    )
+    sid = client.post("/api/sessions", json={}).json()["id"]
+    ctx.sessions.set_audio(sid, "/fake.ogg", [])
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        job = client.post(f"/api/sessions/{sid}/transcribe").json()
+        drain_until_job(ws, job["id"])
+    assert [c["think"] for c in fake_provider.calls] == [False]
+
+
+def test_a_stop_in_the_name_check_keeps_the_transcript(client, ctx, fake_provider):
+    """The transcription is done before the LLM checks names: an app restart (2026-10-05) or
+    Cancel then must not throw it away."""
+    import asyncio
+    import time
+
+    ctx.settings.glossary = "Nimbus"
+    ctx.settings.glossary_llm_correct = True
+    ctx.settings.default_provider = "fake"
+
+    async def forever(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    fake_provider.complete = forever
+    ctx.models._engine = FakeEngine(
+        segments=[TranscriptSegment(text="nimbus sink", speaker="SPEAKER_00", start=0, end=1)]
+    )
+    sid = client.post("/api/sessions", json={}).json()["id"]
+    ctx.sessions.set_audio(sid, "/fake.ogg", [])
+    job = client.post(f"/api/sessions/{sid}/transcribe").json()
+    deadline = time.monotonic() + 10
+    while "Checking names" not in client.get(f"/api/jobs/{job['id']}").json()["message"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    assert client.portal.call(ctx.jobs.cancel, job["id"])
+    client.portal.call(ctx.jobs.wait, job["id"])
+    session = client.get(f"/api/sessions/{sid}").json()
+    assert [s["text"] for s in session["transcript"]] == ["nimbus sink"]
+    assert session["status"] == "completed"
+
+
+@pytest.mark.anyio
+async def test_providers_switch_thinking_off(monkeypatch):
+    import httpx
+
+    from mnemosyne.summarization.ollama import OllamaProvider
+    from mnemosyne.summarization.vllm import VLLMProvider
+
+    bodies, old_ollama = [], False
+
+    def handler(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if request.url.path == "/api/chat":
+            if old_ollama and "think" in body:
+                return httpx.Response(400, json={"error": "unknown field"})
+            return httpx.Response(200, json={"message": {"content": "ok"}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
+    )
+    vllm = VLLMProvider("http://vllm")
+    assert await vllm.complete("s", "u", "m", think=False) == "ok"
+    assert bodies[-1]["chat_template_kwargs"] == {"enable_thinking": False}
+    await vllm.complete("s", "u", "m")
+    assert "chat_template_kwargs" not in bodies[-1]
+
+    ollama = OllamaProvider("http://ollama")
+    assert await ollama.complete("s", "u", "m", think=False) == "ok"
+    assert bodies[-1]["think"] is False
+    old_ollama = True  # answers 400 to the field: asked again without it
+    bodies.clear()
+    assert await ollama.complete("s", "u", "m", think=False) == "ok"
+    assert ["think" in b for b in bodies] == [True, False]

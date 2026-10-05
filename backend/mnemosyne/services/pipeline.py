@@ -118,6 +118,16 @@ def transcribe_session(
             raise ValueError(f"Session {session_id} has no audio to transcribe")
 
         before = session.status
+        transcribed: list[TranscriptSegment] | None = None  # done, before the glossary LLM
+
+        def save(segments: list[TranscriptSegment]) -> None:
+            """Keep the transcript (seal it afterwards: records.seal hashes the audio)."""
+            from . import supervision
+
+            app.sessions.set_transcript(session_id, segments)
+            supervision.scan(app, session_id, replace=True)  # a new transcript: its own flags
+            app.repo.update_fields(session_id, speakers_reviewed=False)  # new labels to name
+
         app.sessions.set_status(session_id, SessionStatus.TRANSCRIBING)
         try:
             ctx.update("Loading models...")
@@ -247,6 +257,7 @@ def transcribe_session(
 
             glossary = parse_glossary(settings.glossary)
             segments, fixed = apply_corrections(segments, glossary)
+            transcribed = segments
             local_only = session is not None and session.local_only
             if (
                 settings.glossary_llm_correct
@@ -257,21 +268,24 @@ def transcribe_session(
                 ctx.update("Checking names and terms...", progress=0.99)
 
                 async def complete(system: str, user: str) -> str:
+                    # No reasoning first: a reasoning model took 20-150 s a batch instead of
+                    # 1-3 s, and a 16-minute meeting sat at 99 % for many minutes (2026-10-05).
                     return await app.summarizer.complete(
-                        system, user, settings.default_provider, settings.default_model
+                        system, user, settings.default_provider, settings.default_model, think=False
                     )
 
-                segments, llm_fixed = await llm_correct(segments, glossary, complete)
+                def on_batch(done: int, total: int) -> None:
+                    ctx.update(f"Checking names and terms ({done} of {total})...", progress=0.99)
+
+                segments, llm_fixed = await llm_correct(
+                    segments, glossary, complete, on_batch=on_batch
+                )
                 fixed += llm_fixed
 
-            app.sessions.set_transcript(session_id, segments)
+            save(segments)
             from . import records
 
             await asyncio.to_thread(records.seal, app, session_id, "transcribed")
-            from . import supervision
-
-            supervision.scan(app, session_id, replace=True)  # a new transcript: its own flags
-            app.repo.update_fields(session_id, speakers_reviewed=False)  # new labels to name
             if (settings.auto_summarize if summarize is None else summarize) and segments:
                 app.jobs.submit(
                     "summarize", summarize_session(app, session_id), session_id=session_id
@@ -296,7 +310,18 @@ def transcribe_session(
                 "glossary_fixes": fixed,
             }
         except asyncio.CancelledError:  # cancelled, or the backend shutting down
-            app.sessions.set_status(session_id, before)
+            if transcribed is None:
+                app.sessions.set_status(session_id, before)
+                raise
+            # Stopped while the LLM checked names: the transcription itself is done, keep it.
+            logger.warning("Transcription of %s stopped in the glossary check; saved", session_id)
+            from . import records
+
+            save(transcribed)
+            records.seal(app, session_id, "transcribed")  # the loop may be closing: not in a thread
+            history.log(
+                app, session_id, "transcribed", parts=todo, segments=len(transcribed), names=False
+            )
             raise
         except Exception as e:
             app.sessions.set_status(session_id, SessionStatus.ERROR)

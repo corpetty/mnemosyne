@@ -27,7 +27,7 @@ from ..summarization.prompts import (
     split_lines,
     transcript_lines,
 )
-from ..summarization.provider import SummarizationProvider
+from ..summarization.provider import SummarizationProvider, think_kwargs
 from ..summarization.vllm import VLLMProvider
 
 logger = logging.getLogger(__name__)
@@ -100,10 +100,15 @@ class SummarizationService:
             raise ValueError(f"No models available from provider '{provider_name}'")
         return models[0]
 
-    async def complete(self, system: str, user: str, provider_name: str, model: str = "") -> str:
-        """One chat turn with a configured provider (first model if none given)."""
+    async def complete(
+        self, system: str, user: str, provider_name: str, model: str = "", think: bool = True
+    ) -> str:
+        """One chat turn with a configured provider (first model if none given). think=False:
+        no reasoning first, where the model can switch it (provider.py)."""
         model = await self.resolve_model(provider_name, model)
-        return await self.providers[provider_name].complete(system, user, model)
+        return await self.providers[provider_name].complete(
+            system, user, model, **think_kwargs(think)
+        )
 
     async def summarize(
         self,

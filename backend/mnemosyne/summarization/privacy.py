@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
+from .provider import think_kwargs
+
 CLOUD_PROVIDERS = frozenset({"openai", "anthropic"})
 
 LOCAL_ONLY_ERROR = (
@@ -477,9 +479,13 @@ class RedactingProvider:
     async def list_models(self) -> list[str]:
         return await self.inner.list_models()
 
-    async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
+    async def complete(
+        self, system_prompt: str, user_prompt: str, model: str, think: bool = True
+    ) -> str:
         r = Redactor(self._names())
-        reply = await self.inner.complete(r.redact(system_prompt), r.redact(user_prompt), model)
+        reply = await self.inner.complete(
+            r.redact(system_prompt), r.redact(user_prompt), model, **think_kwargs(think)
+        )
         return r.restore(reply)
 
     async def summarize(self, transcript: str, model: str, system_prompt: str) -> str:

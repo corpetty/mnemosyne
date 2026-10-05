@@ -13,9 +13,11 @@ every final transcript.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ..models.transcript import TranscriptSegment
@@ -148,27 +150,47 @@ async def llm_correct(
     glossary: Glossary,
     complete,
     batch_size: int = 40,
+    on_batch: Callable[[int, int], None] | None = None,
+    parallel: int = 4,
 ) -> tuple[list[TranscriptSegment], int]:
     """Ask an LLM (`complete(system, user) -> str`) to fix glossary terms, in batches.
     Only lines that still share most of their words with the original are accepted, so a
-    model that rewrites a line cannot slip it through."""
+    model that rewrites a line cannot slip it through. Up to `parallel` batches are asked at
+    once (vLLM answers them together); `on_batch(done, total)` follows along."""
     if not glossary.terms or not segments:
         return segments, 0
     out = list(segments)
-    changed = 0
     terms = "\n".join(f"- {t}" for t in glossary.terms)
-    for start in range(0, len(out), batch_size):
-        batch = out[start : start + batch_size]
+    starts = range(0, len(out), batch_size)
+    done = 0
+    slots = asyncio.Semaphore(parallel)
+
+    async def ask(start: int) -> list[dict]:
+        nonlocal done
+        batch = segments[start : start + batch_size]
         lines = "\n".join(f"{start + k}: {s.text}" for k, s in enumerate(batch))
         user = f"Glossary:\n{terms}\n\nTranscript lines:\n{lines}"
-        try:
-            reply = await complete(LLM_SYSTEM, user)
-        except Exception:
-            logger.warning("Glossary LLM correction failed for a batch", exc_info=True)
-            continue
+        async with slots:
+            try:
+                reply = await complete(LLM_SYSTEM, user)
+            except Exception:
+                logger.warning("Glossary LLM correction failed for a batch", exc_info=True)
+                reply = ""
+        done += 1
+        if on_batch:
+            on_batch(done, len(starts))
+        fixes = []
         for fix in _parse_fixes(reply):
+            i = fix["i"]
+            if start <= i < start + len(batch):
+                fixes.append(fix)
+        return fixes
+
+    changed = 0
+    for fixes in await asyncio.gather(*(ask(start) for start in starts)):
+        for fix in fixes:
             i, text = fix["i"], str(fix.get("text", "")).strip()
-            if not (start <= i < start + len(batch)) or not text or text == out[i].text:
+            if not text or text == out[i].text:
                 continue
             if _similar_enough(out[i].text, text):
                 out[i] = out[i].model_copy(update={"text": text})

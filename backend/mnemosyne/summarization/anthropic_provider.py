@@ -39,7 +39,9 @@ class AnthropicProvider:
     async def summarize(self, transcript: str, model: str, system_prompt: str) -> str:
         return await self.complete(system_prompt, summarize_user_prompt(transcript), model)
 
-    async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
+    async def complete(
+        self, system_prompt: str, user_prompt: str, model: str, think: bool = True
+    ) -> str:
         """One chat turn: system + user message, returns the assistant text."""
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(

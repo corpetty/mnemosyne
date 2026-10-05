@@ -134,9 +134,16 @@ class FakeProvider:
     async def list_models(self) -> list[str]:
         return list(self.models)
 
-    async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
+    async def complete(
+        self, system_prompt: str, user_prompt: str, model: str, think: bool = True
+    ) -> str:
         self.calls.append(
-            {"transcript": user_prompt, "model": model, "system_prompt": system_prompt}
+            {
+                "transcript": user_prompt,
+                "model": model,
+                "system_prompt": system_prompt,
+                "think": think,
+            }
         )
         return self.reply if self.reply is not None else self.summary
 

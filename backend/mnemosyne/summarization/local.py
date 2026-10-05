@@ -25,7 +25,9 @@ class LocalProvider:
     async def summarize(self, transcript: str, model: str, system_prompt: str) -> str:
         return await self.complete(system_prompt, summarize_user_prompt(transcript), model)
 
-    async def complete(self, system_prompt: str, user_prompt: str, model: str) -> str:
+    async def complete(
+        self, system_prompt: str, user_prompt: str, model: str, think: bool = True
+    ) -> str:
         model = model if model in MODELS else (self.llm.downloaded() or [""])[0]
         base = await self.llm.url(model)
         try:
@@ -38,6 +40,7 @@ class LocalProvider:
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
                         ],
+                        **({} if think else {"chat_template_kwargs": {"enable_thinking": False}}),
                     },
                 )
                 resp.raise_for_status()
