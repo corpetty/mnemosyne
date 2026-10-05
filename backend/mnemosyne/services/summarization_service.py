@@ -132,9 +132,10 @@ class SummarizationService:
 
         lines = transcript_lines(segments)
         starts = [float(seg["start"]) for seg in segments]
+        budget = self.budget(provider)
         ranges = (
-            split_lines(lines, self.chunk_chars)
-            if self.chunk_chars and sum(len(x) + 1 for x in lines) > self.chunk_chars
+            split_lines(lines, budget)
+            if budget and sum(len(x) + 1 for x in lines) > budget
             else [(0, len(lines))]
         )
         logger.info(
@@ -157,6 +158,12 @@ class SummarizationService:
         snap_item_times(data, starts)
         data.provider, data.model = provider_name, model
         return {"summary": summary, "data": data, "provider": provider_name, "model": model}
+
+    def budget(self, provider) -> int:
+        """Transcript characters per request (0: no limit): `summary_chunk_chars`, or less when
+        the provider says its context holds less (`max_chars`, the built-in model)."""
+        limits = [n for n in (self.chunk_chars, getattr(provider, "max_chars", 0)) if n]
+        return min(limits) if limits else 0
 
     async def _summarize_in_parts(
         self, provider, model, segments, lines, ranges, style, instructions, on_progress
@@ -196,7 +203,8 @@ class SummarizationService:
     ) -> tuple[str, SummaryData]:
         """Merge partial notes into one summary. When the notes themselves exceed the
         budget (very long meetings), merge them in groups first, then merge the groups."""
-        groups = _group_parts(parts, self.chunk_chars) if self.chunk_chars else [parts]
+        budget = self.budget(provider)
+        groups = _group_parts(parts, budget) if budget else [parts]
         if len(groups) > 1:
             merged = []
             for n, group in enumerate(groups, start=1):

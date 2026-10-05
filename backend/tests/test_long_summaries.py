@@ -114,6 +114,23 @@ async def test_short_transcripts_are_not_split():
     assert [c[0] for c in provider.calls] == ["map"]
 
 
+@pytest.mark.anyio
+async def test_a_provider_with_a_small_context_gets_smaller_parts():
+    """The built-in model's context holds ~20k characters of transcript (LocalProvider.max_chars):
+    a meeting that fits `summary_chunk_chars` is still split for it."""
+    svc = SummarizationService()
+    svc.chunk_chars = 100000
+    small = ScriptedProvider(json.dumps({"summary": "whole meeting"}))
+    small.max_chars = 250
+    svc.providers = {"p": small}
+    await svc.summarize(_segments(6), "p")
+    assert sum(1 for c in small.calls if c[0] == "map") >= 2
+    assert svc.budget(small) == 250
+    svc.chunk_chars = 0  # no limit set: the provider's still holds
+    assert svc.budget(small) == 250
+    assert svc.budget(ScriptedProvider("")) == 0
+
+
 def test_merge_parts_unit():
     parts = [
         {

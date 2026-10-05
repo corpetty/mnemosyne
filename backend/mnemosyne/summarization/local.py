@@ -14,6 +14,11 @@ TIMEOUT = httpx.Timeout(1800.0, connect=10.0)
 
 class LocalProvider:
     name = "local"
+    # Transcript characters per request. The server's context is 16k tokens and a formatted
+    # transcript (times, names) is about 2.6 characters a token, so 20k characters (~7.5k tokens)
+    # leaves room for the system prompt and the answer; longer meetings are summarized in parts.
+    # Smaller requests are also much faster on a CPU, whose attention slows as the context fills.
+    max_chars = 20_000
 
     def __init__(self, llm: LocalLLM):
         self.llm = llm
