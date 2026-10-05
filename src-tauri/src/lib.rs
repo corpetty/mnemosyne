@@ -30,6 +30,9 @@ struct BackendState {
     /// A backend we found running and took over instead of spawning one (see
     /// `existing_backend`): stopped by pid on exit, since it is not our child.
     adopted: Mutex<Option<i32>>,
+    /// The backend is up and ours to look after (`watch_backend`): set once it is ready,
+    /// cleared while it is (re)started on purpose and when the app exits.
+    watched: AtomicBool,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -215,8 +218,56 @@ fn adopt_backend(app: &AppHandle, pid: Option<i32>) {
     if ours {
         *app.state::<BackendState>().adopted.lock().unwrap() = pid;
     }
+    app.state::<BackendState>().watched.store(true, Ordering::SeqCst);
     emit_status(app, "ready", format!("Backend ready on port {BACKEND_PORT}"));
     let _ = app.emit("backend-ready", true);
+}
+
+/// The backend went away under a running app (it crashed, or one taken over from a crashed
+/// app ended: backend/mnemosyne/api/app_watch.py) and the window was left with nothing to talk
+/// to. Start another; it recovers a recording the old one left (services/recovery.py). Only
+/// once nothing holds the port, on two checks in a row: a backend that is busy, or being
+/// restarted on purpose, is never touched. At most three restarts in ten minutes, then say so
+/// instead of looping.
+fn watch_backend(app: AppHandle) {
+    use std::time::{Duration, Instant};
+    let mut restarts: Vec<Instant> = Vec::new();
+    let mut free = 0;
+    loop {
+        std::thread::sleep(Duration::from_secs(5));
+        let state = app.state::<BackendState>();
+        if !state.watched.load(Ordering::SeqCst) || port_in_use() {
+            free = 0;
+            continue;
+        }
+        free += 1;
+        if free < 2 {
+            continue;
+        }
+        free = 0;
+        if !state.watched.swap(false, Ordering::SeqCst) {
+            continue; // restarted or exiting meanwhile
+        }
+        if let Some(mut child) = state.child.lock().unwrap().take() {
+            kill_process_tree(&mut child); // reaps it, and anything left in its group
+        }
+        state.adopted.lock().unwrap().take();
+        let now = Instant::now();
+        restarts.retain(|t| now.duration_since(*t) < Duration::from_secs(600));
+        if restarts.len() >= 3 {
+            error!("The backend stopped again; not starting it a fourth time in ten minutes");
+            emit_status(
+                &app,
+                "error",
+                "The backend keeps stopping. Its log is logs/backend.log in the data folder.",
+            );
+            continue;
+        }
+        restarts.push(now);
+        warn!("The backend is gone; starting a new one");
+        emit_status(&app, "starting", "The backend stopped; starting it again...");
+        start_backend(app.clone());
+    }
 }
 
 /// Environment variables the AppImage runtime (AppRun + linuxdeploy hooks) sets for
@@ -750,6 +801,7 @@ fn start_backend(app: AppHandle) {
         // First start after install may need to import torch; be generous.
         let healthy = wait_for_backend(120).await;
         if healthy {
+            app2.state::<BackendState>().watched.store(true, Ordering::SeqCst);
             emit_status(&app2, "ready", format!("Backend ready on port {BACKEND_PORT}"));
         } else {
             emit_status(&app2, "error", "Backend did not become healthy within 120s");
@@ -775,6 +827,7 @@ fn start_backend(app: AppHandle) {
 #[tauri::command]
 fn restart_backend(app: AppHandle) {
     info!("Restarting the backend");
+    app.state::<BackendState>().watched.store(false, Ordering::SeqCst);
     if let Some(mut child) = app.state::<BackendState>().child.lock().unwrap().take() {
         kill_process_tree(&mut child);
     }
@@ -1046,7 +1099,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
-        .manage(BackendState { child: Mutex::new(None), adopted: Mutex::new(None) })
+        .manage(BackendState {
+            child: Mutex::new(None),
+            adopted: Mutex::new(None),
+            watched: AtomicBool::new(false),
+        })
         .manage(Recording(AtomicBool::new(false)))
         .manage(PendingGpu(Mutex::new(None)))
         .manage(remote::RemoteState::default())
@@ -1126,6 +1183,14 @@ pub fn run() {
                     error!("failed to start supervisor thread: {e}");
                     e
                 })?;
+            let handle = app.handle().clone();
+            std::thread::Builder::new()
+                .name("backend-watch".into())
+                .spawn(move || watch_backend(handle))
+                .map_err(|e| {
+                    error!("failed to start the backend watch: {e}");
+                    e
+                })?;
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -1133,6 +1198,8 @@ pub fn run() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {
+            // Not started again by watch_backend once it is gone.
+            app_handle.state::<BackendState>().watched.store(false, Ordering::SeqCst);
             if !cfg!(debug_assertions) && backend_outlives_app() {
                 // Shared with a team and asked to keep sharing after quitting: the backend
                 // goes on (it runs in a session of its own) and a relaunch takes it over.

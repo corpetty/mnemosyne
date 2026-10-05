@@ -128,6 +128,45 @@ async function checkRecordingStillRunning() {
   toastState.show('The recording stopped when the backend restarted. What was recorded is kept.', 'error', 20_000);
 }
 
+/** The backend can go away under a running window: it crashed, or one left by a crashed app
+ *  ended (api/app_watch.py); the desktop shell then starts another. The WebSocket only retries,
+ *  so when it stays down and /health does not answer either, say so and stop showing a
+ *  recording nobody is making. When a backend answers again, the WebSocket's `hello` brings
+ *  back what changed: a recording still going on, or one recovered on startup. */
+function watchBackend(): () => void {
+  let failures = 0;
+  let checking = false;
+  const timer = setInterval(async () => {
+    if (wsState.connected) {
+      failures = 0;
+      uiState.backendStatus = 'connected';
+      return;
+    }
+    if (checking) return;
+    checking = true;
+    const up = await getHealth().then(() => true).catch(() => false);
+    checking = false;
+    if (up) {
+      failures = 0;
+      uiState.backendStatus = 'connected';
+      return;
+    }
+    if (++failures < 2 || uiState.backendStatus === 'unreachable') return;
+    uiState.backendStatus = 'unreachable';
+    if (audioState.isRecording && !audioState.pending) {
+      audioState.ended();
+      toastState.show(
+        'The backend stopped. What was recorded is kept and saved when it starts again.',
+        'error',
+        30_000
+      );
+    } else {
+      toastState.show('The backend is not answering; trying again…', 'error', 10_000);
+    }
+  }, 5000);
+  return () => clearInterval(timer);
+}
+
 /** A source stopped being captured: save what was recorded and carry on recording into the
  *  same meeting (its next part). The live transcript so far stays. */
 export async function restartCapture() {
@@ -561,6 +600,7 @@ function onConnected(): () => void {
   askState.init();
   digestState.init();
   const stopAutoRecord = listenForAutoRecord();
+  const stopWatch = watchBackend();
   maybeRunSetup();
   void showStartupProblems();
   void import('./smoke.js').then((m) => m.runSmokeTest());
@@ -625,6 +665,7 @@ function onConnected(): () => void {
   return () => {
     stopSessions();
     stopAutoRecord();
+    stopWatch();
   };
 }
 
@@ -776,6 +817,10 @@ export function connectApp(): () => void {
           uiState.shellLog = [...uiState.shellLog.slice(-7), e.payload.message];
         }
         if (e.payload.stage === 'error') uiState.backendStatus = 'unreachable';
+        // The shell starts a new backend after the old one went away (watch_backend in lib.rs).
+        if (e.payload.stage === 'starting' && uiState.backendStatus === 'unreachable') {
+          uiState.backendStatus = 'checking';
+        }
       })
     )
     .then((un) => {

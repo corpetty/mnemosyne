@@ -33,13 +33,15 @@
 
 	const active = (v: View) => uiState.view === v && !sessionState.activeSession;
 	const status = $derived(
-		uiState.backendStatus !== 'connected'
-			? uiState.backendStatus
-			: connectionState.isLocal
-				? wsState.connected
-					? 'Connected'
-					: 'Connected (no live updates)'
-				: `Connected to ${connectionState.host ?? connectionState.url}`
+		uiState.backendStatus === 'unreachable'
+			? 'Backend not answering'
+			: uiState.backendStatus === 'checking'
+				? 'Connecting to the backend…'
+				: connectionState.isLocal
+					? wsState.connected
+						? 'Connected'
+						: 'Connected (no live updates)'
+					: `Connected to ${connectionState.host ?? connectionState.url}`
 	);
 </script>
 

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type WebSocketRoute } from '@playwright/test';
 
 const BACKEND = 'http://127.0.0.1:8018';
 
@@ -56,4 +56,40 @@ test('a stopped source offers to restart the capture', async ({ page, request })
   await expect(page.getByText('Recording again; what was recorded so far is saved')).toBeVisible();
   expect(restarted).toBe(true);
   await expect(page.getByRole('button', { name: 'Restart capture' })).toHaveCount(0);
+});
+
+// The backend goes away under a running window (it crashed; the desktop shell starts another):
+// say so and stop showing a recording nobody makes, then pick it up again once it answers.
+test('a backend that stops answering is noticed', async ({ page, request }) => {
+  test.setTimeout(60_000);
+  const created = await request.post(`${BACKEND}/api/sessions`, { data: { name: 'backend-gone' } });
+  const { id } = await created.json();
+  await page.route(/\/api\/audio\/active$/, (route) =>
+    route.fulfill({
+      json: [{ session_id: id, started_at: Date.now() / 1000 - 60, device_ids: [1], part: 0, live: false, live_segments: [] }]
+    })
+  );
+  let down = false;
+  let socket: WebSocketRoute | null = null;
+  await page.routeWebSocket(/\/ws/, (ws) => {
+    if (down) {
+      ws.close();
+      return;
+    }
+    ws.connectToServer();
+    socket = ws;
+  });
+  await page.route(/\/health$/, (route) => (down ? route.abort() : route.continue()));
+  await page.goto('/');
+  await expect(page.getByTitle('Stop recording (Ctrl+S)')).toBeVisible();
+
+  down = true;
+  await socket!.close();
+  await expect(page.getByText('The backend stopped. What was recorded is kept')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTitle('Backend not answering')).toBeVisible();
+  await expect(page.getByTitle('Stop recording (Ctrl+S)')).toHaveCount(0);
+
+  down = false;
+  await expect(page.getByTitle('Connected', { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTitle('Stop recording (Ctrl+S)')).toBeVisible();
 });
