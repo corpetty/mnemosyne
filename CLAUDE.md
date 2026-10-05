@@ -133,6 +133,16 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   (api/app_watch.py, `/api/system/attach`, `existing_backend` in lib.rs). The CLI binds the port
   before startup (cli.py `bind`): uvicorn binds after the lifespan, and a second backend's startup
   used to stop the first one's recorders. Recovery leaves recorders whose parent is a live Python.
+  A backend that vanishes under a running app is started again by lib.rs `watch_backend` (only
+  once the port is free; not while `BackendState.watched` is off: starting, restarting, exiting).
+- The Rust shell never has the API token (`api_token`, set for pairing and remote access), so its
+  `backend_request` calls to /api get 401 when one is set. A path the shell needs goes in auth.py
+  `LOCAL_PATHS` (open to loopback, not the team port, no proxy headers). Attach was missing it
+  until 0.15.0: relaunched apps never took their recording over (2026-10-05).
+- LLM calls that need no reasoning (glossary pass) use `complete(..., think=False)`
+  (provider.py `think_kwargs`): vLLM/built-in get `enable_thinking: false`, Ollama `think: false`.
+  On Corey's vLLM Qwen a 40-line batch took 20-150 s thinking, 1-3 s without; `/no_think` in the
+  prompt made it slower.
 - Nemotron streaming (live speakers) is a second model instance on purpose: streaming settings
   live on the model, so sharing the offline diarizer's would let a final job change them under a
   recording. Its attention runs through SDPA (`sdpa_attention`): NeMo's compiled FlexAttention asks
@@ -144,6 +154,10 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   the backend may outlive it. Edit the bundled sources, never that copy.
 - Tests never touch the machine: conftest stubs the sleep inhibitor (`awake._spawn`), Tailscale
   (`team_host.tailscale_name`) and points `HF_HUB_CACHE` at a temp dir. Keep it that way.
+- This machine has little memory to spare (a mining node, ~7 of 31 GB free): the full backend
+  pytest suite OOM-killed the desktop app (2026-10-05), and CPU-heavy runs have frozen it. Locally
+  run single test files, `pnpm check`, `cargo check`, ruff; leave the full suite, full e2e and
+  builds to CI (push and watch the run, or a Release workflow_dispatch), or ask Corey first.
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.
@@ -297,7 +311,7 @@ GGUFs; provider "local", not retried, stopped when idle) and Ollama pulls (route
 "Share this computer with my team" (services/team_host.py, routes/team.py: a second HTTPS listener
 on `team_port` with a self-signed cert in <data_dir>/tls, the owner is `team_owner_id` and the
 desktop's tokenless loopback requests run as them, the web app is bundled as resources/web).
-After it (docs/plans/2026-10-02-shared-desktop-and-first-run.md, unreleased): close to the tray
+After it (docs/plans/2026-10-02-shared-desktop-and-first-run.md, released as 0.15.0): close to the tray
 (src-tauri/src/shell_prefs.rs, `<app config>/shell.json`); `keep_sharing_after_quit` (`/health`
 `outlives_app`, app_watch keeps serving); sleep inhibitor while recording (services/awake.py,
 `keep_awake_while_sharing`); `tailscale cert` served by SNI (`team_tailscale_cert`) and the
@@ -305,6 +319,12 @@ self-signed cert reloaded in place when addresses change; download progress and 
 `prepare_models` job (services/model_downloads.py, `POST /api/system/prepare`); GPU support a setup
 choice (`gpu_support`, Tauri `start_gpu_install`); the offline AppImage carries the CPU models
 (`mnemosyne-backend prefetch`). Windows/macOS: planned only, docs/plans/2026-10-02-windows-and-macos.md.
+Also in 0.15.0, from a crash mid-meeting (2026-10-05): attach without the API token (auth.py
+`LOCAL_PATHS`), `watch_backend` in lib.rs and a "Backend not answering" watchdog in the UI, quit
+without a backend, the glossary pass without thinking (four batches at a time, "(3 of 12)"), a
+transcript saved when the job stops during that pass, the view following a running transcription
+after looking at another meeting. After 0.15.0 (unreleased, for 0.15.1; Corey holds the bump): the
+built-in model summarizes in parts of `LocalProvider.max_chars` (20k characters).
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
