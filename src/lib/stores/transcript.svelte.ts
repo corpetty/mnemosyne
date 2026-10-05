@@ -265,8 +265,10 @@ class TranscriptState {
     this.error = 'The transcription was interrupted; transcribe again to finish it';
   }
 
-  /** Switch the view to a session, loading its stored transcript. */
-  showSession(sessionId: string, segments: TranscriptSegment[]) {
+  /** Switch the view to a session, loading its stored transcript. `running`: its
+   *  transcription job still going on (the view was on another meeting meanwhile), followed
+   *  again so its progress shows and its transcript loads when it is done. */
+  showSession(sessionId: string, segments: TranscriptSegment[], running?: Job) {
     if (sessionId === this.sessionId && this.isProcessing) return;
     const switching = sessionId !== this.sessionId;
     // A recording's live lines survive a look at another meeting; a finished one's go.
@@ -280,6 +282,7 @@ class TranscriptState {
       this.error = null;
       this.isProcessing = false;
       this.activeJob = null;
+      if (running) this.applyJob(running);
     }
     for (const seg of segments) this.getSpeakerColor(seg.speaker);
   }

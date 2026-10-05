@@ -30,6 +30,7 @@
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 	import UnlockScreen from '$lib/components/UnlockScreen.svelte';
 	import { audioState } from '$lib/stores/audio.svelte.js';
+	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { uiState, type View } from '$lib/stores/ui.svelte.js';
@@ -69,7 +70,15 @@
 		}
 		if (session.id !== lastLoadedSessionId) {
 			lastLoadedSessionId = session.id;
-			transcriptState.showSession(session.id, session.transcript);
+			const running = untrack(() =>
+				Object.values(jobsState.jobs).find(
+					(j) =>
+						j.kind === 'transcribe' &&
+						j.session_id === session.id &&
+						(j.status === 'queued' || j.status === 'running')
+				)
+			);
+			transcriptState.showSession(session.id, session.transcript, running);
 			uiState.closePanels();
 			// A finished meeting opens on what it produced, not on the recording tab left
 			// from the last one (the tab chosen otherwise stays as it was).
