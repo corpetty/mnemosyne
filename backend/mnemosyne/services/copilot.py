@@ -215,12 +215,12 @@ async def answer_live(
 # ---- jobs -------------------------------------------------------------------------------
 
 
-def _completer(app: AppContext) -> tuple[str, Complete]:
+def _completer(app: AppContext, think: bool = True) -> tuple[str, Complete]:
     st = app.settings
     provider = st.default_provider
 
     async def complete(system: str, user: str) -> str:
-        return await app.summarizer.complete(system, user, provider, st.default_model)
+        return await app.summarizer.complete(system, user, provider, st.default_model, think=think)
 
     return provider, complete
 
@@ -229,7 +229,9 @@ def copilot_runner(app: AppContext, session_id: str, tick: float = 5.0):
     """Keeps the running notes up to date until the recording stops (the job is cancelled)."""
 
     async def run(ctx: JobContext) -> dict:
-        provider, complete = _completer(app)
+        # Notes every 30 s or more need to be quick: a reasoning model that thinks first takes
+        # many times longer for the same notes (the glossary pass: 20-150 s against 1-3 s).
+        provider, complete = _completer(app, think=False)
         session = app.sessions.get_session(session_id)
         if session is not None and session.local_only and is_cloud(provider):
             ctx.update("Copilot off: this meeting is local-only and the model is a cloud one")

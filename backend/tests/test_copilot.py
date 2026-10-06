@@ -106,6 +106,7 @@ async def test_runner_updates_on_enough_text_then_on_interval(ctx, fake_provider
     assert events[0]["type"] == "copilot_notes" and events[0]["notes"]["lines"] == 2
     assert ctx.copilot_notes[session.id].summary == ["so far"]
     assert ctx.repo.get(session.id).copilot_notes.summary == ["so far"]  # saved as it goes
+    assert fake_provider.calls[-1]["think"] is False  # notes every 30 s: no reasoning first
     live.committed.append(_seg(2, "z" * 2000))
     await asyncio.sleep(0.1)
     assert len(events) == 1  # more text, but the interval has not passed
@@ -135,6 +136,7 @@ def test_copilot_routes(client, ctx, fake_provider):
     result = client.get(f"/api/jobs/{job['id']}").json()
     assert result["status"] == "completed" and result["result"]["answer"] == "October [00:00]."
     assert "we ship in October" in fake_provider.calls[-1]["transcript"]
+    assert fake_provider.calls[-1]["think"] is True  # a question may need it
 
 
 def _notes(session_id, todos=(), decisions=()):
