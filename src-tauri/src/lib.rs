@@ -18,6 +18,8 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
+#[cfg(target_os = "linux")]
+mod frames;
 mod remote;
 mod shell_prefs;
 
@@ -1051,10 +1053,19 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     // Marks a moment of the recording as important (also `mnemosyne --mark`); off otherwise.
     let mark = MenuItem::with_id(app, "mark", "Mark this moment", false, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Mnemosyne", true, None::<&str>)?;
+    // The window stopped repainting (frames.rs): a new X window, without a restart.
+    let redraw = MenuItem::with_id(app, "redraw", "Redraw window", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
-        &[&toggle, &mark, &show, &PredefinedMenuItem::separator(app)?, &quit],
+        &[
+            &toggle,
+            &mark,
+            &show,
+            &redraw,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
     )?;
     let mut builder = TrayIconBuilder::with_id("main")
         .tooltip("Mnemosyne")
@@ -1067,6 +1078,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let _ = app.emit(ACTION_EVENT, "mark");
             }
             "show" => show_main_window(app),
+            #[cfg(target_os = "linux")]
+            "redraw" => frames::redraw(app),
             "quit" => quit_or_ask(app),
             _ => {}
         });
@@ -1087,6 +1100,12 @@ pub fn run() {
     let app = tauri::Builder::default()
         // Must be the first plugin: a second launch hands its args to us and exits.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            #[cfg(target_os = "linux")]
+            if argv.iter().any(|a| a == "--redraw") {
+                info!("Redraw requested by a second launch");
+                frames::redraw(app);
+                return;
+            }
             match action_from_args(argv.iter()) {
                 Some(action) => {
                     info!("Remote action from second launch: {action}");
@@ -1161,6 +1180,8 @@ pub fn run() {
             }
 
             reload_after_webview_crash(app.handle());
+            #[cfg(target_os = "linux")]
+            frames::setup(app.handle());
             remote::start_at_launch(app.handle());
 
             // A missing tray host (e.g. GNOME without the AppIndicator extension) must

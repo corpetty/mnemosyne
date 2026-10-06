@@ -3179,6 +3179,7 @@ dependencies = [
 name = "mnemosyne"
 version = "0.15.0"
 dependencies = [
+ "gtk",
  "libc",
  "log",
  "mnemosyne-link",

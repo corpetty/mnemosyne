@@ -62,7 +62,12 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - NVIDIA: WebKit's GPU compositing stops presenting frames for good after a workspace or monitor
   change (the AppImage runs under XWayland: its GTK hook forces `GDK_BACKEND=x11`). The page's JS
   keeps running, the window never repaints, even on resize. main.rs sets
-  `WEBKIT_DISABLE_COMPOSITING_MODE=1` when /proc/driver/nvidia exists (2026-09-29).
+  `WEBKIT_DISABLE_COMPOSITING_MODE=1` when /proc/driver/nvidia exists (2026-09-29). That was not
+  enough (2026-10-05: frozen with clicks still handled, idle main loop; GTK 3 frame sync waiting
+  for a _NET_WM_FRAME_DRAWN that never came). Since then main.rs sets `GDK_BACKEND=wayland` in a
+  Wayland session, over the hook (`MNEMOSYNE_X11=1` keeps XWayland), and under X11 frames.rs turns
+  frame sync off; tray "Redraw window" / `mnemosyne --redraw` give the window a new X window.
+  Building the AppImage locally needs `patchelf` on PATH (the gstreamer plugin).
 - System Python is 3.14; the backend pins 3.13 via `backend/.python-version`. WhisperX
   does not support 3.14 yet.
 - Diarizer `auto` (the default) is Nemotron when NeMo is installed and CUDA works, else pyannote

@@ -34,3 +34,5 @@ libc = "0.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 # Same version wry uses, to handle the WebKit web process crashing (see lib.rs).
 webkit2gtk = "=2.0.2"
+# Same version tao uses: the window's frame sync (frames.rs).
+gtk = "0.18"
