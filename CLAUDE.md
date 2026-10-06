@@ -144,7 +144,7 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   `backend_request` calls to /api get 401 when one is set. A path the shell needs goes in auth.py
   `LOCAL_PATHS` (open to loopback, not the team port, no proxy headers). Attach was missing it
   until 0.15.0: relaunched apps never took their recording over (2026-10-05).
-- LLM calls that need no reasoning (glossary pass) use `complete(..., think=False)`
+- LLM calls that need no reasoning (glossary pass, copilot notes) use `complete(..., think=False)`
   (provider.py `think_kwargs`): vLLM/built-in get `enable_thinking: false`, Ollama `think: false`.
   On Corey's vLLM Qwen a 40-line batch took 20-150 s thinking, 1-3 s without; `/no_think` in the
   prompt made it slower.
@@ -156,7 +156,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   chunked pass (needs the AMI files); re-run it when bumping NeMo.
 - The AppImage runs the backend, web app and link sidecar from a copy in
   `<app data>/runtime/<version>` (lib.rs `runtime_copy`): its own mount vanishes when it exits, and
-  the backend may outlive it. Edit the bundled sources, never that copy.
+  the backend may outlive it. Edit the bundled sources, never that copy. The copy is reused while
+  the version is the same, so installing a local build over the same version needs
+  `rm -rf <app data>/runtime/<version>` (app closed) or its backend changes do not run.
 - Tests never touch the machine: conftest stubs the sleep inhibitor (`awake._spawn`), Tailscale
   (`team_host.tailscale_name`) and points `HF_HUB_CACHE` at a temp dir. Keep it that way.
 - This machine has little memory to spare (a mining node, ~7 of 31 GB free): the full backend
@@ -329,7 +331,10 @@ Also in 0.15.0, from a crash mid-meeting (2026-10-05): attach without the API to
 without a backend, the glossary pass without thinking (four batches at a time, "(3 of 12)"), a
 transcript saved when the job stops during that pass, the view following a running transcription
 after looking at another meeting. After 0.15.0 (unreleased, for 0.15.1; Corey holds the bump): the
-built-in model summarizes in parts of `LocalProvider.max_chars` (20k characters).
+built-in model summarizes in parts of `LocalProvider.max_chars` (20k characters); copilot notes
+without thinking (44 s → 9 s an update on Corey's vLLM Qwen); the frozen-window fix (native Wayland
+by default for the AppImage, X11 frame sync off, tray "Redraw window" / `--redraw`; src-tauri/src/
+frames.rs), not yet confirmed in daily use.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
