@@ -28,6 +28,9 @@ class SummarizeRequest(ApiModel):
     model: str = ""
     style: str = ""  # blank = the meeting type's, else the owner's (services/prefs.py) or settings'
     instructions: str | None = None  # None = settings.summary_instructions
+    # Revise the current summary (with any hand edits) as asked: "shorter", "focus on the
+    # decisions". Blank: summarize afresh.
+    revise: str = ""
 
 
 class SummaryStyle(ApiModel):
@@ -94,7 +97,13 @@ async def summarize_session(
     return ctx.jobs.submit(
         "summarize",
         summarize_runner(
-            ctx, session_id, request.provider, request.model, style, request.instructions
+            ctx,
+            session_id,
+            request.provider,
+            request.model,
+            style,
+            request.instructions,
+            revise=request.revise,
         ),
         session_id=session_id,
     )

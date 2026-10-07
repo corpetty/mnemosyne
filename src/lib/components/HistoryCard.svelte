@@ -144,7 +144,7 @@
 			case 'transcribe_failed':
 				return `Transcription failed: ${d.error}`;
 			case 'summarized':
-				return `Summarized with ${d.provider}${d.model ? `/${d.model}` : ''}`;
+				return `${d.revised ? `Revised (“${d.revised}”)` : 'Summarized'} with ${d.provider}${d.model ? `/${d.model}` : ''}`;
 			case 'summary_edited':
 				return `Summary edited${d.by ? ` by ${d.by}` : ''}`;
 			case 'summary_restored':

@@ -5471,6 +5471,11 @@ export interface components {
              */
             provider: string;
             /**
+             * Revise
+             * @default
+             */
+            revise: string;
+            /**
              * Style
              * @default
              */

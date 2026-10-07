@@ -181,3 +181,19 @@ def test_someone_else_cannot_restore(team):  # noqa: F811
     (v,) = client.get(f"/api/sessions/{s.id}/versions", headers=bob).json()
     r = client.post(f"/api/sessions/{s.id}/versions/{v['id']}/restore-summary", headers=bob)
     assert r.status_code == 403
+
+
+def test_revise_sends_the_current_summary_and_the_request(client, ctx, fake_provider):
+    s = _session(ctx)
+    client.put(f"/api/sessions/{s.id}/summary", json=_edit())
+    run_summarize(client, s.id, {"provider": "fake", "revise": "shorter, and name owners"})
+    prompt = fake_provider.calls[-1]["system_prompt"]
+    assert "Revise the existing summary below as asked: shorter, and name owners" in prompt
+    assert "We planned the launch and the docs." in prompt  # the edited text
+    assert "- Write the docs (Ann, due 2026-10-20)" in prompt
+    assert "Topics: Launch, Docs" in prompt
+    summarized = [e for e in ctx.repo.events(s.id) if e["kind"] == "summarized"][-1]
+    assert summarized["detail"]["revised"] == "shorter, and name owners"
+    # Without `revise` nothing of the kind is asked.
+    run_summarize(client, s.id, {"provider": "fake"})
+    assert "Revise the existing summary" not in fake_provider.calls[-1]["system_prompt"]

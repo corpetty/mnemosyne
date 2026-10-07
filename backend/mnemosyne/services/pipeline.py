@@ -332,6 +332,34 @@ def transcribe_session(
     return run
 
 
+def revise_hint(session: Session, instruction: str) -> str:
+    """The current summary, hand edits and all, and what to change in it."""
+    d = session.summary_data
+    lines = [session.summary.strip()]
+    if d:
+        if d.topics:
+            lines.append("Topics: " + ", ".join(d.topics))
+        for title, items in (
+            ("Decisions", d.decisions),
+            ("Action items", [_item_line(a) for a in d.action_items]),
+            ("Open questions", d.open_questions),
+        ):
+            if items:
+                lines.append(f"{title}:\n" + "\n".join(f"- {x}" for x in items))
+    current = "\n\n".join(lines)
+    return (
+        f"Revise the existing summary below as asked: {instruction.strip()}\n"
+        "Keep what it says (people may have corrected it by hand) unless the request changes "
+        "it; use the transcript to check facts and to add what is asked for.\n"
+        f"Existing summary:\n{current}"
+    )
+
+
+def _item_line(a) -> str:
+    extra = ", ".join(x for x in (a.owner or "", f"due {a.due}" if a.due else "") if x)
+    return f"{a.text} ({extra})" if extra else a.text
+
+
 def _auto_export(app: AppContext, session_id: str) -> str | None:
     """Export to Obsidian after a summary; failures are logged, never raised."""
     from ..api.routes.export import export_session
@@ -353,8 +381,10 @@ def summarize_session(
     model: str = "",
     style: str = "",
     instructions: str | None = None,
+    revise: str = "",
 ):
-    """Build the summarize job runner. Blank arguments fall back to settings."""
+    """Build the summarize job runner. Blank arguments fall back to settings. `revise`: an
+    instruction for changing the current summary (revise_hint) instead of starting afresh."""
 
     async def run(ctx: JobContext) -> dict:
         session = app.sessions.get_session(session_id)
@@ -402,6 +432,8 @@ def summarize_session(
         marked = bookmark_hint(session.bookmarks, session.transcript)
         if marked:
             instr = f"{instr}\n{marked}".strip()
+        if revise.strip() and session.summary:
+            instr = f"{instr}\n{revise_hint(session, revise)}".strip()
 
         ctx.update(f"Summarizing with {prov}/{mdl or 'default model'}")
         ctx.emit({"type": "status", "session_id": session_id, "message": "Summarizing..."})
@@ -456,7 +488,12 @@ def summarize_session(
             exported = await asyncio.to_thread(_auto_export, app, session_id)
         ctx.update("Summary ready")
         history.log(
-            app, session_id, "summarized", provider=result["provider"], model=result["model"]
+            app,
+            session_id,
+            "summarized",
+            provider=result["provider"],
+            model=result["model"],
+            **({"revised": revise.strip()} if revise.strip() else {}),
         )
         from .hubspot import auto_push
 

@@ -372,11 +372,12 @@ export async function summarizeSession(
   sessionId: string,
   provider = '',
   model = '',
-  style = ''
+  style = '',
+  revise = ''
 ): Promise<Job> {
   return request(`/api/sessions/${sessionId}/summarize`, {
     method: 'POST',
-    body: JSON.stringify({ provider, model, style })
+    body: JSON.stringify({ provider, model, style, revise })
   });
 }
 

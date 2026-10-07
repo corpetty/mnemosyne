@@ -1103,7 +1103,10 @@ model's disk, `ollama/pull {model}` → an `ollama_pull` job that pulls into the
 
 All fields optional: blanks fall back to `default_provider` and `default_model`, and the style and
 instructions to the meeting type's, else the owner's preferences on a team server, else
-`summary_style` and `summary_instructions` from settings. Queues a `summarize` **Job** and returns it immediately; the
+`summary_style` and `summary_instructions` from settings. `revise` ("shorter", "focus on the
+decisions"): the model also gets the current summary, hand edits included, and is asked to change
+it as requested rather than start afresh; the history's `summarized` event then carries `revised`.
+Topics go through `settings.topic_aliases`. Queues a `summarize` **Job** and returns it immediately; the
 LLM call runs in the background (up to two summaries at once). When it finishes the session's
 `summary` (markdown) and `summary_data` are saved, a `session` event fires, and the job completes
 with `result: { "provider", "model", "title" }`. Provider errors (unknown provider, no models,

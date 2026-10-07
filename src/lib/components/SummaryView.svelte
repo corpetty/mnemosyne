@@ -264,6 +264,24 @@
 		}
 	}
 
+	// Revise the current summary (hand edits included) as asked, with the chosen model.
+	let reviseText = $state('');
+	async function handleRevise() {
+		const session = sessionState.activeSession;
+		const ask = reviseText.trim();
+		if (!session || !ask || submitting) return;
+		error = '';
+		submitting = true;
+		try {
+			jobsState.track(await summarizeSession(session.id, selectedProvider, selectedModel, selectedStyle, ask));
+			reviseText = '';
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Could not revise the summary';
+		} finally {
+			submitting = false;
+		}
+	}
+
 	async function copyToClipboard() {
 		const s = sessionState.activeSession;
 		if (!s?.summary) return;
@@ -521,6 +539,22 @@
 			{activeJob ? 'Summarizing...' : sessionState.activeSession?.summary ? 'Re-summarize' : 'Summarize'}
 		</button>
 	</div>
+	{#if sessionState.activeSession?.summary}
+		<form onsubmit={(e) => { e.preventDefault(); handleRevise(); }} class="flex flex-wrap items-center gap-2">
+			<input
+				bind:value={reviseText}
+				placeholder="Revise it: shorter, focus on the decisions, say who owns what…"
+				aria-label="How to revise the summary"
+				class="flex-1 min-w-[16rem] bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 placeholder-gray-500"
+			/>
+			<button
+				type="submit"
+				disabled={!reviseText.trim() || !!activeJob || submitting}
+				class="px-4 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-purple-700 text-purple-200 disabled:opacity-50"
+				title="Rewrite the summary as asked, keeping your edits unless asked otherwise"
+			>Revise</button>
+		</form>
+	{/if}
 	{/if}
 
 	{#if sessionState.activeSession?.summary_stale && !activeJob}

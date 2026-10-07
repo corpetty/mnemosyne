@@ -123,3 +123,11 @@ test('rename a topic across meetings', async () => {
   await expect(page.getByText('Waku migration', { exact: true })).toBeVisible();
   await expect(page.getByText('waku', { exact: true })).toHaveCount(0);
 });
+
+test('revise the summary with an instruction', async () => {
+  await page.getByLabel('How to revise the summary').fill('shorter');
+  await page.getByRole('button', { name: 'Revise', exact: true }).click();
+  await page.getByRole('button', { name: 'Recording', exact: true }).click();
+  await page.getByRole('button', { name: /^Parts & history/ }).click();
+  await expect(page.getByText('Revised (“shorter”) with demo/demo-model')).toBeVisible();
+});
