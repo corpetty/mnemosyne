@@ -38,3 +38,26 @@ test('the browser records the microphone and the meeting keeps it', async ({ pag
     expect(part.seconds).toBeLessThan(6);
   }).toPass({ timeout: 15_000 });
 });
+
+// Without auto-transcribe, Stop answers before the recording is saved (a `finish` job): once it
+// is, Transcribe appears for the meeting on screen, without opening it again.
+test('after a recording is saved, Transcribe is offered', async ({ page, request }) => {
+  await request.put(`${BACKEND}/api/settings`, { data: { auto_transcribe: false } });
+  try {
+    await page.addInitScript(() => localStorage.setItem('mnemosyne.recordInBrowser', '1'));
+    await openApp(page);
+    await page.getByRole('button', { name: 'New meeting' }).first().click();
+    const call = page.getByRole('checkbox', { name: /The call's audio/ });
+    await expect(call).toBeVisible();
+    if (await call.isChecked()) await call.uncheck();
+    await page.getByRole('button', { name: 'Record', exact: true }).click();
+    await expect(page.getByLabel('Recording from')).toContainText('Fake');
+    await page.waitForTimeout(2000);
+    await page.getByRole('button', { name: 'Stop', exact: true }).first().click();
+    await expect(page.getByText('Recording stopped; saving it')).toBeVisible();
+    await page.getByRole('button', { name: /^Transcript/ }).click();
+    await expect(page.getByTitle("Transcribe this meeting's audio")).toBeVisible({ timeout: 15_000 });
+  } finally {
+    await request.put(`${BACKEND}/api/settings`, { data: { auto_transcribe: true } });
+  }
+});

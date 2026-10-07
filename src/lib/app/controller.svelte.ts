@@ -606,6 +606,14 @@ function onConnected(): () => void {
   void import('./smoke.js').then((m) => m.runSmokeTest());
   calendarState.start();
   audioState.listenForLevels();
+  // A recording is saved by a `finish` job after Stop answered (encoding and mixing). The open
+  // meeting was shown from Stop's answer, without the saved audio: reload it, or Transcribe
+  // stays hidden until the meeting is opened again (auto_transcribe off).
+  jobsState.onComplete((job) => {
+    if (job.kind !== 'finish' || !job.session_id) return;
+    if (sessionState.activeSession?.id === job.session_id) sessionState.refreshActive();
+    sessionState.loadSessions();
+  });
   jobsState.onComplete((job) => {
     if (job.kind !== 'summarize' || !job.session_id) return;
     if (sessionState.activeSession?.id === job.session_id) sessionState.refreshActive();
