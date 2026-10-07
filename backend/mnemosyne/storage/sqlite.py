@@ -1208,6 +1208,7 @@ class SessionRepository:
         if before is None or not (before.transcript or before.summary):
             return
         session_id = before.id
+        self._check_write(session_id)  # callers may keep a version before their own write
         content = content_of(before)
         digest = content_hash(content)
         who = access.principal()

@@ -145,6 +145,8 @@
 				return `Transcription failed: ${d.error}`;
 			case 'summarized':
 				return `Summarized with ${d.provider}${d.model ? `/${d.model}` : ''}`;
+			case 'summary_edited':
+				return `Summary edited${d.by ? ` by ${d.by}` : ''}`;
 			case 'summarize_failed':
 				return `Summary failed: ${d.error}`;
 			case 'hubspot_pushed': {

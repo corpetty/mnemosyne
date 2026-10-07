@@ -14,11 +14,13 @@
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import Markdown from './Markdown.svelte';
 	import ExternalNotesCard from './ExternalNotesCard.svelte';
+	import SummaryEditor from './SummaryEditor.svelte';
 	import HubSpotCard from './HubSpotCard.svelte';
 	import {
 		createIssues,
 		draftFollowup,
 		getIntegrations,
+		saveFollowup,
 		sendFollowup,
 		setActionItemDone,
 		type DestinationName,
@@ -27,12 +29,14 @@
 
 	let selected = $state<Set<number>>(new Set());
 	let creating = $state(false);
+	let editing = $state(false);
 	let lastSession: string | null = null;
 	$effect(() => {
 		const id = sessionState.activeSession?.id ?? null;
 		if (id !== lastSession) {
 			lastSession = id;
 			selected = new Set();
+			editing = false;
 		}
 	});
 
@@ -69,6 +73,22 @@
 			jobsState.track(await draftFollowup(session.id, followupStyle));
 		} catch (e) {
 			toastState.error(e instanceof Error ? e.message : 'Could not draft a follow-up');
+		}
+	}
+
+	let savingFollowup = $state(false);
+	async function keepFollowup() {
+		const session = sessionState.activeSession;
+		if (!session) return;
+		savingFollowup = true;
+		try {
+			await saveFollowup(session.id, followupText);
+			await sessionState.refreshActive();
+			toastState.success('Follow-up draft saved');
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not save the draft');
+		} finally {
+			savingFollowup = false;
 		}
 	}
 
@@ -222,6 +242,13 @@
 	async function handleSummarize() {
 		const session = sessionState.activeSession;
 		if (!session || submitting) return;
+		if (
+			session.summary_data?.edited_at &&
+			!confirm(
+				'This summary was edited by hand. Summarizing again replaces your edits (done ticks, issue links and due dates carry over). Continue?'
+			)
+		)
+			return;
 		error = '';
 		submitting = true; // until the job is tracked: a double click queues one summary
 		try {
@@ -281,7 +308,9 @@
 {/snippet}
 
 <div class="space-y-3">
-	{#if sessionState.activeSession?.summary}
+	{#if editing && sessionState.activeSession}
+		<SummaryEditor session={sessionState.activeSession} ondone={() => (editing = false)} />
+	{:else if sessionState.activeSession?.summary}
 		<div class="relative space-y-3">
 			{#if data && data.topics.length}
 				<div class="flex flex-wrap gap-1">
@@ -377,7 +406,9 @@
 						</section>
 					{/if}
 				</div>
-				<p class="text-[11px] text-gray-600">{data.style} summary · {data.provider}/{data.model}</p>
+				<p class="text-[11px] text-gray-600">
+					{data.style} summary{#if data.provider} · {data.provider}/{data.model}{/if}{#if data.edited_at} · edited {new Date(data.edited_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}{#if data.edited_by} by {data.edited_by}{/if}{/if}
+				</p>
 				{#if hubspot && mine}<HubSpotCard />{/if}
 				{#if mine}
 				<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 space-y-2">
@@ -405,30 +436,48 @@
 					</div>
 					{#if followupError}<p class="text-xs text-red-400">{followupError}</p>{/if}
 					{#if followupText}
+						{#if followupText.trim() !== data.followup}
+							<button onclick={keepFollowup} disabled={savingFollowup} class="self-start px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+								{savingFollowup ? 'Saving…' : 'Save draft'}
+							</button>
+						{/if}
 						<textarea
 							bind:value={followupText}
 							rows={Math.min(16, Math.max(4, followupText.split('\n').length + 1))}
 							aria-label="Follow-up draft"
 							class="w-full bg-gray-950 border border-gray-800 rounded px-2 py-1.5 text-sm text-gray-200 font-sans resize-y"
 						></textarea>
-						<p class="text-[11px] text-gray-600">Edits here are only for copying; redrafting replaces the saved draft.</p>
+						<p class="text-[11px] text-gray-600">Edit it here and save it; drafting again replaces the saved draft.</p>
 					{:else if !followupJob}
 						<p class="text-[11px] text-gray-600">An email or chat message recapping decisions and next steps, ready to paste.</p>
 					{/if}
 				</section>
 				{/if}
 			{/if}
-			<button
-				onclick={copyToClipboard}
-				class="absolute top-0 right-0 text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
-				title="Copy summary as markdown"
-			>
-				Copy
-			</button>
+			<div class="absolute top-0 right-0 flex gap-1">
+				{#if mine}
+					<button
+						onclick={() => (editing = true)}
+						class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
+						title="Edit the summary, topics, decisions, action items, chapters and questions"
+					>
+						Edit
+					</button>
+				{/if}
+				<button
+					onclick={copyToClipboard}
+					class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
+					title="Copy summary as markdown"
+				>
+					Copy
+				</button>
+			</div>
 		</div>
+	{:else if mine && sessionState.activeSession}
+		<button onclick={() => (editing = true)} class="text-xs text-blue-400 hover:text-blue-300">Write a summary yourself</button>
 	{/if}
 
-	{#if mine}
+	{#if mine && !editing}
 	<div class="flex flex-wrap items-center gap-3">
 		<select bind:value={selectedStyle} class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200" title="Summary style">
 			{#each styles as s}

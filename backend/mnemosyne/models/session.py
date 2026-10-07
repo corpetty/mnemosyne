@@ -122,6 +122,10 @@ class SummaryData(ApiModel):
     chapters: list[Chapter] = Field(default_factory=list)
     client_facts: list[ClientFact] = Field(default_factory=list)  # client style only
     followup: str = ""  # last drafted follow-up message (email or chat)
+    # Changed by hand (services/summary_edit.py); a new summary starts unedited, and the UI
+    # asks before one replaces edits.
+    edited_at: datetime | None = None
+    edited_by: str = ""
 
 
 class Asset(ApiModel):

@@ -334,7 +334,9 @@ after looking at another meeting. After 0.15.0 (unreleased, for 0.15.1; Corey ho
 built-in model summarizes in parts of `LocalProvider.max_chars` (20k characters); copilot notes
 without thinking (44 s → 9 s an update on Corey's vLLM Qwen); the frozen-window fix (native Wayland
 by default for the AppImage, X11 frame sync off, tray "Redraw window" / `--redraw`; src-tauri/src/
-frames.rs), not yet confirmed in daily use.
+frames.rs), not yet confirmed in daily use; summaries editable by hand (services/summary_edit.py,
+`PUT …/summary` and `…/followup`, components/SummaryEditor.svelte: text, topics, decisions,
+action items, chapters, questions, client facts; `edited_at` makes re-summarize ask first).
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

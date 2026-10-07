@@ -562,6 +562,24 @@ Deletes the session, its transcript, and its recordings directory. → `{ "messa
 
 `{ "notes": "..." }` → `SessionDetail`.
 
+### `PUT /api/sessions/{session_id}/summary`
+
+A summary edited by hand, saved together (services/summary_edit.py): `{summary, topics: [str],
+decisions: [{text, at}], open_questions: [{text, at}], action_items: [ActionItem], chapters:
+[{start, title}], client_facts: [ClientFact]}` → `SessionDetail`. Each decision and question
+carries its transcript time (`at`, seconds or null), stored back as `decision_at`/`question_at`.
+Empty items are dropped, topics deduplicated, chapters sorted by time. Style, model, source
+fingerprint and follow-up draft stay; `summary_data.edited_at`/`edited_by` are set (a new summary
+clears them, and the UI asks before replacing edits). Works without a summary yet (style
+`manual`). Keeps the previous version, logs `summary_edited` in the history, seals it, publishes
+a `session` event (search reindexes), and re-exports to Obsidian when auto-export is on. Someone
+else's meeting: 403.
+
+### `PUT /api/sessions/{session_id}/followup`
+
+`{ "text": "..." }` → `SessionDetail`: keeps the follow-up draft as edited, without marking the
+summary edited. 404 without a summary.
+
 ### Bookmarks: `POST /api/sessions/{session_id}/bookmarks` · `PATCH|DELETE …/bookmarks/{id}`
 `{at?, note}` → `{id, at, note, created_at}`. Without `at`, while recording, it marks now (the Mark
 button, Ctrl+M, the tray's "Mark this moment", `mnemosyne --mark`). Kept as (part, seconds), so

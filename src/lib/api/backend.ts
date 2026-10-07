@@ -47,6 +47,7 @@ import type {
   RecordingStatus,
   SearchHit,
   SessionDetail,
+  SummaryEdit,
   SessionSpeaker,
   SessionSummary,
   Me,
@@ -196,6 +197,22 @@ export async function updateNotes(sessionId: string, notes: string): Promise<Ses
   return request(`/api/sessions/${sessionId}/notes`, {
     method: 'POST',
     body: JSON.stringify({ notes })
+  });
+}
+
+/** Save a summary edited by hand: text, topics, decisions, questions, items, chapters, facts. */
+export async function editSummary(sessionId: string, edit: SummaryEdit): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/summary`, {
+    method: 'PUT',
+    body: JSON.stringify(edit)
+  });
+}
+
+/** Keep an edited follow-up draft. */
+export async function saveFollowup(sessionId: string, text: string): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/followup`, {
+    method: 'PUT',
+    body: JSON.stringify({ text })
   });
 }
 

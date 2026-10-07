@@ -11,11 +11,12 @@ from ...models.session import (
     Session,
     SessionSummary,
 )
-from ...services import history
+from ...services import history, summary_edit
 from ...services.combine import combine_runner
 from ...services.copilot import copilot_ask_runner
 from ...services.pipeline import transcribe_session
 from ...services.stats import MeetingStats, meeting_stats
+from ...services.summary_edit import SummaryEdit
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -148,6 +149,31 @@ async def update_notes(session_id: str, request: NotesRequest, ctx: AppContext =
     session = ctx.sessions.update_notes(session_id, request.notes)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+@router.put("/{session_id}/summary", response_model=Session)
+async def edit_summary(session_id: str, request: SummaryEdit, ctx: AppContext = Depends(get_ctx)):
+    """Save a summary edited by hand: text, topics, decisions, open questions, action items,
+    chapters and client facts together (services/summary_edit.py)."""
+    session = summary_edit.edit_summary(ctx, session_id, request)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+class FollowupRequest(ApiModel):
+    text: str
+
+
+@router.put("/{session_id}/followup", response_model=Session)
+async def save_followup(
+    session_id: str, request: FollowupRequest, ctx: AppContext = Depends(get_ctx)
+):
+    """Keep the follow-up draft as edited (a new draft replaces it)."""
+    session = summary_edit.save_followup(ctx, session_id, request.text)
+    if session is None:
+        raise HTTPException(status_code=404, detail="No summary to keep a follow-up with")
     return session
 
 

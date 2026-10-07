@@ -1735,7 +1735,11 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
+        /**
+         * Save Followup
+         * @description Keep the follow-up draft as edited (a new draft replaces it).
+         */
+        put: operations["save_followup_api_sessions__session_id__followup_put"];
         /**
          * Draft Followup
          * @description Queue a `followup` job: a follow-up email or chat message drafted from the summary.
@@ -2067,6 +2071,27 @@ export interface paths {
          * @description Queue a summarize job. The summary arrives via `job` and `session` events.
          */
         post: operations["summarize_session_api_sessions__session_id__summarize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Edit Summary
+         * @description Save a summary edited by hand: text, topics, decisions, open questions, action items,
+         *     chapters and client facts together (services/summary_edit.py).
+         */
+        put: operations["edit_summary_api_sessions__session_id__summary_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2625,7 +2650,30 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /** ActionItem */
-        ActionItem: {
+        "ActionItem-Input": {
+            /** At */
+            at?: number | null;
+            /**
+             * Done
+             * @default false
+             */
+            done: boolean;
+            /** Due */
+            due?: string | null;
+            /** Issue Url */
+            issue_url?: string | null;
+            /**
+             * Live
+             * @default false
+             */
+            live: boolean;
+            /** Owner */
+            owner?: string | null;
+            /** Text */
+            text: string;
+        };
+        /** ActionItem */
+        "ActionItem-Output": {
             /** At */
             at: number | null;
             /**
@@ -3040,7 +3088,24 @@ export interface components {
          * @description Something a client or customer said about themselves in a meeting (the `client`
          *     summary style), recorded as said.
          */
-        ClientFact: {
+        "ClientFact-Input": {
+            /** At */
+            at?: number | null;
+            /**
+             * Kind
+             * @default other
+             * @enum {string}
+             */
+            kind: "goal" | "concern" | "preference" | "context" | "next_meeting" | "other";
+            /** Text */
+            text: string;
+        };
+        /**
+         * ClientFact
+         * @description Something a client or customer said about themselves in a meeting (the `client`
+         *     summary style), recorded as said.
+         */
+        "ClientFact-Output": {
             /** At */
             at: number | null;
             /**
@@ -3376,25 +3441,6 @@ export interface components {
             start: number;
             /** Text */
             text: string;
-        };
-        /** FollowupRequest */
-        FollowupRequest: {
-            /**
-             * Model
-             * @default
-             */
-            model: string;
-            /**
-             * Provider
-             * @default
-             */
-            provider: string;
-            /**
-             * Style
-             * @default email
-             * @enum {string}
-             */
-            style: "email" | "chat";
         };
         /** GlossarySuggestion */
         GlossarySuggestion: {
@@ -5344,15 +5390,22 @@ export interface components {
          */
         SummaryData: {
             /** Action Items */
-            action_items: components["schemas"]["ActionItem"][];
+            action_items: components["schemas"]["ActionItem-Output"][];
             /** Chapters */
             chapters: components["schemas"]["Chapter"][];
             /** Client Facts */
-            client_facts: components["schemas"]["ClientFact"][];
+            client_facts: components["schemas"]["ClientFact-Output"][];
             /** Decision At */
             decision_at: (number | null)[];
             /** Decisions */
             decisions: string[];
+            /** Edited At */
+            edited_at: string | null;
+            /**
+             * Edited By
+             * @default
+             */
+            edited_by: string;
             /**
              * Followup
              * @default
@@ -5389,6 +5442,23 @@ export interface components {
             title: string;
             /** Topics */
             topics: string[];
+        };
+        /** SummaryEdit */
+        SummaryEdit: {
+            /** Action Items */
+            action_items?: components["schemas"]["ActionItem-Input"][];
+            /** Chapters */
+            chapters?: components["schemas"]["Chapter"][];
+            /** Client Facts */
+            client_facts?: components["schemas"]["ClientFact-Input"][];
+            /** Decisions */
+            decisions?: components["schemas"]["TimedText"][];
+            /** Open Questions */
+            open_questions?: components["schemas"]["TimedText"][];
+            /** Summary */
+            summary: string;
+            /** Topics */
+            topics?: string[];
         };
         /** SummaryStyle */
         SummaryStyle: {
@@ -5545,6 +5615,13 @@ export interface components {
             provider: string;
             /** Q */
             q: string;
+        };
+        /** TimedText */
+        TimedText: {
+            /** At */
+            at?: number | null;
+            /** Text */
+            text: string;
         };
         /** TopicCount */
         TopicCount: {
@@ -5751,6 +5828,25 @@ export interface components {
             /** Asset Id */
             asset_id: string;
         };
+        /** FollowupRequest */
+        mnemosyne__api__routes__models__FollowupRequest: {
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /**
+             * Style
+             * @default email
+             * @enum {string}
+             */
+            style: "email" | "chat";
+        };
         /** RedeemRequest */
         mnemosyne__api__routes__pairing__RedeemRequest: {
             /** Code */
@@ -5762,6 +5858,11 @@ export interface components {
              * @default
              */
             name: string;
+        };
+        /** FollowupRequest */
+        mnemosyne__api__routes__sessions__FollowupRequest: {
+            /** Text */
+            text: string;
         };
         /** AttachRequest */
         mnemosyne__api__routes__system__AttachRequest: {
@@ -8845,6 +8946,41 @@ export interface operations {
             };
         };
     };
+    save_followup_api_sessions__session_id__followup_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["mnemosyne__api__routes__sessions__FollowupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     draft_followup_api_sessions__session_id__followup_post: {
         parameters: {
             query?: never;
@@ -8856,7 +8992,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FollowupRequest"];
+                "application/json": components["schemas"]["mnemosyne__api__routes__models__FollowupRequest"];
             };
         };
         responses: {
@@ -9504,6 +9640,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_summary_api_sessions__session_id__summary_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SummaryEdit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
                 };
             };
             /** @description Validation Error */
