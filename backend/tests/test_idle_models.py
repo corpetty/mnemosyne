@@ -43,3 +43,33 @@ async def test_zero_keeps_them_loaded(models):
     await _loaded(models)
     assert not await models.unload_if_idle(busy=False, now=models.last_used + 10**6)
     assert models.loaded
+
+
+@pytest.mark.anyio
+async def test_unloading_hands_memory_back(models, monkeypatch, caplog):
+    from mnemosyne.services import model_service
+
+    released = []
+    monkeypatch.setattr(model_service, "release_memory", lambda: released.append(True))
+    await _loaded(models)
+    with caplog.at_level("INFO", logger="mnemosyne.services.model_service"):
+        assert await models.unload_if_idle(busy=False, now=models.last_used + 16 * 60)
+    assert released == [True]
+    assert "process" in caplog.text and "MB" in caplog.text
+
+
+def test_release_memory_and_rss_work_without_torch():
+    from mnemosyne.services.model_service import release_memory, rss_mb
+
+    assert rss_mb() > 0
+    release_memory()  # torch not imported in tests: nothing CUDA, still trims
+
+
+def test_compile_workers_are_off():
+    """PyTorch kept a pool of 21 compile workers alive (~350 MB each); importing the package
+    sets one in-process compile thread before torch can be imported."""
+    import os
+
+    import mnemosyne  # noqa: F401
+
+    assert os.environ["TORCHINDUCTOR_COMPILE_THREADS"] == "1"

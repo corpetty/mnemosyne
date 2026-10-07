@@ -15,6 +15,41 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def rss_mb() -> float:
+    """This process's resident memory, in MB (0 where /proc is missing)."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        pass
+    return 0.0
+
+
+def release_memory() -> None:
+    """After models are dropped: collect their cycles, give CUDA's cached blocks back (only
+    when torch is already loaded), and hand freed heap pages back to the system (glibc keeps
+    them otherwise, so an idle backend stayed at ~7 GB)."""
+    import ctypes
+    import gc
+    import sys
+
+    gc.collect()
+    torch = sys.modules.get("torch")
+    if torch is not None:
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            logger.debug("CUDA cache not emptied", exc_info=True)
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):  # not glibc
+        pass
+
+
 GPU_MODULES = {"torch", "torchaudio", "whisperx", "pyannote", "faster_whisper", "ctranslate2"}
 
 
@@ -59,8 +94,15 @@ class ModelService:
             return False
         if (now if now is not None else time.monotonic()) - self.last_used < minutes * 60:
             return False
+        before = rss_mb()
         await self.unload()
-        logger.info("Unloaded the speech models after %d idle minutes", minutes)
+        release_memory()
+        logger.info(
+            "Unloaded the speech models after %d idle minutes (process %.0f -> %.0f MB)",
+            minutes,
+            before,
+            rss_mb(),
+        )
         return True
 
     @property
