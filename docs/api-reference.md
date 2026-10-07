@@ -875,9 +875,12 @@ dropped. Open items with a deadline come first, soonest first; `due=overdue` kee
 `duedate`, and the Obsidian note `📅 YYYY-MM-DD` (the Tasks plugin's format).
 
 ### `PATCH /api/sessions/{session_id}/action-items/{idx}`
-Body `{"done": true}`. Returns the updated item and publishes a `session` event; 404 for an unknown
-session or index. Anyone who can read the meeting may tick its items (someone it is shared with
-ticks off theirs); when it is not the owner, `task_done` / `task_reopened` goes into its history. Re-summarizing a meeting keeps `done` and `issue_url` on items whose text matches
+Body: any of `{done, text, owner, due}`; fields left out stay (`owner` "" or null and `due` null
+clear them; empty `text` is 400). Returns the updated item (`can_edit`: whether the caller may
+change text/owner/due) and publishes a `session` event; 404 for an unknown session or index.
+Anyone who can read the meeting may tick its items (someone it is shared with ticks off theirs);
+when it is not the owner, `task_done` / `task_reopened` goes into its history. Changing text, owner
+or due needs write access (403 otherwise), marks the summary edited and logs `task_edited`. Re-summarizing a meeting keeps `done` and `issue_url` on items whose text matches
 the previous summary's (same words, or at least 85% similar), and their `due` when the new summary
 names none.
 

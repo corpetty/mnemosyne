@@ -129,3 +129,19 @@ def test_a_reader_ticks_off_their_action_item(team):
     assert ctx.repo.get(s.id).summary_data.action_items[0].done
     done = [e for e in ctx.repo.events(s.id) if e["kind"] == "task_done"]
     assert done and done[0]["detail"]["by"] == "Bob"
+
+
+def test_a_reader_ticks_but_does_not_edit(team):
+    client, ctx, people = team
+    s = _meeting(ctx, people, "Ann", "Plan")
+    bob = people["Bob"][1]
+    sharing.set_shares(ctx, s.id, {people["Bob"][0].id})
+    tasks = client.get("/api/action-items", params={"status": "all"}, headers=bob).json()
+    assert [t["can_edit"] for t in tasks] == [False]
+    url = f"/api/sessions/{s.id}/action-items/0"
+    assert client.patch(url, json={"text": "Send it later"}, headers=bob).status_code == 403
+    assert ctx.repo.get(s.id).summary_data.action_items[0].text == "Send the plan"
+    ann = people["Ann"][1]
+    assert client.get("/api/action-items", params={"status": "all"}, headers=ann).json()[0][
+        "can_edit"
+    ]

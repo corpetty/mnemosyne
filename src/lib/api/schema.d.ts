@@ -2695,10 +2695,21 @@ export interface components {
             /** Text */
             text: string;
         };
-        /** ActionItemUpdate */
+        /**
+         * ActionItemUpdate
+         * @description What to change; fields left out stay. Ticking `done` needs read access only; `text`,
+         *     `owner` and `due` edit the summary and need write access. `owner` "" or null clears it,
+         *     `due` null clears it.
+         */
         ActionItemUpdate: {
             /** Done */
-            done: boolean;
+            done?: boolean | null;
+            /** Due */
+            due?: string | null;
+            /** Owner */
+            owner?: string | null;
+            /** Text */
+            text?: string | null;
         };
         /**
          * ActiveRecording
@@ -5498,6 +5509,11 @@ export interface components {
         };
         /** TaskItem */
         TaskItem: {
+            /**
+             * Can Edit
+             * @default false
+             */
+            can_edit: boolean;
             /**
              * Created At
              * Format: date-time

@@ -22,6 +22,9 @@ class TaskItem(ApiModel):
     issue_url: str | None
     due: date | None = None
     mine: bool = False  # its owner is whoever asks (mine_matcher)
+    # Whoever asks may change its text, owner and due date (their meeting, or an admin);
+    # anyone who can read it may tick it done. Set by the task list and the edit route.
+    can_edit: bool = False
 
 
 def _norm(text: str) -> str:

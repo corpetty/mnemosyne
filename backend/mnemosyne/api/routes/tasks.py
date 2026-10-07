@@ -1,5 +1,6 @@
 """Action items across all meetings."""
 
+from datetime import date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -44,7 +45,14 @@ def _mine(ctx: AppContext):
 
 
 class ActionItemUpdate(ApiModel):
-    done: bool
+    """What to change; fields left out stay. Ticking `done` needs read access only; `text`,
+    `owner` and `due` edit the summary and need write access. `owner` "" or null clears it,
+    `due` null clears it."""
+
+    done: bool | None = None
+    text: str | None = None
+    owner: str | None = None
+    due: date | None = None
 
 
 @router.patch("/sessions/{session_id}/action-items/{idx}", response_model=TaskItem)
@@ -57,14 +65,30 @@ async def update_action_item(
     items = session.summary_data.action_items if session.summary_data else []
     if not 0 <= idx < len(items):
         raise HTTPException(status_code=404, detail="No such action item")
-    items[idx].done = request.done
-    ctx.repo.set_action_item_done(session_id, idx, request.done)  # readers may tick too
-    if session.owner_id != access.user_id():
+    given = request.model_fields_set
+    if given & {"text", "owner", "due"}:
+        updates: dict = {}
+        if "text" in given:
+            text = (request.text or "").strip()
+            if not text:
+                raise HTTPException(status_code=400, detail="An action item needs some text")
+            updates["text"] = text
+        if "owner" in given:
+            updates["owner"] = (request.owner or "").strip() or None
+        if "due" in given:
+            updates["due"] = request.due
         who = access.principal()
-        history.log(
-            ctx, session_id, "task_done" if request.done else "task_reopened",
-            task=items[idx].text, by=who.name if who else "",
-        )  # fmt: skip
+        data = session.summary_data.model_copy(deep=True)
+        data.action_items[idx] = data.action_items[idx].model_copy(update=updates)
+        data.edited_at, data.edited_by = datetime.now(), who.name if who else ""
+        ctx.repo.update_fields(session_id, summary_data=data)  # write access, or 403
+        history.log(ctx, session_id, "task_edited", task=data.action_items[idx].text,
+                    by=data.edited_by)  # fmt: skip
+        items = data.action_items
+    if "done" in given and request.done is not None and request.done != items[idx].done:
+        items[idx].done = request.done
+        ctx.repo.set_action_item_done(session_id, idx, request.done)  # readers may tick too
+        _log_tick(ctx, session, items[idx].text, request.done)
     ctx.bus.publish({"type": "session", "session_id": session_id, "status": session.status.value})
     a = items[idx]
     return TaskItem(
@@ -76,7 +100,19 @@ async def update_action_item(
         owner=a.owner,
         done=a.done,
         issue_url=a.issue_url,
+        due=a.due,
+        can_edit=access.can_write(session.owner_id),
     )
+
+
+def _log_tick(ctx: AppContext, session, task: str, done: bool) -> None:
+    """Someone other than the owner ticking an item off shows in the meeting's history."""
+    if session.owner_id != access.user_id():
+        who = access.principal()
+        history.log(
+            ctx, session.id, "task_done" if done else "task_reopened",
+            task=task, by=who.name if who else "",
+        )  # fmt: skip
 
 
 @router.get("/brief", response_model=Brief)

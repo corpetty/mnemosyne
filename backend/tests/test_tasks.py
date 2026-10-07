@@ -140,3 +140,28 @@ def test_due_survives_a_resummarize_that_drops_it():
     old = SummaryData(action_items=[ActionItem(text="Update the docs", due=date(2026, 10, 1))])
     new = SummaryData(action_items=[ActionItem(text="Update the docs.")])
     assert carry_over(old, new).action_items[0].due == date(2026, 10, 1)
+
+
+def test_edit_a_task_from_the_list(client, ctx):
+    a, _ = _seed(ctx)
+    url = f"/api/sessions/{a.id}/action-items/0"
+    r = client.patch(
+        url, json={"text": " Update the release docs ", "owner": "Bob", "due": "2026-10-20"}
+    )
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert (got["text"], got["owner"], got["due"], got["done"]) == (
+        "Update the release docs", "Bob", "2026-10-20", False,
+    )  # fmt: skip
+    assert got["can_edit"] is True
+    data = ctx.repo.get(a.id).summary_data
+    assert data.action_items[0].text == "Update the release docs" and data.edited_at is not None
+    assert data.action_items[1].text == "Tag rc1"  # the others stay
+    # Clearing the owner and the due date; ticking it in the same call.
+    r = client.patch(url, json={"owner": "", "due": None, "done": True})
+    assert (r.json()["owner"], r.json()["due"], r.json()["done"]) == (None, None, True)
+    assert client.patch(url, json={"text": "  "}).status_code == 400
+    assert "task_edited" in [e["kind"] for e in ctx.repo.events(a.id)]
+    assert all(
+        t["can_edit"] for t in client.get("/api/action-items", params={"status": "all"}).json()
+    )

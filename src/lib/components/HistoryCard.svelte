@@ -159,6 +159,8 @@
 				return `Audio deleted${d.reason === 'retention' ? ' by the retention rule' : ''}`;
 			case 'task_done':
 				return `${d.by || 'Someone'} ticked off “${d.task}”`;
+			case 'task_edited':
+				return `${d.by || 'Someone'} edited the task “${d.task}”`;
 			case 'task_reopened':
 				return `${d.by || 'Someone'} reopened “${d.task}”`;
 			case 'shared':

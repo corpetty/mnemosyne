@@ -78,3 +78,19 @@ test('the follow-up draft is kept as edited', async () => {
   await page.getByRole('button', { name: 'Summary', exact: true }).click();
   await expect(page.getByLabel('Follow-up draft')).toHaveValue('Hi all, the release call is on the 30th.');
 });
+
+test('edit a task from the Tasks view', async () => {
+  await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+  await page.getByPlaceholder('Filter…').fill('release call');
+  await page.getByRole('button', { name: 'Edit task: Book the release call' }).click();
+  await page.getByLabel('Task text').fill('Book the release call with QA');
+  await page.getByLabel('Task owner').fill('Bob');
+  await page.getByLabel('Task text').press('Enter');
+  await page.getByPlaceholder('Filter…').fill('');
+  await expect(page.getByText('Book the release call with QA')).toBeVisible();
+  // The meeting's summary has it too.
+  await page.getByRole('button', { name: /summary-edit/ }).first().click();
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  await expect(page.getByText('Book the release call with QA')).toBeVisible();
+  await expect(page.getByText('· Bob')).toBeVisible();
+});

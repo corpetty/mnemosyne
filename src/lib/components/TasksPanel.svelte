@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { listActionItems, setActionItemDone } from '$lib/api/backend.js';
+	import { listActionItems, setActionItemDone, updateActionItem } from '$lib/api/backend.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -57,6 +57,40 @@
 		}
 	}
 
+	// One task at a time is edited in place (text, owner, due date).
+	const keyOf = (t: TaskItem) => `${t.session_id}:${t.idx}`;
+	let editing = $state<string | null>(null);
+	let draft = $state({ text: '', owner: '', due: '' });
+	let saving = $state(false);
+
+	function startEdit(t: TaskItem) {
+		editing = keyOf(t);
+		draft = { text: t.text, owner: t.owner ?? '', due: t.due ?? '' };
+	}
+
+	async function saveEdit(t: TaskItem) {
+		if (saving || !draft.text.trim()) return;
+		saving = true;
+		try {
+			const got = await updateActionItem(t.session_id, t.idx, {
+				text: draft.text,
+				owner: draft.owner.trim() || null,
+				due: draft.due || null
+			});
+			Object.assign(t, { text: got.text, owner: got.owner, due: got.due });
+			editing = null;
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not save the task');
+		} finally {
+			saving = false;
+		}
+	}
+
+	function editKey(e: KeyboardEvent, t: TaskItem) {
+		if (e.key === 'Enter') saveEdit(t);
+		else if (e.key === 'Escape') editing = null;
+	}
+
 	async function open(t: TaskItem) {
 		sessionState.pendingOpen = null;
 		onOpenSession?.();
@@ -108,6 +142,46 @@
 	});
 </script>
 
+{#snippet pencil(t: TaskItem)}
+	{#if t.can_edit}
+		<button
+			onclick={() => startEdit(t)}
+			class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-xs text-gray-500 hover:text-gray-200 pt-0.5"
+			aria-label="Edit task: {t.text}"
+			title="Edit the text, owner or due date"
+		>✎</button>
+	{/if}
+{/snippet}
+
+{#snippet editor(t: TaskItem)}
+	<li class="flex flex-wrap items-center gap-1.5 text-sm rounded px-1 py-1 bg-gray-900">
+		<!-- svelte-ignore a11y_autofocus -->
+		<input
+			bind:value={draft.text}
+			onkeydown={(e) => editKey(e, t)}
+			autofocus
+			aria-label="Task text"
+			class="flex-1 min-w-[12rem] bg-gray-950 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200"
+		/>
+		<input
+			bind:value={draft.owner}
+			onkeydown={(e) => editKey(e, t)}
+			placeholder="Owner"
+			aria-label="Task owner"
+			class="w-32 bg-gray-950 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+		/>
+		<input
+			type="date"
+			bind:value={draft.due}
+			onkeydown={(e) => editKey(e, t)}
+			aria-label="Task due date"
+			class="w-36 bg-gray-950 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+		/>
+		<button onclick={() => saveEdit(t)} disabled={saving || !draft.text.trim()} class="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">Save</button>
+		<button onclick={() => (editing = null)} class="px-2 py-1 text-xs rounded bg-gray-800 border border-gray-700 text-gray-300">Cancel</button>
+	</li>
+{/snippet}
+
 <div class="space-y-5">
 	<div>
 		<h2 class="text-xl font-semibold text-gray-100 mb-1">Tasks</h2>
@@ -150,13 +224,18 @@
 			<h3 class="text-xs font-medium text-gray-300">Deadlines</h3>
 			<ul class="space-y-0.5">
 				{#each deadlines as t (t.session_id + t.idx)}
-					<li class="flex items-start gap-2 text-sm rounded px-1 py-0.5 hover:bg-gray-900/60">
+					{#if editing === keyOf(t)}
+						{@render editor(t)}
+					{:else}
+					<li class="group flex items-start gap-2 text-sm rounded px-1 py-0.5 hover:bg-gray-900/60">
 						<input type="checkbox" checked={t.done} onchange={() => toggle(t)} aria-label="Done: {t.text}" class="mt-1 rounded border-gray-600 bg-gray-800" />
 						<span class="w-14 shrink-0 text-xs pt-0.5 {dueClass(t)}" title={t.due! < today ? 'Overdue' : 'Due'}>{dueLabel(t.due!)}</span>
 						<span class="text-gray-200">{t.text}</span>
 						{#if t.owner}<span class="text-xs text-gray-500 pt-0.5 whitespace-nowrap">· {t.owner}</span>{/if}
+						{@render pencil(t)}
 						<button onclick={() => open(t)} class="ml-auto text-xs text-gray-600 hover:text-gray-300 pt-0.5 whitespace-nowrap">{t.session_name}</button>
 					</li>
+					{/if}
 				{/each}
 			</ul>
 		</section>
@@ -169,7 +248,10 @@
 			</button>
 			<ul class="space-y-0.5">
 				{#each g.items as t (t.idx)}
-					<li class="flex items-start gap-2 text-sm rounded px-1 py-0.5 hover:bg-gray-900/60">
+					{#if editing === keyOf(t)}
+						{@render editor(t)}
+					{:else}
+					<li class="group flex items-start gap-2 text-sm rounded px-1 py-0.5 hover:bg-gray-900/60">
 						<input
 							type="checkbox"
 							checked={t.done}
@@ -183,7 +265,9 @@
 						{#if t.issue_url}
 							<button onclick={() => openLink(t.issue_url!)} class="text-xs text-green-500 hover:text-green-300 pt-0.5">issue</button>
 						{/if}
+						{@render pencil(t)}
 					</li>
+					{/if}
 				{/each}
 			</ul>
 		</section>

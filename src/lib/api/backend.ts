@@ -795,6 +795,18 @@ export async function setActionItemDone(sessionId: string, idx: number, done: bo
   });
 }
 
+/** Change an action item's text, owner or due date (null clears them); fields left out stay. */
+export async function updateActionItem(
+  sessionId: string,
+  idx: number,
+  changes: { text?: string; owner?: string | null; due?: string | null; done?: boolean }
+): Promise<TaskItem> {
+  return request(`/api/sessions/${sessionId}/action-items/${idx}`, {
+    method: 'PATCH',
+    body: JSON.stringify(changes)
+  });
+}
+
 // Digests
 export async function createDigest(start: string, end: string, provider = '', model = ''): Promise<Job> {
   return request('/api/digests', { method: 'POST', body: JSON.stringify({ start, end, provider, model }) });

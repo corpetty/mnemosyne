@@ -1779,7 +1779,7 @@ class SessionRepository:
         visible = self.visible_ids()
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, name, created_at, summary_data FROM sessions"
+                "SELECT id, name, created_at, summary_data, owner_id FROM sessions"
                 " WHERE summary_data IS NOT NULL ORDER BY created_at DESC"
             ).fetchall()
         out = []
@@ -1787,6 +1787,7 @@ class SessionRepository:
             if visible is not None and r["id"] not in visible:
                 continue
             data = SummaryData.model_validate_json(r["summary_data"])
+            writable = access.can_write(r["owner_id"])
             for i, a in enumerate(data.action_items):
                 out.append(
                     TaskItem(
@@ -1799,6 +1800,7 @@ class SessionRepository:
                         done=a.done,
                         issue_url=a.issue_url,
                         due=a.due,
+                        can_edit=writable,
                     )
                 )
         return out
