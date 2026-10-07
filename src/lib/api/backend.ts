@@ -731,6 +731,11 @@ export async function listTopics(): Promise<TopicCount[]> {
   return request('/api/topics');
 }
 
+/** Rename a topic across meetings, or merge it into another (an existing topic's name). */
+export async function renameTopic(old: string, name: string): Promise<{ meetings: number; remembered: boolean }> {
+  return request('/api/topics/rename', { method: 'POST', body: JSON.stringify({ old, new: name }) });
+}
+
 export async function getThread(q: string): Promise<Thread> {
   return request(`/api/topics/thread?q=${encodeURIComponent(q)}`);
 }

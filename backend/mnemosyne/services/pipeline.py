@@ -431,6 +431,10 @@ def summarize_session(
         # To-dos the copilot heard that the summary missed; then keep done flags and issue
         # links of items that survive a re-summarize.
         add_live_todos(session.copilot_notes, result["data"])
+        # Topics renamed or merged by hand keep their new name (services/topics.py).
+        from .topics import apply_aliases
+
+        result["data"].topics = apply_aliases(result["data"].topics, app.settings.topic_aliases)
         current = app.sessions.get_session(session_id)
         carry_over(current.summary_data if current else None, result["data"])
         app.sessions.set_summary(session_id, result["summary"], result["data"])

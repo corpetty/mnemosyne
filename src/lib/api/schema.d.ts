@@ -2477,6 +2477,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/topics/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename
+         * @description Rename a topic, or merge it into another, across meetings.
+         */
+        post: operations["rename_api_topics_rename_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/topics/thread": {
         parameters: {
             query?: never;
@@ -4398,6 +4418,13 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** RenameResult */
+        RenameResult: {
+            /** Meetings */
+            meetings: number;
+            /** Remembered */
+            remembered: boolean;
+        };
         /** RenameSpeakerRequest */
         RenameSpeakerRequest: {
             /**
@@ -4409,6 +4436,13 @@ export interface components {
             label: string;
             /** Name */
             name: string;
+        };
+        /** RenameTopic */
+        RenameTopic: {
+            /** New */
+            new: string;
+            /** Old */
+            old: string;
         };
         /** RepoCheck */
         RepoCheck: {
@@ -4986,6 +5020,10 @@ export interface components {
             team_port?: number | null;
             /** Team Tailscale Cert */
             team_tailscale_cert?: boolean | null;
+            /** Topic Aliases */
+            topic_aliases?: {
+                [key: string]: string;
+            } | null;
             /** Transcriber */
             transcriber?: string | null;
             /** Unload Models After Minutes */
@@ -5239,6 +5277,10 @@ export interface components {
             team_port: number;
             /** Team Tailscale Cert */
             team_tailscale_cert: boolean;
+            /** Topic Aliases */
+            topic_aliases: {
+                [key: string]: string;
+            };
             /** Transcriber */
             transcriber: string;
             /** Unload Models After Minutes */
@@ -10362,6 +10404,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TopicCount"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_api_topics_rename_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameTopic"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RenameResult"];
                 };
             };
             /** @description Validation Error */

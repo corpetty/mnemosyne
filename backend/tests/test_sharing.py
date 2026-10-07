@@ -145,3 +145,22 @@ def test_a_reader_ticks_but_does_not_edit(team):
     assert client.get("/api/action-items", params={"status": "all"}, headers=ann).json()[0][
         "can_edit"
     ]
+
+
+def test_a_member_renames_topics_in_their_own_meetings_only(team):
+    client, ctx, people = team
+    ann_meeting = _meeting(ctx, people, "Ann", "Plan")
+    bob_meeting = _meeting(ctx, people, "Bob", "Also a plan")
+    for s in (ann_meeting, bob_meeting):
+        data = ctx.repo.get(s.id).summary_data.model_copy(update={"topics": ["Waku"]})
+        with ctx.repo._lock, ctx.repo._conn:
+            ctx.repo._conn.execute(
+                "UPDATE sessions SET summary_data=? WHERE id=?", (data.model_dump_json(), s.id)
+            )
+    sharing.set_shares(ctx, ann_meeting.id, {people["Bob"][0].id})  # Bob reads Ann's
+    bob = people["Bob"][1]
+    r = client.post("/api/topics/rename", json={"old": "waku", "new": "Messaging"}, headers=bob)
+    assert r.json() == {"meetings": 1, "remembered": False}  # not a team-wide alias
+    assert ctx.repo.get(bob_meeting.id).summary_data.topics == ["Messaging"]
+    assert ctx.repo.get(ann_meeting.id).summary_data.topics == ["Waku"]
+    assert ctx.settings.topic_aliases == {}

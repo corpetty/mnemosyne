@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     glossary: str = ""
     # Also let the LLM fix misheard glossary terms after transcription (default provider).
     glossary_llm_correct: bool = False
+    # Renamed or merged topics (services/topics.py rename_topic): a topic's words, lowercased,
+    # -> the name to use. New summaries go through it, so a rename outlasts a re-summarize.
+    topic_aliases: dict[str, str] = Field(default_factory=dict)
     auto_summarize: bool = False  # queue a summary after each transcription
     auto_name_sessions: bool = True  # rename untitled sessions from the summary title
     # When mic and system audio are captured separately, the mic file is

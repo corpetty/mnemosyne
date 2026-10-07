@@ -7,6 +7,7 @@ from datetime import datetime
 
 import numpy as np
 
+from .. import access
 from ..models.base import ApiModel
 from ..models.session import Chapter, SummaryData
 from .tasks import TaskItem
@@ -36,6 +37,54 @@ class Thread(ApiModel):
 
 def _norm(t: str) -> str:
     return " ".join(re.findall(r"\w+", t.lower()))
+
+
+def apply_aliases(topics: list[str], aliases: dict[str, str]) -> list[str]:
+    """Topics with renamed ones under their new name, merged ones once (first place kept)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for t in topics:
+        t = aliases.get(_norm(t), t)
+        key = _norm(t)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(t)
+    return out
+
+
+def alias_for(aliases: dict[str, str], old: str, new: str) -> dict[str, str]:
+    """`aliases` with `old` renamed to `new`, including names that were renamed to `old`."""
+    key, new_key = _norm(old), _norm(new)
+    out = {k: (new if _norm(v) == key else v) for k, v in aliases.items()}
+    out[key] = new
+    if new_key != key:
+        out.pop(new_key, None)  # `new` is a name of its own again
+    return out
+
+
+def rename_topic(app, old: str, new: str) -> int:
+    """Rename (or, when `new` is already a topic, merge) a topic in every meeting the caller
+    may change. Not a summary edit: re-summarizing keeps it through `topic_aliases`. Returns
+    how many meetings changed."""
+    key, rename = _norm(old), {_norm(old): new.strip()}
+    changed = 0
+    for r in app.repo.people_rows():
+        if not r["summary_data"]:
+            continue
+        data = SummaryData.model_validate_json(r["summary_data"])
+        if not any(_norm(t) == key for t in data.topics):
+            continue
+        data.topics = apply_aliases(data.topics, rename)
+        try:
+            session = app.repo.update_fields(r["id"], summary_data=data)
+        except access.Forbidden:  # someone else's meeting
+            continue
+        if session is not None:
+            app.bus.publish(
+                {"type": "session", "session_id": session.id, "status": session.status.value}
+            )
+            changed += 1
+    return changed
 
 
 def frequent_topics(repo, limit: int = 30) -> list[TopicCount]:

@@ -1,10 +1,11 @@
 """Topic threads across meetings."""
 
+import json
 from datetime import datetime
 
 from mnemosyne.models.session import ActionItem, Chapter, Session, SummaryData
 from mnemosyne.models.transcript import TranscriptSegment
-from tests.conftest import drain_until_job
+from tests.conftest import drain_until_job, run_summarize
 
 
 def _s(name, day, topics, decisions=(), items=(), questions=(), chapters=(), text="talk"):
@@ -83,3 +84,33 @@ def test_thread_summary_job(client, ctx, fake_provider):
     assert sent.startswith("Topic: migration")
     assert "Decision: Ship the Waku migration in October" in sent
     assert client.post("/api/topics/thread/summary", json={"q": "x"}).status_code == 400
+
+
+def _tagged(ctx, name, topics, **kw):
+    return ctx.repo.save(
+        Session(name=name, summary="s", summary_data=SummaryData(topics=topics, **kw))
+    )
+
+
+def test_rename_and_merge_a_topic_across_meetings(client, ctx, fake_provider):
+    a = _tagged(ctx, "One", ["Waku", "Release"])
+    b = _tagged(ctx, "Two", ["waku", "Waku migration"])
+    c = _tagged(ctx, "Three", ["Hiring"])
+    r = client.post("/api/topics/rename", json={"old": "waku", "new": "Waku migration"})
+    assert r.status_code == 200 and r.json() == {"meetings": 2, "remembered": True}
+    assert ctx.repo.get(a.id).summary_data.topics == ["Waku migration", "Release"]
+    assert ctx.repo.get(b.id).summary_data.topics == ["Waku migration"]  # merged once
+    assert ctx.repo.get(c.id).summary_data.topics == ["Hiring"]
+    assert ctx.repo.get(a.id).summary_data.edited_at is None  # not a summary edit
+    assert ctx.repo.versions(a.id) == []
+    counts = {t["topic"]: t["meetings"] for t in client.get("/api/topics").json()}
+    assert counts["Waku migration"] == 2 and "Waku" not in counts
+    assert ctx.settings.topic_aliases == {"waku": "Waku migration"}
+    assert client.post("/api/topics/rename", json={"old": " ", "new": "x"}).status_code == 400
+
+    # Kept for new summaries: the model saying "waku" again gets the new name.
+    ctx.summarizer.providers = {"fake": fake_provider}  # applying the alias rebuilt them
+    ctx.repo.replace_segments(c.id, [TranscriptSegment(text="hi", speaker="A", start=0, end=1)])
+    fake_provider.summary = json.dumps({"summary": "x", "topics": ["WAKU", "hiring"]})
+    run_summarize(client, c.id, {"provider": "fake"})
+    assert ctx.repo.get(c.id).summary_data.topics == ["Waku migration", "hiring"]

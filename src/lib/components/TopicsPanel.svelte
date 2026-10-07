@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { uiState } from '$lib/stores/ui.svelte.js';
-	import { getThread, listTopics, summarizeThread } from '$lib/api/backend.js';
+	import { getThread, listTopics, renameTopic, summarizeThread } from '$lib/api/backend.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -16,11 +16,38 @@
 	let jobId = $state<string | null>(null);
 	let status = $state('');
 
-	$effect(() => {
+	function loadTopics() {
 		listTopics()
 			.then((t) => (topics = t))
 			.catch(() => {});
-	});
+	}
+	$effect(loadTopics);
+
+	// Renaming the followed topic, or merging it into another (typing an existing topic's name).
+	let renaming = $state(false);
+	let newName = $state('');
+	const known = $derived(topics.find((t) => t.topic.toLowerCase() === thread?.query.toLowerCase()) ?? null);
+	const mergeInto = $derived(
+		topics.find((t) => t.topic !== known?.topic && t.topic.toLowerCase() === newName.trim().toLowerCase()) ?? null
+	);
+
+	async function rename() {
+		const old = known?.topic;
+		const name = newName.trim();
+		if (!old || !name || name === old) return;
+		try {
+			const r = await renameTopic(old, name);
+			toastState.success(
+				`${mergeInto ? 'Merged' : 'Renamed'} in ${r.meetings} meeting${r.meetings === 1 ? '' : 's'}` +
+					(r.remembered ? '; new summaries use it too' : '')
+			);
+			renaming = false;
+			loadTopics();
+			await follow(name);
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not rename the topic');
+		}
+	}
 
 	// The command palette asks for a topic.
 	$effect(() => {
@@ -34,6 +61,7 @@
 		q = q.trim();
 		if (q.length < 2) return;
 		query = q;
+		renaming = false;
 		loading = true;
 		status = '';
 		jobId = null;
@@ -124,7 +152,36 @@
 				</button>
 				<span class="text-xs text-gray-500">{thread.meetings.length} meeting{thread.meetings.length === 1 ? '' : 's'}</span>
 				{#if job?.status === 'failed'}<span class="text-xs text-red-400">{job.error}</span>{/if}
+				{#if known && !renaming}
+					<button
+						onclick={() => { renaming = true; newName = known.topic; }}
+						class="ml-auto text-xs text-gray-500 hover:text-gray-200"
+						title="Rename this topic in every meeting, or merge it into another"
+					>Rename or merge…</button>
+				{/if}
 			</div>
+			{#if renaming && known}
+				<form onsubmit={(e) => { e.preventDefault(); rename(); }} class="flex flex-wrap items-center gap-2 text-sm">
+					<span class="text-xs text-gray-500">“{known.topic}” becomes</span>
+					<!-- svelte-ignore a11y_autofocus -->
+					<input
+						bind:value={newName}
+						list="topic-names"
+						autofocus
+						aria-label="New topic name"
+						onkeydown={(e) => { if (e.key === 'Escape') renaming = false; }}
+						class="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 w-56"
+					/>
+					<datalist id="topic-names">
+						{#each topics.filter((t) => t.topic !== known.topic) as t (t.topic)}<option value={t.topic}></option>{/each}
+					</datalist>
+					<button type="submit" disabled={!newName.trim() || newName.trim() === known.topic} class="px-3 py-1 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+						{mergeInto ? `Merge into ${mergeInto.topic}` : 'Rename'}
+					</button>
+					<button type="button" onclick={() => (renaming = false)} class="px-2 py-1 text-xs rounded bg-gray-800 border border-gray-700 text-gray-300">Cancel</button>
+					<span class="w-full text-[11px] text-gray-600">In every meeting you can change; summaries made later use the new name too.</span>
+				</form>
+			{/if}
 			{#if explanation}
 				<div class="rounded-lg border border-purple-900/60 bg-purple-950/20 p-4" aria-label="Where it stands">
 					<Markdown text={explanation} />

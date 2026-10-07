@@ -938,6 +938,13 @@ Facts and meetings come only from meetings the caller may see.
 Topics from meeting summaries (`summary_data.topics`, normalized), most meetings first:
 `[{topic, meetings, last_seen}]`.
 
+### `POST /api/topics/rename`
+`{old, new}` → `{meetings, remembered}`. Renames a topic (matched like the list groups them:
+words, case ignored) in every meeting the caller may change; when `new` is already a topic of a
+meeting, the two merge there. Not a summary edit (no version, no `edited_at`). `remembered`: kept
+in `settings.topic_aliases` so new and re-made summaries use the new name too (always on the
+desktop; admins only on a team server). 400 for a blank name.
+
 ### `GET /api/topics/thread?q=`
 Meetings about `q`, oldest first (up to 12): those whose topics name it, keyword hits and
 meaning hits, ranked by reciprocal rank fusion. Each has `{id, name, created_at, summary (first

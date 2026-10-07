@@ -109,3 +109,17 @@ test('restore the summary the model wrote', async () => {
   await expect(page.getByText('Book the release call with QA')).toHaveCount(0);
   await expect(page.getByText('waku', { exact: true })).toBeVisible(); // its tags came back too
 });
+
+test('rename a topic across meetings', async () => {
+  await page.getByRole('button', { name: 'Topics', exact: true }).click();
+  await page.getByLabel('Topic', { exact: true }).fill('waku');
+  await page.getByRole('button', { name: 'Follow' }).click();
+  await page.getByRole('button', { name: 'Rename or merge…' }).click();
+  await page.getByLabel('New topic name').fill('Waku migration');
+  await page.getByRole('button', { name: 'Rename', exact: true }).click();
+  await expect(page.getByText(/Renamed in \d+ meetings?; new summaries use it too/)).toBeVisible();
+  await page.getByRole('button', { name: /summary-edit/ }).first().click();
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  await expect(page.getByText('Waku migration', { exact: true })).toBeVisible();
+  await expect(page.getByText('waku', { exact: true })).toHaveCount(0);
+});
