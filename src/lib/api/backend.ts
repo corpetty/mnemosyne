@@ -48,6 +48,7 @@ import type {
   SearchHit,
   SessionDetail,
   SummaryEdit,
+  VersionInfo,
   SessionSpeaker,
   SessionSummary,
   Me,
@@ -853,6 +854,16 @@ export async function getMeetingRecord(sessionId: string): Promise<MeetingRecord
 
 export async function getRecordVersion(sessionId: string, versionId: number): Promise<RecordVersion> {
   return request(`/api/sessions/${sessionId}/versions/${versionId}`);
+}
+
+/** Earlier versions of a meeting, oldest first (quick: no seal check). */
+export async function listVersions(sessionId: string): Promise<VersionInfo[]> {
+  return request(`/api/sessions/${sessionId}/versions`);
+}
+
+/** Put an earlier version's summary back; the current one is kept as a version. */
+export async function restoreSummaryVersion(sessionId: string, versionId: number): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/versions/${versionId}/restore-summary`, { method: 'POST' });
 }
 
 export async function setLegalHold(sessionId: string, reason: string): Promise<MeetingRecord> {

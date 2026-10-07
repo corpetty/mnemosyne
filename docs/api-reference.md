@@ -154,7 +154,9 @@ A legal hold refuses both to everyone (403) and refuses combining. Every deletio
 | Method | Path | |
 |---|---|---|
 | GET | `/api/sessions/{id}/records` | `kept_until`, `legal_hold`, `versions`, `verification` (`ok`, `seals`, `chain_head`, `problems`) |
-| GET | `/api/sessions/{id}/versions/{version_id}` | an earlier version's transcript lines and summary |
+| GET | `/api/sessions/{id}/versions` | earlier versions, oldest first (`has_summary`: can be restored as the summary); no seal check |
+| GET | `/api/sessions/{id}/versions/{version_id}` | an earlier version's transcript lines and summary, with `summary_data` (topics, items...) for versions kept since 0.15.1 |
+| POST | `/api/sessions/{id}/versions/{version_id}/restore-summary` | puts that summary back (text and, when kept, its data; done ticks, issue links and due dates carry over), keeping the current one as a version; history `summary_restored`; 404 without a summary, 403 for someone else's meeting |
 | PUT | `/api/sessions/{id}/legal-hold` | reviewer or admin: `{reason}` holds, `""` lifts (logged in history) |
 | GET | `/api/records/deletions?start=&end=` | reviewer or admin: the deletion log |
 | POST | `/api/records/export` | `{session_ids}` or `{start, end}` → a `records_export` job; its result has `export_id` |

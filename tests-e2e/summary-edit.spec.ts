@@ -94,3 +94,18 @@ test('edit a task from the Tasks view', async () => {
   await expect(page.getByText('Book the release call with QA')).toBeVisible();
   await expect(page.getByText('· Bob')).toBeVisible();
 });
+
+test('restore the summary the model wrote', async () => {
+  await page.getByTitle('Earlier summaries, and putting one back').click();
+  const panel = page.getByRole('region', { name: 'Earlier summaries' });
+  // Oldest last: the model's own summary, replaced when it was edited.
+  const original = panel.getByRole('listitem').last();
+  await original.getByRole('button', { name: /replaced when edited/ }).click();
+  await expect(panel.getByText('The team reviewed the release.')).toBeVisible();
+  page.once('dialog', (d) => d.accept());
+  await original.getByRole('button', { name: 'Restore' }).click();
+  await expect(page.getByText('Earlier summary restored')).toBeVisible();
+  await expect(page.getByText('The team reviewed the release. The Waku migration is code complete.')).toBeVisible();
+  await expect(page.getByText('Book the release call with QA')).toHaveCount(0);
+  await expect(page.getByText('waku', { exact: true })).toBeVisible(); // its tags came back too
+});

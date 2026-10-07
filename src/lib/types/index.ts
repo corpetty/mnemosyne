@@ -29,6 +29,7 @@ export type SessionSummary = S['SessionSummary'];
 export type Me = S['Me'];
 export type MeetingRecord = S['MeetingRecord'];
 export type RecordVersion = S['Version'];
+export type VersionInfo = S['VersionInfo'];
 export type Deletion = S['Deletion'];
 export type SupervisionQueueItem = S['QueueItem'];
 export type MeetingSupervision = S['MeetingSupervision'];

@@ -224,7 +224,8 @@ CREATE TABLE IF NOT EXISTS session_versions (
     reason TEXT NOT NULL,
     by TEXT NOT NULL DEFAULT '',
     content TEXT NOT NULL,
-    content_hash TEXT NOT NULL
+    content_hash TEXT NOT NULL,
+    summary_data TEXT
 );
 CREATE INDEX IF NOT EXISTS session_versions_session ON session_versions(session_id);
 -- Seals: a hash of the meeting's content and audio files, chained to the previous seal.
@@ -471,6 +472,12 @@ class SessionRepository:
                 self._conn.execute(
                     f"ALTER TABLE {table} ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''"
                 )
+        # A version's structured summary (topics, items...), outside its records hash, so an
+        # earlier summary can be restored whole (services/summary_edit.py).
+        if "summary_data" not in {
+            r["name"] for r in self._conn.execute("PRAGMA table_info(session_versions)")
+        }:
+            self._conn.execute("ALTER TABLE session_versions ADD COLUMN summary_data TEXT")
         # Not on the Session model: calendar attendees' addresses (name -> email) and what a
         # meeting became in a CRM (services/hubspot.py), keyed by CRM.
         if "attendee_emails" not in cols:
@@ -1211,17 +1218,19 @@ class SessionRepository:
         self._check_write(session_id)  # callers may keep a version before their own write
         content = content_of(before)
         digest = content_hash(content)
+        data = before.summary_data.model_dump_json() if before.summary_data else None
         who = access.principal()
         with self._lock, self._conn:
             last = self._conn.execute(
-                "SELECT content_hash FROM session_versions WHERE session_id=? ORDER BY id DESC",
+                "SELECT content_hash, summary_data FROM session_versions WHERE session_id=?"
+                " ORDER BY id DESC",
                 (session_id,),
             ).fetchone()
-            if last is not None and last["content_hash"] == digest:
+            if last is not None and last["content_hash"] == digest and last["summary_data"] == data:
                 return
             self._conn.execute(
-                "INSERT INTO session_versions (session_id, at, reason, by, content, content_hash)"
-                " VALUES (?,?,?,?,?,?)",
+                "INSERT INTO session_versions (session_id, at, reason, by, content, content_hash,"
+                " summary_data) VALUES (?,?,?,?,?,?,?)",
                 (
                     session_id,
                     datetime.now().isoformat(),
@@ -1229,23 +1238,27 @@ class SessionRepository:
                     who.name if who else "",
                     canonical(content).decode(),
                     digest,
+                    data,
                 ),
             )
 
     def versions(self, session_id: str, with_content: bool = False) -> list[dict]:
         if not self._readable(session_id):
             return []
-        cols = "id, at, reason, by, content_hash" + (", content" if with_content else "")
         with self._lock:
             rows = self._conn.execute(
-                f"SELECT {cols} FROM session_versions WHERE session_id=? ORDER BY id",
+                "SELECT id, at, reason, by, content_hash, content, summary_data"
+                " FROM session_versions WHERE session_id=? ORDER BY id",
                 (session_id,),
             ).fetchall()
         out = []
         for r in rows:
             v = {k: r[k] for k in ("id", "at", "reason", "by", "content_hash")}
+            content = json.loads(r["content"])
+            v["has_summary"] = bool(content.get("summary") or r["summary_data"])
             if with_content:
-                v["content"] = json.loads(r["content"])
+                v["content"] = content
+                v["summary_data"] = json.loads(r["summary_data"]) if r["summary_data"] else None
             out.append(v)
         return out
 

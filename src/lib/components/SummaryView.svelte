@@ -15,6 +15,7 @@
 	import Markdown from './Markdown.svelte';
 	import ExternalNotesCard from './ExternalNotesCard.svelte';
 	import SummaryEditor from './SummaryEditor.svelte';
+	import SummaryVersions from './SummaryVersions.svelte';
 	import HubSpotCard from './HubSpotCard.svelte';
 	import {
 		createIssues,
@@ -30,6 +31,7 @@
 	let selected = $state<Set<number>>(new Set());
 	let creating = $state(false);
 	let editing = $state(false);
+	let showVersions = $state(false);
 	let lastSession: string | null = null;
 	$effect(() => {
 		const id = sessionState.activeSession?.id ?? null;
@@ -37,6 +39,7 @@
 			lastSession = id;
 			selected = new Set();
 			editing = false;
+			showVersions = false;
 		}
 	});
 
@@ -319,6 +322,9 @@
 					{/each}
 				</div>
 			{/if}
+			{#if showVersions}
+				<SummaryVersions sessionId={sessionState.activeSession.id} canRestore={mine} onclose={() => (showVersions = false)} />
+			{/if}
 			<div class="bg-gray-900 border border-gray-700 rounded-lg p-4">
 				<Markdown text={sessionState.activeSession.summary} />
 			</div>
@@ -455,6 +461,13 @@
 				{/if}
 			{/if}
 			<div class="absolute top-0 right-0 flex gap-1">
+				<button
+					onclick={() => (showVersions = !showVersions)}
+					class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
+					title="Earlier summaries, and putting one back"
+				>
+					Versions
+				</button>
 				{#if mine}
 					<button
 						onclick={() => (editing = true)}

@@ -101,10 +101,51 @@ def edit_summary(app: AppContext, session_id: str, edit: SummaryEdit) -> Session
     if session is None:
         return None
     history.log(app, session_id, "summary_edited", by=by)
+    _saved(app, session, "summary_edited")
+    return session
+
+
+def restore_summary(app: AppContext, session_id: str, version_id: int) -> Session | None:
+    """Put an earlier version's summary back (its text, and its topics, items... when the
+    version has them; older versions kept only the text). The current one is kept as a version;
+    done ticks, issue links and due dates carry over as on a re-summarize. LookupError: no such
+    version, or it had no summary."""
+    from .tasks import carry_over
+
+    before = app.sessions.get_session(session_id)
+    if before is None:
+        return None
+    version = next(
+        (v for v in app.repo.versions(session_id, with_content=True) if v["id"] == version_id),
+        None,
+    )
+    if version is None or not version["has_summary"]:
+        raise LookupError("No such version with a summary")
+    if version["summary_data"] is not None:
+        data = carry_over(before.summary_data, SummaryData.model_validate(version["summary_data"]))
+    else:
+        data = before.summary_data
+    app.repo.keep_version(before, "restored an earlier summary")
+    session = app.repo.update_fields(
+        session_id, summary=version["content"]["summary"], summary_data=data
+    )
+    if session is None:
+        return None
+    who = access.principal()
+    history.log(
+        app, session_id, "summary_restored", version_at=version["at"], by=who.name if who else ""
+    )
+    _saved(app, session, "summary_restored")
+    return session
+
+
+def _saved(app: AppContext, session: Session, reason: str) -> None:
+    """After a summary changed by hand: seal it, tell windows and the search index, re-export."""
     from . import records
 
-    records.seal_later(app, session_id, "summary_edited")
-    app.bus.publish({"type": "session", "session_id": session_id, "status": session.status.value})
+    records.seal_later(app, session.id, reason)
+    app.bus.publish({"type": "session", "session_id": session.id, "status": session.status.value})
+    session_id = session.id
     st = app.settings
     if st.obsidian_auto_export and st.obsidian_vault_path:
         from .pipeline import _auto_export
@@ -113,7 +154,6 @@ def edit_summary(app: AppContext, session_id: str, edit: SummaryEdit) -> Session
             asyncio.get_running_loop().run_in_executor(None, _auto_export, app, session_id)
         except RuntimeError:  # no event loop (a script): export now
             _auto_export(app, session_id)
-    return session
 
 
 def save_followup(app: AppContext, session_id: str, text: str) -> Session | None:

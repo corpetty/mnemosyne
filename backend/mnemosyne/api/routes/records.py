@@ -13,7 +13,8 @@ from starlette.background import BackgroundTask
 from ... import access
 from ...jobs import Job
 from ...models.base import ApiModel
-from ...services import history, records
+from ...models.session import Session, SummaryData
+from ...services import history, records, summary_edit
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["records"])
@@ -27,6 +28,7 @@ class VersionInfo(ApiModel):
     at: datetime
     reason: str  # what replaced this version
     by: str
+    has_summary: bool = False  # it can be restored as the summary
 
 
 class MeetingRecord(ApiModel):
@@ -39,6 +41,7 @@ class MeetingRecord(ApiModel):
 class Version(VersionInfo):
     transcript: list[dict]
     summary: str
+    summary_data: SummaryData | None = None  # not kept by versions before 0.15.1
 
 
 class LegalHoldRequest(ApiModel):
@@ -90,6 +93,26 @@ async def version(session_id: str, version_id: int, ctx: AppContext = Depends(ge
             content = v.pop("content")
             return Version(**v, transcript=content["transcript"], summary=content["summary"])
     raise HTTPException(status_code=404, detail="Version not found")
+
+
+@router.get("/sessions/{session_id}/versions", response_model=list[VersionInfo])
+async def versions(session_id: str, ctx: AppContext = Depends(get_ctx)):
+    """Earlier versions of the meeting, oldest first (without checking seals: quick)."""
+    _session(ctx, session_id)
+    return [VersionInfo(**v) for v in ctx.repo.versions(session_id)]
+
+
+@router.post("/sessions/{session_id}/versions/{version_id}/restore-summary", response_model=Session)
+async def restore_summary(session_id: str, version_id: int, ctx: AppContext = Depends(get_ctx)):
+    """Put an earlier version's summary back (services/summary_edit.py)."""
+    _session(ctx, session_id)
+    try:
+        session = summary_edit.restore_summary(ctx, session_id, version_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
 
 
 @router.put("/sessions/{session_id}/legal-hold", response_model=MeetingRecord)

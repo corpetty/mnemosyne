@@ -2155,6 +2155,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Versions
+         * @description Earlier versions of the meeting, oldest first (without checking seals: quick).
+         */
+        get: operations["versions_api_sessions__session_id__versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/versions/{version_id}": {
         parameters: {
             query?: never;
@@ -2166,6 +2186,26 @@ export interface paths {
         get: operations["version_api_sessions__session_id__versions__version_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/versions/{version_id}/restore-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore Summary
+         * @description Put an earlier version's summary back (services/summary_edit.py).
+         */
+        post: operations["restore_summary_api_sessions__session_id__versions__version_id__restore_summary_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5800,12 +5840,18 @@ export interface components {
             at: string;
             /** By */
             by: string;
+            /**
+             * Has Summary
+             * @default false
+             */
+            has_summary: boolean;
             /** Id */
             id: number;
             /** Reason */
             reason: string;
             /** Summary */
             summary: string;
+            summary_data: components["schemas"]["SummaryData"] | null;
             /** Transcript */
             transcript: {
                 [key: string]: unknown;
@@ -5820,6 +5866,11 @@ export interface components {
             at: string;
             /** By */
             by: string;
+            /**
+             * Has Summary
+             * @default false
+             */
+            has_summary: boolean;
             /** Id */
             id: number;
             /** Reason */
@@ -9801,6 +9852,37 @@ export interface operations {
             };
         };
     };
+    versions_api_sessions__session_id__versions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionInfo"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     version_api_sessions__session_id__versions__version_id__get: {
         parameters: {
             query?: never;
@@ -9820,6 +9902,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Version"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_summary_api_sessions__session_id__versions__version_id__restore_summary_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
                 };
             };
             /** @description Validation Error */
