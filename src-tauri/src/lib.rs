@@ -19,6 +19,8 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 #[cfg(target_os = "linux")]
+pub mod display;
+#[cfg(target_os = "linux")]
 mod frames;
 mod remote;
 mod shell_prefs;
@@ -1181,7 +1183,15 @@ pub fn run() {
 
             reload_after_webview_crash(app.handle());
             #[cfg(target_os = "linux")]
-            frames::setup(app.handle());
+            {
+                info!("{}", display::describe());
+                frames::setup(app.handle());
+                // Up for a while on Wayland: it works here (display.rs).
+                let _ = std::thread::Builder::new().name("display-check".into()).spawn(|| {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    display::started();
+                });
+            }
             remote::start_at_launch(app.handle());
 
             // A missing tray host (e.g. GNOME without the AppIndicator extension) must
@@ -1219,6 +1229,8 @@ pub fn run() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {
+            #[cfg(target_os = "linux")]
+            display::started(); // a quick quit is not a failed start
             // Not started again by watch_backend once it is gone.
             app_handle.state::<BackendState>().watched.store(false, Ordering::SeqCst);
             if !cfg!(debug_assertions) && backend_outlives_app() {
