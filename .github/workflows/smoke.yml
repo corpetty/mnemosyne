@@ -22,7 +22,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        flavour: [normal, offline]
+        # wayland: the normal AppImage on a headless Weston, its default in a Wayland session.
+        flavour: [normal, offline, wayland]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -38,11 +39,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libfuse2 xvfb xauth pulseaudio pulseaudio-utils psmisc curl ffmpeg \
-            libegl1 libgl1 libgles2 libgl1-mesa-dri
+            libegl1 libgl1 libgles2 libgl1-mesa-dri weston
       - name: Bundled media stack, first launch, playback
         env:
           # The offline AppImage must install with no network at all.
           OFFLINE_CHECK: ${{ matrix.flavour == 'offline' && '1' || '' }}
+          SMOKE_DISPLAY: ${{ matrix.flavour == 'wayland' && 'wayland' || 'x11' }}
         run: |
           if [ "${{ matrix.flavour }}" = offline ]; then
             app="$(ls dist/*-offline.AppImage)"

@@ -5,6 +5,8 @@
 # 2. The real AppImage starts on a virtual display, installs its backend on first launch (uv),
 #    opens a meeting and plays its audio, muted, into a PulseAudio null sink, without WebKit's
 #    web process dying (src/lib/app/smoke.ts, MNEMOSYNE_SMOKE in lib.rs).
+# 3. SMOKE_DISPLAY=wayland: the same on a headless Weston and no X display at all, the AppImage's
+#    default in a Wayland session (src-tauri/src/display.rs); else on Xvfb.
 #
 # CI only: it starts PulseAudio with a null sink and writes to the user's data dir.
 # Usage: scripts/smoke-appimage.sh path/to/Mnemosyne.AppImage
@@ -49,21 +51,47 @@ if [ -n "${OFFLINE_CHECK:-}" ]; then
     https_proxy=$dead all_proxy=$dead NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost)
   echo "Offline check: downloads are blocked"
 fi
-"${proxy[@]}" xvfb-run -a "$appimage" >"$work/app.log" 2>&1 &
+fail() {
+  echo "SMOKE FAIL: $1"
+  echo "---- app log (last 150 lines)"
+  tail -n 150 "$work/app.log" 2>/dev/null || true
+  if [ -f "$work/weston.log" ]; then
+    echo "---- weston log"
+    tail -n 40 "$work/weston.log"
+  fi
+  exit 1
+}
+
+weston=""
+if [ "${SMOKE_DISPLAY:-x11}" = wayland ]; then
+  echo "== Display: headless Weston (no X)"
+  export XDG_RUNTIME_DIR="$work/xdg"
+  mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+  weston --backend=headless-backend.so --socket=wayland-smoke --idle-time=0 \
+    >"$work/weston.log" 2>&1 &
+  weston=$!
+  for _ in $(seq 100); do
+    [ -S "$XDG_RUNTIME_DIR/wayland-smoke" ] && break
+    sleep 0.1
+  done
+  [ -S "$XDG_RUNTIME_DIR/wayland-smoke" ] || fail "weston did not start"
+  export WAYLAND_DISPLAY=wayland-smoke
+  unset DISPLAY
+  launcher=()
+else
+  echo "== Display: Xvfb"
+  launcher=(xvfb-run -a)
+fi
+
+"${proxy[@]}" "${launcher[@]}" "$appimage" >"$work/app.log" 2>&1 &
 app=$!
 
 cleanup() {
   kill "$app" 2>/dev/null || true
+  [ -n "$weston" ] && kill "$weston" 2>/dev/null || true
   fuser -k 8008/tcp 2>/dev/null || true
 }
 trap cleanup EXIT
-
-fail() {
-  echo "SMOKE FAIL: $1"
-  echo "---- app log (last 150 lines)"
-  tail -n 150 "$work/app.log"
-  exit 1
-}
 
 echo "Waiting for the backend (first launch installs it)..."
 for _ in $(seq 1200); do
@@ -93,5 +121,8 @@ grep -o 'SMOKE .*' "$work/app.log" || true
 grep -q 'SMOKE OK' "$work/app.log" || fail "no SMOKE OK line"
 if [ -n "${OFFLINE_CHECK:-}" ]; then
   grep -q 'Installing from the bundled packages' "$work/app.log" || fail "did not install offline"
+fi
+if [ "${SMOKE_DISPLAY:-x11}" = wayland ]; then
+  grep -q 'Display: Wayland' "$work/app.log" || fail "the app did not run on Wayland"
 fi
 echo "Smoke test passed"
