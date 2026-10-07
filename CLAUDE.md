@@ -332,13 +332,18 @@ Also in 0.15.0, from a crash mid-meeting (2026-10-05): attach without the API to
 `LOCAL_PATHS`), `watch_backend` in lib.rs and a "Backend not answering" watchdog in the UI, quit
 without a backend, the glossary pass without thinking (four batches at a time, "(3 of 12)"), a
 transcript saved when the job stops during that pass, the view following a running transcription
-after looking at another meeting. After 0.15.0 (unreleased, for 0.15.1; Corey holds the bump): the
-built-in model summarizes in parts of `LocalProvider.max_chars` (20k characters); copilot notes
-without thinking (44 s → 9 s an update on Corey's vLLM Qwen); the frozen-window fix (native Wayland
-by default for the AppImage, X11 frame sync off, tray "Redraw window" / `--redraw`; src-tauri/src/
-frames.rs), not yet confirmed in daily use; summaries editable by hand (services/summary_edit.py,
-`PUT …/summary` and `…/followup`, components/SummaryEditor.svelte: text, topics, decisions,
-action items, chapters, questions, client facts; `edited_at` makes re-summarize ask first).
+after looking at another meeting.
+0.15.1 (2026-10-07, docs/plans/2026-10-07-for-0.15.1.md): the built-in model summarizes in parts of
+`LocalProvider.max_chars` (20k characters); copilot notes without thinking (44 s → 9 s an update on
+Corey's vLLM Qwen); the frozen-window fix (native Wayland by default for the AppImage with a
+fallback to X11, display.rs; X11 frame sync off, tray "Redraw window" / `--redraw`, frames.rs), not
+yet confirmed in daily use; summaries editable by hand (services/summary_edit.py, `PUT …/summary`
+and `…/followup`, components/SummaryEditor.svelte; `edited_at` makes re-summarize ask first);
+earlier summaries restored whole (`session_versions.summary_data`, SummaryVersions.svelte); topics
+renamed or merged across meetings (`settings.topic_aliases`); tasks edited from the Tasks view
+(`TaskItem.can_edit`); revise with an instruction (`revise` on summarize); Transcribe offered once a
+stopped recording is saved (`finish` job completion reloads the meeting); no PyTorch compile worker
+pool and memory handed back after the idle unload; a Wayland smoke test (headless Weston).
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
