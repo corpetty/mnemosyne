@@ -86,6 +86,7 @@ def build_transcriber(
         return PhononTranscriber(
             command=settings.phonon_command,
             log_path=settings.data_dir / "logs" / "phonon.log",
+            threads=threads,
         )
     if kind == "demo":
         from ..demo import DemoTranscriber

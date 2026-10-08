@@ -20,6 +20,8 @@ STUB = textwrap.dedent(
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     port = int(sys.argv[sys.argv.index("--port") + 1])
+    log = open(sys.argv[0] + ".log", "a")
+    log.write("ARGS " + " ".join(sys.argv[1:]) + "\\n"); log.flush()
     BODY = {{
         "text": "hello there general kenobi",
         "segments": [{{"start": 0.0, "end": 1.0, "text": "hello there"}},
@@ -43,6 +45,7 @@ STUB = textwrap.dedent(
             self._send({{"status": "ok"}})
         def do_POST(self):
             self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            log.write("POST\\n"); log.flush()
             self._send(BODY)
 
     HTTPServer(("127.0.0.1", port), H).serve_forever()
@@ -61,11 +64,29 @@ def stub(tmp_path):
     phonon._servers.clear()
 
 
+def _audio(path, parts):
+    """A 16 kHz WAV of (seconds, loud) parts: a tone, or digital silence."""
+    import numpy as np
+
+    pcm = np.concatenate(
+        [
+            (0.3 * np.sin(np.arange(int(sec * 16000)) * 2 * np.pi * 440 / 16000))
+            if loud
+            else np.zeros(int(sec * 16000))
+            for sec, loud in parts
+        ]
+    )
+    phonon._write_wav(path, pcm.astype(np.float32))
+    return str(path)
+
+
 @pytest.fixture
 def wav(tmp_path):
-    path = tmp_path / "a.wav"
-    path.write_bytes(b"RIFF0000WAVE")  # the stand-in does not read it
-    return str(path)
+    return _audio(tmp_path / "a.wav", [(3, True)])
+
+
+def _requests(stub):
+    return [line for line in open(stub + ".log").read().splitlines() if line == "POST"]
 
 
 @pytest.mark.anyio
@@ -76,7 +97,7 @@ async def test_phonon_serve_transcribes_with_word_times(stub, wav, tmp_path):
     assert [w.word for w in segments[1].words] == ["general", "kenobi"]
     assert t.is_loaded()
     await t.unload()
-    assert not phonon._servers[stub].running()  # the last user stopped it
+    assert not phonon._servers[(stub, None)].running()  # the last user stopped it
 
 
 @pytest.mark.anyio
@@ -84,7 +105,7 @@ async def test_final_and_live_share_one_server(stub, wav):
     final, live = phonon.PhononTranscriber(command=stub), phonon.PhononTranscriber(command=stub)
     await final.load()
     await live.load()
-    server = phonon._servers[stub]
+    server = phonon._servers[(stub, None)]
     pid = server._proc.pid
     await live.transcribe(wav)
     assert server._proc.pid == pid  # not started twice
@@ -98,7 +119,7 @@ async def test_final_and_live_share_one_server(stub, wav):
 async def test_a_dead_server_is_started_again(stub, wav):
     t = phonon.PhononTranscriber(command=stub)
     await t.load()
-    server = phonon._servers[stub]
+    server = phonon._servers[(stub, None)]
     server._proc.kill()
     server._proc.wait()
     assert not t.is_loaded()
@@ -157,3 +178,41 @@ def test_the_server_dies_with_the_backend(stub, tmp_path):
         time.sleep(0.1)
     os.kill(child, 9)
     pytest.fail("phonon serve outlived its backend")
+
+
+def test_cut_points_fall_in_quiet_moments():
+    import numpy as np
+
+    rate = 16000
+    pcm = np.full(rate * 700, 0.3, dtype=np.float32)  # 11 min 40 s of sound
+    pcm[rate * 290 : rate * 291] = 0.0  # a pause ten seconds before the first boundary
+    cuts = phonon.cut_points(pcm)
+    assert cuts[0] == 0 and cuts[-1] == pcm.size and len(cuts) == 4
+    assert rate * 290 <= cuts[1] <= rate * 291
+    assert all(b - a <= 300 * rate for a, b in zip(cuts, cuts[1:], strict=False))
+    assert phonon.cut_points(pcm[: rate * 60]) == [0, rate * 60]
+
+
+@pytest.mark.anyio
+async def test_long_audio_goes_in_pieces_and_silence_is_not_sent(stub, tmp_path):
+    # 6 min of speech, then 6 min of silence: two pieces with sound at most, none of the last.
+    path = _audio(tmp_path / "long.wav", [(360, True), (360, False)])
+    t = phonon.PhononTranscriber(command=stub)
+    seen = []
+    segments = await t.transcribe(path, progress=seen.append)
+    assert len(_requests(stub)) == 2  # the silent piece was not sent
+    assert seen[-1] == 1.0 and len(seen) == 3
+    # The second piece's lines come back at its own place in the meeting.
+    second = [s for s in segments if s.start > 250]
+    assert second and second[0].start == pytest.approx(300.0, abs=15)
+    assert second[0].words[0].start == second[0].start
+    await t.unload()
+
+
+@pytest.mark.anyio
+async def test_live_gets_its_thread_budget(stub, wav):
+    live = phonon.PhononTranscriber(command=stub, threads=2)
+    await live.transcribe(wav)
+    assert "--threads 2" in open(stub + ".log").read()
+    assert (stub, 2) in phonon._servers
+    await live.unload()
