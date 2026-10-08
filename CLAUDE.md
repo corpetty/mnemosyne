@@ -74,7 +74,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   does not support 3.14 yet.
 - Diarizer `auto` (the default) is Nemotron when NeMo is installed and CUDA works, else pyannote
   when it is installed and `HF_TOKEN` is set, else `onnx` (sherpa-onnx on the CPU, onnx extra),
-  else none. Transcriber `auto` is WhisperX with working CUDA, else Parakeet. pyannote needs
+  else none. Transcriber `auto` is WhisperX with working CUDA, else Parakeet. `phonon` (Phonon-2,
+  English only, never auto) runs Fermion's `phonon serve` (transcribers/phonon.py): the
+  fermion-research package is not a dependency, people install it; missing, Parakeet is used. pyannote needs
   `HF_TOKEN` with its model license accepted; Nemotron and onnx do not, but voice profiles and live
   speaker labels still use pyannote's embedding model, so they do. CI has no ML packages: tests
   that assume one monkeypatch `registry.installed`.

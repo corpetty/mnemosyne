@@ -13,7 +13,7 @@ from .composed import ComposedEngine
 from .engine import Diarizer, Transcriber
 from .glossary import initial_prompt, parse_glossary
 
-TRANSCRIBERS = ("auto", "whisperx", "parakeet", "remote")
+TRANSCRIBERS = ("auto", "whisperx", "parakeet", "phonon", "remote")
 DIARIZERS = ("auto", "nemotron", "pyannote", "onnx", "none")
 
 
@@ -45,7 +45,16 @@ def resolve_transcriber(settings: Settings, kind: str | None = None) -> str:
         return "whisperx" if installed("whisperx") and cuda_works() else "parakeet"
     if kind == "whisperx" and not installed("whisperx", "torch") and installed("onnx_asr"):
         return "parakeet"
+    if kind == "phonon" and not phonon_available(settings) and installed("onnx_asr"):
+        return "parakeet"  # chosen, then uninstalled: Parakeet is the same model, bigger
     return kind
+
+
+def phonon_available(settings: Settings) -> bool:
+    """Fermion's `phonon` program is installed (transcribers/phonon.py; not auto: English only)."""
+    from .transcribers.phonon import find_phonon
+
+    return find_phonon(settings.phonon_command) is not None
 
 
 def build_transcriber(
@@ -70,6 +79,13 @@ def build_transcriber(
             provider=settings.onnx_provider,
             quantization=settings.parakeet_quantization or None,
             threads=threads,
+        )
+    if kind == "phonon":
+        from .transcribers.phonon import PhononTranscriber
+
+        return PhononTranscriber(
+            command=settings.phonon_command,
+            log_path=settings.data_dir / "logs" / "phonon.log",
         )
     if kind == "demo":
         from ..demo import DemoTranscriber
@@ -235,6 +251,7 @@ ENGINE_SETTINGS = (
     "remote_stt_url",
     "remote_stt_model",
     "remote_stt_api_key",
+    "phonon_command",
     "diarization_model",
     "hf_token",
     "language",
@@ -263,4 +280,5 @@ LIVE_SETTINGS = (
     "remote_stt_url",
     "remote_stt_model",
     "remote_stt_api_key",
+    "phonon_command",
 )

@@ -4972,6 +4972,8 @@ export interface components {
             per_source_transcription?: boolean | null;
             /** Phone Url */
             phone_url?: string | null;
+            /** Phonon Command */
+            phonon_command?: string | null;
             /** Records Retention Years */
             records_retention_years?: number | null;
             /** Redact Exports */
@@ -5229,6 +5231,8 @@ export interface components {
             per_source_transcription: boolean;
             /** Phone Url */
             phone_url: string;
+            /** Phonon Command */
+            phonon_command: string;
             /** Records Retention Years */
             records_retention_years: number;
             /** Redact Exports */

@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     gpu_support: str = "auto"
 
     # auto: WhisperX with a working GPU, else Parakeet (registry.resolve_transcriber).
-    transcriber: str = "auto"  # auto | whisperx | parakeet | remote
+    transcriber: str = "auto"  # auto | whisperx | parakeet | phonon | remote
     # auto: Nemotron with a GPU, else pyannote (with its token), else ONNX on the CPU.
     diarizer: str = "auto"  # auto | nemotron | pyannote | onnx | none (registry.resolve_diarizer)
     language: str = ""  # blank = auto-detect
@@ -140,7 +140,7 @@ class Settings(BaseSettings):
 
     # Live transcription while recording (provisional; replaced by the final job)
     live_transcription: bool = True
-    live_transcriber: str = "parakeet"  # parakeet | whisperx | remote
+    live_transcriber: str = "parakeet"  # parakeet | whisperx | phonon | remote
     live_interval_seconds: float = 5.0
     # Label live lines by voice (needs a diarizer and the pyannote embedding model).
     live_diarization: bool = True
@@ -187,6 +187,9 @@ class Settings(BaseSettings):
     onnx_provider: str = "cpu"  # cpu | cuda
 
     # remote transcriber: any OpenAI-compatible /audio/transcriptions server
+    # Phonon-2 (transcribers/phonon.py, English only): the `phonon` program from Fermion's
+    # fermion-research package; blank finds it on PATH.
+    phonon_command: str = ""
     remote_stt_url: str = ""  # e.g. http://127.0.0.1:8484/v1
     remote_stt_model: str = "whisper-1"
     remote_stt_api_key: str = ""

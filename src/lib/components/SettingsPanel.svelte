@@ -146,6 +146,7 @@
 				parakeet_quantization: v.parakeet_quantization,
 				onnx_provider: v.onnx_provider,
 				remote_stt_url: v.remote_stt_url,
+				phonon_command: v.phonon_command,
 				remote_stt_model: v.remote_stt_model,
 				diarization_model: v.diarization_model,
 				auto_transcribe: v.auto_transcribe,
@@ -531,6 +532,7 @@
 						<span class={labelClass}>Live transcriber</span>
 						<select bind:value={form.live_transcriber} disabled={locked('live_transcriber')} class={inputClass}>
 							<option value="parakeet">Parakeet (ONNX, CPU, recommended)</option>
+							<option value="phonon">Phonon-2 (English only, CPU, needs phonon installed)</option>
 							<option value="remote">Remote server</option>
 							<option value="whisperx">WhisperX (GPU, competes with final jobs)</option>
 						</select>
@@ -725,6 +727,7 @@
 						<select bind:value={form.transcriber} disabled={locked('transcriber')} class={inputClass}>
 							<option value="whisperx">WhisperX (GPU, torch)</option>
 							<option value="parakeet">Parakeet TDT (ONNX, CPU/GPU)</option>
+							<option value="phonon">Phonon-2 (English only, CPU, needs phonon installed)</option>
 							<option value="remote">Remote OpenAI-compatible server</option>
 						</select>
 					</label>
@@ -774,7 +777,20 @@
 								<option value="cuda">CUDA (needs onnxruntime-gpu)</option>
 							</select>
 						</label>
-					{:else if form.transcriber === 'remote'}
+					{/if}
+					{#if form.transcriber === 'phonon' || form.live_transcriber === 'phonon'}
+						<label class="col-span-2">
+							<span class={labelClass}>phonon program (blank: find it on PATH)</span>
+							<input type="text" bind:value={form.phonon_command} disabled={locked('phonon_command')} placeholder="phonon, or a path like ~/.local/bin/phonon" class={inputClass} />
+						</label>
+						<p class="col-span-2 text-xs text-gray-500">
+							Phonon-2 is Parakeet TDT 0.6B v3 in a 164 MB file with its own CPU engine, English only. Mnemosyne starts
+							<code>phonon serve</code> when it transcribes and stops it when idle. Install it yourself with
+							<code>pip install fermion-research</code> (its CPU engine also needs CPU PyTorch; see fermionresearch.com/docs/speech).
+							If the program is not found, Parakeet is used.
+						</p>
+					{/if}
+					{#if form.transcriber === 'remote'}
 						<label>
 							<span class={labelClass}>Server base URL (…/v1)</span>
 							<input type="text" bind:value={form.remote_stt_url} disabled={locked('remote_stt_url')} placeholder="http://127.0.0.1:8484/v1" class={inputClass} />
