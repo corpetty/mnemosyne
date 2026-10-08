@@ -124,7 +124,8 @@ def test_registry_builds_it_and_falls_back_when_it_is_gone(stub, tmp_path, monke
     assert registry.resolve_transcriber(s) == "phonon"
     built = registry.build_transcriber(s)
     assert built.name == "phonon" and built.log_path == tmp_path / "logs" / "phonon.log"
-    monkeypatch.setattr(registry, "installed", lambda *m: True)  # Parakeet is installed
+    # Parakeet installed, nothing else (CI has no torch: auto must not look for a GPU there).
+    monkeypatch.setattr(registry, "installed", lambda *m: set(m) <= {"onnx_asr"})
     gone = Settings(data_dir=tmp_path, transcriber="phonon", phonon_command=str(tmp_path / "x"))
     assert registry.resolve_transcriber(gone) == "parakeet"
     assert registry.resolve_transcriber(Settings(data_dir=tmp_path)) != "phonon"  # not auto
