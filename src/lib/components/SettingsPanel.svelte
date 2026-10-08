@@ -20,6 +20,7 @@
 	import TeamHostSettings from './TeamHostSettings.svelte';
 	import WindowSettings from './WindowSettings.svelte';
 	import GpuSupportCard from './GpuSupportCard.svelte';
+	import PhononCard from './PhononCard.svelte';
 	import MyPreferences from './MyPreferences.svelte';
 	import LocalModelCard from './LocalModelCard.svelte';
 	import RecordsSettings from './RecordsSettings.svelte';
@@ -725,6 +726,7 @@
 					<label>
 						<span class={labelClass}>Transcriber</span>
 						<select bind:value={form.transcriber} disabled={locked('transcriber')} class={inputClass}>
+							<option value="auto">Automatic (Phonon-2 for English when installed, else WhisperX on a GPU, else Parakeet)</option>
 							<option value="whisperx">WhisperX (GPU, torch)</option>
 							<option value="parakeet">Parakeet TDT (ONNX, CPU/GPU)</option>
 							<option value="phonon">Phonon-2 (English only, CPU, needs phonon installed)</option>
@@ -778,16 +780,18 @@
 							</select>
 						</label>
 					{/if}
+					{#if form.transcriber === 'phonon' || form.transcriber === 'auto' || form.live_transcriber === 'phonon'}
+						<PhononCard />
+					{/if}
 					{#if form.transcriber === 'phonon' || form.live_transcriber === 'phonon'}
 						<label class="col-span-2">
-							<span class={labelClass}>phonon program (blank: find it on PATH)</span>
+							<span class={labelClass}>phonon program (blank: Mnemosyne's own install, else PATH)</span>
 							<input type="text" bind:value={form.phonon_command} disabled={locked('phonon_command')} placeholder="phonon, or a path like ~/.local/bin/phonon" class={inputClass} />
 						</label>
 						<p class="col-span-2 text-xs text-gray-500">
-							Phonon-2 is Parakeet TDT 0.6B v3 in a 164 MB file with its own CPU engine, English only. Mnemosyne starts
-							<code>phonon serve</code> when it transcribes and stops it when idle. Install it yourself with
-							<code>pip install fermion-research</code> (its CPU engine also needs CPU PyTorch; see fermionresearch.com/docs/speech).
-							If the program is not found, Parakeet is used.
+							Mnemosyne starts <code>phonon serve</code> when it transcribes and stops it when idle. Leave the program blank
+							to use the install above, or give your own (<code>pip install fermion-research</code>, with CPU PyTorch; see
+							fermionresearch.com/docs/speech). If neither is there, Parakeet is used.
 						</p>
 					{/if}
 					{#if form.transcriber === 'remote'}

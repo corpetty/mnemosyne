@@ -615,6 +615,16 @@ export async function prepareModels(): Promise<Job> {
   return request('/api/system/prepare', { method: 'POST' });
 }
 
+/** Install Phonon-2 for English transcription (an `install_phonon` job, about 1 GB). */
+export async function installPhonon(): Promise<Job> {
+  return request('/api/system/phonon', { method: 'POST' });
+}
+
+/** Remove Phonon-2 (its environment and model); a transcriber set to it then uses Parakeet. */
+export async function removePhonon(): Promise<void> {
+  await request('/api/system/phonon', { method: 'DELETE' });
+}
+
 /** A short real meeting (AMI corpus) imported, transcribed and summarized: try the app first. */
 export async function importSample(): Promise<StopRecordingResponse> {
   return request('/api/audio/sample', { method: 'POST' });

@@ -5,6 +5,7 @@
 		getSystemInfo,
 		importSample,
 		listModels,
+		installPhonon,
 		prepareModels,
 		updateSettings
 	} from '$lib/api/backend.js';
@@ -26,7 +27,9 @@
 	let system = $state<SystemInfo | null>(null);
 
 	// Transcription
-	let transcriber = $state<'parakeet' | 'whisperx' | 'remote'>('parakeet');
+	let transcriber = $state<'phonon' | 'parakeet' | 'whisperx' | 'remote'>('parakeet');
+	// Phonon-2 is English only: offered first when this computer's language is English.
+	const english = typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('en');
 	let remoteUrl = $state('');
 	let identifySpeakers = $state(false);
 	let savedTranscriber = $state<string | null>(null); // as saved: may be "auto"
@@ -105,6 +108,7 @@
 		if (savedTranscriber === null || system === null) return;
 		const wanted = savedTranscriber === 'auto' ? system.transcriber_in_use : savedTranscriber;
 		if (wanted === 'remote') transcriber = 'remote';
+		else if (wanted === 'phonon' || (english && system.phonon_installable && !system.setup_complete)) transcriber = 'phonon';
 		else transcriber = wanted === 'whisperx' && system.gpu_stack ? 'whisperx' : 'parakeet';
 	});
 
@@ -168,6 +172,7 @@
 
 	function transcriptionUpdate(): SettingsUpdate {
 		const u: SettingsUpdate = { transcriber, diarizer: identifySpeakers ? 'auto' : 'none' };
+		if (transcriber === 'phonon') u.language = 'en';
 		if (offerGpu) u.gpu_support = installGpu ? 'auto' : 'off';
 		if (transcriber === 'remote') u.remote_stt_url = remoteUrl.trim();
 		if (hfToken.trim()) u.hf_token = hfToken.trim();
@@ -206,6 +211,12 @@
 		if (STEPS[step] === 'Transcription') {
 			ok = await save(transcriptionUpdate());
 			if (ok && offerGpu && installGpu) void startGpuInstall();
+			// Installs in the background; until it is done, Parakeet transcribes.
+			if (ok && transcriber === 'phonon' && system && !system.phonon) {
+				installPhonon()
+					.then((job) => jobsState.track(job))
+					.catch(() => {});
+			}
 		}
 		if (STEPS[step] === 'Summaries') ok = await save(providerUpdate());
 		if (STEPS[step] === 'Notes & calendar') {
@@ -282,6 +293,16 @@
 	{:else if STEPS[step] === 'Transcription'}
 		<section class="space-y-3">
 			<h2 class="text-xl font-semibold text-gray-100">How should meetings be transcribed?</h2>
+			{#if system?.phonon_installable || system?.phonon}
+				<label class={option(transcriber === 'phonon')}>
+					<input type="radio" bind:group={transcriber} value="phonon" class="mt-1" />
+					<span><span class="text-gray-100 font-medium">Phonon-2</span> <span class="text-xs text-gray-500">recommended for English meetings</span><br />
+						<span class="text-sm text-gray-400">
+							English only. More accurate and about four times faster than Parakeet on meetings, on the CPU.
+							{#if !system?.phonon}Installed in the background (about 1 GB, from Fermion Research); Parakeet works meanwhile.{/if}
+						</span></span>
+				</label>
+			{/if}
 			<label class={option(transcriber === 'parakeet')}>
 				<input type="radio" bind:group={transcriber} value="parakeet" class="mt-1" />
 				<span><span class="text-gray-100 font-medium">Parakeet</span> <span class="text-xs text-gray-500">recommended without a GPU</span><br /><span class="text-sm text-gray-400">Fast and accurate on the CPU, English and European languages.</span></span>
@@ -398,7 +419,7 @@
 			<h2 class="text-2xl font-semibold text-gray-100">You're set</h2>
 			<ul class="text-sm text-gray-300 space-y-1">
 				<li>Audio: {audioState.selectedDeviceIds.size ? `${audioState.selectedDeviceIds.size} source${audioState.selectedDeviceIds.size === 1 ? '' : 's'} selected` : 'choose on the Recording tab'}</li>
-				<li>Transcription: {transcriber === 'parakeet' ? 'Parakeet' : transcriber === 'whisperx' ? 'WhisperX' : 'transcription server'}{identifySpeakers ? ', with speaker identification' : ''}</li>
+				<li>Transcription: {transcriber === 'phonon' ? 'Phonon-2 (English)' : transcriber === 'parakeet' ? 'Parakeet' : transcriber === 'whisperx' ? 'WhisperX' : 'transcription server'}{identifySpeakers ? ', with speaker identification' : ''}</li>
 				<li>Summaries: {provider === 'none' ? 'off for now' : `${provider}${model ? ` · ${model}` : ''}`}</li>
 				<li>Obsidian: {vaultPath || 'not connected'}</li>
 			</ul>
