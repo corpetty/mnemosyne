@@ -721,6 +721,8 @@ fn release_command(layout: &ReleaseLayout) -> StdCommand {
         .env("MNEMOSYNE_APP_PID", std::process::id().to_string())
         // Remote access: the link sidecar ships next to the app binary, like uv.
         .env("MNEMOSYNE_LINK_BIN", &layout.link)
+        // Optional engines the backend installs into their own environments (Phonon-2).
+        .env("MNEMOSYNE_UV_BIN", &layout.uv)
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("PYTHONUNBUFFERED", "1");
     if let Some(web) = &layout.web_dir {

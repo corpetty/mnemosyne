@@ -253,6 +253,16 @@ when it is false and there are no meetings yet. The answer also carries `setup_c
 (about 7 GB) in the background only after setup, and not when it was declined; setup and Settings →
 Transcription start it with the Tauri command `start_gpu_install`.
 
+### `POST /api/system/phonon` · `DELETE /api/system/phonon`
+Admin. Phonon-2 for English (services/phonon_install.py): an `install_phonon` job that makes
+`<data_dir>/phonon/venv` with uv (the app's bundled one, `MNEMOSYNE_UV_BIN`, else on PATH), installs
+CPU PyTorch from download.pytorch.org and then `fermion-research` with every package pinned
+(transcription/transcribers/phonon-requirements.txt), downloads the model once and writes
+`installed`; messages are uv's lines, about 1 GB in all. 409 while one runs. DELETE removes the
+folder (409 while recording or transcribing). `GET /api/system` says `phonon`, `phonon_bytes` and
+`phonon_installable`. Transcriber `auto` uses it when `language` is English; servers it starts run
+offline, on loopback, with a random API key and without Fermion's library-override variables.
+
 ### `POST /api/system/prepare`
 Admin. A `prepare_models` job that downloads the models the current settings use: the transcriber
 and diarizer (by loading the engine), the live transcript's model when it is another, and the search

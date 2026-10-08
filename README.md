@@ -11,7 +11,7 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 ## Features
 
 - **Live transcript while recording** (a few seconds behind speech, Parakeet on CPU) with **live speaker labels**: voices are told apart as they speak and people with a saved voice are named on the spot; replaced by the full diarized transcript after stop
-- **Pluggable transcription**: WhisperX (GPU), NVIDIA Parakeet TDT via ONNX (CPU, no torch), or any OpenAI-compatible speech server
+- **Pluggable transcription**: Phonon-2 for English (CPU, installed on demand), WhisperX (GPU), NVIDIA Parakeet TDT via ONNX (CPU, no torch), or any OpenAI-compatible speech server
 - **Speaker diarization** using NVIDIA Nemotron-3-Diarization on NVIDIA GPUs, pyannote.audio (community-1) with a Hugging Face token, or on any CPU a small ONNX model (pyannote segmentation + TitaNet, via sherpa-onnx) with no account; the engines that fit the machine are picked by default
 - **Try it on a sample**: the setup wizard can open a short real meeting (from the AMI corpus, CC BY 4.0), transcribed, before you record anything
 - **Structured summaries**: decisions, action items with owners, open questions and topics as data, with styles (meeting, standup, interview, lecture, brainstorm, client) and your own standing instructions; the client style also keeps what the client said about their goals, concerns and situation
@@ -373,3 +373,8 @@ paywalled. If it saves you time, you can support development through
 ## License
 
 MIT
+
+Phonon-2, which Mnemosyne installs on request for English transcription, is by Fermion Research
+(model weights CC BY 4.0, derived from NVIDIA Parakeet TDT 0.6B v3; `fermion-research` package
+Apache-2.0). It is downloaded from PyPI and Hugging Face onto your machine, not shipped with the
+app.

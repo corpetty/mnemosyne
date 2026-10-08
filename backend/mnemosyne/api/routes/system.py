@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ... import access
 from ...jobs import Job
 from ...models.base import ApiModel
+from ...services import phonon_install
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -35,6 +36,11 @@ class SystemInfo(ApiModel):
     # first-run setup is answered, and not when it was declined ("off").
     setup_complete: bool
     gpu_support: str  # auto | off
+    # Phonon-2 (English): installed by Mnemosyne (services/phonon_install.py), its size on disk,
+    # and whether it can be installed here (uv found).
+    phonon: bool
+    phonon_bytes: int
+    phonon_installable: bool
 
 
 def _has(module: str) -> bool:
@@ -75,7 +81,44 @@ async def system_info(ctx: AppContext = Depends(get_ctx)):
         problems=ctx.startup_problems,
         setup_complete=ctx.settings.setup_complete,
         gpu_support=ctx.settings.gpu_support,
+        phonon=phonon_install.installed(ctx.settings.data_dir),
+        phonon_bytes=await asyncio.to_thread(phonon_install.size_bytes, ctx.settings.data_dir),
+        phonon_installable=phonon_install.uv_binary() is not None,
     )
+
+
+@router.post("/system/phonon", response_model=Job, dependencies=ADMIN)
+async def install_phonon(ctx: AppContext = Depends(get_ctx)):
+    """Install Phonon-2 for English transcription (an `install_phonon` job, about 1 GB)."""
+    if any(j.kind == "install_phonon" for j in ctx.jobs.list(active_only=True)):
+        raise HTTPException(status_code=409, detail="Phonon is already being installed")
+
+    async def run(job) -> dict:
+        await phonon_install.install(
+            ctx.settings.data_dir, lambda message, frac: job.update(message, progress=frac)
+        )
+        # An engine built before (with Parakeet in Phonon's place) is rebuilt on next use.
+        busy = ctx.active_recordings or any(
+            j.kind == "transcribe" for j in ctx.jobs.list(active_only=True)
+        )
+        if not busy:
+            await ctx.models.unload()
+        return {"mb": round(phonon_install.size_bytes(ctx.settings.data_dir) / 1e6)}
+
+    return ctx.jobs.submit("install_phonon", run)
+
+
+@router.delete("/system/phonon", dependencies=ADMIN)
+async def remove_phonon(ctx: AppContext = Depends(get_ctx)):
+    """Remove Phonon (environment, model, caches); a transcriber set to it uses Parakeet."""
+    if (
+        any(j.kind == "transcribe" for j in ctx.jobs.list(active_only=True))
+        or ctx.active_recordings
+    ):
+        raise HTTPException(status_code=409, detail="Not while recording or transcribing")
+    await ctx.models.unload()
+    await asyncio.to_thread(phonon_install.remove, ctx.settings.data_dir)
+    return {"message": "Phonon removed"}
 
 
 @router.post("/system/prepare", response_model=Job, dependencies=ADMIN)

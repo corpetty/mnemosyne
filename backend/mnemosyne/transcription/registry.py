@@ -38,10 +38,14 @@ def cuda_works() -> bool:
 
 
 def resolve_transcriber(settings: Settings, kind: str | None = None) -> str:
-    """The transcriber this machine runs: `auto` is WhisperX with a working GPU, else Parakeet;
-    a saved WhisperX whose packages are not installed (the GPU extra) runs Parakeet instead."""
+    """The transcriber this machine runs. `auto`: Phonon-2 for English meetings when it is
+    installed (on AMI, 2026-10-08: 22.7 % word errors against Parakeet's 27.4 %, 4x faster on the
+    CPU), else WhisperX with a working GPU, else Parakeet. A saved WhisperX or Phonon whose
+    packages are missing runs Parakeet instead."""
     kind = kind or settings.transcriber
     if kind == "auto":
+        if settings.language.lower().startswith("en") and phonon_available(settings):
+            return "phonon"
         return "whisperx" if installed("whisperx") and cuda_works() else "parakeet"
     if kind == "whisperx" and not installed("whisperx", "torch") and installed("onnx_asr"):
         return "parakeet"
@@ -54,7 +58,7 @@ def phonon_available(settings: Settings) -> bool:
     """Fermion's `phonon` program is installed (transcribers/phonon.py; not auto: English only)."""
     from .transcribers.phonon import find_phonon
 
-    return find_phonon(settings.phonon_command) is not None
+    return find_phonon(settings.phonon_command, settings.data_dir / "phonon") is not None
 
 
 def build_transcriber(
@@ -87,6 +91,7 @@ def build_transcriber(
             command=settings.phonon_command,
             log_path=settings.data_dir / "logs" / "phonon.log",
             threads=threads,
+            home=settings.data_dir / "phonon",
         )
     if kind == "demo":
         from ..demo import DemoTranscriber

@@ -2418,6 +2418,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/phonon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install Phonon
+         * @description Install Phonon-2 for English transcription (an `install_phonon` job, about 1 GB).
+         */
+        post: operations["install_phonon_api_system_phonon_post"];
+        /**
+         * Remove Phonon
+         * @description Remove Phonon (environment, model, caches); a transcriber set to it uses Parakeet.
+         */
+        delete: operations["remove_phonon_api_system_phonon_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system/prepare": {
         parameters: {
             query?: never;
@@ -5587,6 +5611,12 @@ export interface components {
             onnx_diarizer: boolean;
             /** Parakeet */
             parakeet: boolean;
+            /** Phonon */
+            phonon: boolean;
+            /** Phonon Bytes */
+            phonon_bytes: number;
+            /** Phonon Installable */
+            phonon_installable: boolean;
             /** Pipewire */
             pipewire: boolean;
             /** Platform */
@@ -10318,6 +10348,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Diagnostics"];
+                };
+            };
+        };
+    };
+    install_phonon_api_system_phonon_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+        };
+    };
+    remove_phonon_api_system_phonon_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

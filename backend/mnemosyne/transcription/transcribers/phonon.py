@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
 import shutil
 import signal
 import socket
@@ -53,14 +54,21 @@ INSTALL_HINT = (
 )
 
 
-def find_phonon(command: str = "") -> str | None:
-    """The `phonon` program to run: `command` when it is set (a path or a name on PATH),
-    else `phonon` on PATH. None when there is none."""
+def managed_program(home: Path) -> Path:
+    """`phonon` as Mnemosyne installs it (services/phonon_install.py)."""
+    return home / "venv" / "bin" / "phonon"
+
+
+def find_phonon(command: str = "", home: Path | None = None) -> str | None:
+    """The `phonon` program to run: `command` when it is set (a path or a name on PATH), else
+    our own install under `home` once it is complete, else `phonon` on PATH. None: there is none."""
     if command:
         path = Path(command).expanduser()
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
         return shutil.which(command)
+    if home is not None and (home / "installed").exists() and managed_program(home).is_file():
+        return str(managed_program(home))
     return shutil.which("phonon")
 
 
@@ -122,13 +130,40 @@ def _shifted(segment: TranscriptSegment, by: float) -> TranscriptSegment:
     )
 
 
-class PhononServer:
-    """`phonon serve` on a free local port, started on first use."""
+# Variables that would make Fermion load or run other native code, unchecked (review of
+# fermion-research 0.2.11, 2026-10-08): never passed on to the server.
+_UNSAFE_ENV = ("PHONON", "FERMION_")
 
-    def __init__(self, program: str, log_path: Path | None = None, threads: int | None = None):
+
+def server_env(home: Path | None) -> dict[str, str]:
+    """The server's environment: ours without Fermion's overrides; with `home` (our own install,
+    services/phonon_install.py) its caches there and no network once the model is installed."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(_UNSAFE_ENV)}
+    if home is not None:
+        env["FERMION_CACHE_DIR"] = str(home / "cache")
+        env["HF_HUB_CACHE"] = str(home / "hf")
+        if (home / "installed").exists():
+            env["HF_HUB_OFFLINE"] = "1"
+    return env
+
+
+class PhononServer:
+    """`phonon serve` on a free local port, started on first use. Loopback only (Fermion's
+    default host, never --host), with a random API key per start: nothing else on the machine
+    gets to use it (it has no host or origin check)."""
+
+    def __init__(
+        self,
+        program: str,
+        log_path: Path | None = None,
+        threads: int | None = None,
+        home: Path | None = None,
+    ):
         self.program = program
         self.log_path = log_path
         self.threads = threads
+        self.home = home
+        self.api_key = ""
         self.port = 0
         self._proc: subprocess.Popen | None = None
         self._users = 0
@@ -163,7 +198,16 @@ class PhononServer:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
         log = self.log_path.open("ab") if self.log_path else subprocess.DEVNULL
         logger.info("Starting phonon serve on port %d", self.port)
-        args = [self.program, "serve", "--port", str(self.port)]
+        self.api_key = secrets.token_urlsafe(24)
+        args = [
+            self.program,
+            "serve",
+            "phonon-2",
+            "--port",
+            str(self.port),
+            "--api-key",
+            self.api_key,
+        ]
         if self.threads:
             args += ["--threads", str(self.threads)]
         self._proc = subprocess.Popen(
@@ -171,6 +215,7 @@ class PhononServer:
             stdout=log,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
+            env=server_env(self.home),
             preexec_fn=_die_with_parent,
         )
 
@@ -204,10 +249,12 @@ class PhononServer:
 _servers: dict[tuple[str, int | None], PhononServer] = {}
 
 
-def server_for(program: str, log_path: Path | None = None, threads: int | None = None):
+def server_for(
+    program: str, log_path: Path | None = None, threads: int | None = None, home: Path | None = None
+):
     key = (program, threads)
     if key not in _servers:
-        _servers[key] = PhononServer(program, log_path, threads)
+        _servers[key] = PhononServer(program, log_path, threads, home)
     return _servers[key]
 
 
@@ -220,8 +267,10 @@ class PhononTranscriber:
         log_path: Path | None = None,
         model: str = MODEL,
         threads: int | None = None,
+        home: Path | None = None,
     ):
         self.command = command
+        self.home = home  # <data_dir>/phonon: our own install, when there is one
         self.log_path = log_path
         self.model = model
         self.threads = threads  # CPU threads for its server; None: Fermion's default
@@ -236,13 +285,16 @@ class PhononTranscriber:
             return
         if self._server is not None:  # its server died: let go of it before starting again
             await self.unload()
-        program = find_phonon(self.command)
+        program = find_phonon(self.command, self.home)
         if program is None:
             raise RuntimeError(INSTALL_HINT)
-        server = server_for(program, self.log_path, self.threads)
+        home = self.home if self.home and program == str(managed_program(self.home)) else None
+        server = server_for(program, self.log_path, self.threads, home)
         url = await server.acquire()
         self._server = server
-        self._client = RemoteTranscriber(f"{url}/v1", model=self.model, timeout=600.0)
+        self._client = RemoteTranscriber(
+            f"{url}/v1", model=self.model, api_key=server.api_key, timeout=600.0
+        )
 
     async def unload(self) -> None:
         server, self._server, self._client = self._server, None, None

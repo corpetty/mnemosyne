@@ -53,6 +53,12 @@ STUB = textwrap.dedent(
 )
 
 
+@pytest.fixture(autouse=True)
+def own_config(tmp_path, monkeypatch):
+    """Settings() reads the config file: never the real one."""
+    monkeypatch.setenv("MNEMOSYNE_CONFIG_FILE", str(tmp_path / "config.toml"))
+
+
 @pytest.fixture
 def stub(tmp_path):
     path = tmp_path / "phonon"
@@ -216,3 +222,104 @@ async def test_live_gets_its_thread_budget(stub, wav):
     assert "--threads 2" in open(stub + ".log").read()
     assert (stub, 2) in phonon._servers
     await live.unload()
+
+
+FAKE_UV = textwrap.dedent(
+    """\
+    #!{python}
+    # Stands in for uv: `venv` makes the folder, `pip install` logs and, for the requirements
+    # file, puts the stand-in phonon in place. FAKE_UV_FAIL=1 fails like a broken network.
+    import os, shutil, sys
+    from pathlib import Path
+    open(sys.argv[0] + ".log", "a").write(" ".join(sys.argv[1:]) + "\\n")
+    if os.environ.get("FAKE_UV_FAIL"):
+        print("error: Failed to fetch: https://download.pytorch.org/whl/cpu"); sys.exit(2)
+    if sys.argv[1] == "venv":
+        bin_ = Path(sys.argv[-1]) / "bin"; bin_.mkdir(parents=True, exist_ok=True)
+        (bin_ / "python").symlink_to(sys.executable)
+    elif sys.argv[1:3] == ["pip", "install"] and "-r" in sys.argv:
+        venv = Path(sys.argv[sys.argv.index("--python") + 1]).parent.parent
+        shutil.copy(os.environ["FAKE_PHONON"], venv / "bin" / "phonon")
+        print("Installed 40 packages")
+    """
+)
+
+
+@pytest.fixture
+def fake_uv(tmp_path, stub, monkeypatch):
+    path = tmp_path / "uv"
+    path.write_text(FAKE_UV.format(python=sys.executable))
+    path.chmod(0o755)
+    monkeypatch.setenv("FAKE_PHONON", stub)
+    monkeypatch.setenv("MNEMOSYNE_UV_BIN", str(path))
+    return str(path)
+
+
+@pytest.mark.anyio
+async def test_install_into_its_own_folder_then_offline(fake_uv, tmp_path, wav, monkeypatch):
+    from mnemosyne.services import phonon_install
+
+    data = tmp_path / "data"
+    seen = []
+    await phonon_install.install(data, lambda m, f: seen.append((m, f)))
+    assert phonon_install.installed(data) and phonon_install.size_bytes(data) > 0
+    calls = open(fake_uv + ".log").read().splitlines()
+    assert calls[0].startswith("venv --python")
+    assert "--index-url https://download.pytorch.org/whl/cpu torch==" in calls[1]  # CPU torch first
+    assert "-r" in calls[2] and calls[2].endswith("phonon-requirements.txt")
+    assert seen[-1] == ("Phonon-2 is installed", 1.0)
+
+    # The transcriber finds our install without a path, and its server runs offline, keyed.
+    home = data / "phonon"
+    assert phonon.find_phonon("", home) == str(phonon.managed_program(home))
+    monkeypatch.setenv("FERMION_NATIVE_BIN", "/tmp/evil")
+    monkeypatch.setenv("PHONON2_CPU_LIBRARY", "/tmp/evil.so")
+    env = phonon.server_env(home)
+    assert env["HF_HUB_OFFLINE"] == "1" and env["FERMION_CACHE_DIR"] == str(home / "cache")
+    assert "FERMION_NATIVE_BIN" not in env and "PHONON2_CPU_LIBRARY" not in env
+    t = phonon.PhononTranscriber(home=home)
+    assert [s.text for s in await t.transcribe(wav)][0] == "hello there"
+    assert "--api-key" in open(str(phonon.managed_program(home)) + ".log").read()
+    await t.unload()
+
+    phonon_install.remove(data)
+    assert not home.exists() and not phonon_install.installed(data)
+
+
+@pytest.mark.anyio
+async def test_a_failed_install_is_not_used(fake_uv, tmp_path, monkeypatch):
+    from mnemosyne.services import phonon_install
+
+    monkeypatch.setenv("FAKE_UV_FAIL", "1")
+    with pytest.raises(RuntimeError, match="Failed to fetch"):
+        await phonon_install.install(tmp_path / "data", lambda m, f: None)
+    assert not phonon_install.installed(tmp_path / "data")
+
+
+def test_auto_picks_phonon_for_english_once_installed(tmp_path, monkeypatch):
+    home = tmp_path / "phonon"
+    english = Settings(data_dir=tmp_path, language="en")
+    monkeypatch.setattr(registry, "installed", lambda *m: set(m) <= {"onnx_asr"})
+    assert registry.resolve_transcriber(english) == "parakeet"  # not installed yet
+    phonon.managed_program(home).parent.mkdir(parents=True)
+    phonon.managed_program(home).write_text("#!/bin/sh\n")
+    phonon.managed_program(home).chmod(0o755)
+    (home / "installed").write_text("x\n")
+    assert registry.resolve_transcriber(english) == "phonon"
+    assert registry.resolve_transcriber(Settings(data_dir=tmp_path)) == "parakeet"  # language?
+    assert registry.resolve_transcriber(Settings(data_dir=tmp_path, language="de")) == "parakeet"
+
+
+def test_install_route(client, ctx, fake_uv):
+    from tests.conftest import drain_until_job
+
+    info = client.get("/api/system").json()
+    assert info["phonon"] is False and info["phonon_installable"] is True
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        job = client.post("/api/system/phonon").json()
+        drain_until_job(ws, job["id"])
+    assert client.get(f"/api/jobs/{job['id']}").json()["status"] == "completed"
+    assert client.get("/api/system").json()["phonon"] is True
+    assert client.delete("/api/system/phonon").status_code == 200
+    assert client.get("/api/system").json()["phonon"] is False
