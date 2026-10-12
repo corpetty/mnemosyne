@@ -41,7 +41,7 @@ jobs:
       - name: ffmpeg
         run: ffmpeg -version | head -1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
       - name: uv's download cache (keyed on the Phonon pins)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: uv-phonon-${{ hashFiles('backend/mnemosyne/transcription/transcribers/phonon-requirements.txt') }}
