@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Literal
 
 import tomli_w
 from dotenv import load_dotenv
@@ -364,6 +365,10 @@ class Settings(BaseSettings):
     # obsidian_daily_folder is set.
     obsidian_daily_notes: bool = False
     obsidian_daily_folder: str = ""
+    # Which action items are written as checkboxes (`- [ ]`) in exported notes: "mine" = yours
+    # and the ones you follow; everyone else's are plain bullets under "Others", so vault-wide
+    # task queries list only your work. "all" = every item is a checkbox.
+    obsidian_task_scope: Literal["mine", "all"] = "mine"
 
     @classmethod
     def settings_customise_sources(

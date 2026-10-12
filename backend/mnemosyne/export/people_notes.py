@@ -23,7 +23,12 @@ def _mmss(sec: float) -> str:
     return f"{m // 60}h {m % 60:02d}m" if m >= 60 else f"{m}:{int(sec % 60):02d}"
 
 
-def render_person(d: PersonDetail, stems: dict[str, str], redact: bool = False) -> str:
+def render_person(
+    d: PersonDetail, stems: dict[str, str], redact: bool = False, task_scope: str = "all"
+) -> str:
+    """With `task_scope` "mine" their open tasks are plain bullets (they are not the reader's,
+    so a vault-wide task query must not list them) except the ones the reader follows, which
+    stay checkboxes under "Waiting on"."""
     from ..summarization.privacy import redact_identifiers
 
     def link(sid: str, name: str) -> str:
@@ -45,7 +50,18 @@ def render_person(d: PersonDetail, stems: dict[str, str], redact: bool = False) 
         + (f" · talked {_mmss(d.total_talk_seconds)} in total" if d.total_talk_seconds else ""),
         "",
     ]
-    if d.open_tasks:
+    if task_scope == "mine":
+        waiting = [t for t in d.open_tasks if t.follow]
+        plain = [t for t in d.open_tasks if not t.follow]
+        if plain:
+            out += ["## Open tasks", ""]
+            out += [f"- {task(t)} · {link(t.session_id, t.session_name)}" for t in plain]
+            out.append("")
+        if waiting:
+            out += ["## Waiting on", ""]
+            out += [f"- [ ] {task(t)} · {link(t.session_id, t.session_name)}" for t in waiting]
+            out.append("")
+    elif d.open_tasks:
         out += ["## Open tasks", ""]
         out += [f"- [ ] {task(t)} · {link(t.session_id, t.session_name)}" for t in d.open_tasks]
         out.append("")
@@ -79,7 +95,13 @@ def _vault_stems(vault: Path, ours: Path) -> set[str]:
 
 
 def write_person_notes(
-    repo, vault: Path, subfolder: str, names, generic=(), redact: bool = False
+    repo,
+    vault: Path,
+    subfolder: str,
+    names,
+    generic=(),
+    redact: bool = False,
+    task_scope: str = "all",
 ) -> list[Path]:
     wanted = {sanitize_filename(n): n for n in names if is_person(n, generic)}
     if not wanted:
@@ -98,6 +120,6 @@ def write_person_notes(
         if detail is None:
             continue
         folder.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_person(detail, stems, redact), encoding="utf-8")
+        path.write_text(render_person(detail, stems, redact, task_scope), encoding="utf-8")
         written.append(path)
     return written

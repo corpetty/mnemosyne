@@ -88,7 +88,9 @@ def test_person_notes(client, ctx, tmp_path):
     folder = vault / "meetings/mnemosyne/people"
     alice = (folder / "Alice.md").read_text()
     assert alice.startswith(f"---\n{MARKER}\n")
-    assert "- [ ] Update docs · [[2026-09-21-Release sync|Release sync]]" in alice
+    # Someone else's task is a plain bullet (obsidian_task_scope "mine", the default).
+    assert "- Update docs · [[2026-09-21-Release sync|Release sync]]" in alice
+    assert "- [ ] Update docs" not in alice
     assert "- 2026-09-21 [[2026-09-21-Release sync|Release sync]] (spoke 0:30)" in alice
     assert "- [x] Tag rc1" in alice
     assert not (folder / "Bob.md").exists()  # the user already has a Bob note

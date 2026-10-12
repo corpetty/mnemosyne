@@ -108,6 +108,8 @@ def _collect(repo, generic: tuple[str, ...]) -> tuple[dict[str, _Acc], dict[str,
                         owner=item.owner,
                         done=item.done,
                         issue_url=item.issue_url,
+                        due=item.due,
+                        follow=item.follow,
                     )
                 )
     for p in repo.list_speakers():

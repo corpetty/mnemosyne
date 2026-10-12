@@ -686,6 +686,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/export/obsidian/all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export All To Obsidian
+         * @description Write every summarized meeting the caller may change to the vault again (an
+         *     `obsidian_export_all` job), e.g. after changing how tasks are written. Its result is
+         *     {exported, failed, total}.
+         */
+        post: operations["export_all_to_obsidian_api_export_obsidian_all_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/glossary/corrections": {
         parameters: {
             query?: never;
@@ -4995,6 +5017,8 @@ export interface components {
             obsidian_subfolder?: string | null;
             /** Obsidian Tags */
             obsidian_tags?: string | null;
+            /** Obsidian Task Scope */
+            obsidian_task_scope?: ("mine" | "all") | null;
             /** Obsidian Vault Path */
             obsidian_vault_path?: string | null;
             /** Ollama Url */
@@ -5254,6 +5278,11 @@ export interface components {
             obsidian_subfolder: string;
             /** Obsidian Tags */
             obsidian_tags: string;
+            /**
+             * Obsidian Task Scope
+             * @enum {string}
+             */
+            obsidian_task_scope: "mine" | "all";
             /** Obsidian Vault Path */
             obsidian_vault_path: string;
             /** Ollama Url */
@@ -7214,6 +7243,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_all_to_obsidian_api_export_obsidian_all_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
         };

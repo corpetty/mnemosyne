@@ -2,9 +2,10 @@
 
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 
-from ..models.session import Session
+from ..models.session import ActionItem, Session
 from .templates import render_meeting_note
 
 logger = logging.getLogger(__name__)
@@ -41,12 +42,15 @@ class ObsidianExporter:
         link_people: bool = True,
         include_transcript: bool = True,
         redact: bool = False,
+        is_mine: Callable[[ActionItem], bool] | None = None,
     ):
         self.vault_path = Path(vault_path)
         self.subfolder = subfolder
         self.tags = tags
         self.link_people = link_people
         self.include_transcript = include_transcript
+        # Which action items are checkboxes (None: all of them), see render_meeting_note.
+        self.is_mine = is_mine
         self.redact = redact  # ID, account and card numbers, see privacy.redact_identifiers
 
     def render(self, session: Session, resources: list[str] | None = None) -> str:
@@ -75,6 +79,7 @@ class ObsidianExporter:
             agenda=[(a.text, a.covered) for a in session.agenda],
             resources=resources,
             external_notes=[(n.source, n.text) for n in session.external_notes],
+            is_mine=self.is_mine,
         )
         if self.redact:  # the summary, notes, action items and the rest
             from ..summarization.privacy import redact_identifiers

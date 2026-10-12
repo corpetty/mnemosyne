@@ -396,6 +396,11 @@ export async function exportToObsidian(
   return request(`/api/sessions/${sessionId}/export/obsidian`, { method: 'POST' });
 }
 
+/** Write every summarized meeting to the vault again (an `obsidian_export_all` job). */
+export async function exportAllToObsidian(): Promise<Job> {
+  return request('/api/export/obsidian/all', { method: 'POST' });
+}
+
 // Settings
 export async function getSettings(): Promise<SettingsResponse> {
   return request('/api/settings');

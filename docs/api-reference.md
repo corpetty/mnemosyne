@@ -1188,10 +1188,22 @@ Writes `<vault>/<subfolder>/YYYY-MM-DD-<name>.md` using the configured vault. Th
 frontmatter (`participants`, `people` as `[[links]]` for named speakers when `obsidian_link_people`,
 `topics`, `tags` from `obsidian_tags`, `duration_minutes`), then Summary, Decisions, Action Items as
 `- [ ]` tasks with owners, Open Questions, Notes, and the Transcript unless
-`obsidian_include_transcript` is off.
+`obsidian_include_transcript` is off. With `obsidian_task_scope` `"mine"` (the default) only the
+recorder's items (their name, "Me", or no owner) and followed items are `- [ ]` tasks; everyone
+else's are plain bullets (`- Jonny Zerah: text`) under `### Others`. `"all"` writes every item as a
+task. Person notes follow the same setting (open tasks as bullets, followed ones under "Waiting on").
 
 **Response:** `{ "path": "...", "message": "Exported successfully" }`
 **Errors:** `400` vault not configured or missing, `404` session.
+
+### `POST /api/export/obsidian/all`
+
+Writes every summarized meeting the caller may change to the vault again (the notes, and the people
+and daily notes when enabled), e.g. after changing `obsidian_task_scope`. Returns the `Job`
+(`kind` `obsidian_export_all`); its message reads "Exporting <name> (n of N)" and its result is
+`{ "exported": n, "failed": k, "total": N }`.
+
+**Errors:** `400` vault not configured, `409` already running.
 
 ---
 

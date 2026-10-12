@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 
-from ..models.session import ClientFact, SummaryData
+from ..models.session import ActionItem, ClientFact, SummaryData
 
 
 def _yaml_str(value: str) -> str:
@@ -58,11 +59,14 @@ def render_meeting_note(
     agenda: list[tuple[str, bool]] | None = None,  # (point, covered)
     resources: list[str] | None = None,  # markdown links, one per resource
     external_notes: list[tuple[str, str]] | None = None,  # (source, text) of other assistants
+    is_mine: Callable[[ActionItem], bool] | None = None,
 ) -> str:
     """Render a complete Obsidian-compatible note with YAML frontmatter.
 
     Named participants become [[wikilinks]] (never raw SPEAKER_xx labels);
-    action items become tasks so Obsidian's Tasks/Dataview plugins pick them up.
+    action items become tasks so Obsidian's Tasks/Dataview plugins pick them up. With `is_mine`
+    only the items it accepts are tasks; the others are plain bullets under "Others", so a
+    vault-wide task query lists only the reader's work (None: every item is a task).
     """
     tags = tags if tags is not None else ["meeting", "mnemosyne"]
 
@@ -108,12 +112,23 @@ def render_meeting_note(
             sections.append("")
         if summary_data.action_items:
             sections.append("## Action Items\n")
-            for item in summary_data.action_items:
+            flags = [is_mine is None or is_mine(i) for i in summary_data.action_items]
+            mine = [i for i, f in zip(summary_data.action_items, flags, strict=True) if f]
+            others = [i for i, f in zip(summary_data.action_items, flags, strict=True) if not f]
+            for item in mine:
                 owner = f" ({person(item.owner)})" if item.owner else ""
                 issue = f" [issue]({item.issue_url})" if item.issue_url else ""
                 box = "x" if item.done else " "
                 due = f" 📅 {item.due.isoformat()}" if item.due else ""  # Obsidian Tasks format
                 sections.append(f"- [{box}] {item.text}{owner}{issue}{due}")
+            if others:
+                if mine:
+                    sections.append("")
+                sections.append("### Others\n")
+                for item in others:
+                    who = f"{person(item.owner)}: " if item.owner else ""
+                    done = " (done)" if item.done else ""
+                    sections.append(f"- {who}{item.text}{done}")
             sections.append("")
         if summary_data.open_questions:
             sections.append("## Open Questions\n")

@@ -3,11 +3,15 @@
 import asyncio
 import logging
 import shutil
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ... import access
 from ...export.obsidian import ObsidianExporter
+from ...jobs import Job
 from ...models.base import ApiModel
+from ...models.session import ActionItem
 from ...services import history
 from ..context import AppContext, get_ctx
 
@@ -19,6 +23,30 @@ router = APIRouter(prefix="/api", tags=["export"])
 class ExportResponse(ApiModel):
     path: str
     message: str
+
+
+def recorder_item_matcher(ctx: AppContext, session) -> Callable[[ActionItem], bool]:
+    """Is an action item the recorder's own: owned by them (mine_matcher, so "Me" counts) or
+    without an owner. For a session of nobody in particular (a preview with none) the
+    desktop's local_speaker_name stands in."""
+    from ...services.tasks import mine_matcher, recorder_names
+
+    names, others = recorder_names(ctx, session)
+    matches = mine_matcher(names, others)
+
+    def mine(item: ActionItem) -> bool:
+        return not (item.owner or "").strip() or matches(item.owner, True)
+
+    return mine
+
+
+def task_predicate(ctx: AppContext, session) -> Callable[[ActionItem], bool] | None:
+    """Which action items of a meeting are checkboxes in its note (obsidian_task_scope): the
+    recorder's and the ones followed, or None for all of them."""
+    if ctx.settings.obsidian_task_scope == "all":
+        return None
+    mine = recorder_item_matcher(ctx, session)
+    return lambda item: item.follow or mine(item)
 
 
 def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianExporter:
@@ -34,6 +62,7 @@ def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianEx
         link_people=st.obsidian_link_people,
         include_transcript=st.obsidian_include_transcript,
         redact=st.redact_exports,
+        is_mine=task_predicate(ctx, session) if session is not None else None,
     )
 
 
@@ -66,8 +95,15 @@ def _resources(ctx: AppContext, session, exporter: ObsidianExporter) -> list[str
     return out
 
 
+def before_export(ctx: AppContext, session, vault_path: str):
+    """Runs before a meeting is written to the vault, and returns the session to write (read
+    again if this changed it). The place for taking back what was changed in the vault."""
+    return session
+
+
 def export_session(ctx: AppContext, session, vault_path: str):
     """Write the meeting note and, when enabled, the notes of the people in it."""
+    session = before_export(ctx, session, vault_path)
     exporter = build_exporter(ctx, vault_path, session)
     path = exporter.export(session, _resources(ctx, session, exporter))
     st = ctx.settings
@@ -87,6 +123,7 @@ def export_session(ctx: AppContext, session, vault_path: str):
                 names,
                 (st.local_speaker_name, st.remote_speaker_name),
                 redact=st.redact_exports,
+                task_scope=st.obsidian_task_scope,
             )
         except Exception:
             logger.warning("Person notes failed for session %s", session.id, exc_info=True)
@@ -104,6 +141,7 @@ def export_session(ctx: AppContext, session, vault_path: str):
                 st.local_speaker_name,
                 st.obsidian_daily_folder,
                 redact=st.redact_exports,
+                is_mine=recorder_item_matcher(ctx, session),
             )
         except Exception:
             logger.warning("Daily note failed for session %s", session.id, exc_info=True)
@@ -118,7 +156,9 @@ async def export_markdown(session_id: str, ctx: AppContext = Depends(get_ctx)):
         raise HTTPException(status_code=404, detail="Session not found")
     history.log_access(ctx, session_id, "exported")
     return {
-        "markdown": build_exporter(ctx, ctx.settings.obsidian_vault_path or ".").render(session)
+        "markdown": build_exporter(ctx, ctx.settings.obsidian_vault_path or ".", session).render(
+            session
+        )
     }
 
 
@@ -141,3 +181,40 @@ async def export_to_obsidian(session_id: str, ctx: AppContext = Depends(get_ctx)
     except Exception as e:
         logger.exception("Export failed")
         raise HTTPException(status_code=500, detail=f"Export failed: {e}") from e
+
+
+@router.post("/export/obsidian/all", response_model=Job)
+async def export_all_to_obsidian(ctx: AppContext = Depends(get_ctx)):
+    """Write every summarized meeting the caller may change to the vault again (an
+    `obsidian_export_all` job), e.g. after changing how tasks are written. Its result is
+    {exported, failed, total}."""
+    vault_path = ctx.settings.obsidian_vault_path
+    if not vault_path:
+        raise HTTPException(status_code=400, detail="Obsidian vault path not configured")
+    if any(j.kind == "obsidian_export_all" for j in ctx.jobs.list(active_only=True)):
+        raise HTTPException(status_code=409, detail="The meetings are already being exported")
+    wanted = [
+        s for s in ctx.repo.list_summaries() if s.has_summary and access.can_write(s.owner_id)
+    ]
+
+    async def run(job) -> dict:
+        total = len(wanted)
+        exported = failed = 0
+        for n, summary in enumerate(wanted, start=1):
+            job.update(f"Exporting {summary.name} ({n} of {total})", progress=(n - 1) / total)
+            try:
+                session = ctx.sessions.get_session(summary.id)
+                if session is None:
+                    continue
+                history.log_access(ctx, summary.id, "exported")
+                await asyncio.to_thread(export_session, ctx, session, vault_path)
+                exported += 1
+            except FileNotFoundError as e:  # the vault is gone: every meeting would fail
+                raise ValueError(str(e)) from e
+            except Exception:
+                failed += 1
+                logger.warning("Export of session %s failed", summary.id, exc_info=True)
+        job.update(f"Exported {exported} of {total}", progress=1.0)
+        return {"exported": exported, "failed": failed, "total": total}
+
+    return ctx.jobs.submit("obsidian_export_all", run)

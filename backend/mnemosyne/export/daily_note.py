@@ -12,10 +12,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from ..models.session import Session
+from ..models.session import ActionItem, Session
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +66,16 @@ def _one_line(session: Session, limit: int = 160, clean=lambda t: t) -> str:
     return first if len(first) <= limit else first[: limit - 1].rstrip() + "…"
 
 
-def entry(session: Session, link: str, me: str, redact: bool = False) -> list[str]:
-    """The lines for one meeting: `- 14:00 [[note|Title]]: one line`, then your open tasks.
-    `redact`: ID, account and card numbers in the text become markers
+def entry(
+    session: Session,
+    link: str,
+    me: str,
+    redact: bool = False,
+    is_mine: Callable[[ActionItem], bool] | None = None,
+) -> list[str]:
+    """The lines for one meeting: `- 14:00 [[note|Title]]: one line`, then your open tasks:
+    the items `is_mine` accepts (the backend's matcher, so "Me" counts) or, without it, those
+    whose owner is exactly `me`. `redact`: ID, account and card numbers in the text become markers
     (privacy.redact_identifiers)."""
     from ..summarization.privacy import redact_identifiers
 
@@ -77,7 +85,7 @@ def entry(session: Session, link: str, me: str, redact: bool = False) -> list[st
         line += f": {about}"
     lines = [line]
     for item in session.summary_data.action_items if session.summary_data else []:
-        if item.done or (item.owner or "") != me:
+        if item.done or not (is_mine(item) if is_mine else (item.owner or "") == me):
             continue
         due = f" 📅 {item.due.isoformat()}" if item.due else ""
         lines.append(f"    - [ ] {clean(item.text)}{due}")
@@ -111,7 +119,13 @@ def upsert_entry(text: str, link: str, lines: list[str]) -> str:
 
 
 def write_daily_entry(
-    vault: Path, session: Session, link: str, me: str, folder: str = "", redact: bool = False
+    vault: Path,
+    session: Session,
+    link: str,
+    me: str,
+    folder: str = "",
+    redact: bool = False,
+    is_mine: Callable[[ActionItem], bool] | None = None,
 ) -> Path:
     path, template = daily_note_path(vault, session.created_at, folder)
     if path.exists():
@@ -132,7 +146,9 @@ def write_daily_entry(
         path.parent.mkdir(parents=True, exist_ok=True)
     # The user's own note: written whole or not at all (a crash mid-write must not truncate it).
     tmp = path.with_name(f".{path.name}.mnemosyne")
-    tmp.write_text(upsert_entry(text, link, entry(session, link, me, redact)), encoding="utf-8")
+    tmp.write_text(
+        upsert_entry(text, link, entry(session, link, me, redact, is_mine)), encoding="utf-8"
+    )
     tmp.replace(path)
     logger.info("Daily note %s: %s", path, session.name)
     return path

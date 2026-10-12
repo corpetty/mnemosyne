@@ -10,6 +10,7 @@
 	import RemoteConnect from './RemoteConnect.svelte';
 	import StorageSettings from './StorageSettings.svelte';
 	import BackupSettings from './BackupSettings.svelte';
+	import ObsidianExportAll from './ObsidianExportAll.svelte';
 	import MeetingTypesSettings from './MeetingTypesSettings.svelte';
 	import { calendarState } from '$lib/stores/calendar.svelte.js';
 	import { checkGitHub, checkIntegration, getIndexStatus, listDesktopCalendars, rebuildIndex } from '$lib/api/backend.js';
@@ -193,6 +194,7 @@
 				obsidian_people_notes: v.obsidian_people_notes,
 				obsidian_daily_notes: v.obsidian_daily_notes,
 				obsidian_daily_folder: v.obsidian_daily_folder,
+				obsidian_task_scope: v.obsidian_task_scope,
 				digest_weekday: v.digest_weekday,
 				digest_hour: v.digest_hour
 			};
@@ -1113,10 +1115,19 @@
 							<input type="text" bind:value={form.obsidian_daily_folder} disabled={locked('obsidian_daily_folder')} placeholder="e.g. Journal" class={inputClass} />
 						</label>
 					{/if}
+					<label class="col-span-2">
+						<span class={labelClass}>Action items written as checkboxes in notes</span>
+						<select bind:value={form.obsidian_task_scope} disabled={locked('obsidian_task_scope')} class={inputClass}>
+							<option value="mine">Mine and the ones I follow (others' as plain bullets)</option>
+							<option value="all">Everyone's</option>
+						</select>
+						<span class="block text-[11px] text-gray-600 mt-1">Vault-wide task queries (Tasks, Dataview) list every unticked checkbox, so keep other people's items out of them.</span>
+					</label>
 					<label class="flex items-center gap-2 col-span-2">
 						<input type="checkbox" bind:checked={form.obsidian_auto_export} disabled={locked('obsidian_auto_export')} class="rounded border-gray-600 bg-gray-800" />
 						<span class="text-sm text-gray-300">Export to Obsidian automatically after each summary (overwrites that session's note)</span>
 					</label>
+					<ObsidianExportAll />
 					<label>
 						<span class={labelClass}>Weekly digest</span>
 						<select bind:value={form.digest_weekday} disabled={locked('digest_weekday')} class={inputClass}>
