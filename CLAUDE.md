@@ -350,6 +350,10 @@ renamed or merged across meetings (`settings.topic_aliases`); tasks edited from 
 (`TaskItem.can_edit`); revise with an instruction (`revise` on summarize); Transcribe offered once a
 stopped recording is saved (`finish` job completion reloads the meeting); no PyTorch compile worker
 pool and memory handed back after the idle unload; a Wayland smoke test (headless Weston).
+0.16.0 (2026-10-12): Phonon-2 for English (transcribers/phonon.py `phonon serve` in 5-min pieces,
+services/phonon_install.py on-demand install into <data_dir>/phonon, `/api/system/phonon`,
+components/PhononCard.svelte, setup offers it first for an English locale; auto picks it when the
+language is English). The real install was only exercised with stand-in uv/phonon in tests.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
