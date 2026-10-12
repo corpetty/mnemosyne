@@ -367,6 +367,15 @@ task queries list only yours; export-all job), ticks read back from exported not
 is newer than the meeting), `obsidian_link_notes` (export/links.py, vault_index.py), topic notes
 and `obsidian_decisions_log` (export/topic_notes.py), Ask answers to the vault (export/ask_notes.py).
 Only notes carrying our frontmatter marker are ever rewritten.
+Two-way meeting notes (unreleased, phase 1 of docs/plans/2026-10-12-hashseq-collaboration.md):
+export merges the user's edits in the vault with the new rendering instead of overwriting
+(services/vault_sync.py `write_note`, export/note_merge.py, `vault_notes` table). The merge is
+`mnemosyne-link notes merge` (link/src/notes.rs, hashseq pinned by git rev): its history keeps
+the app's own branch next to the combined one, else a re-render deletes edits it never had.
+Checkbox status and done dates stay out of the text merge (`normalize`/`restore`). With a record,
+a tick counts when it differs from what we wrote (the mtime rule is only for notes without one).
+No sidecar or a failure: the note is overwritten as before. Tests: conftest points
+MNEMOSYNE_LINK_BIN at nothing; test_vault_notes.py has a fake sidecar and real-sidecar tests.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

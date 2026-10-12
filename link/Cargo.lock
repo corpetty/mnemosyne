@@ -1099,11 +1099,32 @@ checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"
+version = "0.15.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
+
+[[package]]
+name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "foldhash",
+]
+
+[[package]]
+name = "hashseq"
+version = "0.1.0"
+source = "git+https://github.com/davidrusu/hashseq?rev=94f5e3c#94f5e3c7c692e8ca3478772521521df018899e0f"
+dependencies = [
+ "blake3",
+ "getrandom 0.2.17",
+ "hashbrown 0.15.5",
+ "hex",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1125,6 +1146,12 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hickory-proto"
@@ -1868,13 +1895,17 @@ name = "mnemosyne-link"
 version = "0.9.4"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "clap",
+ "getrandom 0.2.17",
+ "hashseq",
  "iroh",
  "iroh-mdns-address-lookup",
  "iroh-relay",
  "iroh-tickets",
  "serde",
  "serde_json",
+ "similar",
  "tempfile",
  "tokio",
  "tracing",
@@ -3177,6 +3208,12 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "simple-dns"

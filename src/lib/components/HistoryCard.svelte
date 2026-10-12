@@ -165,6 +165,10 @@
 				return `${d.by || 'Someone'} edited the task “${d.task}”`;
 			case 'task_reopened':
 				return `${d.by || 'Someone'} reopened “${d.task}”`;
+			case 'note_merged':
+				return d.both
+					? `Your edits in Obsidian were kept in the note (${d.both} line${d.both === 1 ? '' : 's'} changed on both sides: worth a look)`
+					: 'Your edits in Obsidian were kept in the note';
 			case 'shared':
 				return `Shared with ${(d.people as string[] | undefined)?.join(', ')}${d.by ? ` by ${d.by}` : ''}`;
 			case 'unshared':

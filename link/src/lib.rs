@@ -11,6 +11,8 @@
 //! iroh encrypts end to end between the two endpoint keys; a relay in between only forwards
 //! packets. Every stream starts with one byte naming its kind: [`TUNNEL`] or [`PAIR`].
 
+pub mod notes;
+
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},

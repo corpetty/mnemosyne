@@ -210,6 +210,17 @@ CREATE TABLE IF NOT EXISTS session_events (
     detail TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS session_events_session ON session_events(session_id);
+-- The meeting note last written to the Obsidian vault (services/vault_sync.py write_note):
+-- the merge history of its text (export/note_merge.py), the checkbox statuses and the hash of
+-- the bytes written, so the next export can tell what the user changed. boxes is JSON.
+CREATE TABLE IF NOT EXISTS vault_notes (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    history BLOB NOT NULL,
+    boxes TEXT NOT NULL,
+    written_sha TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS session_assets (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
@@ -1117,6 +1128,47 @@ class SessionRepository:
                 " VALUES (?,?,?,?,?)",
                 (session_id, datetime.now().isoformat(), kind, part, json.dumps(detail or {})),
             )
+
+    # ---- vault notes (internal bookkeeping: no access checks, like events being written) --
+
+    def get_vault_note(self, session_id: str) -> dict | None:
+        """{path, history (bytes), boxes (dict), written_sha, updated_at} or None."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT path, history, boxes, written_sha, updated_at FROM vault_notes"
+                " WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "path": row["path"],
+            "history": bytes(row["history"]),
+            "boxes": json.loads(row["boxes"]),
+            "written_sha": row["written_sha"],
+            "updated_at": row["updated_at"],
+        }
+
+    def put_vault_note(
+        self, session_id: str, path: str, history: bytes, boxes: dict, written_sha: str
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO vault_notes"
+                " (session_id, path, history, boxes, written_sha, updated_at) VALUES (?,?,?,?,?,?)",
+                (
+                    session_id,
+                    path,
+                    history,
+                    json.dumps(boxes),
+                    written_sha,
+                    datetime.now().isoformat(),
+                ),
+            )
+
+    def delete_vault_note(self, session_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM vault_notes WHERE session_id=?", (session_id,))
 
     def events(self, session_id: str) -> list[dict]:
         if not self._readable(session_id):

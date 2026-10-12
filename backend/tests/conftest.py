@@ -79,6 +79,13 @@ def no_tailscale(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_link_sidecar(monkeypatch, tmp_path):
+    """Exports never run a real mnemosyne-link (a dev build in link/target, or one on PATH):
+    none by default, tests stand one in with MNEMOSYNE_LINK_BIN (services/vault_sync.py)."""
+    monkeypatch.setenv("MNEMOSYNE_LINK_BIN", str(tmp_path / "no-mnemosyne-link"))
+
+
+@pytest.fixture(autouse=True)
 def fake_embedder(monkeypatch):
     """Never download an embedding model: hashed embeddings with a few synonyms."""
     from mnemosyne.search import embeddings

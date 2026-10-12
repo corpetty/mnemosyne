@@ -47,6 +47,11 @@ enum Command {
         #[arg(long)]
         no_relay: bool,
     },
+    /// Merge markdown notes (stdin to stdout, no network).
+    Notes {
+        #[command(subcommand)]
+        command: NotesCommand,
+    },
     /// Serve the home backend on a local port.
     Connect {
         ticket: EndpointTicket,
@@ -57,6 +62,44 @@ enum Command {
         #[arg(long)]
         no_relay: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum NotesCommand {
+    /// Three-way merge a note through its history. Reads one JSON object on stdin,
+    /// `{"history": <base64 or null>, "app": <text>, "vault": <text or null>}`, and prints one
+    /// line, `{"history": <base64>, "text": <text>}`. On an error: a message on stderr, exit 1.
+    Merge,
+}
+
+#[derive(serde::Deserialize)]
+struct MergeRequest {
+    history: Option<String>,
+    app: String,
+    vault: Option<String>,
+}
+
+fn notes_merge() -> Result<()> {
+    use anyhow::Context;
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use std::io::Read;
+
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .context("reading stdin")?;
+    let request: MergeRequest = serde_json::from_str(&input).context("invalid request")?;
+    let history = request
+        .history
+        .map(|h| STANDARD.decode(h.trim()).context("history is not base64"))
+        .transpose()?;
+    let merged =
+        mnemosyne_link::notes::merge(history.as_deref(), &request.app, request.vault.as_deref())?;
+    print_json(serde_json::json!({
+        "history": STANDARD.encode(&merged.history),
+        "text": merged.text,
+    }));
+    Ok(())
 }
 
 fn print_json(value: serde_json::Value) {
@@ -74,6 +117,9 @@ async fn main() -> Result<()> {
         )
         .init();
     match Cli::parse().command {
+        Command::Notes {
+            command: NotesCommand::Merge,
+        } => notes_merge()?,
         Command::Home {
             backend,
             data_dir,

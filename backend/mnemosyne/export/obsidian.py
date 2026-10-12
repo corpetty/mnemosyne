@@ -98,10 +98,16 @@ class ObsidianExporter:
             note = redact_identifiers(note)
         return note
 
-    def export(self, session: Session, resources: list[str] | None = None) -> Path:
+    def export(
+        self,
+        session: Session,
+        resources: list[str] | None = None,
+        write: Callable[[Path, str], None] | None = None,
+    ) -> Path:
         """Export a session to the Obsidian vault.
 
-        Returns the path to the created markdown file.
+        `write(path, text)` replaces writing the file (it keeps the user's edits, see
+        services/vault_sync.py write_note). Returns the path to the created markdown file.
         """
         if not self.vault_path.exists():
             raise FileNotFoundError(f"Vault path does not exist: {self.vault_path}")
@@ -112,6 +118,10 @@ class ObsidianExporter:
 
         output_path = output_dir / f"{note_stem(session)}.md"
 
-        output_path.write_text(self.render(session, resources), encoding="utf-8")
+        note = self.render(session, resources)
+        if write is not None:
+            write(output_path, note)
+        else:
+            output_path.write_text(note, encoding="utf-8")
         logger.info("Exported session %s to %s", session.id, output_path)
         return output_path

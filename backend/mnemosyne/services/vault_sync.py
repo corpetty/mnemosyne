@@ -12,12 +12,18 @@ rewrites that one line of its note, so the two never disagree on our side.
 
 A note that says an item is open while ours is done is only believed when the note was written
 after the meeting last changed: notes exported before this existed, then ticked in the app, are
-stale, and must not reopen what was finished.
+stale, and must not reopen what was finished. For a note with a record (`vault_notes`), the
+record decides instead: a box counts as the user's change when its status differs from the one
+we last wrote.
+
+`write_note` is how export_session writes the meeting note: the user's edits in the vault are
+merged with the new rendering (export/note_merge.py) instead of being overwritten.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 import threading
@@ -50,6 +56,7 @@ _BLOCK_ID = re.compile(r"\s+\^[\w-]+\s*$")
 _WIKILINK = re.compile(r"\[\[([^\]|]*)(?:\|([^\]]*))?\]\]")
 
 _lock = threading.Lock()  # an export and the periodic pass must not tick the same item twice
+_warned: set[str] = set()  # problems with the merge sidecar already logged (once per process)
 
 
 @dataclass
@@ -185,22 +192,41 @@ def apply_vault_ticks(ctx: AppContext, session: Session, vault_path: str) -> boo
         return False
 
 
+def _same_status(recorded: str, done: bool | None) -> bool:
+    """Is the status we wrote (a box character) the state the note shows now (Tick.done)?"""
+    return (True if recorded in "xX" else False if recorded == " " else None) == done
+
+
 def _apply(ctx: AppContext, session: Session, path: Path) -> bool:
+    from ..export.note_merge import box_at, box_positions  # note_merge imports this module
+
     try:
         written = datetime.fromtimestamp(path.stat().st_mtime)
-    except OSError:
+        text = path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
         return False
-    ticks = read_ticks(path)
+    ticks = parse_ticks(text) if is_ours(text) else []
     if not ticks:
         return False
     session = ctx.sessions.get_session(session.id) or session  # as it is now
     items = session.summary_data.action_items if session.summary_data else []
+    record = ctx.repo.get_vault_note(session.id)
+    if record is not None and record["path"] != str(path):
+        record = None
+    positions = box_positions(text) if record is not None else {}
     changed = False
     for idx, tick in pairs(ticks, items):
         item = items[idx]
         if tick.done is None or tick.done == item.done:
             continue
-        if not tick.done and written <= session.updated_at:
+        if record is not None:
+            # The note is compared with what we wrote, not with the clock: the same status as
+            # we wrote is not the user's doing (a stale note included).
+            key, n = positions.get(tick.line, ("", 0))
+            wrote = box_at(record["boxes"], key, n)
+            if wrote is not None and _same_status(wrote[0], tick.done):
+                continue
+        elif not tick.done and written <= session.updated_at:
             continue  # a note older than our tick: stale, not a reopen
         if not ctx.repo.set_action_item_done(session.id, idx, tick.done):
             continue
@@ -237,6 +263,31 @@ def _set_box(line: str, done: bool, today: date) -> str:
     return f"{head}{box}{close}{rest}{eol or ''}"
 
 
+def _atomic_write(path: Path, data: bytes) -> None:
+    """The user's note: written whole or not at all."""
+    tmp = path.with_name(f".{path.name}.mnemosyne")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _keep_record(ctx: AppContext, session: Session, path: Path, before: bytes, new: str) -> None:
+    """After write_tick: the note's record follows the new line, so the next export finds the
+    vault as we left it. Only when the file was as we wrote it before; with the user's edits in
+    it, the record stays and those edits are still found."""
+    from ..export.note_merge import normalize
+
+    record = ctx.repo.get_vault_note(session.id)
+    if record is None or record["path"] != str(path) or _sha(before) != record["written_sha"]:
+        return
+    ctx.repo.put_vault_note(
+        session.id, str(path), record["history"], normalize(new)[1], _sha(new.encode("utf-8"))
+    )
+
+
 def write_tick(
     ctx: AppContext, session: Session, idx: int, done: bool, vault_path: str | None = None
 ) -> bool:
@@ -251,7 +302,8 @@ def write_tick(
         path = note_path(ctx, session, vault)
         with _lock:
             try:
-                text = path.read_bytes().decode("utf-8")
+                raw = path.read_bytes()
+                text = raw.decode("utf-8")
             except (OSError, UnicodeDecodeError):
                 return False
             if not is_ours(text):
@@ -264,15 +316,125 @@ def write_tick(
             if line == lines[tick.line]:
                 return False
             lines[tick.line] = line
-            # The user's note: written whole or not at all, like the daily note.
-            tmp = path.with_name(f".{path.name}.mnemosyne")
-            tmp.write_bytes("".join(lines).encode("utf-8"))
-            tmp.replace(path)
+            written = "".join(lines).encode("utf-8")
+            _atomic_write(path, written)
             ctx.vault_seen[str(path)] = path.stat().st_mtime_ns  # our own write: nothing new
+            try:
+                _keep_record(ctx, session, path, raw, written.decode("utf-8"))
+            except Exception:
+                logger.warning("Could not update the record of %s", session.id, exc_info=True)
         return True
     except Exception:
         logger.warning("Could not write a tick to the note of %s", session.id, exc_info=True)
         return False
+
+
+def _warn_once(key: str, message: str, *args) -> None:
+    if key not in _warned:
+        _warned.add(key)
+        logger.warning(message, *args)
+
+
+_MERGED, _FRESH, _PLAIN = "merged", "fresh", "plain"
+
+
+def write_note(ctx: AppContext, session: Session, path: Path, app_text: str) -> None:
+    """Write a meeting's note (`app_text`, as rendered) to `path`, keeping what the user
+    changed in it since we last wrote it: the two are merged by the mnemosyne-link sidecar
+    (export/note_merge.py) against the history stored in `vault_notes`. Without a record, a
+    working sidecar or a note of ours, the note is simply written, as it always was. Never
+    lets the merge break the export."""
+    with _lock:
+        try:
+            outcome = _merge_note(ctx, session, path, app_text)
+        except Exception as e:
+            _warn_once("merge", "Keeping the user's edits to Obsidian notes failed: %s", e)
+            logger.debug("Merging the note of %s failed", session.id, exc_info=True)
+            outcome = _PLAIN
+        if outcome == _MERGED:
+            return
+        path.write_text(app_text, encoding="utf-8")
+        # Whatever history there was does not describe the file any more.
+        if _forget(ctx, session) and outcome == _FRESH:
+            _start_record(ctx, session, path, app_text)
+
+
+def _forget(ctx: AppContext, session: Session) -> bool:
+    try:
+        ctx.repo.delete_vault_note(session.id)
+        return True
+    except Exception:
+        logger.warning("Could not forget the record of %s", session.id, exc_info=True)
+        return False
+
+
+def _start_record(ctx: AppContext, session: Session, path: Path, app_text: str) -> None:
+    """The file was just written from `app_text` alone: a new history starting there. Without
+    a working sidecar there is no record."""
+    from ..export.note_merge import merge, normalize
+    from .link import find_binary
+
+    try:
+        binary = find_binary()
+        if binary is not None:
+            history_bytes, _ = merge(binary, None, normalize(app_text)[0], None)
+            _store(ctx, session, path, history_bytes, app_text.encode("utf-8"))
+    except Exception as e:
+        _warn_once("merge", "Keeping the user's edits to Obsidian notes failed: %s", e)
+        _forget(ctx, session)
+
+
+def _store(ctx: AppContext, session: Session, path: Path, history_bytes: bytes, data: bytes):
+    """Remember what was written to `path`: its merge history, boxes and hash."""
+    from ..export.note_merge import normalize
+
+    boxes = normalize(data.decode("utf-8"))[1]
+    ctx.repo.put_vault_note(session.id, str(path), history_bytes, boxes, _sha(data))
+    ctx.vault_seen[str(path)] = path.stat().st_mtime_ns  # our own write: nothing new
+
+
+def _merge_note(ctx: AppContext, session: Session, path: Path, app_text: str) -> str:
+    """The merging write of write_note: _MERGED when the note was written; _FRESH when the
+    caller writes `app_text` and starts a history (no record, or one for another file);
+    _PLAIN when it writes `app_text` and keeps no record (not our note, no sidecar)."""
+    from ..export.note_merge import lines_both_changed, merge, normalize, restore
+    from .link import find_binary
+
+    raw = text = None
+    try:
+        raw = path.read_bytes()
+        text = raw.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        pass
+    if raw is not None and (text is None or not is_ours(text)):
+        return _PLAIN  # someone else's file: overwritten as before
+    binary = find_binary()
+    if binary is None:
+        _warn_once("missing", "mnemosyne-link not found: Obsidian notes are overwritten")
+        return _PLAIN
+    record = ctx.repo.get_vault_note(session.id)
+    if record is None or record["path"] != str(path):
+        return _FRESH
+    app_norm, app_boxes = normalize(app_text)
+    vault_norm, vault_boxes = normalize(text) if text is not None else (None, {})
+    changed = raw is not None and _sha(raw) != record["written_sha"]
+    history_bytes, merged = merge(
+        binary, record["history"], app_norm, vault_norm if changed else None
+    )
+    final = restore(merged, app_boxes, vault_boxes)
+    data = final.encode("utf-8")
+    _atomic_write(path, data)
+    try:
+        _store(ctx, session, path, history_bytes, data)
+    except Exception:
+        _forget(ctx, session)
+        logger.warning("Could not record the note of %s", session.id, exc_info=True)
+    if changed:
+        history.log(
+            ctx, session.id, "note_merged",
+            both=lines_both_changed(normalize(final)[0], app_norm, vault_norm or ""),
+        )  # fmt: skip
+    return _MERGED
 
 
 def sync_vault(ctx: AppContext) -> int:

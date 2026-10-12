@@ -14,6 +14,7 @@ from ...jobs import Job
 from ...models.base import ApiModel
 from ...models.session import ActionItem
 from ...services import history
+from ...services.vault_sync import write_note
 from ..context import AppContext, get_ctx
 
 logger = logging.getLogger(__name__)
@@ -138,7 +139,11 @@ def export_session(ctx: AppContext, session, vault_path: str, decisions: bool = 
     decisions log (`decisions=False`: the caller writes it once after many meetings)."""
     session = before_export(ctx, session, vault_path)
     exporter = build_exporter(ctx, vault_path, session)
-    path = exporter.export(session, _resources(ctx, session, exporter))
+    path = exporter.export(
+        session,
+        _resources(ctx, session, exporter),
+        write=lambda note_path, text: write_note(ctx, session, note_path, text),
+    )
     st = ctx.settings
     if st.obsidian_people_notes:
         from ...export.people_notes import write_person_notes

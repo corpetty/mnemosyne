@@ -128,6 +128,14 @@ three-way merge (`git merge-file`), and with three ways of turning a text change
 
 ## Phase 1: two-way Obsidian sync (local only)
 
+Status: built 2026-10-12, unreleased. Scope agreed with Corey: edits survive in the note; pulling
+edited item text and summary paragraphs back into the app moved to phase 2. As built: the history
+is a `vault_notes` row in SQLite (not a file: encryption, backups and deletion come with it), and
+it holds two branches, the combined one (what we wrote) and the app's own (what the app last
+rendered). With only the combined branch, a user edit survived just the export that merged it:
+the next rendering, diffed against text that contained the edit, deleted it. The word diff
+splits punctuation from words (`similar`'s word split made "April, pending" look like a rewrite).
+
 The history of each exported meeting note lives in the data directory, never in the vault (only
 notes with our `source: mnemosyne` frontmatter, as today).
 
