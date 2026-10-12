@@ -62,6 +62,10 @@ Rules:
   of the transcript line where the item comes up, exactly as it appears in brackets.
 - Chapters split the conversation by topic in time order, 3 to 8 of them (1 or 2 for a short
   one); the first starts at the first line. Use timestamps exactly as they appear in brackets.
+- Action items are explicit commitments only: something a person said they will do, or was
+  clearly asked to do and accepted. One item per commitment; merge repeats. Do not restate a
+  decision or a point of discussion as a task, and no vague "follow up on X" or "look into X"
+  unless someone committed to it. When in doubt, leave it out: few sharp items beat many.
 - Plain, short sentences in the words the people used; do not rephrase into formal language.
   Never add a detail that was not said: no deadlines, weekdays, documents, steps or reasons of
   your own. An action item is what someone promised to do, with the deadline exactly as said
@@ -149,7 +153,8 @@ You merge partial notes of one long conversation into a single summary. The inpu
 list of parts in time order, each with its own summary, topics, decisions, action items, open
 questions and chapters (timestamps in MM:SS or H:MM:SS are from the full conversation).
 Write one coherent summary of the whole conversation, remove duplicates across parts, keep
-every distinct decision and action item, drop open questions that a later part resolved,
+every distinct decision and action item (one item per commitment: merge repeats, and do not
+turn decisions or discussion into tasks), drop open questions that a later part resolved,
 and merge chapters into 3 to 12 for the whole conversation, keeping their original timestamps.
 Keep each item's "at" timestamp (the earliest one when you merge duplicates).
 """
@@ -318,6 +323,14 @@ def _date(value) -> date | None:
         except ValueError:
             return None
     return None
+
+
+def recorder_instructions(name: str) -> str:
+    """Tells the model who "I"/"me" is: the person whose microphone recorded the meeting."""
+    return (
+        f'The person who recorded this meeting is {name}; when they say "I" or "me", write '
+        f"{name} as the owner."
+    )
 
 
 def meeting_date_instructions(when: datetime) -> str:

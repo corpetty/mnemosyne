@@ -85,6 +85,7 @@ def test_summarize_endpoint_stores_structured(client, ctx, fake_provider, transc
             "owner": "SPEAKER_00",
             "issue_url": None,
             "done": False,
+            "follow": False,
             "live": False,
             "at": None,
             "due": None,

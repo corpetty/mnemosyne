@@ -140,7 +140,7 @@
 				openView('topics');
 			}
 		}));
-		const taskItems: Item[] = tasks.map((t) => ({
+		const taskItems: Item[] = tasks.filter((t) => t.mine || t.follow).map((t) => ({
 			id: `task:${t.session_id}:${t.idx}`,
 			group: 'Open tasks',
 			label: t.text,

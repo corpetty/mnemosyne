@@ -55,12 +55,32 @@ def carry_over(old: SummaryData | None, new: SummaryData) -> SummaryData:
     return new
 
 
-def add_live_todos(notes: CopilotNotes | None, data: SummaryData) -> SummaryData:
+def recorder_names(app, session) -> tuple[list[str], list[str]]:
+    """Who recorded a meeting, as (their names and email, everyone else's names): its owner on
+    a team server, else `local_speaker_name`. Both empty when nobody is known."""
+    owner = getattr(session, "owner_id", "") if session is not None else ""
+    users = getattr(app, "users", None)
+    if owner and users is not None:
+        me = users.get(owner)
+        if me is not None:
+            names = [me.name] + ([me.email] if getattr(me, "email", "") else [])
+            return [n for n in names if n and n.strip()], [
+                u.name for u in users.list() if u.id != owner
+            ]
+    name = (app.settings.local_speaker_name or "").strip()
+    return ([name] if name else []), []
+
+
+def add_live_todos(notes: CopilotNotes | None, data: SummaryData, mine=None) -> SummaryData:
     """Append the copilot's to-dos that the final summary has no matching item for, marked
-    `live`, so nothing agreed during the meeting is lost."""
+    `live`, so nothing agreed during the meeting is lost. With `mine` (mine_matcher for the
+    person who recorded) only their to-dos and ownerless ones are added; others' stay in the
+    copilot notes."""
     if notes is None:
         return data
     for todo in notes.action_items:
+        if mine is not None and (todo.owner or "").strip() and not mine(todo.owner, True):
+            continue
         if not any(same_item(todo.text, item.text) for item in data.action_items):
             data.action_items.append(ActionItem(text=todo.text, owner=todo.owner, live=True))
     return data

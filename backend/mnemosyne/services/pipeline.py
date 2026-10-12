@@ -20,7 +20,7 @@ from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus, trans
 from ..models.transcript import TranscriptSegment
 from ..storage.crypto import plaintext_async
 from ..summarization.privacy import LOCAL_ONLY_ERROR, is_cloud, redact_transcript
-from ..summarization.prompts import meeting_date_instructions
+from ..summarization.prompts import meeting_date_instructions, recorder_instructions
 from ..transcription.engine import AudioSource
 from ..transcription.glossary import (
     apply_corrections,
@@ -415,6 +415,11 @@ def summarize_session(
                 "people; only attribute to a name when the transcript makes it clear."
             ).strip()
         instr = f"{instr}\n{meeting_date_instructions(session.created_at)}".strip()
+        from .tasks import mine_matcher, recorder_names
+
+        me_names, not_me = recorder_names(app, session)
+        if me_names:
+            instr = f"{instr}\n{recorder_instructions(me_names[0])}".strip()
         live_notes = copilot_hint(session.copilot_notes)
         if live_notes:
             instr = f"{instr}\n{live_notes}".strip()
@@ -462,7 +467,11 @@ def summarize_session(
                 fact.at = None
         # To-dos the copilot heard that the summary missed; then keep done flags and issue
         # links of items that survive a re-summarize.
-        add_live_todos(session.copilot_notes, result["data"])
+        add_live_todos(
+            session.copilot_notes,
+            result["data"],
+            mine_matcher(me_names, not_me) if me_names else None,
+        )
         # Topics renamed or merged by hand keep their new name (services/topics.py).
         from .topics import apply_aliases
 

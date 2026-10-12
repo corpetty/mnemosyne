@@ -191,6 +191,34 @@ def test_summary_gets_the_notes_and_keeps_missed_todos(client, ctx, fake_provide
     assert len(ctx.repo.get(s.id).summary_data.action_items) == 2
 
 
+def test_summary_is_told_who_i_is_and_drops_others_copilot_todos(client, ctx, fake_provider):
+    from tests.conftest import run_summarize
+
+    ctx.settings.local_speaker_name = "Corey Petty"
+    s = ctx.repo.save(Session(name="m", transcript=[_seg(0, "we should update the docs")]))
+    ctx.repo.update_fields(
+        s.id,
+        copilot_notes=_notes(
+            s.id,
+            todos=[("Mine one", "Me"), ("Theirs", "Ana"), ("Nobody's", None), ("Own", "Corey")],
+        ),
+    )
+    ctx.settings.default_provider = "fake"
+    fake_provider.summary = json.dumps({"summary": "- x", "action_items": []})
+    run_summarize(client, s.id)
+
+    prompt = fake_provider.calls[-1]["system_prompt"]
+    assert 'recorded this meeting is Corey Petty; when they say "I" or "me"' in prompt
+    assert "explicit commitments" in prompt
+    items = ctx.repo.get(s.id).summary_data.action_items
+    assert [i.text for i in items] == ["Mine one", "Nobody's", "Own"]
+    assert ctx.repo.get(s.id).copilot_notes.action_items[1].owner == "Ana"  # still in the notes
+
+    ctx.settings.local_speaker_name = ""
+    run_summarize(client, s.id)
+    assert "recorded this meeting is" not in fake_provider.calls[-1]["system_prompt"]
+
+
 def test_a_new_recording_starts_new_notes(client, ctx, fake_pipewire):
     s = ctx.repo.save(Session(name="m"))
     ctx.repo.update_fields(s.id, copilot_notes=_notes(s.id))
