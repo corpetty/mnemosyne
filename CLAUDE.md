@@ -354,6 +354,19 @@ pool and memory handed back after the idle unload; a Wayland smoke test (headles
 services/phonon_install.py on-demand install into <data_dir>/phonon, `/api/system/phonon`,
 components/PhononCard.svelte, setup offers it first for an English locale; auto picks it when the
 language is English). The real install was only exercised with stand-in uv/phonon in tests.
+0.16.1: `phonon serve` without a model argument (0.16.0's install failed at that step).
+For 0.17 (docs/plans/2026-10-12-for-0.17.md, from Corey's 141 action items, ~26 his): Phonon proven
+in CI (phonon.yml, scripts/check-phonon.py: real install + transcription, a Release prerequisite),
+pinned by hash (`--require-hashes`, model SHA-256 checked before each start, `MODEL_FILES`),
+`live_transcriber` auto (Phonon for English, else Parakeet) and "Use Phonon-2" on the card; tasks:
+"me"/compound owners in `mine_matcher`, speaker renames follow into owners, `ActionItem.follow` +
+Mine/Following/Everyone, summary told who recorded it (`recorder_names`), others' copilot to-dos
+kept out of the summary; Obsidian: `obsidian_task_scope` (others' items as plain bullets so vault
+task queries list only yours; export-all job), ticks read back from exported notes
+(services/vault_sync.py, every 5 min and before each export; an untick only reopens when the note
+is newer than the meeting), `obsidian_link_notes` (export/links.py, vault_index.py), topic notes
+and `obsidian_decisions_log` (export/topic_notes.py), Ask answers to the vault (export/ask_notes.py).
+Only notes carrying our frontmatter marker are ever rewritten.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
