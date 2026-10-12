@@ -85,6 +85,47 @@ reword, add a line) and another as a re-export would (a new summary), `nool merg
 the merged notes say, especially lines both sides changed. This answers whether text-level merge
 of regenerated notes reads well enough to build on before writing any code.
 
+### Results (2026-10-12)
+
+Done. Inputs, outputs and the trial tool are in `~/.cache/mnemosyne-trials/nool/` (`v03/`,
+`tick/`, `tick2/`, `tool/`).
+
+Main trial (`v03`): a real re-summarize from the vault's git history. "V0.3 Release and Dark
+Prague Planning" (87 KB, 2,249 lines, mostly transcript) was exported at 14:36 (0391755d) and
+re-summarized at 15:32 (1900ed3f): new topics, summary, decisions and action items, speaker
+labels renamed. The user's side was the first export plus nine hand edits as Obsidian would make
+them: three ticks (one on an item the re-export kept, two on items it reworded), an item's owner
+changed, a tag, a paragraph after the summary, a line in Notes, a transcript word, and a reworded
+decision extended. Each side was merged as a fork of the first export, compared with git's
+three-way merge (`git merge-file`), and with three ways of turning a text change into ops
+(`tool/`, the hashseq crate plus the `similar` diff crate):
+
+| merge | result |
+|---|---|
+| `nool merge` | garbled: the tag, the summary paragraph, the decision note, all three ticks (`xxx`), the owner (`Roxna`) and the Notes line all landed as one run inside the transcript line at 00:59 |
+| git three-way | 2 conflicts, 77 lines of conflict markers (both whole versions of Summary to Action Items) |
+| char diff | all nine edits kept; the tick on a reworded item became a stray `x` inside a word (`lockx`) |
+| line diff | all nine kept; the reworded lines both sides changed came back twice (old and new versions) |
+| **line, then word** | **all nine kept and clean**; edits on reworded lines carried over to the new wording (the decision note at the end of the new decision, the ticks on the reworded items) |
+
+- **hashseq itself did its job.** Every merge gave the same text in both orders, took
+  0.05-0.6 s and 63-86 MB for the whole process, and the history file was 1.0x the note at the
+  start and 1.16x after both sides and the merge.
+- **The diff is the design.** nool diffs characters (Myers) and, once two versions differ by more
+  than 1,000 characters (`MYERS_MAX_D` in src/bin/nool/diff.rs), replaces everything between the
+  first and the last difference in one delete + insert. A re-summarize always exceeds that, so
+  every edit made in that span is anchored on removed text and lands where the removed text
+  was. Worth telling David. Lines first (patience), then words inside each replaced block, works.
+- **Checkboxes cannot be text.** `tick2`: both sides tick the same item after each made some
+  other edit above it, and the merge says `[xx]` (char diff) or `[x][x]` (line, then word). The
+  ops only coincide, and collapse into one, when both sides started from the same state
+  (`tick`). And the ticks on reworded items carried over to the new wording here because the
+  word diff lined the boxes up; with a different rewrite a tick could land on the wrong item.
+- **Phase 1 alone does not need a CRDT.** Two sides and a stored base is a three-way merge; a
+  word-level three-way merge would do about as well. hashseq pays off with history across rounds
+  and when there are more than two replicas (phases 2-3). Using it in phase 1 keeps one
+  mechanism from the start, and that is the plan.
+
 ## Phase 1: two-way Obsidian sync (local only)
 
 The history of each exported meeting note lives in the data directory, never in the vault (only
@@ -94,13 +135,20 @@ notes with our `source: mnemosyne` frontmatter, as today).
   last written (the app's side). If the file in the vault changed since we wrote it, diff it into
   ops against the same base (the user's side). The two are concurrent forks of one frontier;
   merge them, write the merged text to the vault, remember it as the new base.
+- Diff by lines (patience), then by words inside each replaced block (phase 0). Never by
+  characters across a whole note, never a coarse replace.
+- Checkbox status stays out of the text: both sides' text has every box as `[ ]` before it is
+  diffed. Ticks are read from the vault note by item (`parse_ticks` / `pairs`, as today), applied
+  to our action items, and the boxes are filled in from our state when the note is written.
 - `sync_vault` (every 5 min) does the user's side alone, and merges back into the app what it
-  understands: ticks (`parse_ticks` stays; the mtime rules go), edited action item text, edited
-  summary paragraphs (as a summary edit, `edited_by` "Obsidian").
-- After a merge, normalize what must be one value: a checkbox with more than one status char,
-  duplicated frontmatter keys. Gap conflicts (two inserts at the same anchor, which hashseq can
-  detect) on a line both sides changed are listed in the meeting's history (services/history.py)
-  so they can be looked at; nothing is thrown away.
+  understands: ticks, edited action item text, edited summary paragraphs (as a summary edit,
+  `edited_by` "Obsidian"). The mtime rules go.
+- After a merge, normalize what must be one value (duplicated frontmatter keys). Gap conflicts
+  (two inserts at the same anchor, which hashseq can detect) on a line both sides changed are
+  listed in the meeting's history (services/history.py) so they can be looked at; nothing is
+  thrown away.
+- The phase 0 trials (`v03`, `tick2`) become the sidecar's first tests, with the expected merges
+  checked in.
 - Tests: the sidecar's own `cargo test` (fork, diff, merge, normalize), and backend tests with a
   fake sidecar in tests/fakes.py, as for link.
 
