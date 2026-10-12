@@ -1765,6 +1765,18 @@ class SessionRepository:
             )
         return ask
 
+    @staticmethod
+    def _ask_from_row(r) -> Ask:
+        return Ask(
+            id=r["id"],
+            question=r["question"],
+            answer=r["answer"],
+            citations=[Citation.model_validate(c) for c in json.loads(r["citations"])],
+            provider=r["provider"],
+            model=r["model"],
+            created_at=_dt(r["created_at"]),
+        )
+
     def list_asks(self, limit: int = 50) -> list[Ask]:
         """Saved questions: a signed-in user's own (access.py), else all."""
         user = access.user_id()
@@ -1773,18 +1785,17 @@ class SessionRepository:
                 "SELECT * FROM asks WHERE ? = '' OR owner_id = ? ORDER BY created_at DESC LIMIT ?",
                 (user, user, limit),
             ).fetchall()
-        return [
-            Ask(
-                id=r["id"],
-                question=r["question"],
-                answer=r["answer"],
-                citations=[Citation.model_validate(c) for c in json.loads(r["citations"])],
-                provider=r["provider"],
-                model=r["model"],
-                created_at=_dt(r["created_at"]),
-            )
-            for r in rows
-        ]
+        return [self._ask_from_row(r) for r in rows]
+
+    def get_ask(self, ask_id: str) -> Ask | None:
+        """One saved question, under the same access rule as `list_asks`."""
+        user = access.user_id()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM asks WHERE id = ? AND (? = '' OR owner_id = ?)",
+                (ask_id, user, user),
+            ).fetchone()
+        return self._ask_from_row(row) if row else None
 
     def delete_ask(self, ask_id: str) -> bool:
         user = access.user_id()

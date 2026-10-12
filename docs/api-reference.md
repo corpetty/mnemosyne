@@ -782,6 +782,12 @@ A citation's `idx`/`start` point at the best-matching line in its excerpt (`null
 
 - `GET /api/asks?limit=50` — saved questions and answers, newest first.
 - `DELETE /api/asks/{id}`
+- `POST /api/asks/{id}/obsidian` → `{path, message}`. Writes the answer to
+  `<vault>/<obsidian_subfolder>/asks/<YYYY-MM-DD> <question>.md` (frontmatter `mnemosyne: ask`): the
+  question, the answer as written (links to vault notes when `obsidian_link_notes`, identifiers
+  redacted when `redact_exports`), then `## Sources`: `- YYYY-MM-DD [[note|Name]] (mm:ss)` per
+  meeting cited. Saving again rewrites the file; 409 when the vault has a note of the user's with
+  that name, 400 without a vault, 404 for an unknown ask or another user's.
 - `GET /api/ask/passages?q=...` — what retrieval would send for a question (debugging).
 
 ---

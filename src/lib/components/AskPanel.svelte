@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { getSettings, saveAskNote } from '$lib/api/backend.js';
 	import { askState } from '$lib/stores/ask.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -20,6 +21,22 @@
 		void jobsState.jobs;
 		askState.syncFailures();
 	});
+
+	let hasVault = $state(false);
+	$effect(() => {
+		getSettings()
+			.then((s) => (hasVault = s.obsidian_vault_exists))
+			.catch(() => {});
+	});
+
+	async function saveNote(ask: Ask) {
+		try {
+			const r = await saveAskNote(ask.id);
+			toastState.success(`Saved to ${r.path}`);
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not save the note');
+		}
+	}
 
 	async function submit() {
 		const q = askState.draft.trim();
@@ -133,6 +150,12 @@
 				<h3 class="font-medium text-gray-100 text-sm">{ask.question}</h3>
 				<div class="flex items-center gap-3 flex-shrink-0 text-[11px] text-gray-600">
 					<span>{fmtDate(ask.created_at)}</span>
+					<button
+						onclick={() => saveNote(ask)}
+						disabled={!hasVault}
+						class="hover:text-gray-300 disabled:opacity-50 disabled:hover:text-gray-600"
+						title={hasVault ? 'Write this answer to your vault as a note' : 'Set your Obsidian vault in Settings first'}
+					>Save to Obsidian</button>
 					<button onclick={() => askState.remove(ask.id)} class="hover:text-red-400" title="Delete">✕</button>
 				</div>
 			</header>

@@ -101,6 +101,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/asks/{ask_id}/obsidian": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save Ask Note
+         * @description Write the answer to `<vault>/<subfolder>/asks/<date> <question>.md`, with the meetings it
+         *     drew on as [[links]]. 409 when the vault has a note of the user's with that name.
+         */
+        post: operations["save_ask_note_api_asks__ask_id__obsidian_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/assets": {
         parameters: {
             query?: never;
@@ -6275,6 +6296,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_ask_note_api_asks__ask_id__obsidian_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportResponse"];
                 };
             };
             /** @description Validation Error */

@@ -764,6 +764,10 @@ export async function saveTopicNote(query: string, explanation = ''): Promise<{ 
   return request('/api/topics/obsidian', { method: 'POST', body: JSON.stringify({ query, explanation }) });
 }
 
+export async function saveAskNote(askId: string): Promise<{ path: string; message: string }> {
+  return request(`/api/asks/${askId}/obsidian`, { method: 'POST' });
+}
+
 export async function setLocalOnly(sessionId: string, localOnly: boolean): Promise<SessionDetail> {
   return request(`/api/sessions/${sessionId}/local-only`, {
     method: 'PUT',
