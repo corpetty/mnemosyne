@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { listActionItems, setActionItemDone, updateActionItem } from '$lib/api/backend.js';
-	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
@@ -11,9 +10,11 @@
 	let items = $state<TaskItem[]>([]);
 	let loaded = $state(false);
 	let status = $state<'open' | 'done' | 'all'>('open');
-	// Yours first on a team server (the backend marks the items whose owner is you).
-	const MINE = '__mine__';
-	let owner = $state(connectionState.me?.team_mode ? MINE : '');
+	// Only what is yours by default (the backend marks the items whose owner is you); the ones you
+	// star on other people's lists are "Following"; "Everyone" is the whole list.
+	type Scope = 'mine' | 'following' | 'everyone';
+	let scope = $state<Scope>('mine');
+	let owner = $state('');
 	let query = $state('');
 	let dueFilter = $state<'' | 'overdue' | 'week'>('');
 
@@ -53,6 +54,17 @@
 			await setActionItemDone(t.session_id, t.idx, done);
 		} catch (e) {
 			t.done = !done;
+			toastState.error(e instanceof Error ? e.message : 'Could not update the task');
+		}
+	}
+
+	async function toggleFollow(t: TaskItem) {
+		const follow = !t.follow;
+		t.follow = follow; // optimistic
+		try {
+			await updateActionItem(t.session_id, t.idx, { follow });
+		} catch (e) {
+			t.follow = !follow;
 			toastState.error(e instanceof Error ? e.message : 'Could not update the task');
 		}
 	}
@@ -111,7 +123,8 @@
 		items.filter(
 			(t) =>
 				(status === 'all' || (status === 'done') === t.done) &&
-				(!owner || (owner === MINE ? t.mine : owner === '—' ? !t.owner : t.owner === owner)) &&
+				(scope === 'everyone' || (scope === 'mine' ? t.mine : t.follow && !t.mine)) &&
+				(scope !== 'everyone' || !owner || (owner === '—' ? !t.owner : t.owner === owner)) &&
 				(!query.trim() || t.text.toLowerCase().includes(query.trim().toLowerCase())) &&
 				(!dueFilter || (!!t.due && (dueFilter === 'overdue' ? t.due < today : t.due <= weekOut)))
 		)
@@ -120,7 +133,14 @@
 	const deadlines = $derived(
 		shown.filter((t) => t.due && !t.done).sort((a, b) => (a.due! < b.due! ? -1 : a.due! > b.due! ? 1 : 0))
 	);
-	const openCount = $derived(items.filter((t) => !t.done).length);
+	// What you have to do plus what you wait on; the rest is other people's.
+	const openCount = $derived(items.filter((t) => !t.done && (t.mine || t.follow)).length);
+	const allOpen = $derived(items.filter((t) => !t.done).length);
+	const counts = $derived({
+		mine: items.filter((t) => !t.done && t.mine).length,
+		following: items.filter((t) => !t.done && t.follow && !t.mine).length,
+		everyone: allOpen
+	});
 	// Group by meeting, keeping the newest-first order from the backend.
 	const groups = $derived.by(() => {
 		const out: { id: string; name: string; date: string; items: TaskItem[] }[] = [];
@@ -150,6 +170,18 @@
 			aria-label="Edit task: {t.text}"
 			title="Edit the text, owner or due date"
 		>✎</button>
+	{/if}
+{/snippet}
+
+{#snippet star(t: TaskItem)}
+	{#if !t.mine}
+		<button
+			onclick={() => toggleFollow(t)}
+			class="text-xs pt-0.5 {t.follow ? 'text-amber-300 hover:text-amber-200' : 'opacity-0 group-hover:opacity-100 focus:opacity-100 text-gray-500 hover:text-amber-300'}"
+			aria-label="{t.follow ? 'Stop following' : 'Follow'}: {t.text}"
+			aria-pressed={t.follow}
+			title={t.follow ? 'Following: shown under Following. Click to stop' : 'Follow: wait on this one, shown under Following'}
+		>{t.follow ? '★' : '☆'}</button>
 	{/if}
 {/snippet}
 
@@ -186,7 +218,7 @@
 	<div>
 		<h2 class="text-xl font-semibold text-gray-100 mb-1">Tasks</h2>
 		<p class="text-xs text-gray-500">
-			Action items from every summarized meeting · {openCount} open. Ticking one off is saved with the meeting, kept when
+			Action items from your summarized meetings · {openCount} open for you ({allOpen} in all). Ticking one off is saved with the meeting, kept when
 			it is summarized again, and exported to Obsidian as <code>- [x]</code>.
 		</p>
 	</div>
@@ -200,12 +232,23 @@
 				>{s}</button>
 			{/each}
 		</div>
-		<select bind:value={owner} class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Owner">
-			<option value="">Anyone</option>
-			<option value={MINE}>Mine</option>
-			{#each owners as o}<option value={o}>{o}</option>{/each}
-			<option value="—">No owner</option>
-		</select>
+		<div class="flex rounded border border-gray-700 overflow-hidden text-xs" role="group" aria-label="Whose tasks">
+			{#each [['mine', 'Mine'], ['following', 'Following'], ['everyone', 'Everyone']] as const as [s, label]}
+				<button
+					onclick={() => (scope = s)}
+					aria-pressed={scope === s}
+					title={s === 'mine' ? 'Items given to you' : s === 'following' ? 'Other people\'s items you starred' : 'Every action item'}
+					class="px-2.5 py-1 {scope === s ? 'bg-gray-700 text-gray-100' : 'text-gray-400 hover:bg-gray-800'}"
+				>{label}{#if loaded && s !== 'everyone' && counts[s]} <span class="text-gray-500">{counts[s]}</span>{/if}</button>
+			{/each}
+		</div>
+		{#if scope === 'everyone'}
+			<select bind:value={owner} class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Owner">
+				<option value="">Anyone</option>
+				{#each owners as o}<option value={o}>{o}</option>{/each}
+				<option value="—">No owner</option>
+			</select>
+		{/if}
 		<select bind:value={dueFilter} class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Deadline">
 			<option value="">Any deadline</option>
 			<option value="overdue">Overdue</option>
@@ -232,6 +275,7 @@
 						<span class="w-14 shrink-0 text-xs pt-0.5 {dueClass(t)}" title={t.due! < today ? 'Overdue' : 'Due'}>{dueLabel(t.due!)}</span>
 						<span class="text-gray-200">{t.text}</span>
 						{#if t.owner}<span class="text-xs text-gray-500 pt-0.5 whitespace-nowrap">· {t.owner}</span>{/if}
+						{@render star(t)}
 						{@render pencil(t)}
 						<button onclick={() => open(t)} class="ml-auto text-xs text-gray-600 hover:text-gray-300 pt-0.5 whitespace-nowrap">{t.session_name}</button>
 					</li>
@@ -265,6 +309,7 @@
 						{#if t.issue_url}
 							<button onclick={() => openLink(t.issue_url!)} class="text-xs text-green-500 hover:text-green-300 pt-0.5">issue</button>
 						{/if}
+						{@render star(t)}
 						{@render pencil(t)}
 					</li>
 					{/if}
@@ -277,9 +322,13 @@
 		<p class="text-sm text-gray-600">
 			{items.length === 0
 				? 'No action items yet. They come from meeting summaries.'
-				: owner === MINE
-					? 'Nothing is given to you. Choose Anyone to see every action item.'
-					: 'Nothing matches.'}
+				: scope === 'mine' && !query.trim() && !dueFilter
+					? status === 'open'
+						? 'Nothing is open for you. Other people\'s items are under Everyone; star one (☆) to follow it under Following.'
+						: 'Nothing here for you yet.'
+					: scope === 'following' && !query.trim() && !dueFilter
+						? 'You are not following anything. Star (☆) an item under Everyone to wait on it here.'
+						: 'Nothing matches.'}
 		</p>
 	{/if}
 </div>

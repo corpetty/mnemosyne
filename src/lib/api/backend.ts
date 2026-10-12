@@ -812,11 +812,12 @@ export async function setActionItemDone(sessionId: string, idx: number, done: bo
   });
 }
 
-/** Change an action item's text, owner or due date (null clears them); fields left out stay. */
+/** Change an action item's text, owner, due date (null clears them), done or follow (star) state;
+ * fields left out stay. */
 export async function updateActionItem(
   sessionId: string,
   idx: number,
-  changes: { text?: string; owner?: string | null; due?: string | null; done?: boolean }
+  changes: { text?: string; owner?: string | null; due?: string | null; done?: boolean; follow?: boolean }
 ): Promise<TaskItem> {
   return request(`/api/sessions/${sessionId}/action-items/${idx}`, {
     method: 'PATCH',

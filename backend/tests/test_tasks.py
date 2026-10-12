@@ -165,3 +165,41 @@ def test_edit_a_task_from_the_list(client, ctx):
     assert all(
         t["can_edit"] for t in client.get("/api/action-items", params={"status": "all"}).json()
     )
+
+
+def test_follow_survives_a_new_summary():
+    old = SummaryData(action_items=[ActionItem(text="Update the docs", owner="Alice", follow=True)])
+    new = SummaryData(action_items=[ActionItem(text="Update the docs."), ActionItem(text="Other")])
+    items = carry_over(old, new).action_items
+    assert items[0].follow is True and items[1].follow is False
+
+
+def test_follow_and_the_scope_filter(client, ctx):
+    a, b = _seed(ctx)
+    ctx.settings.local_speaker_name = "Alice"  # Alice's item is mine
+    url = f"/api/sessions/{a.id}/action-items/1"  # Bob's
+    r = client.patch(url, json={"follow": True})
+    assert r.status_code == 200 and r.json()["follow"] is True
+    r = client.patch(f"/api/sessions/{b.id}/action-items/0", json={"follow": True})
+    assert r.json()["follow"] is True
+    assert ctx.repo.get(a.id).summary_data.action_items[1].follow is True
+    assert ctx.repo.get(a.id).summary_data.action_items[0].follow is False
+
+    def texts(scope=None, **params):
+        params = {"status": "all", **params, **({"scope": scope} if scope else {})}
+        return [t["text"] for t in client.get("/api/action-items", params=params).json()]
+
+    assert len(texts()) == 3 and len(texts("everyone")) == 3  # everyone is the default
+    assert texts("mine") == ["Update the docs"]
+    assert texts("following") == ["Schedule final round", "Tag rc1"]
+    assert texts(mine=True) == ["Update the docs"]
+    got = {t["text"]: t["follow"] for t in client.get("/api/action-items?status=all").json()}
+    assert got == {"Update the docs": False, "Tag rc1": True, "Schedule final round": True}
+    # Unstarring; following something that is mine does not list it twice.
+    client.patch(url, json={"follow": False})
+    client.patch(f"/api/sessions/{a.id}/action-items/0", json={"follow": True})
+    assert texts("following") == ["Schedule final round"]
+    assert client.get("/api/action-items?scope=bogus").status_code == 422
+    assert client.patch(f"{url[:-1]}9", json={"follow": True}).status_code == 404
+    # Starring is not an edit: the summary stays as the model wrote it.
+    assert ctx.repo.get(a.id).summary_data.edited_at is None

@@ -149,14 +149,23 @@ test('export to the Obsidian vault', async () => {
 
 test('tasks: tick off an action item across meetings', async () => {
   await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-  await expect(page.getByText(/· 1 open\./)).toBeVisible();
+  // Mine is the default: the demo's item belongs to a speaker, not to the user.
+  await expect(page.getByText(/· 0 open for you \(1 in all\)\./)).toBeVisible();
+  await expect(page.getByText(/Nothing is open for you/)).toBeVisible();
+  await page.getByRole('button', { name: 'Everyone', exact: true }).click();
   // The demo summary gives it a deadline: listed under Deadlines, with its date.
   const deadlines = page.getByRole('region', { name: 'Deadlines' });
   await expect(deadlines.getByText('Update the docs before the release')).toBeVisible();
   await expect(deadlines.getByText('Oct 1')).toBeVisible();
+  // Starring someone else's item follows it: it moves under Following and counts as open for you.
+  await page.getByRole('button', { name: 'Follow: Update the docs before the release' }).click();
+  await expect(page.getByText(/· 1 open for you \(1 in all\)\./)).toBeVisible();
+  await page.getByRole('button', { name: /^Following/ }).click();
+  await expect(page.getByText('Update the docs before the release')).toBeVisible();
+  await page.getByRole('button', { name: 'Everyone', exact: true }).click();
   // click, not check(): the item leaves the Open list as soon as it is done.
   await page.getByRole('checkbox', { name: 'Done: Update the docs before the release' }).click();
-  await expect(page.getByText(/· 0 open\./)).toBeVisible();
+  await expect(page.getByText(/· 0 open for you \(0 in all\)\./)).toBeVisible();
   await expect(page.getByText('Nothing matches.')).toBeVisible();
   await page.getByRole('button', { name: 'done', exact: true }).click();
   await expect(page.getByRole('checkbox', { name: 'Done: Update the docs before the release' })).toBeChecked();

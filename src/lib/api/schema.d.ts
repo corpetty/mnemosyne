@@ -15,6 +15,8 @@ export interface paths {
          * List Action Items
          * @description Action items from every meeting the caller can read, newest meeting first (open ones
          *     with a deadline first, soonest first). `mine`: only those whose owner is the caller.
+         *     `scope`: "mine" (the same), "following" (starred items that are not the caller's) or
+         *     "everyone" (default).
          */
         get: operations["list_action_items_api_action_items_get"];
         put?: never;
@@ -2744,6 +2746,11 @@ export interface components {
             done: boolean;
             /** Due */
             due?: string | null;
+            /**
+             * Follow
+             * @default false
+             */
+            follow: boolean;
             /** Issue Url */
             issue_url?: string | null;
             /**
@@ -2767,6 +2774,11 @@ export interface components {
             done: boolean;
             /** Due */
             due: string | null;
+            /**
+             * Follow
+             * @default false
+             */
+            follow: boolean;
             /** Issue Url */
             issue_url: string | null;
             /**
@@ -2781,7 +2793,8 @@ export interface components {
         };
         /**
          * ActionItemUpdate
-         * @description What to change; fields left out stay. Ticking `done` needs read access only; `text`,
+         * @description What to change; fields left out stay. Ticking `done` and starring (`follow`) need read
+         *     access only (follow is kept with the meeting, not per person); `text`,
          *     `owner` and `due` edit the summary and need write access. `owner` "" or null clears it,
          *     `due` null clears it.
          */
@@ -2790,6 +2803,8 @@ export interface components {
             done?: boolean | null;
             /** Due */
             due?: string | null;
+            /** Follow */
+            follow?: boolean | null;
             /** Owner */
             owner?: string | null;
             /** Text */
@@ -5644,6 +5659,11 @@ export interface components {
             done: boolean;
             /** Due */
             due: string | null;
+            /**
+             * Follow
+             * @default false
+             */
+            follow: boolean;
             /** Idx */
             idx: number;
             /** Issue Url */
@@ -6043,6 +6063,7 @@ export interface operations {
                 owner?: string | null;
                 due?: ("overdue" | "week") | null;
                 mine?: boolean;
+                scope?: "mine" | "following" | "everyone";
             };
             header?: never;
             path?: never;

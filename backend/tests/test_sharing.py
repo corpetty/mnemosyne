@@ -147,6 +147,23 @@ def test_a_reader_ticks_but_does_not_edit(team):
     ]
 
 
+def test_a_reader_follows_an_item_but_does_not_edit_it(team):
+    client, ctx, people = team
+    s = _meeting(ctx, people, "Ann", "Plan")  # "Send the plan" is Bob's
+    cat = people["Cat"][1]
+    url = f"/api/sessions/{s.id}/action-items/0"
+    assert client.patch(url, json={"follow": True}, headers=cat).status_code == 404  # not shared
+    sharing.set_shares(ctx, s.id, {people["Cat"][0].id})
+    r = client.patch(url, json={"follow": True}, headers=cat)
+    assert r.status_code == 200 and r.json()["follow"] is True
+    assert ctx.repo.get(s.id).summary_data.action_items[0].follow
+    assert client.patch(url, json={"text": "x"}, headers=cat).status_code == 403
+    tasks = client.get("/api/action-items", params={"scope": "following"}, headers=cat).json()
+    assert [t["text"] for t in tasks] == ["Send the plan"]
+    mine = client.get("/api/action-items", params={"scope": "mine"}, headers=cat).json()
+    assert mine == []
+
+
 def test_a_member_renames_topics_in_their_own_meetings_only(team):
     client, ctx, people = team
     ann_meeting = _meeting(ctx, people, "Ann", "Plan")

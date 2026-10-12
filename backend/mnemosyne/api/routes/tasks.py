@@ -21,10 +21,13 @@ async def list_action_items(
     owner: str | None = None,
     due: Literal["overdue", "week"] | None = None,
     mine: bool = False,
+    scope: Literal["mine", "following", "everyone"] = "everyone",
     ctx: AppContext = Depends(get_ctx),
 ):
     """Action items from every meeting the caller can read, newest meeting first (open ones
-    with a deadline first, soonest first). `mine`: only those whose owner is the caller."""
+    with a deadline first, soonest first). `mine`: only those whose owner is the caller.
+    `scope`: "mine" (the same), "following" (starred items that are not the caller's) or
+    "everyone" (default)."""
     tasks = ctx.repo.list_action_items()
     is_mine = _mine(ctx)
     p = access.principal()
@@ -32,7 +35,7 @@ async def list_action_items(
     for t in tasks:
         # "Me" is the microphone speaker of the meeting: on a team server that is its owner.
         t.mine = is_mine(t.owner, not team or ctx.repo.session_owner(t.session_id) == p.user_id)
-    return filter_tasks(tasks, status, owner, due, mine=mine)
+    return filter_tasks(tasks, status, owner, due, mine=mine, scope=scope)
 
 
 def _mine(ctx: AppContext):
@@ -48,11 +51,13 @@ def _mine(ctx: AppContext):
 
 
 class ActionItemUpdate(ApiModel):
-    """What to change; fields left out stay. Ticking `done` needs read access only; `text`,
+    """What to change; fields left out stay. Ticking `done` and starring (`follow`) need read
+    access only (follow is kept with the meeting, not per person); `text`,
     `owner` and `due` edit the summary and need write access. `owner` "" or null clears it,
     `due` null clears it."""
 
     done: bool | None = None
+    follow: bool | None = None
     text: str | None = None
     owner: str | None = None
     due: date | None = None
@@ -92,6 +97,9 @@ async def update_action_item(
         items[idx].done = request.done
         ctx.repo.set_action_item_done(session_id, idx, request.done)  # readers may tick too
         _log_tick(ctx, session, items[idx].text, request.done)
+    if "follow" in given and request.follow is not None and request.follow != items[idx].follow:
+        items[idx].follow = request.follow
+        ctx.repo.set_action_item_follow(session_id, idx, request.follow)  # readers may star too
     ctx.bus.publish({"type": "session", "session_id": session_id, "status": session.status.value})
     a = items[idx]
     return TaskItem(
@@ -104,6 +112,7 @@ async def update_action_item(
         done=a.done,
         issue_url=a.issue_url,
         due=a.due,
+        follow=a.follow,
         can_edit=access.can_write(session.owner_id),
     )
 

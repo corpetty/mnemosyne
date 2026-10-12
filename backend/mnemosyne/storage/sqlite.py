@@ -1443,6 +1443,14 @@ class SessionRepository:
     def set_action_item_done(self, session_id: str, idx: int, done: bool) -> bool:
         """Tick an action item done (or not). Anyone who can read the meeting may: someone it
         is shared with ticks off what they were asked to do. False: no such meeting or item."""
+        return self._set_action_item_flag(session_id, idx, "done", done)
+
+    def set_action_item_follow(self, session_id: str, idx: int, follow: bool) -> bool:
+        """Star an action item (or not), i.e. follow what somebody else was given. Readers may,
+        like ticking; the flag is kept with the meeting, not per person."""
+        return self._set_action_item_flag(session_id, idx, "follow", follow)
+
+    def _set_action_item_flag(self, session_id: str, idx: int, flag: str, value: bool) -> bool:
         if not self._readable(session_id):
             return False
         with self._lock, self._conn:
@@ -1454,7 +1462,7 @@ class SessionRepository:
             data = SummaryData.model_validate_json(row["summary_data"])
             if not 0 <= idx < len(data.action_items):
                 return False
-            data.action_items[idx].done = done
+            setattr(data.action_items[idx], flag, value)
             self._conn.execute(
                 "UPDATE sessions SET summary_data=?, updated_at=? WHERE id=?",
                 (data.model_dump_json(), datetime.now().isoformat(), session_id),
@@ -1816,6 +1824,7 @@ class SessionRepository:
                         done=a.done,
                         issue_url=a.issue_url,
                         due=a.due,
+                        follow=a.follow,
                         can_edit=writable,
                     )
                 )

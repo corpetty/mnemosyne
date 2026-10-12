@@ -81,6 +81,7 @@ test('the follow-up draft is kept as edited', async () => {
 
 test('edit a task from the Tasks view', async () => {
   await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+  await page.getByRole('button', { name: 'Everyone', exact: true }).click(); // Mine is the default
   await page.getByPlaceholder('Filter…').fill('release call');
   await page.getByRole('button', { name: 'Edit task: Book the release call' }).click();
   await page.getByLabel('Task text').fill('Book the release call with QA');

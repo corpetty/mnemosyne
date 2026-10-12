@@ -21,6 +21,7 @@ class TaskItem(ApiModel):
     done: bool
     issue_url: str | None
     due: date | None = None
+    follow: bool = False  # starred: someone else's item the reader waits on
     mine: bool = False  # its owner is whoever asks (mine_matcher)
     # Whoever asks may change its text, owner and due date (their meeting, or an admin);
     # anyone who can read it may tick it done. Set by the task list and the edit route.
@@ -37,7 +38,7 @@ def same_item(a: str, b: str) -> bool:
 
 
 def carry_over(old: SummaryData | None, new: SummaryData) -> SummaryData:
-    """Copy done flags and issue links from a previous summary onto matching items of
+    """Copy done and follow flags and issue links from a previous summary onto matching items of
     a new one (re-summarizing must not reopen finished tasks or orphan issues)."""
     if old is None:
         return new
@@ -47,6 +48,7 @@ def carry_over(old: SummaryData | None, new: SummaryData) -> SummaryData:
             if i not in used and same_item(item.text, prev.text):
                 used.add(i)
                 item.done = item.done or prev.done
+                item.follow = item.follow or prev.follow
                 item.issue_url = item.issue_url or prev.issue_url
                 item.due = item.due or prev.due
                 break
@@ -120,9 +122,12 @@ def filter_tasks(
     due: str | None = None,
     today: date | None = None,
     mine: bool = False,
+    scope: str = "everyone",
 ) -> list[TaskItem]:
-    """Filter by done state, owner and deadline (`due`: "overdue" or "week", i.e. due by the
-    end of the next seven days). Open tasks with a deadline come first, soonest first."""
+    """Filter by done state, owner, deadline (`due`: "overdue" or "week", i.e. due by the
+    end of the next seven days) and `scope`: "mine" (owner is the caller), "following" (starred
+    items that are not the caller's) or "everyone". `mine=True` is the same as scope "mine".
+    Open tasks with a deadline come first, soonest first."""
     if status == "open":
         tasks = [t for t in tasks if not t.done]
     elif status == "done":
@@ -130,8 +135,10 @@ def filter_tasks(
     if owner:
         want = owner.casefold()
         tasks = [t for t in tasks if (t.owner or "").casefold() == want]
-    if mine:
+    if mine or scope == "mine":
         tasks = [t for t in tasks if t.mine]
+    elif scope == "following":
+        tasks = [t for t in tasks if t.follow and not t.mine]
     today = today or date.today()
     if due == "overdue":
         tasks = [t for t in tasks if t.due and t.due < today]

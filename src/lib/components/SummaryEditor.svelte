@@ -196,7 +196,7 @@
 					</li>
 				{/each}
 			</ul>
-			<button onclick={() => (items = [...items, { text: '', owner: null, issue_url: null, done: false, live: false, at: null, due: null }])} class="{add} mt-1.5">+ Add action item</button>
+			<button onclick={() => (items = [...items, { text: '', owner: null, issue_url: null, done: false, follow: false, live: false, at: null, due: null }])} class="{add} mt-1.5">+ Add action item</button>
 		</section>
 
 		<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 md:col-span-2">

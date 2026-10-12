@@ -54,6 +54,7 @@ class ActionItem(ApiModel):
     owner: str | None = None
     issue_url: str | None = None  # set once an issue was created for this item
     done: bool = False
+    follow: bool = False  # someone else's item that its reader waits on (starred)
     live: bool = False  # noted by the live copilot; the final summary did not list it
     at: float | None = None  # seconds: the transcript line where it came up
     due: date | None = None  # a deadline named in the meeting, resolved to a date
