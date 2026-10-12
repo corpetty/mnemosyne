@@ -38,8 +38,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: false # the cache below is keyed on the Phonon pins instead
-      - name: ffmpeg
-        run: ffmpeg -version | head -1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Install ffmpeg (cuts the sample meeting)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: uv's download cache (keyed on the Phonon pins)
         uses: actions/cache@v6
         with:
