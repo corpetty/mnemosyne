@@ -1,0 +1,62 @@
+name: Phonon
+
+# 0.16.0 shipped a Phonon installer that never worked (the tests' stand-in `phonon` accepted any
+# arguments). Do the real install here (real uv, the pins in phonon-requirements.txt, the model
+# download) and transcribe a minute of the sample meeting (scripts/check-phonon.py). Called by the
+# Release workflow too.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/mnemosyne/services/phonon_install.py"
+      - "backend/mnemosyne/transcription/transcribers/phonon.py"
+      - "backend/mnemosyne/transcription/transcribers/phonon-requirements.txt"
+      - "scripts/check-phonon.py"
+      - ".github/workflows/phonon.yml"
+  pull_request:
+    paths:
+      - "backend/mnemosyne/services/phonon_install.py"
+      - "backend/mnemosyne/transcription/transcribers/phonon.py"
+      - "backend/mnemosyne/transcription/transcribers/phonon-requirements.txt"
+      - "scripts/check-phonon.py"
+      - ".github/workflows/phonon.yml"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: Install Phonon and transcribe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false # the cache below is keyed on the Phonon pins instead
+      - name: ffmpeg
+        run: ffmpeg -version | head -1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: uv's download cache (keyed on the Phonon pins)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.UV_CACHE_DIR }}
+          key: uv-phonon-${{ hashFiles('backend/mnemosyne/transcription/transcribers/phonon-requirements.txt') }}
+      - name: Sync the backend (base only; Phonon gets its own environment)
+        working-directory: backend
+        run: uv sync --locked
+      - name: Install Phonon for real and transcribe the sample meeting
+        working-directory: backend
+        env:
+          MNEMOSYNE_UV_BIN: uv
+          # keep the temp data dir on the same filesystem as the cache so uv can hardlink
+          TMPDIR: ${{ github.workspace }}/.tmp
+        run: |
+          mkdir -p "$TMPDIR"
+          uv run --no-sync python ../scripts/check-phonon.py
+      - name: Phonon's log
+        if: failure()
+        run: cat .tmp/check-phonon-*/data/logs/phonon.log || true
