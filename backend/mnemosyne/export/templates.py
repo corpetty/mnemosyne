@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import datetime
 
 from ..models.session import ActionItem, ClientFact, SummaryData
+from .links import link_known_notes, link_topic
 
 
 def _yaml_str(value: str) -> str:
@@ -60,6 +61,7 @@ def render_meeting_note(
     resources: list[str] | None = None,  # markdown links, one per resource
     external_notes: list[tuple[str, str]] | None = None,  # (source, text) of other assistants
     is_mine: Callable[[ActionItem], bool] | None = None,
+    known_notes: Collection[str] | None = None,  # names of vault notes words may link to
 ) -> str:
     """Render a complete Obsidian-compatible note with YAML frontmatter.
 
@@ -67,11 +69,21 @@ def render_meeting_note(
     action items become tasks so Obsidian's Tasks/Dataview plugins pick them up. With `is_mine`
     only the items it accepts are tasks; the others are plain bullets under "Others", so a
     vault-wide task query lists only the reader's work (None: every item is a task).
+    With `known_notes`, words of the summary, decisions, action items, open questions, chapter
+    titles and the topics that are the name of one of those notes become [[links]], once per
+    section (links.py); the transcript is never linked.
     """
     tags = tags if tags is not None else ["meeting", "mnemosyne"]
 
     def person(name: str) -> str:
         return f"[[{name}]]" if link_people and not _is_label(name) else name
+
+    def linker():
+        """A function that links the text of one section: each name once across its calls."""
+        seen: set[str] = set()
+        if not known_notes:
+            return lambda text: text
+        return lambda text: link_known_notes(text, known_notes, seen)
 
     fm = [
         "---",
@@ -91,7 +103,8 @@ def render_meeting_note(
     if attendees:
         fm.append("attendees: [" + ", ".join(_yaml_str(person(a)) for a in attendees) + "]")
     if summary_data and summary_data.topics:
-        fm.append("topics: [" + ", ".join(_yaml_str(t) for t in summary_data.topics) + "]")
+        topics = [link_topic(t, known_notes or ()) for t in summary_data.topics]
+        fm.append("topics: [" + ", ".join(_yaml_str(t) for t in topics) + "]")
     fm.append("tags: [" + ", ".join(tags) + "]")
     fm.append("---")
 
@@ -102,25 +115,27 @@ def render_meeting_note(
 
     if summary:
         sections.append("## Summary\n")
-        sections.append(summary)
+        sections.append(linker()(summary))
         sections.append("")
 
     if summary_data:
         if summary_data.decisions:
             sections.append("## Decisions\n")
-            sections.extend(f"- {d}" for d in summary_data.decisions)
+            link = linker()
+            sections.extend(f"- {link(d)}" for d in summary_data.decisions)
             sections.append("")
         if summary_data.action_items:
             sections.append("## Action Items\n")
             flags = [is_mine is None or is_mine(i) for i in summary_data.action_items]
             mine = [i for i, f in zip(summary_data.action_items, flags, strict=True) if f]
             others = [i for i, f in zip(summary_data.action_items, flags, strict=True) if not f]
+            link = linker()  # one section: Others included
             for item in mine:
                 owner = f" ({person(item.owner)})" if item.owner else ""
                 issue = f" [issue]({item.issue_url})" if item.issue_url else ""
                 box = "x" if item.done else " "
                 due = f" 📅 {item.due.isoformat()}" if item.due else ""  # Obsidian Tasks format
-                sections.append(f"- [{box}] {item.text}{owner}{issue}{due}")
+                sections.append(f"- [{box}] {link(item.text)}{owner}{issue}{due}")
             if others:
                 if mine:
                     sections.append("")
@@ -128,11 +143,12 @@ def render_meeting_note(
                 for item in others:
                     who = f"{person(item.owner)}: " if item.owner else ""
                     done = " (done)" if item.done else ""
-                    sections.append(f"- {who}{item.text}{done}")
+                    sections.append(f"- {who}{link(item.text)}{done}")
             sections.append("")
         if summary_data.open_questions:
             sections.append("## Open Questions\n")
-            sections.extend(f"- {q}" for q in summary_data.open_questions)
+            link = linker()
+            sections.extend(f"- {link(q)}" for q in summary_data.open_questions)
             sections.append("")
         if summary_data.client_facts:
             sections.append("## Client Facts\n")
@@ -140,8 +156,9 @@ def render_meeting_note(
             sections.append("")
         if summary_data.chapters:
             sections.append("## Chapters\n")
+            link = linker()
             sections.extend(
-                f"- {int(c.start // 60):02d}:{int(c.start % 60):02d} {c.title}"
+                f"- {int(c.start // 60):02d}:{int(c.start % 60):02d} {link(c.title)}"
                 for c in summary_data.chapters
             )
             sections.append("")

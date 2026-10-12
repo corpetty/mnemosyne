@@ -2,7 +2,7 @@
 
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 from ..models.session import ActionItem, Session
@@ -43,6 +43,7 @@ class ObsidianExporter:
         include_transcript: bool = True,
         redact: bool = False,
         is_mine: Callable[[ActionItem], bool] | None = None,
+        known_notes: Callable[[], Collection[str]] | None = None,
     ):
         self.vault_path = Path(vault_path)
         self.subfolder = subfolder
@@ -51,6 +52,9 @@ class ObsidianExporter:
         self.include_transcript = include_transcript
         # Which action items are checkboxes (None: all of them), see render_meeting_note.
         self.is_mine = is_mine
+        # The names of vault notes that words may link to (called when a note is rendered,
+        # since scanning the vault is for exports only), None: no links to the user's notes.
+        self.known_notes = known_notes
         self.redact = redact  # ID, account and card numbers, see privacy.redact_identifiers
 
     def render(self, session: Session, resources: list[str] | None = None) -> str:
@@ -61,6 +65,12 @@ class ObsidianExporter:
             # Line by line first: a line may only make sense after the one before it.
             transcript = redact_transcript(transcript)
             session = session.model_copy(update={"transcript": transcript})
+        known = None
+        if self.known_notes is not None:
+            try:
+                known = self.known_notes()
+            except Exception:
+                logger.warning("Could not read the notes of the vault", exc_info=True)
         duration = max((s.end for s in transcript), default=None)
         note = render_meeting_note(
             title=session.name,
@@ -80,6 +90,7 @@ class ObsidianExporter:
             resources=resources,
             external_notes=[(n.source, n.text) for n in session.external_notes],
             is_mine=self.is_mine,
+            known_notes=known,
         )
         if self.redact:  # the summary, notes, action items and the rest
             from ..summarization.privacy import redact_identifiers

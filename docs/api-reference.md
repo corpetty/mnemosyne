@@ -1192,6 +1192,11 @@ frontmatter (`participants`, `people` as `[[links]]` for named speakers when `ob
 recorder's items (their name, "Me", or no owner) and followed items are `- [ ]` tasks; everyone
 else's are plain bullets (`- Jonny Zerah: text`) under `### Others`. `"all"` writes every item as a
 task. Person notes follow the same setting (open tasks as bullets, followed ones under "Waiting on").
+With `obsidian_link_notes` (default on) words in the Summary, Decisions, Action Items, Open
+Questions, Chapters and the `topics` that are the exact name of a note already in the vault become
+`[[links]]`, the first occurrence in each section. Case-sensitive, whole words, names of 3 or more
+characters; never date-named or daily notes, notes in our own folders, single lowercase or very
+common words, nor anything inside code, URLs or existing links. The transcript is never linked.
 
 **Response:** `{ "path": "...", "message": "Exported successfully" }`
 **Errors:** `400` vault not configured or missing, `404` session.

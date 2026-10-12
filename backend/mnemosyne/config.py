@@ -371,6 +371,10 @@ class Settings(BaseSettings):
     # and the ones you follow; everyone else's are plain bullets under "Others", so vault-wide
     # task queries list only your work. "all" = every item is a checkbox.
     obsidian_task_scope: Literal["mine", "all"] = "mine"
+    # Words in exported notes (summary, decisions, action items, open questions, chapters,
+    # topics) that are the exact name of a note already in the vault become [[links]], once
+    # per section (export/links.py).
+    obsidian_link_notes: bool = True
 
     @classmethod
     def settings_customise_sources(

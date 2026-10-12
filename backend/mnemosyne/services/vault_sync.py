@@ -47,6 +47,7 @@ _ISSUE = re.compile(r"\s*\[issue\]\([^)]*\)\s*$")
 _LINKED_OWNER = re.compile(r"\s*\(\[\[[^\]]+\]\]\)\s*$")
 _DONE_DATE = re.compile("\\s*\u2705\ufe0f?\\s*\\d{4}-\\d{2}-\\d{2}")
 _BLOCK_ID = re.compile(r"\s+\^[\w-]+\s*$")
+_WIKILINK = re.compile(r"\[\[([^\]|]*)(?:\|([^\]]*))?\]\]")
 
 _lock = threading.Lock()  # an export and the periodic pass must not tick the same item twice
 
@@ -73,16 +74,23 @@ def is_ours(text: str) -> bool:
     return False
 
 
+def strip_links(text: str) -> str:
+    """[[Note]] as Note and [[Note|Shown]] as Shown: links to the user's notes (export/links.py)
+    are not part of what an item says."""
+    return _WIKILINK.sub(lambda m: m.group(2) if m.group(2) is not None else m.group(1), text)
+
+
 def item_text(rest: str) -> str:
     """What follows a checkbox, without the decorations: block id, Tasks fields (📅 due,
-    ✅ done, ...), the issue link and a linked owner ` ([[Owner]])`."""
+    ✅ done, ...), the issue link and a linked owner ` ([[Owner]])`; other [[links]] in the
+    text are replaced by their words."""
     rest = _BLOCK_ID.sub("", rest)
     m = _TASKS_FIELDS.search(rest)
     if m:
         rest = rest[: m.start()]
     rest = _ISSUE.sub("", rest)
     rest = _LINKED_OWNER.sub("", rest)
-    return rest.strip()
+    return strip_links(rest).strip()
 
 
 def parse_ticks(text: str) -> list[Tick]:
@@ -145,10 +153,11 @@ def _match(text: str, items: list[ActionItem], used: set[int]) -> int | None:
     for i, item in enumerate(items):
         if i in used:
             continue
+        wanted = strip_links(item.text)  # the note's text has none either
         for form in _forms(text, item):
-            if form == item.text.strip():
+            if form == wanted.strip():
                 return i
-            if similar is None and same_item(form, item.text):
+            if similar is None and same_item(form, wanted):
                 similar = i
     return similar
 

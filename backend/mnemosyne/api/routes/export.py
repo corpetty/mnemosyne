@@ -4,6 +4,7 @@ import asyncio
 import logging
 import shutil
 from collections.abc import Callable
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -51,10 +52,14 @@ def task_predicate(ctx: AppContext, session) -> Callable[[ActionItem], bool] | N
 
 def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianExporter:
     """An exporter with the settings; a session's meeting type may choose the folder."""
-    from ...services.meeting_types import obsidian_folder
+    from ...export.vault_index import linkable_notes
+    from ...services.meeting_types import available_types, obsidian_folder
 
     st = ctx.settings
     tags = [t.strip() for t in st.obsidian_tags.split(",") if t.strip()]
+    root = Path(vault_path).expanduser()
+    links = st.obsidian_link_notes and bool(vault_path) and vault_path != "."  # ".": no vault set
+    own = {st.obsidian_subfolder} | {t.obsidian_folder for t in available_types(st)}
     return ObsidianExporter(
         vault_path,
         obsidian_folder(st, session) if session is not None else st.obsidian_subfolder,
@@ -63,6 +68,7 @@ def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianEx
         include_transcript=st.obsidian_include_transcript,
         redact=st.redact_exports,
         is_mine=task_predicate(ctx, session) if session is not None else None,
+        known_notes=(lambda: linkable_notes(root, own)) if links else None,
     )
 
 
@@ -113,8 +119,6 @@ def export_session(ctx: AppContext, session, vault_path: str):
     path = exporter.export(session, _resources(ctx, session, exporter))
     st = ctx.settings
     if st.obsidian_people_notes:
-        from pathlib import Path
-
         from ...export.people_notes import write_person_notes
 
         names = set(session.participants) | set(session.attendees)
@@ -133,8 +137,6 @@ def export_session(ctx: AppContext, session, vault_path: str):
         except Exception:
             logger.warning("Person notes failed for session %s", session.id, exc_info=True)
     if st.obsidian_daily_notes:
-        from pathlib import Path
-
         from ...export.daily_note import write_daily_entry
         from ...export.obsidian import note_stem
 

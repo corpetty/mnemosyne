@@ -5009,6 +5009,8 @@ export interface components {
             obsidian_daily_notes?: boolean | null;
             /** Obsidian Include Transcript */
             obsidian_include_transcript?: boolean | null;
+            /** Obsidian Link Notes */
+            obsidian_link_notes?: boolean | null;
             /** Obsidian Link People */
             obsidian_link_people?: boolean | null;
             /** Obsidian People Notes */
@@ -5270,6 +5272,8 @@ export interface components {
             obsidian_daily_notes: boolean;
             /** Obsidian Include Transcript */
             obsidian_include_transcript: boolean;
+            /** Obsidian Link Notes */
+            obsidian_link_notes: boolean;
             /** Obsidian Link People */
             obsidian_link_people: boolean;
             /** Obsidian People Notes */
