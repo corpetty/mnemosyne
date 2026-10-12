@@ -199,10 +199,11 @@ class PhononServer:
         log = self.log_path.open("ab") if self.log_path else subprocess.DEVNULL
         logger.info("Starting phonon serve on port %d", self.port)
         self.api_key = secrets.token_urlsafe(24)
+        # `phonon serve` names its model itself: a "phonon-2" argument is refused (0.16.0's
+        # install failed at its first start on that, 2026-10-12).
         args = [
             self.program,
             "serve",
-            "phonon-2",
             "--port",
             str(self.port),
             "--api-key",

@@ -19,7 +19,14 @@ STUB = textwrap.dedent(
     import json, sys
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
-    port = int(sys.argv[sys.argv.index("--port") + 1])
+    import argparse
+    # As strict as the real `phonon serve`: unknown arguments are refused.
+    p = argparse.ArgumentParser()
+    p.add_argument("command", choices=["serve"])
+    p.add_argument("--port", type=int, required=True)
+    p.add_argument("--api-key")
+    p.add_argument("--threads", type=int)
+    port = p.parse_args().port
     log = open(sys.argv[0] + ".log", "a")
     log.write("ARGS " + " ".join(sys.argv[1:]) + "\\n"); log.flush()
     BODY = {{
