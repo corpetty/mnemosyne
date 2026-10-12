@@ -141,7 +141,9 @@ class Settings(BaseSettings):
 
     # Live transcription while recording (provisional; replaced by the final job)
     live_transcription: bool = True
-    live_transcriber: str = "parakeet"  # parakeet | whisperx | phonon | remote
+    # auto (Phonon-2 for English when installed, else Parakeet) | parakeet | whisperx | phonon
+    # | remote
+    live_transcriber: str = "auto"
     live_interval_seconds: float = 5.0
     # Label live lines by voice (needs a diarizer and the pyannote embedding model).
     live_diarization: bool = True

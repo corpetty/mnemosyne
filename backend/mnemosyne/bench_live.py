@@ -273,7 +273,11 @@ def turns_from_reference(reference: list[dict]) -> list[dict]:
 
 async def run_live(settings, audio: Path, reference: list[dict], modes: list[str]) -> list[dict]:
     from .audio.mixer import decode_audio
-    from .transcription.registry import build_live_embedder, build_live_transcriber
+    from .transcription.registry import (
+        build_live_embedder,
+        build_live_transcriber,
+        resolve_live_transcriber,
+    )
 
     turns = turns_from_reference(reference)
     pcm = await asyncio.to_thread(decode_audio, audio, RATE)
@@ -285,7 +289,7 @@ async def run_live(settings, audio: Path, reference: list[dict], modes: list[str
         pass
     transcriber = CachingTranscriber(
         build_live_transcriber(settings),
-        WORK_DIR / f"{audio.stem}-{settings.live_transcriber}.json",
+        WORK_DIR / f"{audio.stem}-{resolve_live_transcriber(settings)}.json",
     )
     models: dict = {"embedder": build_live_embedder(settings)}
     if models["embedder"] is not None:

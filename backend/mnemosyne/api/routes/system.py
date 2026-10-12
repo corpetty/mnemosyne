@@ -29,6 +29,7 @@ class SystemInfo(ApiModel):
     # What this machine runs for the current settings (registry.resolve_*): "auto" and choices
     # whose packages are missing resolve to what works here.
     transcriber_in_use: str
+    live_transcriber_in_use: str  # the live transcript's (CPU only: Phonon-2 or Parakeet for auto)
     diarizer_in_use: str
     platform: str
     problems: list[str]  # what went wrong when the backend started (config, recovery, ...)
@@ -62,14 +63,20 @@ def _gpu_driver() -> bool:
 
 @router.get("/system", response_model=SystemInfo)
 async def system_info(ctx: AppContext = Depends(get_ctx)):
-    from ...transcription.registry import resolve_diarizer, resolve_transcriber
+    from ...transcription.registry import (
+        resolve_diarizer,
+        resolve_live_transcriber,
+        resolve_transcriber,
+    )
 
     # May import torch to see whether CUDA works: not on the event loop.
     transcriber = await asyncio.to_thread(resolve_transcriber, ctx.settings)
+    live = await asyncio.to_thread(resolve_live_transcriber, ctx.settings)
     diarizer = await asyncio.to_thread(resolve_diarizer, ctx.settings)
     return SystemInfo(
         onnx_diarizer=_has("sherpa_onnx"),
         transcriber_in_use=transcriber,
+        live_transcriber_in_use=live,
         diarizer_in_use=diarizer,
         gpu_driver=_gpu_driver(),
         gpu_stack=_has("torch") and _has("whisperx"),
@@ -126,7 +133,7 @@ async def prepare_models(ctx: AppContext = Depends(get_ctx)):
     """Download the speech and search models now (a `prepare_models` job), so the first
     recording, transcription and search do not wait for them: what setup does at the end."""
     from ...services.model_downloads import MB, SEARCH_MB, TRANSCRIBER_MB, hf_cache, watched
-    from ...transcription.registry import resolve_transcriber
+    from ...transcription.registry import resolve_live_transcriber, resolve_transcriber
 
     if any(j.kind == "prepare_models" for j in ctx.jobs.list(active_only=True)):
         raise HTTPException(status_code=409, detail="The models are already being prepared")
@@ -143,7 +150,10 @@ async def prepare_models(ctx: AppContext = Depends(get_ctx)):
         await ctx.models.ensure_loaded(on_download=downloading("the speech models", (0.0, 0.7)))
         settings = ctx.settings
         final = await asyncio.to_thread(resolve_transcriber, settings)
-        if settings.live_transcription and settings.live_transcriber != final:
+        if (
+            settings.live_transcription
+            and await asyncio.to_thread(resolve_live_transcriber, settings) != final
+        ):
             # The live transcript's model (Parakeet on the CPU), when the final one is another.
             job.update("Getting the live transcript's model ready", progress=0.7)
             live = ctx.models.live_transcriber

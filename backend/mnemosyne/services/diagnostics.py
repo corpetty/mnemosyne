@@ -47,6 +47,18 @@ SHOWN_TEXT = {
 }
 
 
+def _live_in_use(settings) -> str:
+    """' (-> phonon)' when the live transcriber is auto: what it resolves to here."""
+    if not settings.live_transcription or settings.live_transcriber != "auto":
+        return ""
+    try:
+        from ..transcription.registry import resolve_live_transcriber
+
+        return f" (using {resolve_live_transcriber(settings)})"
+    except Exception:
+        return ""
+
+
 def _redact_home(text: str) -> str:
     home = str(Path.home())
     return text.replace(home, "~") if home not in ("", "/") else text
@@ -156,7 +168,8 @@ def build_report(app: AppContext, log_lines: int = 200) -> str:
         "",
         "### Engines",
         f"transcriber {settings.transcriber}, diarizer {settings.diarizer}, "
-        f"live {settings.live_transcriber if settings.live_transcription else 'off'}",
+        f"live {settings.live_transcriber if settings.live_transcription else 'off'}"
+        f"{_live_in_use(settings)}",
         f"summaries {settings.default_provider}/{settings.default_model or 'default'}",
         f"transcription models loaded: {_engine_loaded(app)}",
         "",

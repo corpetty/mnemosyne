@@ -459,3 +459,38 @@ def test_a_file_is_hashed_once_while_it_is_unchanged(fake_uv, tmp_path, monkeypa
         phonon.verify_model(home)
     assert len(calls) == 2
     phonon._refused.clear()
+
+
+def test_live_auto_follows_phonon_for_english_and_never_picks_whisperx(tmp_path, monkeypatch):
+    # Both packages present: the final "auto" may choose WhisperX, live (CPU) never does.
+    monkeypatch.setattr(registry, "installed", lambda *m: True)
+    monkeypatch.setattr(registry, "cuda_works", lambda: True)
+    english = Settings(data_dir=tmp_path, language="en")
+    assert english.live_transcriber == "auto"  # the default
+    assert registry.resolve_live_transcriber(english) == "parakeet"  # not installed
+    home = tmp_path / "phonon"
+    phonon.managed_program(home).parent.mkdir(parents=True)
+    phonon.managed_program(home).write_text("#!/bin/sh\n")
+    phonon.managed_program(home).chmod(0o755)
+    (home / "installed").write_text("x\n")
+    assert registry.resolve_live_transcriber(english) == "phonon"
+    assert registry.build_live_transcriber(english).name == "phonon"
+    assert (
+        registry.resolve_live_transcriber(Settings(data_dir=tmp_path, language="en-GB")) == "phonon"
+    )
+    assert (
+        registry.resolve_live_transcriber(Settings(data_dir=tmp_path, language="de")) == "parakeet"
+    )
+    assert registry.resolve_live_transcriber(Settings(data_dir=tmp_path)) == "parakeet"
+    # A saved explicit choice is kept.
+    kept = Settings(data_dir=tmp_path, language="en", live_transcriber="parakeet")
+    assert registry.resolve_live_transcriber(kept) == "parakeet"
+
+
+def test_system_reports_the_live_engine(client, ctx, monkeypatch):
+    monkeypatch.setattr(registry, "installed", lambda *m: set(m) <= {"onnx_asr"})
+    info = client.get("/api/system").json()
+    assert info["live_transcriber_in_use"] == "parakeet"
+    monkeypatch.setattr(registry, "phonon_available", lambda s: True)
+    ctx.settings.language = "en"
+    assert client.get("/api/system").json()["live_transcriber_in_use"] == "phonon"

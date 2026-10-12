@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { deleteSpeakerProfile, getSettings, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
+	import { deleteSpeakerProfile, getSettings, getSystemInfo, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
 	import { loadAutoRecordSettings, openSetup, refreshMe } from '$lib/app/controller.svelte.js';
 	import { updateState } from '$lib/stores/update.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
@@ -25,12 +25,14 @@
 	import MyPreferences from './MyPreferences.svelte';
 	import LocalModelCard from './LocalModelCard.svelte';
 	import RecordsSettings from './RecordsSettings.svelte';
-	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile } from '$lib/types/index.js';
+	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile, SystemInfo } from '$lib/types/index.js';
 
 	// a team server: settings belong to its admins (members and reviewers only read them).
 	const readOnly = $derived(!!connectionState.me?.id && connectionState.me.role !== 'admin');
 	const teamAdmin = $derived(!!connectionState.me?.team_mode && connectionState.me.role === 'admin');
 	let settings = $state<SettingsResponse | null>(null);
+	// What the engines set to Automatic resolve to on this machine (for the hint beside them).
+	let system = $state<SystemInfo | null>(null);
 	let providers = $state<ProviderModels[]>([]);
 	let voices = $state<SpeakerProfile[]>([]);
 	let loading = $state(false);
@@ -108,6 +110,7 @@
 		error = '';
 		try {
 			settings = await getSettings();
+			system = await getSystemInfo().catch(() => null);
 			const v = settings.values;
 			form = {
 				phone_url: v.phone_url,
@@ -534,11 +537,15 @@
 					<label>
 						<span class={labelClass}>Live transcriber</span>
 						<select bind:value={form.live_transcriber} disabled={locked('live_transcriber')} class={inputClass}>
-							<option value="parakeet">Parakeet (ONNX, CPU, recommended)</option>
+							<option value="auto">Automatic (Phonon-2 for English when installed, else Parakeet)</option>
+							<option value="parakeet">Parakeet (ONNX, CPU)</option>
 							<option value="phonon">Phonon-2 (English only, CPU, needs phonon installed)</option>
 							<option value="remote">Remote server</option>
 							<option value="whisperx">WhisperX (GPU, competes with final jobs)</option>
 						</select>
+						{#if form.live_transcriber === 'auto' && system}
+							<span class="text-xs text-gray-500">Uses {system.live_transcriber_in_use} here.</span>
+						{/if}
 					</label>
 					<label>
 						<span class={labelClass}>Update interval (seconds)</span>
@@ -734,6 +741,9 @@
 							<option value="phonon">Phonon-2 (English only, CPU, needs phonon installed)</option>
 							<option value="remote">Remote OpenAI-compatible server</option>
 						</select>
+						{#if form.transcriber === 'auto' && system}
+							<span class="text-xs text-gray-500">Uses {system.transcriber_in_use} here.</span>
+						{/if}
 					</label>
 					<label>
 						<span class={labelClass}>Diarizer</span>
@@ -782,8 +792,8 @@
 							</select>
 						</label>
 					{/if}
-					{#if form.transcriber === 'phonon' || form.transcriber === 'auto' || form.live_transcriber === 'phonon'}
-						<PhononCard />
+					{#if form.transcriber === 'phonon' || form.transcriber === 'auto' || form.live_transcriber === 'phonon' || form.live_transcriber === 'auto' || system?.phonon}
+						<PhononCard onapplied={load} />
 					{/if}
 					{#if form.transcriber === 'phonon' || form.live_transcriber === 'phonon'}
 						<label class="col-span-2">

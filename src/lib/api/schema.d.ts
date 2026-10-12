@@ -5651,6 +5651,8 @@ export interface components {
             gpu_support: string;
             /** Hf Token */
             hf_token: boolean;
+            /** Live Transcriber In Use */
+            live_transcriber_in_use: string;
             /** Onnx Diarizer */
             onnx_diarizer: boolean;
             /** Parakeet */

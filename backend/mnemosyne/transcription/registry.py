@@ -54,6 +54,17 @@ def resolve_transcriber(settings: Settings, kind: str | None = None) -> str:
     return kind
 
 
+def resolve_live_transcriber(settings: Settings) -> str:
+    """The transcriber the live transcript runs. `auto`: Phonon-2 for English when it is
+    installed, else Parakeet (live runs on the CPU: never WhisperX). Other choices resolve as
+    for the final transcript."""
+    if settings.live_transcriber == "auto":
+        if settings.language.lower().startswith("en") and phonon_available(settings):
+            return "phonon"
+        return "parakeet"
+    return resolve_transcriber(settings, settings.live_transcriber)
+
+
 def phonon_available(settings: Settings) -> bool:
     """Fermion's `phonon` program is installed (transcribers/phonon.py; not auto: English only)."""
     from .transcribers.phonon import find_phonon
@@ -113,7 +124,9 @@ def build_transcriber(
 def build_live_transcriber(settings: Settings) -> Transcriber:
     """A separate transcriber instance for live use, so it never shares state
     with the engine running final jobs."""
-    return build_transcriber(settings, settings.live_transcriber, threads=settings.live_threads)
+    return build_transcriber(
+        settings, resolve_live_transcriber(settings), threads=settings.live_threads
+    )
 
 
 def nemotron_available() -> bool:
