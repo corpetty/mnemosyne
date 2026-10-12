@@ -27,8 +27,11 @@ async def list_action_items(
     with a deadline first, soonest first). `mine`: only those whose owner is the caller."""
     tasks = ctx.repo.list_action_items()
     is_mine = _mine(ctx)
+    p = access.principal()
+    team = p is not None and bool(p.user_id)
     for t in tasks:
-        t.mine = is_mine(t.owner)
+        # "Me" is the microphone speaker of the meeting: on a team server that is its owner.
+        t.mine = is_mine(t.owner, not team or ctx.repo.session_owner(t.session_id) == p.user_id)
     return filter_tasks(tasks, status, owner, due, mine=mine)
 
 

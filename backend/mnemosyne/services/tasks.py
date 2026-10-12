@@ -64,18 +64,51 @@ def add_live_todos(notes: CopilotNotes | None, data: SummaryData) -> SummaryData
     return data
 
 
+_SPLIT = re.compile(r"\s+and\s+|\s*[&,/]\s*", re.IGNORECASE)
+_SELF = {"me", "myself", "i"}
+
+
+def owner_parts(owner: str) -> list[str]:
+    """A compound owner ("Jonny Zerah and Me", "Ann, Bob", "Ann/Bob") as its people."""
+    return [p.strip() for p in _SPLIT.split(owner) if p.strip()]
+
+
+def rename_owner(owner: str | None, old: str, new: str) -> str | None:
+    """`owner` with the person `old` (exact, any case) written as `new`, also inside a
+    compound owner. Unchanged when `old` is not in it."""
+    if not owner or not old.strip():
+        return owner
+    want = old.strip().casefold()
+    if owner.strip().casefold() == want:
+        return new
+    parts = owner_parts(owner)
+    if len(parts) < 2 or want not in {p.casefold() for p in parts}:
+        return owner
+    return " and ".join(new if p.casefold() == want else p for p in parts)
+
+
 def mine_matcher(names: list[str], others: list[str]):
     """Is an action item's owner this person? Their full name or email (`names`), or their
-    first name when nobody else (`others`: everyone else's names) has it. Owners are written
-    as people said them, so "Ann" is Ann Lee unless there is also an Ann Ortiz."""
+    first name when nobody else (`others`: everyone else's names) has it, or "me"/"myself"/"I"
+    (the summarizer writes those from the microphone speaker's side; pass `me=False` for a
+    meeting where that is somebody else). Owners are written as people said them, so "Ann" is
+    Ann Lee unless there is also an Ann Ortiz. A compound owner ("Ann and Me") is mine when
+    any of its people is."""
     full = {n.strip().casefold() for n in names if n.strip()}
     taken = {o.split()[0].casefold() for o in others if o.split()}
     first = {n.split()[0].casefold() for n in names if n.split() and "@" not in n}
     short = first - taken
 
-    def mine(owner: str | None) -> bool:
+    def one(o: str, me: bool) -> bool:
+        return o in full or o in short or (me and o in _SELF)
+
+    def mine(owner: str | None, me: bool = True) -> bool:
         o = (owner or "").strip().casefold()
-        return bool(o) and (o in full or o in short)
+        if not o:
+            return False
+        if one(o, me):
+            return True
+        return any(one(p.casefold(), me) for p in owner_parts(o))
 
     return mine
 

@@ -576,6 +576,9 @@ class SessionRepository:
 
     # ---- who may see and change what (access.py) ----------------------
 
+    def session_owner(self, session_id: str) -> str | None:
+        return self._owner(session_id)
+
     def _owner(self, session_id: str) -> str | None:
         """The meeting's owner id ("" for nobody's), or None for an unknown meeting."""
         with self._lock:
@@ -2151,7 +2154,29 @@ class SessionRepository:
                 "UPDATE sessions SET participants=?, updated_at=? WHERE id=?",
                 (json.dumps(participants), datetime.now().isoformat(), session_id),
             )
+            self._rename_item_owners(session_id, old, new)
         return self.get(session_id)
+
+    def _rename_item_owners(self, session_id: str, old: str, new: str) -> None:
+        """Action items owned by the speaker label `old` now belong to `new`."""
+        from ..services.tasks import rename_owner
+
+        row = self._conn.execute(
+            "SELECT summary_data FROM sessions WHERE id=?", (session_id,)
+        ).fetchone()
+        if row is None or not row["summary_data"]:
+            return
+        data = SummaryData.model_validate_json(row["summary_data"])
+        changed = False
+        for item in data.action_items:
+            renamed = rename_owner(item.owner, old, new)
+            if renamed != item.owner:
+                item.owner, changed = renamed, True
+        if changed:
+            self._conn.execute(
+                "UPDATE sessions SET summary_data=? WHERE id=?",
+                (data.model_dump_json(), session_id),
+            )
 
     def list_speakers(self) -> list[SpeakerProfile]:
         with self._lock:
