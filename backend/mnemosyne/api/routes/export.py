@@ -97,7 +97,12 @@ def _resources(ctx: AppContext, session, exporter: ObsidianExporter) -> list[str
 
 def before_export(ctx: AppContext, session, vault_path: str):
     """Runs before a meeting is written to the vault, and returns the session to write (read
-    again if this changed it). The place for taking back what was changed in the vault."""
+    again if this changed it): ticks made in the note in Obsidian are taken back first, so
+    exporting again never undoes them (services/vault_sync.py)."""
+    from ...services.vault_sync import apply_vault_ticks
+
+    if apply_vault_ticks(ctx, session, vault_path):
+        return ctx.sessions.get_session(session.id) or session
     return session
 
 

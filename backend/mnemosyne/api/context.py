@@ -62,6 +62,11 @@ class AppContext:
     _backup_task: asyncio.Task | None = None
     _idle_task: asyncio.Task | None = None
     _awake_task: asyncio.Task | None = None
+    _vault_task: asyncio.Task | None = None
+    # Ticks read back from the Obsidian vault (services/vault_sync.py): seconds between passes
+    # (0: none; tests drive sync_vault directly) and each note's mtime at the last pass.
+    vault_sync_interval: float = 300.0
+    vault_seen: dict = field(default_factory=dict)
     _intervals: tuple[float, float] = (6 * 3600, 900)
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     live: dict = field(default_factory=dict)  # session id -> running LiveTranscriber
@@ -453,6 +458,10 @@ class AppContext:
         self._backup_task = asyncio.create_task(self._backup_loop(3600.0))
         self._idle_task = asyncio.create_task(self._idle_loop(60.0))
         self._awake_task = asyncio.create_task(self._awake_loop(5.0))
+        if self.vault_sync_interval > 0:
+            from ..services.vault_sync import sync_loop
+
+            self._vault_task = asyncio.create_task(sync_loop(self, self.vault_sync_interval))
 
     async def _start_echo(self) -> None:
         try:
@@ -500,6 +509,7 @@ class AppContext:
             self._backup_task,
             self._idle_task,
             self._awake_task,
+            self._vault_task,
         ):
             if task is not None:
                 task.cancel()

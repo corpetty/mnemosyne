@@ -1,5 +1,6 @@
 """Action items across all meetings."""
 
+import asyncio
 from datetime import date, datetime
 from typing import Literal
 
@@ -10,6 +11,7 @@ from ...models.base import ApiModel
 from ...services import history, organizations
 from ...services.brief import Brief, build_brief
 from ...services.tasks import TaskItem, filter_tasks, mine_matcher
+from ...services.vault_sync import write_tick
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["tasks"])
@@ -97,6 +99,9 @@ async def update_action_item(
         items[idx].done = request.done
         ctx.repo.set_action_item_done(session_id, idx, request.done)  # readers may tick too
         _log_tick(ctx, session, items[idx].text, request.done)
+        # The meeting's note in the vault says the same (that one line), or the next pass
+        # over the vault would take the old state back. Never raises.
+        await asyncio.to_thread(write_tick, ctx, session, idx, request.done)
     if "follow" in given and request.follow is not None and request.follow != items[idx].follow:
         items[idx].follow = request.follow
         ctx.repo.set_action_item_follow(session_id, idx, request.follow)  # readers may star too
