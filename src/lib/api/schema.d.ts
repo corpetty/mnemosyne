@@ -1851,6 +1851,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/live-flags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Flags */
+        get: operations["list_flags_api_sessions__session_id__live_flags_get"];
+        put?: never;
+        /** Add */
+        post: operations["add_api_sessions__session_id__live_flags_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/live-flags/{flag_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete */
+        delete: operations["delete_api_sessions__session_id__live_flags__flag_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/local-only": {
         parameters: {
             query?: never;
@@ -1937,6 +1972,26 @@ export interface paths {
          *     or one whose save failed) as its next part.
          */
         post: operations["recover_api_sessions__session_id__recover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/segments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Insert Segment
+         * @description Put a segment back at an index (undo of a delete).
+         */
+        post: operations["insert_segment_api_sessions__session_id__segments_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2815,6 +2870,11 @@ export interface components {
              * @default false
              */
             follow: boolean;
+            /**
+             * Id
+             * @default
+             */
+            id: string;
             /** Issue Url */
             issue_url?: string | null;
             /**
@@ -2843,6 +2903,11 @@ export interface components {
              * @default false
              */
             follow: boolean;
+            /**
+             * Id
+             * @default
+             */
+            id: string;
             /** Issue Url */
             issue_url: string | null;
             /**
@@ -3794,6 +3859,12 @@ export interface components {
             /** Total Sessions */
             total_sessions: number;
         };
+        /** InsertRequest */
+        InsertRequest: {
+            /** Index */
+            index: number;
+            segment: components["schemas"]["TranscriptSegment-Input"];
+        };
         /** Invite */
         Invite: {
             /** Code */
@@ -3887,9 +3958,48 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** LiveFlag */
+        LiveFlag: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** End */
+            end: number;
+            /** Id */
+            id: string;
+            /**
+             * Part
+             * @default 0
+             */
+            part: number;
+            /** Source */
+            source: string;
+            /** Start */
+            start: number;
+            /** Text */
+            text: string;
+        };
+        /** LiveFlagCreate */
+        LiveFlagCreate: {
+            /** End */
+            end: number;
+            /** Part */
+            part?: number | null;
+            /** Source */
+            source: string;
+            /** Start */
+            start: number;
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+        };
         /** LiveSegment */
         LiveSegment: {
-            segment: components["schemas"]["TranscriptSegment"];
+            segment: components["schemas"]["TranscriptSegment-Output"];
             /** Source */
             source: string;
         };
@@ -4779,7 +4889,7 @@ export interface components {
              */
             readonly summary_stale: boolean;
             /** Transcript */
-            transcript: components["schemas"]["TranscriptSegment"][];
+            transcript: components["schemas"]["TranscriptSegment-Output"][];
             /**
              * Updated At
              * Format: date-time
@@ -5041,6 +5151,8 @@ export interface components {
             meeting_types?: components["schemas"]["MeetingType"][] | null;
             /** Mention Keywords */
             mention_keywords?: string | null;
+            /** Mic Speech Gate */
+            mic_speech_gate?: boolean | null;
             /** Min Speakers */
             min_speakers?: number | null;
             /** Obsidian Auto Export */
@@ -5306,6 +5418,8 @@ export interface components {
             meeting_types: components["schemas"]["MeetingType"][];
             /** Mention Keywords */
             mention_keywords: string;
+            /** Mic Speech Gate */
+            mic_speech_gate: boolean;
             /** Min Speakers */
             min_speakers: number | null;
             /** Obsidian Auto Export */
@@ -5617,6 +5731,8 @@ export interface components {
             client_facts: components["schemas"]["ClientFact-Output"][];
             /** Decision At */
             decision_at: (number | null)[];
+            /** Decision Ids */
+            decision_ids: string[];
             /** Decisions */
             decisions: string[];
             /** Edited At */
@@ -5645,6 +5761,8 @@ export interface components {
             provider: string;
             /** Question At */
             question_at: (number | null)[];
+            /** Question Ids */
+            question_ids: string[];
             /**
              * Source Hash
              * @default
@@ -5858,6 +5976,11 @@ export interface components {
         TimedText: {
             /** At */
             at?: number | null;
+            /**
+             * Id
+             * @default
+             */
+            id: string;
             /** Text */
             text: string;
         };
@@ -5891,7 +6014,7 @@ export interface components {
             ok: boolean;
         };
         /** TranscriptSegment */
-        TranscriptSegment: {
+        "TranscriptSegment-Input": {
             /** End */
             end: number;
             /** Speaker */
@@ -5901,7 +6024,20 @@ export interface components {
             /** Text */
             text: string;
             /** Words */
-            words: components["schemas"]["WordSegment"][] | null;
+            words?: components["schemas"]["WordSegment-Input"][] | null;
+        };
+        /** TranscriptSegment */
+        "TranscriptSegment-Output": {
+            /** End */
+            end: number;
+            /** Speaker */
+            speaker: string;
+            /** Start */
+            start: number;
+            /** Text */
+            text: string;
+            /** Words */
+            words: components["schemas"]["WordSegment-Output"][] | null;
         };
         /** Turn */
         Turn: {
@@ -6069,7 +6205,21 @@ export interface components {
             reason: string;
         };
         /** WordSegment */
-        WordSegment: {
+        "WordSegment-Input": {
+            /** End */
+            end: number;
+            /**
+             * Score
+             * @default 0
+             */
+            score: number;
+            /** Start */
+            start: number;
+            /** Word */
+            word: string;
+        };
+        /** WordSegment */
+        "WordSegment-Output": {
             /** End */
             end: number;
             /**
@@ -9428,6 +9578,104 @@ export interface operations {
             };
         };
     };
+    list_flags_api_sessions__session_id__live_flags_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveFlag"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_api_sessions__session_id__live_flags_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LiveFlagCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveFlag"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_sessions__session_id__live_flags__flag_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                flag_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     set_local_only_api_sessions__session_id__local_only_put: {
         parameters: {
             query?: never;
@@ -9582,6 +9830,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    insert_segment_api_sessions__session_id__segments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
                 };
             };
             /** @description Validation Error */

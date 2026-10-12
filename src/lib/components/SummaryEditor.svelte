@@ -31,14 +31,14 @@
 	// The editor opens on a copy of the summary as it is now; later changes do not move it.
 	const start = untrack(() => session);
 	const d = start.summary_data;
-	const timed = (texts: string[], at: (number | null)[]): TimedText[] =>
-		texts.map((text, i) => ({ text, at: at[i] ?? null }));
+	const timed = (texts: string[], at: (number | null)[], ids: string[]): TimedText[] =>
+		texts.map((text, i) => ({ text, at: at[i] ?? null, id: ids[i] ?? '' }));
 
 	let summary = $state(start.summary ?? '');
 	let topics = $state<string[]>([...(d?.topics ?? [])]);
 	let newTopic = $state('');
-	let decisions = $state<TimedText[]>(timed(d?.decisions ?? [], d?.decision_at ?? []));
-	let questions = $state<TimedText[]>(timed(d?.open_questions ?? [], d?.question_at ?? []));
+	let decisions = $state<TimedText[]>(timed(d?.decisions ?? [], d?.decision_at ?? [], d?.decision_ids ?? []));
+	let questions = $state<TimedText[]>(timed(d?.open_questions ?? [], d?.question_at ?? [], d?.question_ids ?? []));
 	let items = $state<ActionItem[]>((d?.action_items ?? []).map((a) => ({ ...a })));
 	let chapters = $state<ChapterRow[]>((d?.chapters ?? []).map((c) => ({ time: fmt(c.start), title: c.title })));
 	let facts = $state<ClientFact[]>((d?.client_facts ?? []).map((f) => ({ ...f })));
@@ -122,7 +122,7 @@
 			</li>
 		{/each}
 	</ul>
-	<button onclick={() => set([...list, { text: '', at: null }])} class="{add} mt-1.5">+ Add {label.toLowerCase()}</button>
+	<button onclick={() => set([...list, { text: '', at: null, id: '' }])} class="{add} mt-1.5">+ Add {label.toLowerCase()}</button>
 {/snippet}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -196,7 +196,7 @@
 					</li>
 				{/each}
 			</ul>
-			<button onclick={() => (items = [...items, { text: '', owner: null, issue_url: null, done: false, follow: false, live: false, at: null, due: null }])} class="{add} mt-1.5">+ Add action item</button>
+			<button onclick={() => (items = [...items, { text: '', owner: null, issue_url: null, done: false, follow: false, live: false, at: null, due: null, id: '' }])} class="{add} mt-1.5">+ Add action item</button>
 		</section>
 
 		<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 md:col-span-2">

@@ -50,6 +50,7 @@ def transcript_hash(segments: list[TranscriptSegment]) -> str:
 
 
 class ActionItem(ApiModel):
+    id: str = ""  # stable id across edits and re-summaries (services/summary_ids.py)
     text: str
     owner: str | None = None
     issue_url: str | None = None  # set once an issue was created for this item
@@ -120,6 +121,8 @@ class SummaryData(ApiModel):
     # same order as the lists above. Separate lists so `decisions` stays plain text.
     decision_at: list[float | None] = Field(default_factory=list)
     question_at: list[float | None] = Field(default_factory=list)
+    decision_ids: list[str] = Field(default_factory=list)  # stable ids, parallel to decisions
+    question_ids: list[str] = Field(default_factory=list)  # stable ids, parallel to open_questions
     chapters: list[Chapter] = Field(default_factory=list)
     client_facts: list[ClientFact] = Field(default_factory=list)  # client style only
     followup: str = ""  # last drafted follow-up message (email or chat)

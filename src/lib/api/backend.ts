@@ -1,10 +1,12 @@
 import type {
   ActiveRecording,
+  TranscriptSegment,
   ExternalNotes,
   Asset,
   LibraryAsset,
   AgendaItem,
   Bookmark,
+  LiveFlag,
   SessionHistory,
   AddCorrectionResult,
   GlossarySuggestion,
@@ -338,6 +340,23 @@ export async function deleteBookmark(sessionId: string, id: string): Promise<voi
   await request(`/api/sessions/${sessionId}/bookmarks/${id}`, { method: 'DELETE' });
 }
 
+/** Live lines marked "Not said" while recording; the final transcript leaves them out. */
+export async function getLiveFlags(sessionId: string): Promise<LiveFlag[]> {
+  return request(`/api/sessions/${sessionId}/live-flags`);
+}
+
+/** Mark a live line (its source and the seconds the live_segment event gave) as not said. */
+export async function addLiveFlag(
+  sessionId: string,
+  line: { source: string; start: number; end: number; text: string }
+): Promise<LiveFlag> {
+  return request(`/api/sessions/${sessionId}/live-flags`, { method: 'POST', body: JSON.stringify(line) });
+}
+
+export async function deleteLiveFlag(sessionId: string, flagId: string): Promise<void> {
+  await request(`/api/sessions/${sessionId}/live-flags/${flagId}`, { method: 'DELETE' });
+}
+
 /** Glossary entries a transcript correction suggests (a misheard name, product, acronym). */
 export async function suggestGlossary(before: string, after: string): Promise<GlossarySuggestion[]> {
   return request('/api/glossary/suggest', { method: 'POST', body: JSON.stringify({ before, after }) });
@@ -556,6 +575,17 @@ export async function updateSegment(
 
 export async function deleteSegment(sessionId: string, idx: number): Promise<SessionDetail> {
   return request(`/api/sessions/${sessionId}/segments/${idx}`, { method: 'DELETE' });
+}
+
+export async function insertSegment(
+  sessionId: string,
+  index: number,
+  segment: TranscriptSegment
+): Promise<SessionDetail> {
+  return request(`/api/sessions/${sessionId}/segments`, {
+    method: 'POST',
+    body: JSON.stringify({ index, segment })
+  });
 }
 
 export async function mergeSegmentUp(sessionId: string, idx: number): Promise<SessionDetail> {

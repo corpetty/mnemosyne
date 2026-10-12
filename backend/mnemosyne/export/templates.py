@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from datetime import datetime
 
 from ..models.session import ActionItem, ClientFact, SummaryData
@@ -11,6 +11,15 @@ from .links import link_known_notes, link_topic
 
 def _yaml_str(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _block(ids: list[str], n: int) -> str:
+    """` ^m-<id>`: an Obsidian block id, last on its line; nothing for an item without one."""
+    return f" ^m-{ids[n]}" if n < len(ids) and ids[n] else ""
+
+
+def _id(ids: list[str], n: int) -> str:
+    return ids[n] if n < len(ids) else ""
 
 
 def _is_label(name: str) -> bool:
@@ -62,6 +71,7 @@ def render_meeting_note(
     external_notes: list[tuple[str, str]] | None = None,  # (source, text) of other assistants
     is_mine: Callable[[ActionItem], bool] | None = None,
     known_notes: Collection[str] | None = None,  # names of vault notes words may link to
+    annex: Mapping[str, list[str]] | None = None,  # lines the user added in Obsidian, see below
 ) -> str:
     """Render a complete Obsidian-compatible note with YAML frontmatter.
 
@@ -72,11 +82,23 @@ def render_meeting_note(
     With `known_notes`, words of the summary, decisions, action items, open questions, chapter
     titles and the topics that are the name of one of those notes become [[links]], once per
     section (links.py); the transcript is never linked.
+    `annex` holds lines the user wrote under items in the vault (export/note_parse.py), by item
+    id, or "@decisions" / "@action_items" / "@others" / "@open_questions" for those right under
+    a heading: they are rendered back in their place (services/vault_sync.py).
     """
     tags = tags if tags is not None else ["meeting", "mnemosyne"]
 
     def person(name: str) -> str:
         return f"[[{name}]]" if link_people and not _is_label(name) else name
+
+    annex = annex or {}
+
+    def after(key: str) -> list[str]:
+        return list(annex.get(key) or []) if key else []
+
+    def head(key: str) -> list[str]:
+        lines = after(f"@{key}")
+        return [*lines, ""] if lines else []
 
     def linker():
         """A function that links the text of one section: each name once across its calls."""
@@ -121,11 +143,15 @@ def render_meeting_note(
     if summary_data:
         if summary_data.decisions:
             sections.append("## Decisions\n")
+            sections.extend(head("decisions"))
             link = linker()
-            sections.extend(f"- {link(d)}" for d in summary_data.decisions)
+            for n, d in enumerate(summary_data.decisions):
+                sections.append(f"- {link(d)}{_block(summary_data.decision_ids, n)}")
+                sections.extend(after(_id(summary_data.decision_ids, n)))
             sections.append("")
         if summary_data.action_items:
             sections.append("## Action Items\n")
+            sections.extend(head("action_items"))
             flags = [is_mine is None or is_mine(i) for i in summary_data.action_items]
             mine = [i for i, f in zip(summary_data.action_items, flags, strict=True) if f]
             others = [i for i, f in zip(summary_data.action_items, flags, strict=True) if not f]
@@ -135,20 +161,28 @@ def render_meeting_note(
                 issue = f" [issue]({item.issue_url})" if item.issue_url else ""
                 box = "x" if item.done else " "
                 due = f" 📅 {item.due.isoformat()}" if item.due else ""  # Obsidian Tasks format
-                sections.append(f"- [{box}] {link(item.text)}{owner}{issue}{due}")
+                sections.append(
+                    f"- [{box}] {link(item.text)}{owner}{issue}{due}{_block([item.id], 0)}"
+                )
+                sections.extend(after(item.id))
             if others:
                 if mine:
                     sections.append("")
                 sections.append("### Others\n")
+                sections.extend(head("others"))
                 for item in others:
                     who = f"{person(item.owner)}: " if item.owner else ""
                     done = " (done)" if item.done else ""
-                    sections.append(f"- {who}{link(item.text)}{done}")
+                    sections.append(f"- {who}{link(item.text)}{done}{_block([item.id], 0)}")
+                    sections.extend(after(item.id))
             sections.append("")
         if summary_data.open_questions:
             sections.append("## Open Questions\n")
+            sections.extend(head("open_questions"))
             link = linker()
-            sections.extend(f"- {link(q)}" for q in summary_data.open_questions)
+            for n, q in enumerate(summary_data.open_questions):
+                sections.append(f"- {link(q)}{_block(summary_data.question_ids, n)}")
+                sections.extend(after(_id(summary_data.question_ids, n)))
             sections.append("")
         if summary_data.client_facts:
             sections.append("## Client Facts\n")

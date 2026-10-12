@@ -25,6 +25,7 @@ from .routes.glossary import router as glossary_router
 from .routes.history import router as history_router
 from .routes.integrations import router as integrations_router
 from .routes.jobs import router as jobs_router
+from .routes.live_flags import router as live_flags_router
 from .routes.local_model import router as local_model_router
 from .routes.mobile import router as mobile_router
 from .routes.models import router as models_router
@@ -98,6 +99,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(speakers_router)
     app.include_router(segments_router)
     app.include_router(bookmarks_router)
+    app.include_router(live_flags_router)
     app.include_router(assets_router)
     app.include_router(external_notes_router)
     app.include_router(glossary_router)

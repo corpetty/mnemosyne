@@ -20,18 +20,24 @@ def normalize(text: str) -> str:
     return " ".join(_PUNCT.sub(" ", text.lower()).split())
 
 
+def _contains_run(needle: list[str], haystack: list[str]) -> bool:
+    n = len(needle)
+    return any(haystack[i : i + n] == needle for i in range(len(haystack) - n + 1))
+
+
 def similarity(a: str, b: str) -> float:
-    """1.0 when `a` is contained in `b`; otherwise the longest common run of `a`
-    found in `b`, as a fraction of `a` (robust to partial overlaps)."""
-    a, b = normalize(a), normalize(b)
-    if not a or not b:
+    """1.0 when the words of `a` appear as a contiguous run in the words of `b`;
+    otherwise the longest common run of words, as a fraction of `a`'s words, or the
+    word-level SequenceMatcher ratio if that is higher (robust to partial overlaps).
+    Works on whole words, so "so" is not found inside "also" and "no" not in "know"."""
+    wa, wb = normalize(a).split(), normalize(b).split()
+    if not wa or not wb:
         return 0.0
-    if a in b:
+    if _contains_run(wa, wb):
         return 1.0
-    m = SequenceMatcher(None, a, b, autojunk=False)
-    longest = m.find_longest_match(0, len(a), 0, len(b)).size
-    ratio = m.ratio()
-    return max(longest / len(a), ratio)
+    m = SequenceMatcher(None, wa, wb, autojunk=False)
+    longest = m.find_longest_match(0, len(wa), 0, len(wb)).size
+    return max(longest / len(wa), m.ratio())
 
 
 def remove_echo(

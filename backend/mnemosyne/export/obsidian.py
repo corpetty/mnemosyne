@@ -2,7 +2,7 @@
 
 import logging
 import re
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
 from ..models.session import ActionItem, Session
@@ -44,6 +44,7 @@ class ObsidianExporter:
         redact: bool = False,
         is_mine: Callable[[ActionItem], bool] | None = None,
         known_notes: Callable[[], Collection[str]] | None = None,
+        annex: Mapping[str, list[str]] | None = None,
     ):
         self.vault_path = Path(vault_path)
         self.subfolder = subfolder
@@ -56,6 +57,8 @@ class ObsidianExporter:
         # since scanning the vault is for exports only), None: no links to the user's notes.
         self.known_notes = known_notes
         self.redact = redact  # ID, account and card numbers, see privacy.redact_identifiers
+        # Lines the user added under the summary's items in the vault (services/vault_sync.py).
+        self.annex = annex
 
     def render(self, session: Session, resources: list[str] | None = None) -> str:
         transcript = session.transcript
@@ -91,6 +94,7 @@ class ObsidianExporter:
             external_notes=[(n.source, n.text) for n in session.external_notes],
             is_mine=self.is_mine,
             known_notes=known,
+            annex=self.annex,
         )
         if self.redact:  # the summary, notes, action items and the rest
             from ..summarization.privacy import redact_identifiers

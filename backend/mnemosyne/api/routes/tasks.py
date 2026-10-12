@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ... import access
 from ...models.base import ApiModel
-from ...services import history, organizations
+from ...services import history, organizations, summary_doc
 from ...services.brief import Brief, build_brief
 from ...services.tasks import TaskItem, filter_tasks, mine_matcher
 from ...services.vault_sync import write_tick
@@ -91,7 +91,13 @@ async def update_action_item(
         data = session.summary_data.model_copy(deep=True)
         data.action_items[idx] = data.action_items[idx].model_copy(update=updates)
         data.edited_at, data.edited_by = datetime.now(), who.name if who else ""
-        ctx.repo.update_fields(session_id, summary_data=data)  # write access, or 403
+        body = session.summary or ""
+        ctx.repo._check_write(session_id)  # 403 before the doc changes
+        try:  # recorded in the summary doc, so a re-summarize keeps the edit
+            data, body, _ = summary_doc.apply_human(ctx, session_id, data, body, data.edited_by)
+        except summary_doc.SummaryDocUnavailable:
+            pass
+        ctx.repo.update_fields(session_id, summary=body, summary_data=data)  # write access, or 403
         history.log(ctx, session_id, "task_edited", task=data.action_items[idx].text,
                     by=data.edited_by)  # fmt: skip
         items = data.action_items

@@ -2,6 +2,9 @@
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
+	import { wsState } from '$lib/stores/websocket.svelte.js';
+	import { toastState } from '$lib/stores/toast.svelte.js';
+	import type { LiveLine } from '$lib/stores/transcript.svelte.js';
 
 	// Tall while recording, next to the copilot; compact elsewhere.
 	let { tall = false }: { tall?: boolean } = $props();
@@ -37,6 +40,30 @@
 	const show = $derived(
 		here && (recordingHere || transcriptState.liveSegments.length > 0 || partials.length > 0)
 	);
+
+	// Lines marked "Not said": loaded again when the recording screen shows up or the
+	// connection comes back, so a reopened window shows what was marked.
+	$effect(() => {
+		const id = transcriptState.liveSessionId;
+		if (!show || !id || !wsState.connected) return;
+		transcriptState.loadFlags(id).catch(() => {});
+	});
+
+	// Lines whose request is out, so a double click does not send two.
+	let busy = $state<Record<string, boolean>>({});
+	async function toggleFlag(line: LiveLine, flagged: boolean) {
+		const key = `${line.source}|${line.rawStart ?? line.start}|${line.rawEnd ?? line.end}`;
+		if (busy[key]) return;
+		busy[key] = true;
+		try {
+			if (flagged) await transcriptState.unflagLine(line);
+			else await transcriptState.flagLine(line);
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not change the mark');
+		} finally {
+			delete busy[key];
+		}
+	}
 </script>
 
 {#if show}
@@ -53,10 +80,31 @@
 		<div bind:this={container} onscroll={onScroll} class="{tall ? 'h-[60vh]' : 'max-h-64'} overflow-y-auto p-3 space-y-1.5 text-sm">
 			{#each transcriptState.liveSegments as seg}
 				{@const hit = mentioned.has(seg.start)}
-				<div class="flex gap-3 {hit ? 'rounded bg-amber-900/30 ring-1 ring-amber-700/60' : ''}" title={hit ? 'You were mentioned' : undefined}>
+				{@const flagged = !!transcriptState.flagOf(seg)}
+				<div class="group flex gap-3 {hit ? 'rounded bg-amber-900/30 ring-1 ring-amber-700/60' : ''}" title={hit ? 'You were mentioned' : undefined}>
 					<span class="w-12 text-right text-xs font-mono text-gray-600 flex-shrink-0">{formatTime(seg.start)}</span>
 					<span class="w-20 flex-shrink-0 font-medium {transcriptState.getSpeakerColor(seg.speaker)}">{seg.speaker}</span>
-					<span class="text-gray-300">{seg.text}</span>
+					<span class="flex-1 {flagged ? 'text-gray-600 line-through' : 'text-gray-300'}">{seg.text}</span>
+					{#if flagged}
+						<button
+							type="button"
+							onclick={() => toggleFlag(seg, true)}
+							class="flex-shrink-0 self-start text-xs text-gray-500 hover:text-gray-200 focus:text-gray-200"
+						>Undo</button>
+					{:else if recordingHere && seg.source !== undefined}
+						<button
+							type="button"
+							onclick={() => toggleFlag(seg, false)}
+							aria-label="Not said"
+							title="Not said"
+							class="flex-shrink-0 self-start px-1 text-gray-500 hover:text-gray-200 opacity-0 group-hover:opacity-100 focus:opacity-100"
+						>
+							<svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+								<circle cx="8" cy="8" r="6.2" />
+								<path d="M3.6 12.4 12.4 3.6" />
+							</svg>
+						</button>
+					{/if}
 				</div>
 			{/each}
 			{#each partials as p}

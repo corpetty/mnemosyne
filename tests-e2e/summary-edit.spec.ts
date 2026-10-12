@@ -49,14 +49,14 @@ test('edit the text, tags, decisions, items, chapters and questions', async () =
   await expect(page.getByText(/· edited /)).toBeVisible();
 });
 
-test('edits are kept, and summarizing again asks first', async () => {
+test('edits are kept, and summarizing again says so', async () => {
   await page.reload();
   await page.getByRole('button', { name: /summary-edit/ }).first().click();
   await page.getByRole('button', { name: 'Summary', exact: true }).click();
   await expect(page.getByText('Book the release call')).toBeVisible();
-  page.once('dialog', (d) => d.dismiss());
-  await page.getByRole('button', { name: 'Re-summarize' }).click();
-  await expect(page.getByText('Book the release call')).toBeVisible(); // nothing replaced
+  await expect(page.getByText('Your edits are kept when the summary is made again.')).toBeVisible();
+  await page.getByRole('button', { name: 'Re-summarize' }).click(); // no dialog; the edits are merged
+  await expect(page.getByText('Book the release call')).toBeVisible();
 });
 
 test('cancel leaves the summary as it was', async () => {

@@ -245,13 +245,6 @@
 	async function handleSummarize() {
 		const session = sessionState.activeSession;
 		if (!session || submitting) return;
-		if (
-			session.summary_data?.edited_at &&
-			!confirm(
-				'This summary was edited by hand. Summarizing again replaces your edits (done ticks, issue links and due dates carry over). Continue?'
-			)
-		)
-			return;
 		error = '';
 		submitting = true; // until the job is tracked: a double click queues one summary
 		try {
@@ -554,6 +547,9 @@
 				title="Rewrite the summary as asked, keeping your edits unless asked otherwise"
 			>Revise</button>
 		</form>
+		{#if sessionState.activeSession?.summary_data?.edited_at}
+			<p class="text-xs text-gray-500">Your edits are kept when the summary is made again.</p>
+		{/if}
 	{/if}
 	{/if}
 

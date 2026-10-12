@@ -107,7 +107,7 @@ async function resumeActiveRecording() {
   if (!audioState.devices.length) void audioState.loadDevices();
   transcriptState.resumeLive(
     active.session_id,
-    active.live_segments.map((s) => s.segment),
+    active.live_segments.map((s) => ({ ...s.segment, source: s.source })),
     active.live
   );
   await sessionState.selectSession(active.session_id);
@@ -618,7 +618,17 @@ function onConnected(): () => void {
     if (job.kind !== 'summarize' || !job.session_id) return;
     if (sessionState.activeSession?.id === job.session_id) sessionState.refreshActive();
     sessionState.loadSessions();
-    toastState.success('Summary ready');
+    const merged = job.result?.merged as { kept?: number; both?: number } | undefined;
+    if (merged) {
+      const kept = merged.kept ?? 0;
+      const both = merged.both ?? 0;
+      toastState.success(
+        `Summary ready · your ${kept} edit${kept === 1 ? '' : 's'} kept` +
+          (both > 0 ? ` · ${both} changed on both sides` : '')
+      );
+    } else {
+      toastState.success('Summary ready');
+    }
   });
   transcriptState.onComplete((sessionId) => {
     if (sessionState.activeSession?.id === sessionId) sessionState.refreshActive();

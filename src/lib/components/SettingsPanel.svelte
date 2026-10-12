@@ -123,6 +123,7 @@
 				local_speaker_name: v.local_speaker_name,
 				remote_speaker_name: v.remote_speaker_name,
 				echo_dedup: v.echo_dedup,
+				mic_speech_gate: v.mic_speech_gate,
 				echo_similarity: v.echo_similarity,
 				auto_label_speakers: v.auto_label_speakers,
 				speaker_match_threshold: v.speaker_match_threshold,
@@ -690,6 +691,11 @@
 					<label class="flex items-center gap-2">
 						<input type="checkbox" bind:checked={form.echo_dedup} disabled={locked('echo_dedup')} class="rounded border-gray-600 bg-gray-800" />
 						<span class="text-sm text-gray-300">Drop mic segments that repeat the speakers (no headphones)</span>
+					</label>
+					<label class="flex items-center gap-2">
+						<input type="checkbox" bind:checked={form.mic_speech_gate} disabled={locked('mic_speech_gate')} class="rounded border-gray-600 bg-gray-800" />
+						<span class="text-sm text-gray-300">Drop mic lines without speech</span>
+						<span class="text-xs text-gray-500">Keyboard clicks and silence the transcriber turns into words</span>
 					</label>
 					<label>
 						<span class={labelClass}>Echo text similarity (0.6 aggressive … 0.95 strict)</span>

@@ -89,7 +89,11 @@ def test_a_summary_can_be_written_where_there_was_none(client, ctx):
     assert client.put("/api/sessions/nope/summary", json=_edit()).status_code == 404
 
 
-def test_summarizing_again_starts_unedited_and_keeps_ticks(client, ctx, fake_provider):
+def test_without_a_sidecar_summarizing_again_starts_unedited_and_keeps_ticks(
+    client, ctx, fake_provider
+):
+    # conftest points MNEMOSYNE_LINK_BIN at nothing: the replace-and-carry-over fallback. With a
+    # sidecar the edits are kept (tests/test_summary_doc.py, "the summarize job").
     s = _session(ctx)
     body = _edit()
     body["action_items"][0]["done"] = True

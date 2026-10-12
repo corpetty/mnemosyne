@@ -20,6 +20,11 @@ class SplitRequest(ApiModel):
     offset: int  # character offset in the segment text
 
 
+class InsertRequest(ApiModel):
+    index: int  # 0..len(transcript)
+    segment: TranscriptSegment
+
+
 def _apply(ctx: AppContext, session_id: str, edit) -> Session:
     try:
         session = ctx.repo.edit_segments(session_id, edit)
@@ -38,6 +43,21 @@ def _apply(ctx: AppContext, session_id: str, edit) -> Session:
 def _check(segments: list[TranscriptSegment], idx: int) -> None:
     if idx < 0 or idx >= len(segments):
         raise IndexError(idx)
+
+
+@router.post("", response_model=Session)
+async def insert_segment(
+    session_id: str, request: InsertRequest, ctx: AppContext = Depends(get_ctx)
+):
+    """Put a segment back at an index (undo of a delete)."""
+
+    def edit(segments):
+        if request.index < 0 or request.index > len(segments):
+            raise ValueError("Index out of range")
+        segments.insert(request.index, request.segment)
+        return segments
+
+    return _apply(ctx, session_id, edit)
 
 
 @router.patch("/{idx}", response_model=Session)

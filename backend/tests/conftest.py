@@ -86,6 +86,21 @@ def no_link_sidecar(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def no_silero(monkeypatch):
+    """Never fetch or load the Silero VAD (transcription/speech_gate.py): unavailable by
+    default, which keeps every mic line. Tests of the gate patch `speech_frames`."""
+    from mnemosyne.transcription import speech_gate
+
+    def boom():
+        raise OSError("no Silero in tests")
+
+    monkeypatch.setattr(speech_gate, "_open_session", boom)
+    monkeypatch.setattr(speech_gate, "_session", None)
+    monkeypatch.setattr(speech_gate, "_failed_at", None)
+    monkeypatch.setattr(speech_gate, "_logged", False)
+
+
+@pytest.fixture(autouse=True)
 def fake_embedder(monkeypatch):
     """Never download an embedding model: hashed embeddings with a few synonyms."""
     from mnemosyne.search import embeddings

@@ -51,6 +51,7 @@ def carry_over(old: SummaryData | None, new: SummaryData) -> SummaryData:
                 item.follow = item.follow or prev.follow
                 item.issue_url = item.issue_url or prev.issue_url
                 item.due = item.due or prev.due
+                item.id = item.id or prev.id
                 break
     return new
 

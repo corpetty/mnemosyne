@@ -515,3 +515,119 @@ fn the_binary_fails_with_nothing_on_stdout() {
         assert!(!out.stderr.is_empty(), "{input}");
     }
 }
+
+// ---- batch, base and rebase ----
+
+use mnemosyne_link::notes::{merge_from_base, merge_with};
+
+const BASE3: &str = "Alpha one two three four.\n\nBeta five six seven eight.\n\nGamma nine ten.\n";
+
+#[test]
+fn base_three_way_keeps_both_sides_word_edits() {
+    let app = BASE3.replace("two", "TWO");
+    let vault = BASE3.replace("seven", "SEVEN");
+    let merged = merge_from_base(BASE3, &app, Some(&vault)).unwrap();
+    assert_eq!(merged.text, app.replace("seven", "SEVEN"));
+    assert_eq!(text_of(&merged.history).unwrap(), merged.text);
+    // Without a vault it is the app text.
+    assert_eq!(merge_from_base(BASE3, &app, None).unwrap().text, app);
+}
+
+/// A history whose user added words through the vault; returns it and the stored text.
+fn history_with_user_words() -> (Vec<u8>, String) {
+    let first = merge(None, BASE3, None).unwrap();
+    // Two rounds, so the user's words are not one insertion the app could repeat identically.
+    let vault = BASE3.replace("five six", "five USER six");
+    let second = merge(Some(&first.history), BASE3, Some(&vault)).unwrap();
+    let vault = vault.replace("USER", "USER WORDS");
+    let third = merge(Some(&second.history), BASE3, Some(&vault)).unwrap();
+    assert_eq!(third.text, vault);
+    (third.history, third.text)
+}
+
+#[test]
+fn rebase_does_not_double_words_the_new_text_echoes() {
+    let (history, stored) = history_with_user_words();
+    // The new rendering already contains the user's words plus a change of its own.
+    let app = stored.replace("nine", "NINE");
+    let merged = merge_with(Some(&history), &app, None, true).unwrap();
+    assert_eq!(merged.text, app);
+    assert_eq!(merged.text.matches("WORDS").count(), 1);
+    // A later plain merge of the same text stays stable.
+    let again = merge_with(Some(&merged.history), &app, None, false).unwrap();
+    assert_eq!(again.text, app);
+}
+
+#[test]
+fn without_rebase_an_echo_that_is_not_the_same_insertion_doubles_the_words() {
+    // Documents current behaviour: the app branch lacks the words, so a rendering that has
+    // them (here one word further on, as a reworded paragraph would) adds them again next to
+    // the user's copy. Only an identical insertion at the identical place collapses.
+    let (history, stored) = history_with_user_words();
+    let app = stored
+        .replace("five USER WORDS six", "five six USER WORDS")
+        .replace("nine", "NINE");
+    let merged = merge_with(Some(&history), &app, None, false).unwrap();
+    assert_eq!(merged.text.matches("WORDS").count(), 2);
+    // Rebased, the same request keeps the app's text and does not add a copy.
+    let merged = merge_with(Some(&history), &app, None, true).unwrap();
+    assert_eq!(merged.text, app);
+}
+
+#[test]
+fn the_binary_runs_a_batch_in_order_with_a_per_item_error() {
+    let history = STANDARD.encode(first_export("keep one\n"));
+    let input = serde_json::json!([
+        {"history": null, "app": "first\n", "vault": null},
+        {"history": "!!!not base64", "app": "x", "vault": null},
+        {"base": BASE3, "app": BASE3.replace("two", "TWO"), "vault": BASE3.replace("ten", "TEN")},
+        {"history": history, "base": BASE3, "app": "x", "vault": null},
+        {"history": null, "app": 5, "vault": null},
+        {"history": history, "app": "keep one\nmore\n", "vault": null, "rebase": true},
+    ])
+    .to_string();
+    let out = reply(&run(&input));
+    let items = out.as_array().unwrap();
+    assert_eq!(items.len(), 6);
+    assert_eq!(items[0]["text"], "first\n");
+    assert!(items[1]["error"].as_str().unwrap().contains("base64"));
+    assert!(items[1].get("text").is_none());
+    assert_eq!(
+        items[2]["text"],
+        BASE3.replace("two", "TWO").replace("ten", "TEN")
+    );
+    assert!(items[3]["error"].as_str().unwrap().contains("base"));
+    assert!(items[4]["error"].is_string());
+    assert_eq!(items[5]["text"], "keep one\nmore\n");
+    let bytes = STANDARD
+        .decode(items[0]["history"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(text_of(&bytes).unwrap(), "first\n");
+}
+
+#[test]
+fn an_empty_batch_and_a_bad_top_level_behave() {
+    assert_eq!(reply(&run("[]")), serde_json::json!([]));
+    let out = run("[1,");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
+fn the_single_form_with_base_or_rebase_over_the_binary() {
+    let history = STANDARD.encode(first_export("a b c\n"));
+    let both = run(&serde_json::json!({"history": history, "base": "a", "app": "x"}).to_string());
+    assert_eq!(both.status.code(), Some(1));
+    assert!(both.stdout.is_empty());
+    let ok = reply(&run(
+        &serde_json::json!({"base": "a b c\n", "app": "a B c\n", "vault": "a b C\n"}).to_string(),
+    ));
+    assert_eq!(ok["text"], "a B C\n");
+}
+
+#[test]
+fn base_alone_equals_a_first_export() {
+    // base with history is rejected by the CLI (the_single_form_with_base_or_rebase_over_the_binary).
+    let merged = merge_from_base("x\n", "x\n", None).unwrap();
+    assert_eq!(merged.text, "x\n");
+}

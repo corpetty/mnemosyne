@@ -18,7 +18,7 @@ import json
 import subprocess
 from typing import Any
 
-from ..services.vault_sync import _BOX, _DONE_DATE
+from ..services.vault_sync import _BLOCK_ID, _BOX, _DONE_DATE
 
 Boxes = dict[str, list[list[str]]]
 
@@ -109,7 +109,10 @@ def restore(merged_norm: str, app_boxes: Boxes, vault_boxes: Boxes) -> str:
         else:
             status = " "
         date = vault[1] if vault is not None and vault[0] in "xX" and status in "xX" else ""
-        out.append(f"{head}{status}{close}{rest}{date}{eol or ''}")
+        if date:  # before a block id: Obsidian needs that last on the line
+            body = _BLOCK_ID.sub("", rest)
+            rest = f"{body}{date}{rest[len(body) :]}"
+        out.append(f"{head}{status}{close}{rest}{eol or ''}")
     return "".join(out)
 
 
@@ -139,6 +142,57 @@ def merge(binary: str, history: bytes | None, app: str, vault: str | None) -> tu
         return base64.b64decode(reply["history"]), str(reply["text"])
     except (IndexError, KeyError, TypeError, ValueError) as e:
         raise MergeError(f"unreadable reply from {binary} notes merge: {e}") from e
+
+
+def merge_many(binary: str, requests: list[dict]) -> list[tuple[bytes, str] | MergeError]:
+    """Run several merges in one `<binary> notes merge` (its batch form). Each request has
+    `app` and optionally `history` (bytes or None), `base` (a one-off three-way merge from this
+    text), `vault` and `rebase` (see the `Merge` doc comment in link/src/main.rs). Returns, in
+    order, (the new history, the merged text) or a MergeError for a request that failed.
+    Raises MergeError when the whole batch failed."""
+    if not requests:
+        return []
+    batch = []
+    for r in requests:
+        item: dict[str, Any] = {"app": r["app"], "vault": r.get("vault")}
+        history = r.get("history")
+        if history is not None:
+            item["history"] = base64.b64encode(history).decode("ascii")
+        if r.get("base") is not None:
+            item["base"] = r["base"]
+        if r.get("rebase"):
+            item["rebase"] = True
+        batch.append(item)
+    timeout = MERGE_TIMEOUT + len(batch)
+    try:
+        done = subprocess.run(
+            [binary, "notes", "merge"],
+            input=json.dumps(batch),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        raise MergeError(f"could not run {binary}: {e}") from e
+    if done.returncode != 0:
+        raise MergeError(f"{binary} notes merge exited {done.returncode}: {done.stderr.strip()}")
+    try:
+        replies: Any = json.loads(done.stdout.strip().splitlines()[-1])
+        if not isinstance(replies, list) or len(replies) != len(batch):
+            raise ValueError("not one result per request")
+    except (IndexError, TypeError, ValueError) as e:
+        raise MergeError(f"unreadable reply from {binary} notes merge: {e}") from e
+    out: list[tuple[bytes, str] | MergeError] = []
+    for reply in replies:
+        try:
+            if "error" in reply:
+                out.append(MergeError(str(reply["error"])))
+            else:
+                out.append((base64.b64decode(reply["history"]), str(reply["text"])))
+        except (KeyError, TypeError, ValueError) as e:
+            out.append(MergeError(f"unreadable result from {binary} notes merge: {e}"))
+    return out
 
 
 def lines_both_changed(final_norm: str, app_norm: str, vault_norm: str) -> int:

@@ -72,3 +72,31 @@ def test_export_missing_vault_is_400(client, ctx, tmp_path, transcribed_session)
     ctx.settings.obsidian_vault_path = str(tmp_path / "missing")
     resp = client.post(f"/api/sessions/{transcribed_session['id']}/export/obsidian")
     assert resp.status_code == 400
+
+
+def test_block_ids_only_for_items_with_ids():
+    from mnemosyne.models.session import ActionItem, SummaryData
+
+    def render(data):
+        return render_meeting_note(
+            "T", datetime(2026, 1, 1), [], [], "s", "", summary_data=data,
+            is_mine=lambda i: i.owner != "Ana",
+        )  # fmt: skip
+
+    data = SummaryData(
+        decisions=["Go"],
+        open_questions=["Why?"],
+        action_items=[ActionItem(text="Do it", owner="Me"), ActionItem(text="Ask", owner="Ana")],
+    )
+    assert "^m-" not in render(data)  # old data: as before
+    data.decision_ids, data.question_ids = ["d1"], ["q1"]
+    data.action_items[0].id, data.action_items[1].id = "a1", "a2"
+    note = render(data)
+    lines = note.splitlines()
+    for line in (
+        "- Go ^m-d1",
+        "- Why? ^m-q1",
+        "- [ ] Do it ([[Me]]) ^m-a1",
+        "- [[Ana]]: Ask ^m-a2",
+    ):
+        assert line in lines

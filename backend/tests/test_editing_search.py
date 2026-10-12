@@ -49,6 +49,35 @@ def test_update_text_and_speaker(client, ctx):
     assert client.patch("/api/sessions/nope/segments/0", json={"text": "x"}).status_code == 404
 
 
+def test_insert_segment(client, ctx):
+    sid = _session(client, ctx, SEGS)
+    url = f"/api/sessions/{sid}/segments"
+    before = client.get(f"/api/sessions/{sid}").json()["transcript"]
+    new = {"text": "Inserted", "speaker": "SPEAKER_01", "start": 1.0, "end": 2.0}
+    for index in (0, 2, len(before)):
+        s = client.post(url, json={"index": index, "segment": new}).json()
+        assert s["transcript"][index]["text"] == "Inserted"
+        assert len(s["transcript"]) == len(before) + 1
+        client.delete(f"{url}/{index}")
+    assert client.get(f"/api/sessions/{sid}").json()["transcript"] == before
+    assert client.post(url, json={"index": 4, "segment": new}).status_code == 400
+    assert client.post(url, json={"index": -1, "segment": new}).status_code == 400
+    assert (
+        client.post("/api/sessions/nope/segments", json={"index": 0, "segment": new}).status_code
+        == 404
+    )
+
+
+def test_delete_then_insert_restores(client, ctx):
+    sid = _session(client, ctx, SEGS)
+    url = f"/api/sessions/{sid}/segments"
+    before = client.get(f"/api/sessions/{sid}").json()["transcript"]
+    for idx in range(len(before)):
+        client.delete(f"{url}/{idx}")
+        s = client.post(url, json={"index": idx, "segment": before[idx]}).json()
+        assert s["transcript"] == before
+
+
 def test_delete_merge_split(client, ctx):
     sid = _session(client, ctx, SEGS)
     s = client.delete(f"/api/sessions/{sid}/segments/1").json()

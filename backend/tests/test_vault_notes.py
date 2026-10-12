@@ -1,12 +1,9 @@
 """Edits a user makes in an exported meeting note survive the next export (export/note_merge.py,
 services/vault_sync.py write_note). The merge engine is the mnemosyne-link sidecar; here a stand-in
-script does a line-level three-way merge with difflib, with the sidecar's protocol."""
+script (tests/fake_link.py) does a three-way merge with difflib, with the sidecar's protocol."""
 
 import hashlib
-import json
 import os
-import stat
-import sys
 import time
 from datetime import date, datetime
 
@@ -24,77 +21,14 @@ from mnemosyne.models.session import ActionItem, Session, SummaryData
 from mnemosyne.services import vault_sync
 from mnemosyne.services.link import find_binary
 from mnemosyne.services.vault_sync import apply_vault_ticks, note_path, write_tick
-
-FAKE = r"""#!{python}
-import base64, difflib, json, os, sys
-
-assert sys.argv[1:] == ["notes", "merge"], sys.argv
-request = json.load(sys.stdin)
-assert set(request) == {{"history", "app", "vault"}}, request
-if request["history"] is None:
-    assert request["vault"] is None, "a new history has no vault side"
-log = os.environ.get("FAKE_MERGE_LOG")
-if log:
-    with open(log, "a") as f:
-        f.write(json.dumps(request) + "\n")
-if os.environ.get("FAKE_MERGE_FAIL"):
-    sys.stderr.write("boom\n")
-    sys.exit(1)
-
-
-def edits(base, other):
-    sm = difflib.SequenceMatcher(None, base, other, autojunk=False)
-    return [(i1, i2, other[j1:j2]) for tag, i1, i2, j1, j2 in sm.get_opcodes() if tag != "equal"]
-
-
-def merge3(base, app, vault):
-    base, app, vault = (t.splitlines(keepends=True) for t in (base, app, vault))
-    both = sorted(edits(base, app) + edits(base, vault), key=lambda e: (e[0], e[1]))
-    out, pos, last = [], 0, None
-    for i1, i2, new in both:
-        if (i1, i2, new) == last:
-            continue
-        last = (i1, i2, new)
-        if i1 < pos:  # overlapping edits: both are kept
-            out += new
-        else:
-            out += base[pos:i1] + new
-        pos = max(pos, i2)
-    return "".join(out + base[pos:])
-
-
-def pack(app, text):
-    return base64.b64encode(json.dumps({{"app": app, "text": text}}).encode()).decode()
-
-
-app, vault = request["app"], request["vault"]
-if request["history"] is None:
-    text = app
-else:
-    # The history keeps the app's side as it last was and the merged text, so that the user's
-    # edits stay in when the vault has not changed since.
-    kept = json.loads(base64.b64decode(request["history"]))
-    text = merge3(kept["app"], app, kept["text"] if vault is None else vault)
-print(json.dumps({{"history": pack(app, text), "text": text}}))
-"""
+from tests import fake_link
 
 
 @pytest.fixture
 def sidecar(tmp_path, monkeypatch):
-    """A stand-in mnemosyne-link; the requests it got are in sidecar.log."""
-    script = tmp_path / "mnemosyne-link"
-    script.write_text(FAKE.format(python=sys.executable))
-    script.chmod(script.stat().st_mode | stat.S_IXUSR)
-    log = tmp_path / "merge.log"
-    monkeypatch.setenv("MNEMOSYNE_LINK_BIN", str(script))
-    monkeypatch.setenv("FAKE_MERGE_LOG", str(log))
-
-    class Sidecar:
-        @property
-        def requests(self):
-            return [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
-
-    return Sidecar()
+    """A stand-in mnemosyne-link (tests/fake_link.py); the requests it got are in
+    sidecar.requests."""
+    return fake_link.install(tmp_path, monkeypatch)
 
 
 # ---- normalize / restore ----------------------------------------------------------------
@@ -180,11 +114,12 @@ def test_merge_errors(sidecar, monkeypatch):
 # ---- exports ------------------------------------------------------------------------------
 
 ITEMS = [
-    ActionItem(text="Write the guide", owner="Corey Petty", due=date(2026, 10, 1)),
-    ActionItem(text="Send the deck", owner="Me"),
-    ActionItem(text="Fix the build", owner="Ana"),
-    ActionItem(text="Ask about it", owner="SPEAKER_12", follow=True),
+    ActionItem(id="aaaa0001", text="Write the guide", owner="Corey Petty", due=date(2026, 10, 1)),
+    ActionItem(id="aaaa0002", text="Send the deck", owner="Me"),
+    ActionItem(id="aaaa0003", text="Fix the build", owner="Ana"),
+    ActionItem(id="aaaa0004", text="Ask about it", owner="SPEAKER_12", follow=True),
 ]
+DECK = " ^m-aaaa0002"  # the block id of "Send the deck" (export/templates.py)
 
 
 @pytest.fixture
@@ -251,7 +186,7 @@ def test_the_first_export_writes_the_render_and_starts_a_record(ctx, vault, side
     record = ctx.repo.get_vault_note(s.id)
     assert record["path"] == str(path)
     assert record["written_sha"] == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert record["boxes"]["- [ ] Send the deck ([[Me]])"] == [[" ", ""]]
+    assert record["boxes"][f"- [ ] Send the deck ([[Me]]){DECK}"] == [[" ", ""]]
     assert sidecar.requests[0]["history"] is None and sidecar.requests[0]["vault"] is None
     assert ctx.vault_seen[str(path)] == path.stat().st_mtime_ns
 
@@ -299,7 +234,7 @@ def test_ticks_on_both_sides_do_not_double(ctx, vault, sidecar):
     _edit(path, "## Action Items\n", "## Action Items\n\nMy own paragraph.\n")
     _export(ctx, s, vault)  # the tick is taken first (before_export), then merged
     text = path.read_text(encoding="utf-8")
-    assert "- [x] Send the deck ([[Me]]) ✅ 2026-10-03\n" in text
+    assert f"- [x] Send the deck ([[Me]]) ✅ 2026-10-03{DECK}\n" in text
     assert "[xx]" not in text and "My own paragraph." in text
     assert ctx.sessions.get_session(s.id).summary_data.action_items[1].done is True
 
@@ -310,7 +245,7 @@ def test_tasks_statuses_survive(ctx, vault, sidecar):
     _edit(path, "- [ ] Send the deck ([[Me]])", "- [/] Send the deck ([[Me]])")
     _change(ctx, s, summary="Second summary.")
     _export(ctx, s, vault)
-    assert "- [/] Send the deck ([[Me]])\n" in path.read_text(encoding="utf-8")
+    assert f"- [/] Send the deck ([[Me]]){DECK}\n" in path.read_text(encoding="utf-8")
 
 
 def test_a_note_without_a_sidecar_is_written_as_before(ctx, vault, tmp_path):
@@ -346,7 +281,7 @@ def test_a_note_that_is_not_ours_is_overwritten_without_a_record(ctx, vault, sid
     _export(ctx, s, vault)
     assert path.read_text(encoding="utf-8") == _render(ctx, s, vault)
     assert ctx.repo.get_vault_note(s.id) is None
-    assert sidecar.requests == []
+    assert not [r for r in sidecar.requests if isinstance(r, dict)]  # no note merge
 
 
 def test_a_note_moved_to_another_folder_starts_again(ctx, vault, sidecar):
@@ -413,7 +348,7 @@ def test_a_tick_in_the_vault_is_taken_and_kept(ctx, vault, sidecar):
     _edit(path, "- [ ] Send the deck ([[Me]])", "- [x] Send the deck ([[Me]]) ✅ 2026-10-03")
     assert apply_vault_ticks(ctx, s, str(vault)) is True
     _export(ctx, s, vault)
-    assert "- [x] Send the deck ([[Me]]) ✅ 2026-10-03\n" in path.read_text(encoding="utf-8")
+    assert f"- [x] Send the deck ([[Me]]) ✅ 2026-10-03{DECK}\n" in path.read_text(encoding="utf-8")
     assert apply_vault_ticks(ctx, s, str(vault)) is False  # now it is what we wrote
 
 
@@ -423,16 +358,16 @@ def test_write_tick_keeps_the_record_in_sync(client, ctx, vault, sidecar):
     r = client.patch(f"/api/sessions/{s.id}/action-items/1", json={"done": True})
     assert r.status_code == 200
     today = date.today().isoformat()
-    assert f"- [x] Send the deck ([[Me]]) ✅ {today}\n" in path.read_text(encoding="utf-8")
+    assert f"- [x] Send the deck ([[Me]]) ✅ {today}{DECK}\n" in path.read_text(encoding="utf-8")
     record = ctx.repo.get_vault_note(s.id)
     assert record["written_sha"] == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert record["boxes"]["- [ ] Send the deck ([[Me]])"] == [["x", f" ✅ {today}"]]
+    assert record["boxes"][f"- [ ] Send the deck ([[Me]]){DECK}"] == [["x", f" ✅ {today}"]]
     # Nothing for the vault to report: no merge, the tick stays.
     _change(ctx, s, summary="Second summary.")
     _export(ctx, s, vault)
     assert sidecar.requests[-1]["vault"] is None
     assert _events(ctx, s, "note_merged") == []
-    assert f"- [x] Send the deck ([[Me]]) ✅ {today}\n" in path.read_text(encoding="utf-8")
+    assert f"- [x] Send the deck ([[Me]]) ✅ {today}{DECK}\n" in path.read_text(encoding="utf-8")
     assert apply_vault_ticks(ctx, s, str(vault)) is False
 
 
@@ -505,7 +440,7 @@ def test_with_the_real_sidecar(ctx, vault, real_sidecar):
     _export(ctx, s, vault)
     text = path.read_text(encoding="utf-8")
     assert "My own paragraph." in text and "Second summary." in text
-    assert "- [x] Send the deck ([[Me]]) ✅ 2026-10-03\n" in text and "[xx]" not in text
+    assert f"- [x] Send the deck ([[Me]]) ✅ 2026-10-03{DECK}\n" in text and "[xx]" not in text
     assert _events(ctx, s, "note_merged")
 
 

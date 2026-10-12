@@ -31,6 +31,7 @@ from typing import Any
 import numpy as np
 
 from ..models.transcript import TranscriptSegment
+from . import speech_gate
 from .engine import Transcriber
 from .live_speakers import OnlineClusterer, SpeakerEmbedder
 from .live_streaming import LiveSpeakerNames, SpeakerTimeline, VoiceNamer, split_line
@@ -183,6 +184,7 @@ class LiveTranscriber:
         pressure: Callable[[], float | None] = cpu_pressure,
         names: LiveSpeakerNames | None = None,
         namer: VoiceNamer | None = None,
+        mic_speech_gate: bool = True,
     ):
         self.transcriber = transcriber
         self.sources = sources
@@ -197,6 +199,9 @@ class LiveTranscriber:
         self.clusterer = clusterer
         self.mentions = mentions
         self.silence_db = silence_db
+        # Mic buffers without speech (Silero) are not transcribed, and mic lines without any
+        # are not shown (transcription/speech_gate.py).
+        self.mic_speech_gate = mic_speech_gate
         # Back off when ticks cannot keep up or the machine is busy (see _adapt).
         self.adaptive = adaptive
         self.pressure = pressure
@@ -273,7 +278,14 @@ class LiveTranscriber:
         duration = source.buffer.size / rate
         if duration < self.min_buffer:
             return
-        if not flush and _rms_db(source.buffer) < self.silence_db:
+        probs = None
+        silent = not flush and _rms_db(source.buffer) < self.silence_db
+        if not silent and self.mic_speech_gate and source.kind == "mic":
+            probs = await asyncio.to_thread(speech_gate.speech_frames, source.buffer, rate)
+            if probs is not None and not flush:
+                # Clicks and room noise are louder than the RMS gate but not speech.
+                silent = int((probs > speech_gate.THRESHOLD).sum()) < speech_gate.LIVE_MIN_FRAMES
+        if silent:
             # Nobody is talking (EasyEffects' noise suppression makes the mic exact digital
             # silence): skip the transcriber and keep only a short tail for the next words.
             keep = int(self.commit_margin * rate)
@@ -302,7 +314,9 @@ class LiveTranscriber:
             commit = segments
         rest = [s for s in segments if s not in commit]
 
-        for seg in commit:
+        # Committed lines still move the buffer on, shown or not.
+        shown, _noise = speech_gate.split_noise(commit, probs)
+        for seg in shown:
             if source.stream is not None:
                 lines = self._stream_lines(source, seg)
             else:

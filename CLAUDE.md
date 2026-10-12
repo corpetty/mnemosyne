@@ -375,7 +375,23 @@ the app's own branch next to the combined one, else a re-render deletes edits it
 Checkbox status and done dates stay out of the text merge (`normalize`/`restore`). With a record,
 a tick counts when it differs from what we wrote (the mtime rule is only for notes without one).
 No sidecar or a failure: the note is overwritten as before. Tests: conftest points
-MNEMOSYNE_LINK_BIN at nothing; test_vault_notes.py has a fake sidecar and real-sidecar tests.
+MNEMOSYNE_LINK_BIN at nothing; tests/fake_link.py is the fake sidecar; real-sidecar tests skip
+without a build.
+Summary as a document (unreleased, phase 2; design in that plan): a re-summarize, revise or
+Obsidian edit MERGES with hand edits instead of replacing them (services/summary_doc.py
+`apply_llm` / `apply_human`, `summary_docs` table). One merge history per block (body, each
+decision, question and action item) keyed by stable ids (`ActionItem.id`, `decision_ids`,
+`question_ids`, services/summary_ids.py; Obsidian block ids `^m-<id>`). Touched items survive an
+LLM that drops them; hand-deleted ones are tombstoned; a revise rebases first or echoed edits
+double. summary_data stays the projection everything reads. Edits in the vault's summary sections
+flow back (vault_sync `apply_vault_edits`, export/note_parse.py) and those sections are cut out of
+phase 1's text merge. No sidecar: replace + carry_over as before (`SummaryDocUnavailable`).
+Phantom mic lines (2026-10-12, meeting ec7cf909, ~/.cache/mnemosyne-trials/phantom): Phonon turned
+keyboard clicks and near-silence into "Yeah." etc.; not bleed (echo cancellation was on).
+transcription/speech_gate.py (Silero from the HF cache, onnx extra) drops mic lines with fewer than
+8 speech frames around their words (34 of 34 phantoms, 0 of 40 real lines) and skips live mic
+buffers with fewer than 3 (`mic_speech_gate`). Live lines can be marked "Not said" (`live_flags`,
+dropped from the final transcript of their part). dedup.similarity works on words.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

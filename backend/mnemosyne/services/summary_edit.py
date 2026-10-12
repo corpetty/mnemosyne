@@ -5,7 +5,8 @@ Each decision and open question travels with its transcript time (`SummaryData.d
 `question_at` are parallel lists), so links to the transcript survive reordering and deletions.
 The previous summary is kept as a version (storage `keep_version`), the edit goes into the
 meeting's history and is sealed (records), and a `session` event lets the search index and other
-windows follow. A later re-summarize replaces edits; the UI asks first (`edited_at`).
+windows follow. A later re-summarize keeps the edits (services/summary_doc.py); without the
+merge sidecar it replaces them (`edited_at`).
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from pydantic import Field
 from .. import access
 from ..models.base import ApiModel
 from ..models.session import ActionItem, Chapter, ClientFact, Session, SummaryData
-from . import history
+from . import history, summary_doc
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 class TimedText(ApiModel):
     text: str
     at: float | None = None  # seconds: where it came up in the transcript
+    id: str = ""
 
 
 class SummaryEdit(ApiModel):
@@ -43,9 +45,9 @@ class SummaryEdit(ApiModel):
     client_facts: list[ClientFact] = Field(default_factory=list)
 
 
-def _texts(items: list[TimedText]) -> tuple[list[str], list[float | None]]:
-    kept = [(i.text.strip(), i.at) for i in items if i.text.strip()]
-    return [t for t, _ in kept], [a for _, a in kept]
+def _texts(items: list[TimedText]) -> tuple[list[str], list[float | None], list[str]]:
+    kept = [(i.text.strip(), i.at, i.id) for i in items if i.text.strip()]
+    return [t for t, _, _ in kept], [a for _, a, _ in kept], [i for _, _, i in kept]
 
 
 def _topics(topics: list[str]) -> list[str]:
@@ -64,8 +66,8 @@ def apply_edit(data: SummaryData | None, edit: SummaryEdit, by: str) -> SummaryD
     fingerprint, follow-up draft) stays."""
     data = data.model_copy(deep=True) if data else SummaryData(style="manual")
     data.topics = _topics(edit.topics)
-    data.decisions, data.decision_at = _texts(edit.decisions)
-    data.open_questions, data.question_at = _texts(edit.open_questions)
+    data.decisions, data.decision_at, data.decision_ids = _texts(edit.decisions)
+    data.open_questions, data.question_at, data.question_ids = _texts(edit.open_questions)
     data.action_items = [
         a.model_copy(update={"text": a.text.strip(), "owner": (a.owner or "").strip() or None})
         for a in edit.action_items
@@ -96,6 +98,12 @@ def edit_summary(app: AppContext, session_id: str, edit: SummaryEdit) -> Session
     by = who.name if who else ""
     data = apply_edit(before.summary_data, edit, by)
     summary = edit.summary.strip()
+    app.repo._check_write(session_id)  # 403 before the doc changes
+    try:  # recorded in the summary doc, so a later re-summarize keeps the edit
+        data, summary, _ = summary_doc.apply_human(app, session_id, data, summary, by)
+    except summary_doc.SummaryDocUnavailable:
+        pass
+    before = app.sessions.get_session(session_id) or before  # the doc may have added ids
     app.repo.keep_version(before, "edited")  # before update_fields, which would say "summarized"
     session = app.repo.update_fields(session_id, summary=summary, summary_data=data)
     if session is None:
@@ -125,13 +133,21 @@ def restore_summary(app: AppContext, session_id: str, version_id: int) -> Sessio
         data = carry_over(before.summary_data, SummaryData.model_validate(version["summary_data"]))
     else:
         data = before.summary_data
+    summary = version["content"]["summary"]
+    who = access.principal()
+    if data is not None:
+        app.repo._check_write(session_id)  # 403 before the doc changes
+        try:
+            data, summary, _ = summary_doc.apply_human(
+                app, session_id, data, summary, who.name if who else ""
+            )
+        except summary_doc.SummaryDocUnavailable:
+            pass
+    before = app.sessions.get_session(session_id) or before  # the doc may have added ids
     app.repo.keep_version(before, "restored an earlier summary")
-    session = app.repo.update_fields(
-        session_id, summary=version["content"]["summary"], summary_data=data
-    )
+    session = app.repo.update_fields(session_id, summary=summary, summary_data=data)
     if session is None:
         return None
-    who = access.principal()
     history.log(
         app, session_id, "summary_restored", version_at=version["at"], by=who.name if who else ""
     )

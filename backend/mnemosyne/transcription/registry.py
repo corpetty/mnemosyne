@@ -254,6 +254,7 @@ def build_engine(settings: Settings) -> ComposedEngine:
         max_speakers=settings.max_speakers,
         echo_dedup=settings.echo_dedup,
         echo_similarity=settings.echo_similarity,
+        mic_speech_gate=settings.mic_speech_gate,
     )
 
 
@@ -278,6 +279,7 @@ ENGINE_SETTINGS = (
     "max_speakers",
     "echo_dedup",
     "echo_similarity",
+    "mic_speech_gate",
     "glossary",
 )
 

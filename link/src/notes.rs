@@ -54,6 +54,27 @@ struct History {
 /// Merge `app` (the app's new rendering) and `vault` (the file as the user left it, if it
 /// differs from what we wrote) into the stored `history`.
 pub fn merge(history: Option<&[u8]>, app: &str, vault: Option<&str>) -> Result<Merged> {
+    merge_with(history, app, vault, false)
+}
+
+/// A one-off three-way merge: a history is started from `base` (as [`merge`] with no history
+/// does from the app's text), then `app` and `vault` are merged into it as usual.
+pub fn merge_from_base(base: &str, app: &str, vault: Option<&str>) -> Result<Merged> {
+    let start = merge(None, base, None)?;
+    merge(Some(&start.history), app, vault)
+}
+
+/// [`merge`], optionally rebased: with `rebase` the app branch is first set to the combined
+/// branch, so `app` is diffed against the combined text (what we last wrote, user edits
+/// included) instead of the app's last rendering. A new rendering that already echoes the
+/// user's edits then does not add them a second time. `rebase` means nothing without a
+/// history and is ignored.
+pub fn merge_with(
+    history: Option<&[u8]>,
+    app: &str,
+    vault: Option<&str>,
+    rebase: bool,
+) -> Result<Merged> {
     let Some(history) = history else {
         ensure!(
             vault.is_none(),
@@ -69,7 +90,13 @@ pub fn merge(history: Option<&[u8]>, app: &str, vault: Option<&str>) -> Result<M
             text: app.to_string(),
         });
     };
-    let History { combined, app: old } = decode(history)?;
+    let History {
+        combined,
+        app: mut old,
+    } = decode(history)?;
+    if rebase {
+        old = combined.clone();
+    }
 
     // The app's side: its last rendering, diffed into its new one.
     let old_text: String = old.iter().collect();

@@ -18,6 +18,7 @@ from pathlib import Path
 from .. import access
 from ..models.ask import Ask, Citation, Passage, PassageLine
 from ..models.digest import Digest
+from ..models.live_flag import LiveFlag
 from ..models.search import SearchHit, SegmentHit
 from ..models.session import (
     AgendaItem,
@@ -177,6 +178,21 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 );
 CREATE INDEX IF NOT EXISTS bookmarks_session ON bookmarks(session_id);
 
+-- Live lines marked "Not said" while recording (keyboard noise heard as "yeah"): the final
+-- transcript drops its lines that overlap them (services/live_flags.py). start/"end" are the
+-- live transcript's own seconds, i.e. into `part`'s recording, as the live_segment events had.
+CREATE TABLE IF NOT EXISTS live_flags (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    start REAL NOT NULL,
+    "end" REAL NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    part INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS live_flags_session ON live_flags(session_id);
+
 -- Resources (links, files) in a library; a meeting lists those attached to it.
 -- path: a file's place under <data_dir>/assets (relative, so backups move), maybe .enc.
 CREATE TABLE IF NOT EXISTS assets (
@@ -219,6 +235,14 @@ CREATE TABLE IF NOT EXISTS vault_notes (
     history BLOB NOT NULL,
     boxes TEXT NOT NULL,
     written_sha TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+-- A meeting summary as a mergeable document (services/summary_doc.py): per-block merge
+-- histories, the LLM's last output as the base of three-way rules, deleted ids, and what the
+-- last Obsidian export rendered. JSON; summary_data stays the projection read everywhere.
+CREATE TABLE IF NOT EXISTS summary_docs (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    doc TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS session_assets (
@@ -1117,6 +1141,70 @@ class SessionRepository:
                         "UPDATE bookmarks SET session_id=?, part=? WHERE id=?", (*dest, r["id"])
                     )
 
+    # ---- live flags ----------------------------------------------------
+
+    def add_live_flag(
+        self, session_id: str, source: str, start: float, end: float, text: str, part: int = 0
+    ) -> LiveFlag:
+        from uuid import uuid4
+
+        self._check_write(session_id)
+        flag = LiveFlag(
+            id=str(uuid4())[:8],
+            source=source,
+            start=start,
+            end=end,
+            text=text,
+            part=part,
+            created_at=datetime.now(),
+        )
+        with self._lock, self._conn:
+            self._conn.execute(
+                'INSERT INTO live_flags (id, session_id, source, start, "end", text, created_at,'
+                " part) VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    flag.id,
+                    session_id,
+                    source,
+                    start,
+                    end,
+                    text,
+                    flag.created_at.isoformat(),
+                    part,
+                ),
+            )
+        return flag
+
+    def list_live_flags(self, session_id: str) -> list[LiveFlag]:
+        """The flags of a meeting; empty when there is none or the caller may not see it."""
+        if self._owner(session_id) is None or not self._readable(session_id):
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM live_flags WHERE session_id=? ORDER BY part, start, created_at",
+                (session_id,),
+            ).fetchall()
+        return [
+            LiveFlag(
+                id=r["id"],
+                source=r["source"],
+                start=r["start"],
+                end=r["end"],
+                text=r["text"],
+                part=r["part"],
+                created_at=datetime.fromisoformat(r["created_at"]),
+            )
+            for r in rows
+        ]
+
+    def delete_live_flag(self, session_id: str, flag_id: str) -> bool:
+        self._check_write(session_id)
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "DELETE FROM live_flags WHERE id=? AND session_id=?", (flag_id, session_id)
+            )
+        return cur.rowcount > 0
+
     # ---- history -------------------------------------------------------
 
     def add_event(
@@ -1169,6 +1257,28 @@ class SessionRepository:
     def delete_vault_note(self, session_id: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM vault_notes WHERE session_id=?", (session_id,))
+
+    # ---- summary documents (internal bookkeeping: no access checks, like vault notes) -----
+
+    def get_summary_doc(self, session_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT doc FROM summary_docs WHERE session_id=?", (session_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["doc"])
+
+    def put_summary_doc(self, session_id: str, doc: dict) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO summary_docs (session_id, doc, updated_at) VALUES (?,?,?)",
+                (session_id, json.dumps(doc), datetime.now().isoformat()),
+            )
+
+    def delete_summary_doc(self, session_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM summary_docs WHERE session_id=?", (session_id,))
 
     def events(self, session_id: str) -> list[dict]:
         if not self._readable(session_id):

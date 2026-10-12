@@ -28,7 +28,7 @@ from ..transcription.glossary import (
     llm_correct,
     parse_glossary,
 )
-from . import history
+from . import history, live_flags
 from .copilot import agenda_hint, bookmark_hint, copilot_hint
 from .prefs import for_meeting
 from .tasks import add_live_todos, carry_over
@@ -161,6 +161,7 @@ def transcribe_session(
                 ctx.update(stage + "...", progress=round(min(max(frac, 0.0), 0.99), 3))
 
             segments = list(kept)
+            flagged_removed = 0
             embeddings = app.repo.get_session_embeddings(session_id) if kept else {}
             n_sources = 0
             for part in todo:
@@ -202,6 +203,9 @@ def transcribe_session(
                     new: list[TranscriptSegment] = []
                     async for segment in engine.transcribe_sources(plain, on_progress=on_progress):
                         new.append(segment)
+                # Lines marked "Not said" while recording (keyboard noise heard as "yeah").
+                new, gone = live_flags.apply(app, session_id, part, new, engine)
+                flagged_removed += gone
                 part_embeddings = dict(getattr(engine, "last_speaker_embeddings", {}) or {})
                 if embeddings or segments:  # a later part: same voices, same labels
                     taken = {s.speaker for s in segments}
@@ -283,6 +287,8 @@ def transcribe_session(
                 fixed += llm_fixed
 
             save(segments)
+            if flagged_removed:
+                history.log(app, session_id, "flagged_lines_removed", count=flagged_removed)
             from . import records
 
             await asyncio.to_thread(records.seal, app, session_id, "transcribed")
@@ -318,6 +324,8 @@ def transcribe_session(
             from . import records
 
             save(transcribed)
+            if flagged_removed:
+                history.log(app, session_id, "flagged_lines_removed", count=flagged_removed)
             records.seal(app, session_id, "transcribed")  # the loop may be closing: not in a thread
             history.log(
                 app, session_id, "transcribed", parts=todo, segments=len(transcribed), names=False
@@ -476,8 +484,30 @@ def summarize_session(
         from .topics import apply_aliases
 
         result["data"].topics = apply_aliases(result["data"].topics, app.settings.topic_aliases)
-        current = app.sessions.get_session(session_id)
-        carry_over(current.summary_data if current else None, result["data"])
+        # Merge into the current summary so hand edits survive (services/summary_doc.py); without
+        # a working sidecar replace it, keeping done flags and issue links.
+        from .summary_doc import SummaryDocUnavailable, apply_llm
+        from .summary_ids import ensure_ids
+
+        merge_report: dict | None = None
+        try:
+            merged, merged_body, merge_report = await asyncio.to_thread(
+                apply_llm,
+                app,
+                session_id,
+                result["data"],
+                result["summary"],
+                rebase=bool(revise.strip() and session.summary),
+            )
+            # edited_at stays only while hand edits remain in the merged summary.
+            if not (merge_report["kept"] or merge_report["both"] or merge_report["dropped_kept"]):
+                merged.edited_at, merged.edited_by = None, ""
+            result["data"] = merged
+            result["summary"] = merged_body
+        except SummaryDocUnavailable:
+            current = app.sessions.get_session(session_id)
+            carry_over(current.summary_data if current else None, result["data"])
+            ensure_ids(result["data"])
         app.sessions.set_summary(session_id, result["summary"], result["data"])
         from . import records
 
@@ -496,24 +526,50 @@ def summarize_session(
         if st.obsidian_auto_export and st.obsidian_vault_path:
             exported = await asyncio.to_thread(_auto_export, app, session_id)
         ctx.update("Summary ready")
-        history.log(
-            app,
-            session_id,
-            "summarized",
-            provider=result["provider"],
-            model=result["model"],
-            **({"revised": revise.strip()} if revise.strip() else {}),
+        revised = {"revised": revise.strip()} if revise.strip() else {}
+        kept_edits = bool(
+            merge_report
+            and (merge_report["kept"] or merge_report["both"] or merge_report["dropped_kept"])
         )
+        if kept_edits:
+            history.log(
+                app,
+                session_id,
+                "summary_merged",
+                provider=result["provider"],
+                model=result["model"],
+                **revised,
+                kept=merge_report["kept"],
+                both=merge_report["both"],
+                both_texts=merge_report["both_texts"],
+                dropped_kept=merge_report["dropped_kept"],
+            )
+        else:
+            history.log(
+                app,
+                session_id,
+                "summarized",
+                provider=result["provider"],
+                model=result["model"],
+                **revised,
+            )
         from .hubspot import auto_push
 
         crm = await auto_push(app, session_id)  # never raises
-        return {
+        job_result = {
             "provider": result["provider"],
             "model": result["model"],
             "title": title,
             "exported": exported,
             "hubspot": crm,
         }
+        if kept_edits:
+            job_result["merged"] = {
+                "kept": merge_report["kept"],
+                "both": merge_report["both"],
+                "dropped_kept": merge_report["dropped_kept"],
+            }
+        return job_result
 
     return run
 
@@ -715,6 +771,7 @@ def live_transcribe(app: AppContext, session_id: str, recording):
             silence_db=settings.live_silence_db,
             adaptive=settings.live_adaptive,
             namer=namer,
+            mic_speech_gate=settings.mic_speech_gate,
         )
         app.live[session_id] = live  # read by the copilot
         rediarize = None

@@ -55,6 +55,7 @@ def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianEx
     """An exporter with the settings; a session's meeting type may choose the folder."""
     from ...export.vault_index import linkable_notes
     from ...services.meeting_types import available_types, obsidian_folder
+    from ...services.vault_sync import vault_annex
 
     st = ctx.settings
     tags = [t.strip() for t in st.obsidian_tags.split(",") if t.strip()]
@@ -70,6 +71,7 @@ def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianEx
         redact=st.redact_exports,
         is_mine=task_predicate(ctx, session) if session is not None else None,
         known_notes=(lambda: linkable_notes(root, own)) if links else None,
+        annex=vault_annex(ctx, session.id) if session is not None else None,
     )
 
 
@@ -104,13 +106,14 @@ def _resources(ctx: AppContext, session, exporter: ObsidianExporter) -> list[str
 
 def before_export(ctx: AppContext, session, vault_path: str):
     """Runs before a meeting is written to the vault, and returns the session to write (read
-    again if this changed it): ticks made in the note in Obsidian are taken back first, so
-    exporting again never undoes them (services/vault_sync.py)."""
-    from ...services.vault_sync import apply_vault_ticks
+    again): ticks and edits to the summary made in the note in Obsidian are taken back first,
+    so exporting again never undoes them (services/vault_sync.py)."""
+    from ...services.vault_sync import apply_vault_edits, apply_vault_ticks
 
-    if apply_vault_ticks(ctx, session, vault_path):
-        return ctx.sessions.get_session(session.id) or session
-    return session
+    apply_vault_ticks(ctx, session, vault_path)
+    apply_vault_edits(ctx, session, vault_path)
+    # Read again in any case: taking edits may also have given the summary's items their ids.
+    return ctx.sessions.get_session(session.id) or session
 
 
 def write_decisions(ctx: AppContext, vault_path: str):

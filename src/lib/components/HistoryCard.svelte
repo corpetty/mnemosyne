@@ -141,10 +141,31 @@
 				return `Combined with “${d.other_name}”`;
 			case 'transcribed':
 				return `Transcribed (${d.segments} lines)`;
+			case 'flagged_lines_removed':
+				return `Removed ${d.count} line${d.count === 1 ? '' : 's'} marked “Not said” while recording`;
 			case 'transcribe_failed':
 				return `Transcription failed: ${d.error}`;
 			case 'summarized':
 				return `${d.revised ? `Revised (“${d.revised}”)` : 'Summarized'} with ${d.provider}${d.model ? `/${d.model}` : ''}`;
+			case 'summary_merged': {
+				const n = (d.dropped_kept as number) ?? 0;
+				return (
+					`${d.revised ? `Revised (“${d.revised}”)` : 'Summarized again'} with ${d.provider}${d.model ? `/${d.model}` : ''}; your ${d.kept} edit${d.kept === 1 ? '' : 's'} kept` +
+					((d.both as number) > 0 ? ` (${d.both} changed on both sides: worth a look)` : '') +
+					(n > 0 ? `; ${n} item${n === 1 ? '' : 's'} the new summary dropped stayed because you had changed them` : '')
+				);
+			}
+			case 'note_edits_taken': {
+				const parts = [
+					[d.items, 'item'],
+					[d.decisions, 'decision'],
+					[d.questions, 'question']
+				]
+					.filter(([n]) => (n as number) > 0)
+					.map(([n, w]) => `${n} ${w}${n === 1 ? '' : 's'}`);
+				if (d.body) parts.push('the summary text');
+				return `Edits from Obsidian taken into the summary${parts.length ? ` (${parts.join(', ')})` : ''}`;
+			}
 			case 'summary_edited':
 				return `Summary edited${d.by ? ` by ${d.by}` : ''}`;
 			case 'summary_restored':

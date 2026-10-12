@@ -1,5 +1,6 @@
 """Structured summaries: parsing, styles, endpoint, and the richer export."""
 
+import re
 from datetime import datetime
 
 from mnemosyne.export.obsidian import ObsidianExporter
@@ -79,18 +80,19 @@ def test_summarize_endpoint_stores_structured(client, ctx, fake_provider, transc
     data = session["summary_data"]
     assert data["style"] == "standup" and data["provider"] == "fake"
     assert data["decisions"] == ["d"]
-    assert data["action_items"] == [
-        {
-            "text": "a",
-            "owner": "SPEAKER_00",
-            "issue_url": None,
-            "done": False,
-            "follow": False,
-            "live": False,
-            "at": None,
-            "due": None,
-        }
-    ]
+    (item,) = data["action_items"]
+    assert re.fullmatch(r"[0-9a-f]{8}", item.pop("id"))
+    assert item == {
+        "text": "a",
+        "owner": "SPEAKER_00",
+        "issue_url": None,
+        "done": False,
+        "follow": False,
+        "live": False,
+        "at": None,
+        "due": None,
+    }
+    assert len(data["decision_ids"]) == 1 and data["question_ids"] == []
     assert client.post(f"/api/sessions/{sid}/summarize", json={"style": "bogus"}).status_code == 400
     assert client.get("/api/summary-styles").json()[0]["id"] == "meeting"
 

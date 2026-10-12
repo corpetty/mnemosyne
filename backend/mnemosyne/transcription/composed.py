@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import AsyncIterator, Callable
 
 from ..models.transcript import TranscriptSegment
+from . import speech_gate
 from .assign import assign_speakers, relabel
 from .dedup import remove_echo
 from .engine import AudioSource, Diarizer, StageProgressFn, Transcriber
@@ -49,6 +50,7 @@ class ComposedEngine:
         max_speakers: int | None = None,
         echo_dedup: bool = True,
         echo_similarity: float = 0.8,
+        mic_speech_gate: bool = True,
     ):
         self.transcriber = transcriber
         self.diarizer = diarizer
@@ -57,8 +59,13 @@ class ComposedEngine:
         self.max_speakers = max_speakers
         self.echo_dedup = echo_dedup
         self.echo_similarity = echo_similarity
+        self.mic_speech_gate = mic_speech_gate
         self.last_speaker_embeddings: dict[str, list[float]] = {}
         self.last_dropped_echo: int = 0
+        self.last_dropped_noise: int = 0
+        # (segment, source kind) of what the last transcribe_sources yielded, by identity:
+        # a segment itself does not say which recording it came from (services/live_flags.py).
+        self.last_segment_sources: list[tuple[TranscriptSegment, str]] = []
 
     @property
     def name(self) -> str:
@@ -133,6 +140,8 @@ class ComposedEngine:
             await self.load()
         self.last_speaker_embeddings = {}
         self.last_dropped_echo = 0
+        self.last_dropped_noise = 0
+        self.last_segment_sources = []
 
         labelled: list[TranscriptSegment] = []
         diarized: list[TranscriptSegment] = []
@@ -148,9 +157,19 @@ class ComposedEngine:
                     loop.call_soon_threadsafe(on_progress, stage, base + weight * frac)
 
             segments, embeddings = await self.transcribe_source(source, report)
+            if self.mic_speech_gate and source.speaker_label is not None and segments:
+                # Phantom lines from clicks and silence (transcription/speech_gate.py). The
+                # kept segments are the same objects: last_segment_sources relies on that.
+                segments, noise = await asyncio.to_thread(
+                    speech_gate.drop_noise, segments, source.path
+                )
+                self.last_dropped_noise += len(noise)
+                if noise:
+                    logger.info("Dropped %d mic segment(s) without speech", len(noise))
             done += weight
             self.last_speaker_embeddings.update(embeddings)
             (labelled if source.speaker_label is not None else diarized).extend(segments)
+            self.last_segment_sources.extend((seg, source.kind) for seg in segments)
 
         if self.echo_dedup and labelled and diarized:
             labelled, dropped = remove_echo(labelled, diarized, threshold=self.echo_similarity)

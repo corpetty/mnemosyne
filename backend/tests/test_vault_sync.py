@@ -255,3 +255,77 @@ def test_no_pass_without_a_vault(ctx, tmp_path):
     assert sync_vault(ctx) == 0
     ctx.settings.obsidian_vault_path = str(tmp_path / "gone")
     assert sync_vault(ctx) == 0
+
+
+def _ided_meeting(ctx, vault):
+    items = [
+        ActionItem(text="Write the guide", owner="Corey Petty", due=date(2026, 10, 1), id="a1"),
+        ActionItem(text="Send the deck", owner="Me", id="b2"),
+        ActionItem(text="Fix the build", owner="Ana", id="c3"),
+    ]
+    session = Session(
+        name="Ids",
+        created_at=datetime(2026, 10, 12, 9),
+        summary="s",
+        summary_data=SummaryData(
+            action_items=items,
+            decisions=["Use Rust"],
+            decision_ids=["d4"],
+            open_questions=["Who pays?"],
+            question_ids=["e5"],
+        ),
+    )
+    ctx.repo.save(session)
+    session = ctx.sessions.get_session(session.id)
+    export_session(ctx, session, str(vault))
+    return session
+
+
+def test_block_ids_end_every_summary_line(ctx, vault):
+    s = _ided_meeting(ctx, vault)
+    text = note_path(ctx, s, str(vault)).read_text(encoding="utf-8")
+    assert "- Use Rust ^m-d4\n" in text
+    assert "- Who pays? ^m-e5\n" in text
+    lines = text.splitlines()
+    assert any(ln.startswith("- [ ] Send the deck") and ln.endswith(" ^m-b2") for ln in lines)
+    assert any(ln.startswith("- [ ] Write the guide") and ln.endswith("📅 2026-10-01 ^m-a1")
+               for ln in lines)  # fmt: skip
+    assert "- [[Ana]]: Fix the build ^m-c3" in lines
+    assert [t.block_id for t in parse_ticks(text)] == ["a1", "b2"]
+
+
+def test_ticks_match_by_id_when_the_text_was_reworded(ctx, vault):
+    s = _ided_meeting(ctx, vault)
+    path = note_path(ctx, s, str(vault))
+    _edit(path, "- [ ] Send the deck ([[Me]]) ^m-b2", "- [x] Mail the slides to everyone ^m-b2")
+    assert apply_vault_ticks(ctx, s, str(vault)) is True
+    assert _done(ctx, s) == [False, True, False]
+
+
+def test_write_tick_keeps_the_block_id_last(ctx, vault):
+    s = _ided_meeting(ctx, vault)
+    path = note_path(ctx, s, str(vault))
+    assert write_tick(ctx, s, 1, True) is True
+    today = date.today().isoformat()
+    text = path.read_text(encoding="utf-8")
+    assert f"- [x] Send the deck ([[Me]]) ✅ {today} ^m-b2\n" in text
+    assert write_tick(ctx, s, 1, False) is True
+    assert "- [ ] Send the deck ([[Me]]) ^m-b2\n" in path.read_text(encoding="utf-8")
+
+
+def test_write_tick_finds_a_reworded_line_by_id(ctx, vault):
+    s = _ided_meeting(ctx, vault)
+    path = note_path(ctx, s, str(vault))
+    _edit(path, "Send the deck ([[Me]])", "Mail the slides")
+    assert write_tick(ctx, s, 1, True) is True
+    today = date.today().isoformat()
+    assert f"- [x] Mail the slides ✅ {today} ^m-b2\n" in path.read_text(encoding="utf-8")
+
+
+def test_notes_without_ids_still_match_by_text(ctx, vault):
+    s = _meeting(ctx, vault)  # items without ids: no block ids rendered
+    path = note_path(ctx, s, str(vault))
+    assert "^m-" not in path.read_text(encoding="utf-8")
+    _edit(path, "- [ ] Send the deck ([[Me]])", "- [x] Send the deck ([[Me]])")
+    assert apply_vault_ticks(ctx, s, str(vault)) is True
+    assert _done(ctx, s)[1] is True

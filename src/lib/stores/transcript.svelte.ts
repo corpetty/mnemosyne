@@ -1,6 +1,11 @@
-import type { BackendEvent, Job, TranscriptSegment } from '$lib/types/index.js';
+import type { BackendEvent, Job, LiveFlag, TranscriptSegment } from '$lib/types/index.js';
 import * as api from '$lib/api/backend.js';
 import { wsState } from './websocket.svelte.js';
+
+/** A live line: the segment as shown, plus which source it came from and the seconds the
+ *  backend gave it (`start`/`end` here include `liveOffset`). Both are what a "Not said" flag
+ *  is keyed by. */
+export type LiveLine = TranscriptSegment & { source?: string; rawStart?: number; rawEnd?: number };
 
 const SPEAKER_COLORS = [
   'text-blue-400',
@@ -44,7 +49,9 @@ class TranscriptState {
   /** Set by the controller: is the live meeting still being recorded? */
   isRecordingLive: () => boolean = () => false;
   /** Provisional segments streamed while recording; replaced by the final job. */
-  liveSegments = $state<TranscriptSegment[]>([]);
+  liveSegments = $state<LiveLine[]>([]);
+  /** Live lines marked "Not said", by `flagKey` (survives speaker relabels: it is not on the line). */
+  liveFlags = $state<Record<string, LiveFlag>>({});
   /** Added to live times after a restarted capture (continueLive). */
   liveOffset = 0;
   /** Start times of live lines where a mention keyword was heard. */
@@ -125,7 +132,14 @@ class TranscriptState {
       case 'live_segment':
         if (msg.session_id === this.liveSessionId) {
           const off = this.liveOffset;
-          const seg = off ? { ...msg.segment, start: msg.segment.start + off, end: msg.segment.end + off } : msg.segment;
+          const seg: LiveLine = {
+            ...msg.segment,
+            start: msg.segment.start + off,
+            end: msg.segment.end + off,
+            source: msg.source,
+            rawStart: msg.segment.start,
+            rawEnd: msg.segment.end
+          };
           const last = this.liveSegments.at(-1);
           // Lines come in order per source; the sources interleave, so sort only when needed.
           this.liveSegments =
@@ -181,15 +195,18 @@ class TranscriptState {
     this.liveSessionId = sessionId;
     this.liveOffset = 0;
     this.liveSegments = [];
+    this.liveFlags = {};
     this.livePartials = {};
     this.mentionStarts = [];
     this.liveStatus = 'Starting...';
   }
 
   /** Pick up a live transcript already under way (see audioState.resume). */
-  resumeLive(sessionId: string, segments: TranscriptSegment[], running: boolean) {
+  resumeLive(sessionId: string, segments: (TranscriptSegment & { source?: string })[], running: boolean) {
     this.startLive(sessionId);
-    this.liveSegments = [...segments].sort((a, b) => a.start - b.start);
+    this.liveSegments = segments
+      .map((s): LiveLine => ({ ...s, rawStart: s.start, rawEnd: s.end }))
+      .sort((a, b) => a.start - b.start);
     for (const s of segments) this.getSpeakerColor(s.speaker);
     this.liveStatus = running ? 'Live' : '';
   }
@@ -201,10 +218,52 @@ class TranscriptState {
     this.livePartials = {};
   }
 
+  /** Key of a live line's "Not said" flag: its source and the seconds the backend gave it. */
+  flagKey(source: string, start: number, end: number): string {
+    return `${source}|${start}|${end}`;
+  }
+
+  /** The flag on a live line, if it was marked "Not said". */
+  flagOf(line: LiveLine): LiveFlag | undefined {
+    if (line.source === undefined) return undefined;
+    return this.liveFlags[this.flagKey(line.source, line.rawStart ?? line.start, line.rawEnd ?? line.end)];
+  }
+
+  /** Mark a live line as not said; the final transcription leaves it out. Throws on failure. */
+  async flagLine(line: LiveLine): Promise<void> {
+    const sessionId = this.liveSessionId;
+    if (!sessionId || line.source === undefined || this.flagOf(line)) return;
+    const start = line.rawStart ?? line.start;
+    const end = line.rawEnd ?? line.end;
+    const flag = await api.addLiveFlag(sessionId, { source: line.source, start, end, text: line.text });
+    if (this.liveSessionId === sessionId) {
+      this.liveFlags = { ...this.liveFlags, [this.flagKey(flag.source, flag.start, flag.end)]: flag };
+    }
+  }
+
+  /** Take the mark back. Throws on failure. */
+  async unflagLine(line: LiveLine): Promise<void> {
+    const sessionId = this.liveSessionId;
+    const flag = this.flagOf(line);
+    if (!sessionId || !flag) return;
+    await api.deleteLiveFlag(sessionId, flag.id);
+    const rest = { ...this.liveFlags };
+    delete rest[this.flagKey(flag.source, flag.start, flag.end)];
+    if (this.liveSessionId === sessionId) this.liveFlags = rest;
+  }
+
+  /** Load the meeting's flags (after a reconnect, or opening the recording screen again). */
+  async loadFlags(sessionId: string): Promise<void> {
+    const flags = await api.getLiveFlags(sessionId);
+    if (this.liveSessionId !== sessionId) return;
+    this.liveFlags = Object.fromEntries(flags.map((f) => [this.flagKey(f.source, f.start, f.end), f]));
+  }
+
   clearLive() {
     this.liveSessionId = null;
     this.mentionStarts = [];
     this.liveSegments = [];
+    this.liveFlags = {};
     this.livePartials = {};
     this.liveStatus = '';
   }

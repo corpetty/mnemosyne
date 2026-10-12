@@ -179,6 +179,70 @@ Replace the "ask before re-summarize" dialog with a merge.
 - The Obsidian note from phase 1 becomes a projection of this document, not a separate text
   history.
 
+### Phase 2 design (agreed with Corey 2026-10-12)
+
+Status: built 2026-10-12, unreleased, as designed below. Deviations found while building: tombstones
+keep their section and last text (a reworded copy is still recognized); an LLM merge passes the
+current text as the vault side (repairs edits that bypassed `apply_human`); on a revise, owner,
+due, topics, chapters and client facts take the current state as the base; Obsidian pull-back
+takes only blocks whose rendered text was exactly the summary's (not redacted); a `[[link]]` typed
+in Obsidian comes back as plain text.
+
+Drafted against the code, reviewed and accepted. Supersedes the HashWeb model sketched above:
+reads stay in SQLite, ids live in `SummaryData`, and phase 1's two-branch text merge works per
+block.
+
+- **Per-block histories.** The summary body is one block; every decision, open question and
+  action item is one block keyed by a stable id. Each block has a phase 1 history (two branches:
+  `llm`, what the LLM last produced, standing in for phase 1's `app`; `combined`, the current
+  text). One id-tagged text for the whole summary was rejected: an item the LLM drops but the
+  human extended leaves fragments, an item the human deleted comes back when the LLM rewords it,
+  and LLM reorders strand word edits. With blocks, those are set rules on ids in Python, and the
+  sidecar merges opaque texts.
+- **Ids in the model** (an API addition): `ActionItem.id`, `SummaryData.decision_ids` and
+  `question_ids` (parallel lists, like `decision_at`), 8 characters like `Asset.id`. Readers are
+  unchanged; the Obsidian block id `^m-<id>` is rendered from them.
+- **Doc** (`summary_docs` table, JSON, cascades with the session): `body` and `blocks[id]` each
+  `{history, llm}` (the llm branch's text is cached in Python); `llm` = the base for 3-way rules
+  (order per section, per-item `owner/due/at/live`, topics, chapters, client facts, `*_at` by
+  id); `tombstones` (ids the human deleted); `vault` (what the last export rendered per block, and
+  annex lines the user added under items in Obsidian). summary_data stays the projection.
+- **LLM merge** (`apply_llm`): ids for the new output by `same_item` against the llm branch's
+  items, then human-added items (the human's wins), then tombstones (dropped), else new ids. Per
+  id: both present and texts differ → merge with `vault=None`; only new → insert after its LLM
+  predecessor in the current order, else at the section end; only in the old LLM output → delete
+  unless the human touched it (text, owner or due differ from the base, or done, follow or
+  issue_url set), then keep (Corey: touched items are kept, done ones included); tombstoned → skip.
+  Order = current order. Scalars: `owner/due/at/live` take the new LLM value when the current one
+  equals the base, else stay; `done/follow/issue_url` are human-only. Topics: (current − (base −
+  new)) ∪ (new − base), aliases applied. Chapters and client facts: whole list, new if current ==
+  base. Metadata (`style/provider/model/source_hash/title`) from the new output.
+- **Revise rebases**: `revise_hint` shows the LLM the current summary with the hand edits, so its
+  output echoes them; diffed against the llm branch they would double. A revise first sets llm :=
+  combined, then merges.
+- **Human edits** (`apply_human`): editor, Tasks text/owner/due, restore, Obsidian pull-back. Text
+  changed → merge with `app=llm text, vault=new text`; new items get ids (no llm side); missing ids
+  are tombstoned. done/follow/issue_url, speaker renames and topic renames stay direct writes.
+- **Migration** (`ensure_doc`): the baseline for a meeting without a doc is the LLM output
+  rebuilt from `session_versions` (the first "edited" version after the last "summarized again" or
+  "restored" one is the pre-edit state), else the current state.
+- **Obsidian**: block ids `^m-<id>` end every decision, question and action item line (Corey
+  agreed); ticks match by id first. The projection sections (Summary, Decisions, Action Items with
+  Others, Open Questions) are cut out of phase 1's text merge (a placeholder) and spliced back from
+  the rendering, so an edit pulled into the doc and rendered back cannot double. Pull-back
+  (`apply_vault_edits`, from `before_export` and the 5-minute pass, never exporting from the
+  pass): per block against what the last export rendered; changed only in the vault → human edit
+  by "Obsidian"; both changed → a one-off 3-way merge. Redacted exports pull back only lines whose
+  text equals the doc's.
+- **Sidecar** (`notes merge`): adds a batch form (array in, array out, per-item errors), `base`
+  instead of `history` (a one-off 3-way) and `rebase: true`. The single-object form is unchanged.
+- **Fallback**: no sidecar or a failure → today's replace + `carry_over`, the doc forgotten,
+  warned once.
+- **UI**: no confirm before re-summarize; an informational line when there are edits ("Your edits
+  are kept when the summary is made again"); the summary-ready toast says how many edits were
+  kept; history lines `summary_merged` and `note_edits_taken`. No per-item conflict state in v1:
+  a line both sides changed keeps both at word level and is listed in the history line.
+
 ## Phase 3: Corey's own machines
 
 Sync meeting documents between two paired computers (the "desktop" devices link/ already trusts)

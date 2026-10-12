@@ -66,39 +66,83 @@ enum Command {
 
 #[derive(Subcommand)]
 enum NotesCommand {
-    /// Three-way merge a note through its history. Reads one JSON object on stdin,
-    /// `{"history": <base64 or null>, "app": <text>, "vault": <text or null>}`, and prints one
-    /// line, `{"history": <base64>, "text": <text>}`. On an error: a message on stderr, exit 1.
+    /// Three-way merge a note through its history. Reads JSON on stdin and prints one line.
+    ///
+    /// Single request: `{"history": <base64 or null>, "app": <text>, "vault": <text or null>}`
+    /// gives `{"history": <base64>, "text": <text>}`. On an error: a message on stderr, exit 1.
+    ///
+    /// Optional fields: `"base": <text>` instead of `history` is a one-off three-way merge (a
+    /// history is started from `base`, then `app` and `vault` are merged into it; `base` with
+    /// `history` is an error). `"rebase": true` with a `history` first sets the app branch to
+    /// the combined one, so `app` is diffed against the combined text and a rendering that
+    /// echoes the user's edits does not double them (ignored without a history).
+    ///
+    /// Batch: a JSON array of request objects gives one line, an array of results in order,
+    /// each `{"history", "text"}` or `{"error": <message>}` for a request that failed. A batch
+    /// exits 0 whatever its items did; only unparsable top-level JSON exits 1.
     Merge,
 }
 
 #[derive(serde::Deserialize)]
 struct MergeRequest {
     history: Option<String>,
+    base: Option<String>,
     app: String,
     vault: Option<String>,
+    #[serde(default)]
+    rebase: bool,
+}
+
+fn merge_one(request: MergeRequest) -> Result<serde_json::Value> {
+    use anyhow::Context;
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use mnemosyne_link::notes;
+
+    let vault = request.vault.as_deref();
+    let merged = match (request.history, request.base) {
+        (Some(_), Some(_)) => anyhow::bail!("base and history cannot both be given"),
+        (None, Some(base)) => notes::merge_from_base(&base, &request.app, vault)?,
+        (history, None) => {
+            let history = history
+                .map(|h| STANDARD.decode(h.trim()).context("history is not base64"))
+                .transpose()?;
+            notes::merge_with(history.as_deref(), &request.app, vault, request.rebase)?
+        }
+    };
+    Ok(serde_json::json!({
+        "history": STANDARD.encode(&merged.history),
+        "text": merged.text,
+    }))
 }
 
 fn notes_merge() -> Result<()> {
     use anyhow::Context;
-    use base64::{engine::general_purpose::STANDARD, Engine};
     use std::io::Read;
 
     let mut input = String::new();
     std::io::stdin()
         .read_to_string(&mut input)
         .context("reading stdin")?;
-    let request: MergeRequest = serde_json::from_str(&input).context("invalid request")?;
-    let history = request
-        .history
-        .map(|h| STANDARD.decode(h.trim()).context("history is not base64"))
-        .transpose()?;
-    let merged =
-        mnemosyne_link::notes::merge(history.as_deref(), &request.app, request.vault.as_deref())?;
-    print_json(serde_json::json!({
-        "history": STANDARD.encode(&merged.history),
-        "text": merged.text,
-    }));
+    let value: serde_json::Value = serde_json::from_str(&input).context("invalid request")?;
+    match value {
+        serde_json::Value::Array(items) => {
+            let results: Vec<_> = items
+                .into_iter()
+                .map(|item| {
+                    serde_json::from_value::<MergeRequest>(item)
+                        .map_err(anyhow::Error::from)
+                        .context("invalid request")
+                        .and_then(merge_one)
+                        .unwrap_or_else(|e| serde_json::json!({ "error": format!("{e:#}") }))
+                })
+                .collect();
+            print_json(serde_json::Value::Array(results));
+        }
+        value => {
+            let request: MergeRequest = serde_json::from_value(value).context("invalid request")?;
+            print_json(merge_one(request)?);
+        }
+    }
     Ok(())
 }
 

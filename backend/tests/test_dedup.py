@@ -43,3 +43,32 @@ def test_threshold_and_empty_inputs():
     assert remove_echo(mic, system, threshold=0.95)[0] == mic
     assert remove_echo([], system) == ([], [])
     assert remove_echo(mic, []) == (mic, [])
+
+
+def test_similarity_is_word_based():
+    # Substrings of longer words are not matches.
+    assert similarity("so", "we also agreed") < 1.0
+    assert similarity("no", "I know that") < 1.0
+    assert similarity("eat", "that was great") < 1.0
+    assert similarity("so", "and so we did") == 1.0
+    assert similarity("all we need", "that's all we need today") == 1.0
+    # Order matters: the words must be a contiguous run.
+    assert similarity("we need all", "that's all we need") < 1.0
+
+
+def test_similarity_partial_overlap():
+    # 3 of 4 words in a run: 0.75; ratio 2*3/(4+4) = 0.75.
+    assert similarity("ship it this week", "ship it this month") == 0.75
+    # Longest run 2 of 5 words = 0.4; ratio 2*2/(5+3) = 0.5 wins.
+    assert similarity("we should ship it now", "ship it again") == 0.5
+
+
+def test_short_mic_word_is_not_bleed_of_longer_word():
+    mic = [_seg("So", 1.0, 1.4)]
+    system = [_seg("We also agreed", 1.0, 2.5, "S")]
+    kept, dropped = remove_echo(mic, system)
+    assert kept == mic and not dropped
+    # But a real one-word repeat of a whole word is still bleed.
+    system = [_seg("And so we did", 1.0, 2.5, "S")]
+    kept, dropped = remove_echo(mic, system)
+    assert not kept and dropped == mic

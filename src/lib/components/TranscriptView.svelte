@@ -6,12 +6,13 @@
 	import {
 		addGlossaryCorrection,
 		deleteSegment,
+		insertSegment,
 		mergeSegmentUp,
 		splitSegment,
 		suggestGlossary,
 		updateSegment
 	} from '$lib/api/backend.js';
-	import type { SessionDetail } from '$lib/types/index.js';
+	import type { SessionDetail, TranscriptSegment } from '$lib/types/index.js';
 	import LiveTranscript from './LiveTranscript.svelte';
 	import SpeakerBar from './SpeakerBar.svelte';
 	import TalkTime from './TalkTime.svelte';
@@ -240,8 +241,26 @@
 	async function remove(idx: number) {
 		const session = sessionState.activeSession;
 		if (!session) return;
-		if (!confirm('Delete this segment?')) return;
-		await run(() => deleteSegment(session.id, idx), 'Segment deleted');
+		const removed = transcriptState.segments[idx];
+		if (!removed) return;
+		const snapshot = $state.snapshot(removed) as TranscriptSegment;
+		busy = true;
+		try {
+			applyUpdated(await deleteSegment(session.id, idx));
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Edit failed');
+			return;
+		} finally {
+			busy = false;
+		}
+		toastState.show('Line deleted', 'info', 8000, {
+			label: 'Undo',
+			run: () => void undoRemove(session.id, idx, snapshot)
+		});
+	}
+
+	async function undoRemove(sessionId: string, idx: number, segment: TranscriptSegment) {
+		await run(() => insertSegment(sessionId, idx, segment));
 	}
 
 	async function mergeUp(idx: number) {

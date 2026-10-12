@@ -132,6 +132,9 @@ class Settings(BaseSettings):
     # Drop mic segments that repeat what came out of the speakers (no headphones).
     echo_dedup: bool = True
     echo_similarity: float = 0.8
+    # Drop mic lines Silero hears no speech in: keyboard clicks and silence that Phonon-2 (no VAD)
+    # turns into "Yeah." (transcription/speech_gate.py).
+    mic_speech_gate: bool = True
     # Voice profiles: auto-label diarized speakers whose embedding matches a
     # known speaker with cosine similarity >= this.
     auto_label_speakers: bool = True
