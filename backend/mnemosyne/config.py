@@ -375,6 +375,9 @@ class Settings(BaseSettings):
     # topics) that are the exact name of a note already in the vault become [[links]], once
     # per section (export/links.py).
     obsidian_link_notes: bool = True
+    # Every export also rewrites <subfolder>/Decisions.md: the decisions of all meetings, newest
+    # first, each under a link to its note (export/topic_notes.py).
+    obsidian_decisions_log: bool = False
 
     @classmethod
     def settings_customise_sources(

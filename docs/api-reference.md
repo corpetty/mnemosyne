@@ -965,6 +965,15 @@ pieces that match the topic by words or by meaning.
 Body `{"q": "...", "provider": "", "model": ""}`. Queues a `thread` job: the LLM writes where the
 topic stands (current state, how it got there, what is still open). Result `{text, query, meetings}`.
 
+### `POST /api/topics/obsidian`
+Body `{"query": "...", "explanation": ""}` → `{path, message}`. Writes the topic thread to
+`<vault>/<obsidian_subfolder>/topics/<Topic>.md` (frontmatter `mnemosyne: topic`): `explanation`
+(the "Where it stands" text, no LLM call is made), then per meeting, oldest first,
+`### YYYY-MM-DD [[note|Name]]` with its summary, decisions, action items (checkboxes by
+`obsidian_task_scope`) and open questions; words that name vault notes are linked
+(`obsidian_link_notes`). Only a file with our marker is rewritten: 409 when the user has a note of
+that name (that file, or elsewhere in the vault). 400 without a vault, 404 without meetings.
+
 ## GitHub issues from action items
 
 Settings: `github_repo` (owner/name), `github_token` (secret; a fine-grained token with
@@ -1192,6 +1201,11 @@ frontmatter (`participants`, `people` as `[[links]]` for named speakers when `ob
 recorder's items (their name, "Me", or no owner) and followed items are `- [ ]` tasks; everyone
 else's are plain bullets (`- Jonny Zerah: text`) under `### Others`. `"all"` writes every item as a
 task. Person notes follow the same setting (open tasks as bullets, followed ones under "Waiting on").
+With `obsidian_decisions_log` (default off) every export also rewrites `<subfolder>/Decisions.md`
+(marker `mnemosyne: decisions`; a note of the user's with that name is left alone): the decisions of
+all readable meetings, newest first, under `## YYYY-MM-DD [[note|Name]]`. The export-all job writes
+it once at the end.
+
 With `obsidian_link_notes` (default on) words in the Summary, Decisions, Action Items, Open
 Questions, Chapters and the `topics` that are the exact name of a note already in the vault become
 `[[links]]`, the first occurrence in each section. Case-sensitive, whole words, names of 3 or more

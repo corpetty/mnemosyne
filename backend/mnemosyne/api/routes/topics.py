@@ -20,6 +20,7 @@ from ...services.topics import (
 )
 from ...summarization.privacy import is_cloud
 from ..context import AppContext, get_ctx
+from .export import ExportResponse, build_exporter, task_predicate
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
 
@@ -93,3 +94,66 @@ async def summarize_thread(request: ThreadSummaryRequest, ctx: AppContext = Depe
         return {"text": text.strip(), "query": q, "meetings": len(thread.meetings)}
 
     return ctx.jobs.submit("thread", run)
+
+
+class TopicNoteRequest(ApiModel):
+    query: str
+    explanation: str = ""  # the "Where it stands" text the panel already has
+
+
+@router.post("/obsidian", response_model=ExportResponse)
+async def save_topic_note(request: TopicNoteRequest, ctx: AppContext = Depends(get_ctx)):
+    """Write the topic's thread (and `explanation`, when given) to `<vault>/<subfolder>/topics/`.
+    409 when the vault has a note of the user's with that name."""
+    from pathlib import Path
+
+    from ...export.obsidian import note_stem
+    from ...export.topic_notes import NoteConflict, write_topic_note
+
+    st = ctx.settings
+    if not st.obsidian_vault_path:
+        raise HTTPException(status_code=400, detail="Obsidian vault path not configured")
+    q = request.query.strip()
+    if len(q) < 2:
+        raise HTTPException(status_code=400, detail="Topic is too short")
+    vault = Path(st.obsidian_vault_path).expanduser()
+    if not vault.is_dir():
+        raise HTTPException(status_code=400, detail=f"Vault not found: {vault}")
+
+    def run() -> Path:
+        thread = build_thread(ctx.repo, ctx.index, q)
+        if not thread.meetings:
+            raise ValueError(f'No meetings found about "{q}"')
+        stems, predicates = {}, {}
+        for m in thread.meetings:
+            s = ctx.repo.get(m.id)
+            if s is None:
+                continue
+            stems[m.id] = note_stem(s)
+            if st.obsidian_task_scope == "mine":
+                predicates[m.id] = (s, task_predicate(ctx, s))
+
+        def is_mine(sid: str, idx: int) -> bool:
+            s, pred = predicates.get(sid, (None, None))
+            items = s.summary_data.action_items if s is not None and s.summary_data else []
+            return pred is not None and idx < len(items) and pred(items[idx])
+
+        exporter = build_exporter(ctx, st.obsidian_vault_path)
+        return write_topic_note(
+            vault,
+            st.obsidian_subfolder,
+            thread,
+            stems,
+            request.explanation,
+            known_notes=exporter.known_notes,
+            is_mine=is_mine if st.obsidian_task_scope == "mine" else (lambda sid, idx: True),
+            redact=st.redact_exports,
+        )
+
+    try:
+        path = await asyncio.to_thread(run)
+    except NoteConflict as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return ExportResponse(path=str(path), message="Saved")

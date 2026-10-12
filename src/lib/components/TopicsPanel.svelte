@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { uiState } from '$lib/stores/ui.svelte.js';
-	import { getThread, listTopics, renameTopic, summarizeThread } from '$lib/api/backend.js';
+	import { getThread, listTopics, renameTopic, getSettings, saveTopicNote, summarizeThread } from '$lib/api/backend.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -85,6 +85,22 @@
 		}
 	}
 
+	let hasVault = $state(false);
+	$effect(() => {
+		getSettings()
+			.then((s) => (hasVault = s.obsidian_vault_exists))
+			.catch(() => {});
+	});
+	async function saveNote() {
+		if (!thread) return;
+		try {
+			const r = await saveTopicNote(thread.query, explanation);
+			toastState.success(`Saved to ${r.path}`);
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not save the note');
+		}
+	}
+
 	const job = $derived(jobId ? jobsState.jobs[jobId] : null);
 	const explanation = $derived(job?.status === 'completed' ? ((job.result as { text?: string } | null)?.text ?? '') : '');
 
@@ -151,6 +167,12 @@
 					{job?.status === 'queued' || job?.status === 'running' ? 'Reading…' : 'Where does this stand?'}
 				</button>
 				<span class="text-xs text-gray-500">{thread.meetings.length} meeting{thread.meetings.length === 1 ? '' : 's'}</span>
+				<button
+					onclick={saveNote}
+					disabled={!hasVault}
+					title={hasVault ? 'Write this thread to your vault as a note' : 'Set your Obsidian vault in Settings first'}
+					class="px-3 py-1 text-xs rounded bg-gray-800 border border-gray-700 text-gray-200 hover:bg-gray-700 disabled:opacity-50"
+				>Save to Obsidian</button>
 				{#if job?.status === 'failed'}<span class="text-xs text-red-400">{job.error}</span>{/if}
 				{#if known && !renaming}
 					<button

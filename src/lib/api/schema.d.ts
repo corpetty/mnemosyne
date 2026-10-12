@@ -2525,6 +2525,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/topics/obsidian": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save Topic Note
+         * @description Write the topic's thread (and `explanation`, when given) to `<vault>/<subfolder>/topics/`.
+         *     409 when the vault has a note of the user's with that name.
+         */
+        post: operations["save_topic_note_api_topics_obsidian_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/topics/rename": {
         parameters: {
             query?: never;
@@ -5007,6 +5028,8 @@ export interface components {
             obsidian_daily_folder?: string | null;
             /** Obsidian Daily Notes */
             obsidian_daily_notes?: boolean | null;
+            /** Obsidian Decisions Log */
+            obsidian_decisions_log?: boolean | null;
             /** Obsidian Include Transcript */
             obsidian_include_transcript?: boolean | null;
             /** Obsidian Link Notes */
@@ -5270,6 +5293,8 @@ export interface components {
             obsidian_daily_folder: string;
             /** Obsidian Daily Notes */
             obsidian_daily_notes: boolean;
+            /** Obsidian Decisions Log */
+            obsidian_decisions_log: boolean;
             /** Obsidian Include Transcript */
             obsidian_include_transcript: boolean;
             /** Obsidian Link Notes */
@@ -5826,6 +5851,16 @@ export interface components {
             meetings: number;
             /** Topic */
             topic: string;
+        };
+        /** TopicNoteRequest */
+        TopicNoteRequest: {
+            /**
+             * Explanation
+             * @default
+             */
+            explanation: string;
+            /** Query */
+            query: string;
         };
         /** TrackerCheck */
         TrackerCheck: {
@@ -10559,6 +10594,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TopicCount"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_topic_note_api_topics_obsidian_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TopicNoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportResponse"];
                 };
             };
             /** @description Validation Error */

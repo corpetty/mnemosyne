@@ -760,6 +760,10 @@ export async function summarizeThread(q: string): Promise<Job> {
   return request('/api/topics/thread/summary', { method: 'POST', body: JSON.stringify({ q }) });
 }
 
+export async function saveTopicNote(query: string, explanation = ''): Promise<{ path: string; message: string }> {
+  return request('/api/topics/obsidian', { method: 'POST', body: JSON.stringify({ query, explanation }) });
+}
+
 export async function setLocalOnly(sessionId: string, localOnly: boolean): Promise<SessionDetail> {
   return request(`/api/sessions/${sessionId}/local-only`, {
     method: 'PUT',

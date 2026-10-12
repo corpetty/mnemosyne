@@ -199,6 +199,7 @@
 				obsidian_daily_folder: v.obsidian_daily_folder,
 				obsidian_task_scope: v.obsidian_task_scope,
 				obsidian_link_notes: v.obsidian_link_notes,
+				obsidian_decisions_log: v.obsidian_decisions_log,
 				digest_weekday: v.digest_weekday,
 				digest_hour: v.digest_hour
 			};
@@ -1140,6 +1141,13 @@
 							<span class="text-sm text-gray-300">Link to the notes in my vault</span>
 						</span>
 						<span class="block text-[11px] text-gray-600 mt-1">Words that are the name of a note in your vault become links.</span>
+					</label>
+					<label class="col-span-2">
+						<span class="flex items-center gap-2">
+							<input type="checkbox" bind:checked={form.obsidian_decisions_log} disabled={locked('obsidian_decisions_log')} class="rounded border-gray-600 bg-gray-800" />
+							<span class="text-sm text-gray-300">Keep a decisions log</span>
+						</span>
+						<span class="block text-[11px] text-gray-600 mt-1">Decisions.md lists every meeting's decisions by date, rewritten on each export.</span>
 					</label>
 					<label class="flex items-center gap-2 col-span-2">
 						<input type="checkbox" bind:checked={form.obsidian_auto_export} disabled={locked('obsidian_auto_export')} class="rounded border-gray-600 bg-gray-800" />

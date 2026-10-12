@@ -112,8 +112,30 @@ def before_export(ctx: AppContext, session, vault_path: str):
     return session
 
 
-def export_session(ctx: AppContext, session, vault_path: str):
-    """Write the meeting note and, when enabled, the notes of the people in it."""
+def write_decisions(ctx: AppContext, vault_path: str):
+    """Rewrite Decisions.md (obsidian_decisions_log) from the meetings the caller can read."""
+    from ...export.topic_notes import write_decisions_log
+
+    meetings = []
+    for summary in ctx.repo.list_summaries():  # newest first, only what the caller may read
+        if not summary.has_summary:
+            continue
+        s = ctx.repo.get(summary.id)
+        if s is not None and s.summary_data and s.summary_data.decisions:
+            meetings.append((s, s.summary_data.decisions))
+    exporter = build_exporter(ctx, vault_path)
+    return write_decisions_log(
+        exporter.vault_path.expanduser(),
+        ctx.settings.obsidian_subfolder,
+        meetings,
+        known_notes=exporter.known_notes,
+        redact=ctx.settings.redact_exports,
+    )
+
+
+def export_session(ctx: AppContext, session, vault_path: str, decisions: bool = True):
+    """Write the meeting note and, when enabled, the notes of the people in it and the
+    decisions log (`decisions=False`: the caller writes it once after many meetings)."""
     session = before_export(ctx, session, vault_path)
     exporter = build_exporter(ctx, vault_path, session)
     path = exporter.export(session, _resources(ctx, session, exporter))
@@ -152,6 +174,11 @@ def export_session(ctx: AppContext, session, vault_path: str):
             )
         except Exception:
             logger.warning("Daily note failed for session %s", session.id, exc_info=True)
+    if decisions and st.obsidian_decisions_log:
+        try:
+            write_decisions(ctx, vault_path)
+        except Exception:
+            logger.warning("Decisions log failed after session %s", session.id, exc_info=True)
     return path
 
 
@@ -214,13 +241,18 @@ async def export_all_to_obsidian(ctx: AppContext = Depends(get_ctx)):
                 if session is None:
                     continue
                 history.log_access(ctx, summary.id, "exported")
-                await asyncio.to_thread(export_session, ctx, session, vault_path)
+                await asyncio.to_thread(export_session, ctx, session, vault_path, False)
                 exported += 1
             except FileNotFoundError as e:  # the vault is gone: every meeting would fail
                 raise ValueError(str(e)) from e
             except Exception:
                 failed += 1
                 logger.warning("Export of session %s failed", summary.id, exc_info=True)
+        if ctx.settings.obsidian_decisions_log:
+            try:
+                await asyncio.to_thread(write_decisions, ctx, vault_path)
+            except Exception:
+                logger.warning("Decisions log failed", exc_info=True)
         job.update(f"Exported {exported} of {total}", progress=1.0)
         return {"exported": exported, "failed": failed, "total": total}
 
