@@ -5,9 +5,13 @@ backend's environment (the GPU extra resolves transformers 4.57, and CPU-only in
 torch at all), so it gets its own: `<data_dir>/phonon/venv`, made by uv from the backend's own
 Python, with every package at the exact version in phonon-requirements.txt. torch comes first,
 alone, from PyTorch's CPU index (from PyPI it would be the multi-GB CUDA build); the rest from
-PyPI. Then the model is downloaded once, as its own step (into `<data_dir>/phonon/cache`), and
-`installed` is written: from then on the server runs with HF_HUB_OFFLINE=1. About 1 GB in all;
-removing the folder removes all of it.
+PyPI. Every requirement carries the SHA-256 of its files (phonon-requirements.txt) and uv runs
+with --require-hashes; torch's step is `--no-deps` (its dependencies are in the file and come in
+the second step, which finds torch installed). Then the model is downloaded once, as its own step
+(into `<data_dir>/phonon/cache`), checked against its pinned SHA-256 (phonon.MODEL_FILES; a
+mismatch fails the install and empties the cache), and `installed` is written: from then on the
+server runs with HF_HUB_OFFLINE=1, and checks the model again before each start. About 1 GB in
+all; removing the folder removes all of it.
 
 uv: the app's bundled one (MNEMOSYNE_UV_BIN, set by the desktop shell), else `uv` on PATH.
 Reviewed 2026-10-08 (fermion-research 0.2.11): no telemetry; model archive pinned by sha256 in
@@ -64,11 +68,20 @@ def uv_binary() -> str | None:
     return os.environ.get("MNEMOSYNE_UV_BIN") or shutil.which("uv")
 
 
-def _pins(name: str) -> str:
+def _pin(name: str) -> str:
+    """The requirement `name==version` with its `--hash` lines, as a requirements file's text."""
+    lines: list[str] = []
     for line in REQUIREMENTS.read_text().splitlines():
+        if lines:  # inside the entry: its hashes are indented continuation lines
+            if line[:1].isspace():
+                lines.append(line)
+                continue
+            break
         if line.lower().startswith(f"{name}=="):
-            return line.strip()
-    raise ValueError(f"{name} is not pinned in {REQUIREMENTS.name}")
+            lines.append(line)
+    if not lines or not any("--hash=" in line for line in lines):
+        raise ValueError(f"{name} is not pinned with hashes in {REQUIREMENTS.name}")
+    return "\n".join(lines) + "\n"
 
 
 async def _run(args: list[str], report: Report, done: float, env: dict[str, str]) -> None:
@@ -101,6 +114,7 @@ async def install(data_dir: Path, report: Report, uv: str | None = None) -> None
     venv = root / "venv"
     python = venv / "bin" / "python"
     (root / "installed").unlink(missing_ok=True)
+    phonon._refused.pop(root, None)  # installing again is the way out of a refusal
     root.mkdir(parents=True, exist_ok=True)
     env = {
         **os.environ,
@@ -112,19 +126,28 @@ async def install(data_dir: Path, report: Report, uv: str | None = None) -> None
         report("Making Phonon's environment", 0.02)
         await _run([uv, "venv", "--python", sys.executable, str(venv)], report, 0.02, env)
     report("Installing PyTorch for the CPU (about 700 MB)", 0.05)
+    torch_file = root / "torch-requirements.txt"
+    torch_file.write_text(_pin("torch"))
     await _run(
-        [uv, "pip", "install", "--python", str(python), "--index-url", TORCH_INDEX, _pins("torch")],
+        [uv, "pip", "install", "--python", str(python), "--require-hashes", "--no-deps"]
+        + ["--index-url", TORCH_INDEX, "-r", str(torch_file)],
         report,
         0.4,
         env,
     )
     report("Installing Fermion's Phonon package", 0.5)
     await _run(
-        [uv, "pip", "install", "--python", str(python), "-r", str(REQUIREMENTS)],
+        [uv, "pip", "install", "--python", str(python), "--require-hashes"]
+        + ["-r", str(REQUIREMENTS)],
         report,
         0.7,
         env,
     )
+    if (root / "cache").exists():  # an earlier download that is not the pinned one is not reused
+        try:
+            await asyncio.to_thread(phonon.verify_model, root)
+        except phonon.ModelMismatch:
+            shutil.rmtree(root / "cache", ignore_errors=True)
     report("Downloading the Phonon-2 model (164 MB)", 0.75)
     server = phonon.PhononServer(
         str(phonon.managed_program(root)),
@@ -135,6 +158,16 @@ async def install(data_dir: Path, report: Report, uv: str | None = None) -> None
         await server.acquire(timeout=1800.0)
     finally:
         await asyncio.to_thread(server.stop)
+    report("Checking the model against its pinned checksum", 0.95)
+    try:
+        await asyncio.to_thread(phonon.verify_model, root)
+    except phonon.ModelMismatch as e:
+        logger.error("%s", e)
+        log = Path(data_dir) / "logs" / "phonon.log"
+        with log.open("a") as f:
+            f.write(f"[mnemosyne] {e}\n")
+        shutil.rmtree(root / "cache", ignore_errors=True)  # a retry downloads it again
+        raise
     (root / "installed").write_text(requirements_hash() + "\n")
     report("Phonon-2 is installed", 1.0)
     logger.info("Phonon installed in %s (%.0f MB)", root, size_bytes(data_dir) / 1e6)
@@ -145,4 +178,5 @@ def remove(data_dir: Path) -> None:
     for server in list(phonon._servers.values()):
         if server.home == home(data_dir):
             server.stop()
+    phonon._refused.pop(home(data_dir), None)
     shutil.rmtree(home(data_dir), ignore_errors=True)

@@ -1,6 +1,7 @@
 """Phonon-2 through `phonon serve` (transcription/transcribers/phonon.py), with a stand-in
 `phonon` program: the real one is Fermion's package, not a dependency."""
 
+import hashlib
 import os
 import sys
 import textwrap
@@ -16,7 +17,8 @@ STUB = textwrap.dedent(
     """\
     #!{python}
     # Answers like `phonon serve`: /health, and /v1/audio/transcriptions in verbose_json.
-    import json, sys
+    import json, os, sys
+    from pathlib import Path
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     import argparse
@@ -27,6 +29,13 @@ STUB = textwrap.dedent(
     p.add_argument("--api-key")
     p.add_argument("--threads", type=int)
     port = p.parse_args().port
+    # Like the real one: the first start puts the model into the cache folder it is given.
+    cache = os.environ.get("FERMION_CACHE_DIR")
+    if cache:
+        model = Path(cache) / "models--x" / "snapshots" / "abc" / "model.bin"
+        if not model.exists():
+            model.parent.mkdir(parents=True, exist_ok=True)
+            model.write_bytes(os.environ.get("FAKE_MODEL", "the model").encode())
     log = open(sys.argv[0] + ".log", "a")
     log.write("ARGS " + " ".join(sys.argv[1:]) + "\\n"); log.flush()
     BODY = {{
@@ -259,6 +268,12 @@ def fake_uv(tmp_path, stub, monkeypatch):
     path.chmod(0o755)
     monkeypatch.setenv("FAKE_PHONON", stub)
     monkeypatch.setenv("MNEMOSYNE_UV_BIN", str(path))
+    # The stand-in's model, in place of the real file's SHA-256.
+    monkeypatch.setattr(
+        phonon,
+        "MODEL_FILES",
+        {"models--x/snapshots/*/model.bin": hashlib.sha256(b"the model").hexdigest()},
+    )
     return str(path)
 
 
@@ -272,8 +287,16 @@ async def test_install_into_its_own_folder_then_offline(fake_uv, tmp_path, wav, 
     assert phonon_install.installed(data) and phonon_install.size_bytes(data) > 0
     calls = open(fake_uv + ".log").read().splitlines()
     assert calls[0].startswith("venv --python")
-    assert "--index-url https://download.pytorch.org/whl/cpu torch==" in calls[1]  # CPU torch first
+    # CPU torch first, alone, and everything with its hash required.
+    assert "--index-url https://download.pytorch.org/whl/cpu" in calls[1]
+    assert "--require-hashes" in calls[1] and "--no-deps" in calls[1]
+    torch_file = data / "phonon" / "torch-requirements.txt"
+    assert calls[1].endswith(str(torch_file))
+    assert (
+        torch_file.read_text().startswith("torch==") and "--hash=sha256:" in torch_file.read_text()
+    )
     assert "-r" in calls[2] and calls[2].endswith("phonon-requirements.txt")
+    assert "--require-hashes" in calls[2] and "--no-deps" not in calls[2]
     assert seen[-1] == ("Phonon-2 is installed", 1.0)
 
     # The transcriber finds our install without a path, and its server runs offline, keyed.
@@ -330,3 +353,109 @@ def test_install_route(client, ctx, fake_uv):
     assert client.get("/api/system").json()["phonon"] is True
     assert client.delete("/api/system/phonon").status_code == 200
     assert client.get("/api/system").json()["phonon"] is False
+
+
+def test_every_pin_has_hashes():
+    """The real file: each entry is name==version with at least one sha256 and nothing else."""
+    from mnemosyne.services import phonon_install
+
+    entries: dict[str, list[str]] = {}
+    name = ""
+    for line in phonon_install.REQUIREMENTS.read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        if line[:1].isspace():
+            entries[name].append(line.strip().removesuffix("\\").strip())
+        else:
+            name = line.split("==")[0]
+            assert "==" in line, line
+            entries[name] = []
+    assert {"torch", "fermion-research", "transformers", "numpy"} <= set(entries)
+    for name, hashes in entries.items():
+        assert hashes and all(h.startswith("--hash=sha256:") for h in hashes), name
+        assert all(len(h) == len("--hash=sha256:") + 64 for h in hashes), name
+    torch = phonon_install._pin("torch")
+    assert torch.startswith("torch==") and "+cpu" in torch.splitlines()[0]
+    assert len(torch.splitlines()) == len(entries["torch"]) + 1
+    assert "annotated-doc" not in torch  # just torch's entry
+
+
+def _model_file(data):
+    return data / "phonon" / "cache" / "models--x" / "snapshots" / "abc" / "model.bin"
+
+
+@pytest.mark.anyio
+async def test_a_wrong_model_fails_the_install_and_empties_the_cache(
+    fake_uv, tmp_path, monkeypatch
+):
+    from mnemosyne.services import phonon_install
+
+    data = tmp_path / "data"
+    monkeypatch.setenv("FAKE_MODEL", "something else")
+    with pytest.raises(phonon.ModelMismatch, match="does not match its pinned SHA-256"):
+        await phonon_install.install(data, lambda m, f: None)
+    assert not phonon_install.installed(data)
+    assert not (data / "phonon" / "cache").exists()  # a retry downloads it again
+    assert "pinned SHA-256" in (data / "logs" / "phonon.log").read_text()
+
+
+@pytest.mark.anyio
+async def test_a_model_replaced_after_the_install_is_not_started(fake_uv, tmp_path, wav):
+    from mnemosyne.services import phonon_install
+
+    data = tmp_path / "data"
+    home = data / "phonon"
+    await phonon_install.install(data, lambda m, f: None)
+    program = str(phonon.managed_program(home))
+    log = data / "logs" / "phonon.log"
+
+    # The pinned file: it starts (and the transcription works).
+    ok = phonon.PhononTranscriber(home=home, log_path=log)
+    assert [s.text for s in await ok.transcribe(wav)][0] == "hello there"
+    await ok.unload()
+    started = open(program + ".log").read().count("ARGS")
+
+    # Another file in its place: refused before the server starts, in the log and the error,
+    # and from then on `phonon` is not on offer (Parakeet takes over, see the registry).
+    _model_file(data).write_bytes(b"tampered")
+    bad = phonon.PhononTranscriber(home=home, log_path=log)
+    with pytest.raises(phonon.ModelMismatch, match="does not match its pinned SHA-256"):
+        await bad.transcribe(wav)
+    assert open(program + ".log").read().count("ARGS") == started  # not started again
+    assert "does not match its pinned SHA-256" in log.read_text()
+    assert phonon.find_phonon("", home) is None
+    with pytest.raises(phonon.ModelMismatch):  # the same clear error, not "not installed"
+        await phonon.PhononTranscriber(home=home, log_path=log).load()
+
+    # Installing again brings the right file back and lifts the refusal.
+    await phonon_install.install(data, lambda m, f: None)
+    assert phonon.find_phonon("", home) == program
+    again = phonon.PhononTranscriber(home=home, log_path=log)
+    assert [s.text for s in await again.transcribe(wav)][0] == "hello there"
+    await again.unload()
+
+
+def test_a_missing_model_file_is_refused(fake_uv, tmp_path):
+    home = tmp_path / "ph-home"
+    with pytest.raises(phonon.ModelMismatch, match="missing"):
+        phonon.verify_model(home)
+    assert home in phonon._refused
+    phonon._refused.clear()
+
+
+def test_a_file_is_hashed_once_while_it_is_unchanged(fake_uv, tmp_path, monkeypatch):
+    home = tmp_path / "ph-home"
+    model = home / "cache" / "models--x" / "snapshots" / "abc" / "model.bin"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"the model")
+    calls = []
+    real = hashlib.file_digest
+    monkeypatch.setattr(hashlib, "file_digest", lambda f, d: calls.append(f.name) or real(f, d))
+    phonon.verify_model(home)
+    phonon.verify_model(home)
+    assert len(calls) == 1
+    model.write_bytes(b"the model, changed")  # size and mtime change: hashed again, and refused
+    with pytest.raises(phonon.ModelMismatch):
+        phonon.verify_model(home)
+    assert len(calls) == 2
+    phonon._refused.clear()

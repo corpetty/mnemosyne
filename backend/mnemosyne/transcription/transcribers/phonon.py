@@ -21,6 +21,7 @@ silence throughout (the echo-cancelled mic, mostly) are not sent, and progress f
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import secrets
@@ -47,6 +48,20 @@ SAMPLE_RATE = 16000
 PIECE_SECONDS = 300.0  # 9.6 MB as 16 kHz 16-bit WAV
 SEARCH_SECONDS = 15.0  # where to look for a quiet moment before each boundary
 SILENT_DBFS = -55.0  # a piece whose loudest 100 ms stays below this is not sent"
+# The model files Phonon runs, pinned by SHA-256 (the files on Corey's machine, 2026-10-12, which
+# Fermion itself verified against the hashes in its wheel: the archive "verified against the pinned
+# sha256 (98125795b6dd…)", every member of it after unpacking). Paths are relative to our own
+# install's cache folder (`<data_dir>/phonon/cache`, FERMION_CACHE_DIR). The archive is what is
+# downloaded, `model.fermion` what the engine loads: checked again here so that a file replaced
+# after the install is not run.
+MODEL_FILES = {
+    "models--FermionResearch--Phonon-2/snapshots/*/phonon-2.bps.tar.zst": (
+        "98125795b6dda72f5c6eee9ba33d19815df65dcb18b50a357bf9f73c9935309e"
+    ),
+    "speech/FermionResearch__Phonon-2/*/model.fermion": (
+        "4b6bfa3a12cc3c4e0a54f2ab3ec4ca7a842b09e5c7ecfc8e7ca0ac6cc8c11468"
+    ),
+}
 INSTALL_HINT = (
     "Phonon is not installed: install it with `pip install fermion-research` (its CPU engine "
     "also needs CPU PyTorch; see fermionresearch.com/docs/speech), or set its path in "
@@ -59,6 +74,53 @@ def managed_program(home: Path) -> Path:
     return home / "venv" / "bin" / "phonon"
 
 
+class ModelMismatch(RuntimeError):
+    """The model file is missing or is not the one pinned in MODEL_FILES."""
+
+
+# (path, size, mtime_ns) -> sha256 of files already hashed in this process.
+_hashed: dict[tuple[str, int, int], str] = {}
+# Installs whose model did not match, with why: not offered as `phonon` until installed again.
+_refused: dict[Path, str] = {}
+
+
+def _sha256(path: Path) -> str:
+    st = path.stat()
+    key = (str(path), st.st_size, st.st_mtime_ns)
+    if key not in _hashed:
+        with path.open("rb") as f:
+            _hashed[key] = hashlib.file_digest(f, "sha256").hexdigest()
+    return _hashed[key]
+
+
+def verify_model(home: Path) -> None:
+    """Check the model files under `home` (our own install) against MODEL_FILES. Raises
+    ModelMismatch, saying which file and what was found; the install is then refused (see
+    `find_phonon`) until it is installed again. A file is hashed once per (path, size, mtime)."""
+    cache = home / "cache"
+    for pattern, expected in MODEL_FILES.items():
+        name = pattern.rsplit("/", 1)[-1]
+        found = sorted(cache.glob(pattern))
+        if not found:
+            message = (
+                f"Phonon-2's model file {name} is missing from {cache}; not starting Phonon. "
+                "Install Phonon again in Settings → Transcription"
+            )
+            _refused[home] = message
+            raise ModelMismatch(message)
+        for path in found:
+            actual = _sha256(path)
+            if actual != expected:
+                message = (
+                    f"Phonon-2's model file {name} does not match its pinned SHA-256 "
+                    f"(expected {expected[:12]}…, found {actual[:12]}…); not starting Phonon. "
+                    "Install Phonon again in Settings → Transcription, or use another transcriber"
+                )
+                _refused[home] = message
+                raise ModelMismatch(message)
+    _refused.pop(home, None)
+
+
 def find_phonon(command: str = "", home: Path | None = None) -> str | None:
     """The `phonon` program to run: `command` when it is set (a path or a name on PATH), else
     our own install under `home` once it is complete, else `phonon` on PATH. None: there is none."""
@@ -67,7 +129,12 @@ def find_phonon(command: str = "", home: Path | None = None) -> str | None:
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
         return shutil.which(command)
-    if home is not None and (home / "installed").exists() and managed_program(home).is_file():
+    if (
+        home is not None
+        and home not in _refused
+        and (home / "installed").exists()
+        and managed_program(home).is_file()
+    ):
         return str(managed_program(home))
     return shutil.which("phonon")
 
@@ -193,12 +260,26 @@ class PhononServer:
                 await asyncio.to_thread(self.stop)
 
     def _start(self) -> None:
-        self.port = _free_port()
         if self.log_path:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        # Our own finished install: its model must be the pinned one before it is run. (The first
+        # start, inside the install, has no `installed` yet and downloads it; the install checks
+        # it afterwards.)
+        if self.home is not None and (self.home / "installed").exists():
+            try:
+                verify_model(self.home)
+            except ModelMismatch as e:
+                logger.error("%s", e)
+                if self.log_path:
+                    with self.log_path.open("a") as f:
+                        f.write(f"[mnemosyne] {e}\n")
+                raise
+        self.port = _free_port()
         log = self.log_path.open("ab") if self.log_path else subprocess.DEVNULL
         logger.info("Starting phonon serve on port %d", self.port)
-        self.api_key = secrets.token_urlsafe(24)
+        # hex, not urlsafe base64: a key that starts with "-" is taken for an option and the server
+        # does not start (1 in 64 starts)
+        self.api_key = secrets.token_hex(24)
         # `phonon serve` names its model itself: a "phonon-2" argument is refused (0.16.0's
         # install failed at its first start on that, 2026-10-12).
         args = [
@@ -288,6 +369,8 @@ class PhononTranscriber:
             await self.unload()
         program = find_phonon(self.command, self.home)
         if program is None:
+            if self.home is not None and not self.command and self.home in _refused:
+                raise ModelMismatch(_refused[self.home])
             raise RuntimeError(INSTALL_HINT)
         home = self.home if self.home and program == str(managed_program(self.home)) else None
         server = server_for(program, self.log_path, self.threads, home)
