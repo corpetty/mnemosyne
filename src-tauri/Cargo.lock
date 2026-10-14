@@ -2158,6 +2158,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashseq"
+version = "0.1.0"
+source = "git+https://github.com/davidrusu/hashseq?rev=94f5e3c#94f5e3c7c692e8ca3478772521521df018899e0f"
+dependencies = [
+ "blake3",
+ "getrandom 0.2.17",
+ "hashbrown 0.15.5",
+ "hex",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "heapless"
 version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3202,12 +3217,16 @@ name = "mnemosyne-link"
 version = "0.9.4"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "clap",
+ "getrandom 0.2.17",
+ "hashseq",
  "iroh",
  "iroh-mdns-address-lookup",
  "iroh-tickets",
  "serde",
  "serde_json",
+ "similar",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -5435,6 +5454,12 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "simple-dns"
