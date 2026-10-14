@@ -49,14 +49,19 @@ test('edit the text, tags, decisions, items, chapters and questions', async () =
   await expect(page.getByText(/· edited /)).toBeVisible();
 });
 
-test('edits are kept, and summarizing again says so', async () => {
+test('summarizing again asks first without the merge sidecar', async () => {
   await page.reload();
   await page.getByRole('button', { name: /summary-edit/ }).first().click();
   await page.getByRole('button', { name: 'Summary', exact: true }).click();
   await expect(page.getByText('Book the release call')).toBeVisible();
-  await expect(page.getByText('Your edits are kept when the summary is made again.')).toBeVisible();
-  await page.getByRole('button', { name: 'Re-summarize' }).click(); // no dialog; the edits are merged
-  await expect(page.getByText('Book the release call')).toBeVisible();
+  // The demo backend has no mnemosyne-link: summarizing again would replace the edits.
+  await expect(page.getByText('Your edits are kept when the summary is made again.')).toHaveCount(0);
+  page.once('dialog', (d) => {
+    expect(d.message()).toContain('replaces your edits');
+    void d.dismiss();
+  });
+  await page.getByRole('button', { name: 'Re-summarize' }).click();
+  await expect(page.getByText('We agreed to ship in October and to fix the docs first.')).toBeVisible();
 });
 
 test('cancel leaves the summary as it was', async () => {

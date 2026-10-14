@@ -21,6 +21,16 @@ def test_system_info(client, ctx, monkeypatch):
     assert client.get("/api/system").json()["hf_token"] is True
 
 
+def test_summary_merge_follows_the_sidecar(client, tmp_path, monkeypatch):
+    # conftest points MNEMOSYNE_LINK_BIN at nothing.
+    assert client.get("/api/system").json()["summary_merge"] is False
+    fake = tmp_path / "mnemosyne-link"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("MNEMOSYNE_LINK_BIN", str(fake))
+    assert client.get("/api/system").json()["summary_merge"] is True
+
+
 def test_setup_complete_is_a_setting(client):
     assert client.get("/api/settings").json()["values"]["setup_complete"] is False
     r = client.put("/api/settings", json={"setup_complete": True})

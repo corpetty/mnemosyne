@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ... import access
 from ...jobs import Job
 from ...models.base import ApiModel
-from ...services import phonon_install
+from ...services import link, phonon_install
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -42,6 +42,9 @@ class SystemInfo(ApiModel):
     phonon: bool
     phonon_bytes: int
     phonon_installable: bool
+    # mnemosyne-link with `notes merge` found: a re-summarize keeps hand edits
+    # (services/summary_doc.py)
+    summary_merge: bool
 
 
 def _has(module: str) -> bool:
@@ -91,6 +94,7 @@ async def system_info(ctx: AppContext = Depends(get_ctx)):
         phonon=phonon_install.installed(ctx.settings.data_dir),
         phonon_bytes=await asyncio.to_thread(phonon_install.size_bytes, ctx.settings.data_dir),
         phonon_installable=phonon_install.uv_binary() is not None,
+        summary_merge=link.find_binary() is not None,
     )
 
 

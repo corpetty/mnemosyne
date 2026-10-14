@@ -7,7 +7,7 @@
 
 <script lang="ts">
 	import { copyText } from '$lib/app/clipboard.js';
-	import { listModels, listSummaryStyles, summarizeSession, getSettings } from '$lib/api/backend.js';
+	import { listModels, listSummaryStyles, summarizeSession, getSettings, getSystemInfo } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
@@ -209,9 +209,14 @@
 	let loaded = $state(false);
 	let loadFailed = $state(false);
 	let submitting = $state(false);
+	// A sidecar that merges hand edits is installed: summarizing again keeps them, else it replaces them.
+	let summaryMerge = $state(false);
 
 	async function load() {
 		loadFailed = false;
+		getSystemInfo()
+			.then((s) => (summaryMerge = s.summary_merge))
+			.catch(() => {});
 		optionsLoading = cachedProviders === null;
 		try {
 			const [p, s, settings] = await Promise.all([listModels(), listSummaryStyles(), getSettings()]);
@@ -245,6 +250,14 @@
 	async function handleSummarize() {
 		const session = sessionState.activeSession;
 		if (!session || submitting) return;
+		if (
+			!summaryMerge &&
+			session.summary_data?.edited_at &&
+			!confirm(
+				'This summary was edited by hand. Summarizing again replaces your edits (done ticks, issue links and due dates carry over). Continue?'
+			)
+		)
+			return;
 		error = '';
 		submitting = true; // until the job is tracked: a double click queues one summary
 		try {
@@ -547,7 +560,7 @@
 				title="Rewrite the summary as asked, keeping your edits unless asked otherwise"
 			>Revise</button>
 		</form>
-		{#if sessionState.activeSession?.summary_data?.edited_at}
+		{#if summaryMerge && sessionState.activeSession?.summary_data?.edited_at}
 			<p class="text-xs text-gray-500">Your edits are kept when the summary is made again.</p>
 		{/if}
 	{/if}

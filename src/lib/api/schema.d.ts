@@ -5839,6 +5839,8 @@ export interface components {
             problems: string[];
             /** Setup Complete */
             setup_complete: boolean;
+            /** Summary Merge */
+            summary_merge: boolean;
             /** Transcriber In Use */
             transcriber_in_use: string;
         };
