@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ... import access
 from ...models.session import Session
+from ...services.origin import require_local_audio
 from ...services.storage_service import CleanupResult, StorageReport
 from ..context import AppContext, get_ctx
 
@@ -25,6 +26,7 @@ async def delete_session_audio(
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    require_local_audio(ctx, session)
     if session_id in ctx.busy_sessions():
         raise HTTPException(status_code=409, detail="Session is recording or has an active job")
     from ...services.records import check_delete

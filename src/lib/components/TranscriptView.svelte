@@ -22,6 +22,7 @@
 	import { canChange } from '$lib/app/access.js';
 	import BookmarksBar from './BookmarksBar.svelte';
 	import QuoteBar from './QuoteBar.svelte';
+	import { syncState } from '$lib/stores/sync.svelte.js';
 	import { playerState } from '$lib/stores/player.svelte.js';
 
 	function formatTime(seconds: number): string {
@@ -283,8 +284,9 @@
 		{#if canTranscribe}
 			<button
 				onclick={handleTranscribe}
-				class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 transition-colors"
-				title="Transcribe this meeting's audio"
+				disabled={!!sessionState.activeSession?.origin}
+				class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 transition-colors disabled:opacity-50"
+				title={sessionState.activeSession?.origin ? syncState.audioOn(sessionState.activeSession.origin) : "Transcribe this meeting's audio"}
 			>
 				{transcriptState.segments.length > 0 ? 'Re-transcribe' : 'Transcribe'}
 			</button>

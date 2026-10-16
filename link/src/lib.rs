@@ -8,16 +8,23 @@
 //! client side ([`Remote`], [`serve_local`]) listens on a local port and carries each TCP
 //! connection over one iroh connection to home.
 //!
+//! For sync between two desktops, a running home also dials its peers from the same endpoint
+//! ([`Control`], driven by JSON lines on the sidecar's stdin through [`serve_control`]).
+//!
 //! iroh encrypts end to end between the two endpoint keys; a relay in between only forwards
 //! packets. Every stream starts with one byte naming its kind: [`TUNNEL`] or [`PAIR`].
 
 pub mod notes;
 
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -28,9 +35,10 @@ use iroh::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::Mutex,
+    sync::{mpsc, Mutex},
+    task::JoinHandle,
 };
 
 pub use iroh_tickets::endpoint::EndpointTicket;
@@ -38,7 +46,7 @@ pub use iroh_tickets::endpoint::EndpointTicket;
 pub const ALPN: &[u8] = b"mnemosyne/link/1";
 /// A stream carrying one TCP connection to the backend.
 pub const TUNNEL: u8 = b'T';
-/// A stream carrying one pairing request: JSON `{code, name}` in, [`PairReply`] out.
+/// A stream carrying one pairing request: JSON `{code, name, peer?}` in, [`PairReply`] out.
 pub const PAIR: u8 = b'P';
 /// How often an open connection re-checks that its device is still paired.
 const RECHECK: Duration = Duration::from_secs(5);
@@ -202,6 +210,21 @@ impl FromStr for Invite {
 struct PairRequest {
     code: String,
     name: String,
+    /// Sync pairing: how home reaches this machine back. Passed to the backend unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    peer: Option<PeerInfo>,
+}
+
+/// What a machine pairing for sync tells home about itself, so home can dial it back: its
+/// sync id and name, its endpoint ticket and the API token home should use on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerInfo {
+    /// The machine's library sync id (its backend's `sync_peers.json` self id).
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    pub ticket: String,
+    pub token: String,
 }
 
 /// The home side's answer to a pairing request.
@@ -211,6 +234,10 @@ pub struct PairReply {
     /// The device's own API token (on success).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    /// For a sync pairing: home's own library sync `{id, name}`, passed through from its
+    /// backend's redeem reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -333,6 +360,7 @@ async fn serve_stream(
                 Err(e) => PairReply {
                     ok: false,
                     token: None,
+                    sync: None,
                     error: Some(format!("bad request: {e}")),
                 },
             };
@@ -348,8 +376,11 @@ async fn serve_stream(
 
 /// Ask the backend to redeem a pairing code for `peer`.
 async fn redeem(backend: SocketAddr, req: &PairRequest, peer: &EndpointId) -> PairReply {
-    let body =
+    let mut body =
         serde_json::json!({"code": req.code, "name": req.name, "endpoint_id": peer.to_string()});
+    if let Some(info) = &req.peer {
+        body["peer"] = serde_json::json!(info);
+    }
     match post_json(backend, "/api/pairing/redeem", &body).await {
         Ok((200, reply)) => PairReply {
             ok: true,
@@ -357,11 +388,13 @@ async fn redeem(backend: SocketAddr, req: &PairRequest, peer: &EndpointId) -> Pa
                 .get("token")
                 .and_then(|t| t.as_str())
                 .map(String::from),
+            sync: reply.get("sync").filter(|v| !v.is_null()).cloned(),
             error: None,
         },
         Ok((_, reply)) => PairReply {
             ok: false,
             token: None,
+            sync: None,
             error: Some(
                 reply
                     .get("detail")
@@ -373,6 +406,7 @@ async fn redeem(backend: SocketAddr, req: &PairRequest, peer: &EndpointId) -> Pa
         Err(e) => PairReply {
             ok: false,
             token: None,
+            sync: None,
             error: Some(format!("{e:#}")),
         },
     }
@@ -441,6 +475,7 @@ pub struct Remote {
     endpoint: Endpoint,
     home: EndpointAddr,
     conn: Mutex<Option<Connection>>,
+    closed: AtomicBool,
 }
 
 impl Remote {
@@ -449,6 +484,15 @@ impl Remote {
             endpoint,
             home: home.into(),
             conn: Mutex::new(None),
+            closed: AtomicBool::new(false),
+        }
+    }
+
+    /// Close the connection to home (cutting its tunnels) and never open another.
+    pub async fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        if let Some(c) = self.conn.lock().await.take() {
+            c.close(0u32.into(), b"hangup");
         }
     }
 
@@ -458,6 +502,9 @@ impl Remote {
 
     async fn connection(&self) -> Result<Connection> {
         let mut conn = self.conn.lock().await;
+        if self.closed.load(Ordering::SeqCst) {
+            bail!("hung up");
+        }
         if let Some(c) = conn.as_ref() {
             if c.close_reason().is_none() {
                 return Ok(c.clone());
@@ -474,17 +521,28 @@ impl Remote {
 
     /// Redeem a pairing code: home remembers this device's key and returns its API token.
     pub async fn pair(&self, code: &str, name: &str) -> Result<String> {
+        Ok(self.pair_with_peer(code, name, None).await?.0)
+    }
+
+    /// [`Remote::pair`] for sync: `peer` tells home how to reach this machine back.
+    pub async fn pair_with_peer(
+        &self,
+        code: &str,
+        name: &str,
+        peer: Option<PeerInfo>,
+    ) -> Result<(String, Option<serde_json::Value>)> {
         let (mut send, mut recv) = self.connection().await?.open_bi().await?;
         send.write_all(&[PAIR]).await?;
         send.write_all(&serde_json::to_vec(&PairRequest {
             code: code.to_string(),
             name: name.to_string(),
+            peer,
         })?)
         .await?;
         send.finish()?;
         let reply: PairReply = serde_json::from_slice(&recv.read_to_end(64 * 1024).await?)?;
-        match (reply.ok, reply.token) {
-            (true, Some(token)) => Ok(token),
+        match (reply.ok, reply.token.clone()) {
+            (true, Some(token)) => Ok((token, reply.sync)),
             _ => bail!(reply.error.unwrap_or_else(|| "pairing refused".into())),
         }
     }
@@ -511,6 +569,219 @@ pub async fn serve_local(remote: Arc<Remote>, listener: TcpListener) -> Result<(
             }
         });
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Control channel (sync peers)
+// ---------------------------------------------------------------------------------------------
+
+/// Commands the backend sends a running `home` over its stdin: dial sync peers from home's own
+/// endpoint (the same key, so peers see this machine's paired endpoint id), hang up, and pair
+/// with another machine. One JSON object per line, answered by one JSON line (see the README).
+pub struct Control {
+    endpoint: Endpoint,
+    dials: Mutex<HashMap<EndpointId, Dial>>,
+}
+
+struct Dial {
+    listen: SocketAddr,
+    remote: Arc<Remote>,
+    task: JoinHandle<()>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+enum ControlRequest {
+    Dial {
+        ticket: String,
+    },
+    Hangup {
+        peer: String,
+    },
+    Pair {
+        invite: String,
+        name: String,
+        #[serde(default)]
+        peer: Option<PeerInfo>,
+    },
+}
+
+impl Control {
+    pub fn new(endpoint: Endpoint) -> Self {
+        Control {
+            endpoint,
+            dials: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Serve the peer in `ticket` on a loopback port: every TCP connection accepted there is
+    /// carried to that peer's backend. Dialing a peer again returns the listener it has. The
+    /// endpoint's relays stay home's own; the peer's relay and addresses come from the ticket.
+    pub async fn dial(&self, ticket: EndpointTicket) -> Result<(EndpointId, SocketAddr)> {
+        let peer = ticket.endpoint_addr().id;
+        if peer == self.endpoint.id() {
+            bail!("that ticket is this machine's own");
+        }
+        let mut dials = self.dials.lock().await;
+        if let Some(dial) = dials.get(&peer) {
+            if !dial.task.is_finished() {
+                return Ok((peer, dial.listen));
+            }
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let listen = listener.local_addr()?;
+        let remote = Arc::new(Remote::new(self.endpoint.clone(), ticket));
+        let task = tokio::spawn({
+            let remote = remote.clone();
+            async move {
+                if let Err(e) = serve_local(remote, listener).await {
+                    tracing::warn!(peer = %peer.fmt_short(), "listener ended: {e:#}");
+                }
+            }
+        });
+        tracing::info!(peer = %peer.fmt_short(), %listen, "dialing");
+        dials.insert(
+            peer,
+            Dial {
+                listen,
+                remote,
+                task,
+            },
+        );
+        Ok((peer, listen))
+    }
+
+    /// Stop serving `peer`: its listener closes and its open tunnels are cut. Returns whether
+    /// it was dialed.
+    pub async fn hangup(&self, peer: &EndpointId) -> bool {
+        let Some(dial) = self.dials.lock().await.remove(peer) else {
+            return false;
+        };
+        dial.task.abort();
+        // Wait for the listener to be dropped, so the port is closed once we answer.
+        dial.task.await.ok();
+        dial.remote.close().await;
+        tracing::info!(peer = %peer.fmt_short(), "hung up");
+        true
+    }
+
+    /// Hang up on every peer (shutdown).
+    pub async fn close_all(&self) {
+        let peers: Vec<EndpointId> = self.dials.lock().await.keys().copied().collect();
+        for peer in peers {
+            self.hangup(&peer).await;
+        }
+    }
+
+    /// Pair with the home in `invite` from this endpoint, as [`Remote::pair_with_peer`].
+    /// Returns the token and home's library sync `{id, name}` (if its backend sent one).
+    pub async fn pair(
+        &self,
+        invite: &Invite,
+        name: &str,
+        peer: Option<PeerInfo>,
+    ) -> Result<(String, Option<serde_json::Value>)> {
+        let remote = Remote::new(self.endpoint.clone(), invite.ticket.clone());
+        let result = remote.pair_with_peer(&invite.code, name, peer).await;
+        remote.close().await;
+        result
+    }
+
+    /// Answer one control line. Never fails: errors become `{"ok": false, "error": ...}`. The
+    /// reply echoes the request's `id` and `op` (null when the line has none).
+    pub async fn handle(&self, line: &str) -> serde_json::Value {
+        let (id, op, result) = match serde_json::from_str::<serde_json::Value>(line) {
+            Err(e) => (
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+                Err(anyhow!("invalid JSON: {e}")),
+            ),
+            Ok(request) => {
+                let id = request.get("id").cloned().unwrap_or_default();
+                let op = request.get("op").cloned().unwrap_or_default();
+                let result = match serde_json::from_value::<ControlRequest>(request) {
+                    Ok(request) => self.run(request).await,
+                    Err(e) => Err(anyhow!("bad request: {e}")),
+                };
+                (id, op, result)
+            }
+        };
+        let mut reply = serde_json::Map::new();
+        reply.insert("id".into(), id);
+        reply.insert("op".into(), op);
+        match result {
+            Ok(fields) => {
+                reply.insert("ok".into(), true.into());
+                reply.extend(fields);
+            }
+            Err(e) => {
+                reply.insert("ok".into(), false.into());
+                reply.insert("error".into(), format!("{e:#}").into());
+            }
+        }
+        serde_json::Value::Object(reply)
+    }
+
+    async fn run(
+        &self,
+        request: ControlRequest,
+    ) -> Result<serde_json::Map<String, serde_json::Value>> {
+        let reply = match request {
+            ControlRequest::Dial { ticket } => {
+                let ticket: EndpointTicket = ticket.trim().parse().context("invalid ticket")?;
+                let (peer, listen) = self.dial(ticket).await?;
+                serde_json::json!({"peer": peer.to_string(), "listen": listen.to_string()})
+            }
+            ControlRequest::Hangup { peer } => {
+                let peer: EndpointId = peer.trim().parse().context("invalid endpoint id")?;
+                serde_json::json!({"peer": peer.to_string(), "closed": self.hangup(&peer).await})
+            }
+            ControlRequest::Pair { invite, name, peer } => {
+                let invite: Invite = invite.parse()?;
+                let (token, sync) = self.pair(&invite, &name, peer).await?;
+                serde_json::json!({
+                    "token": token,
+                    "sync": sync,
+                    "ticket": invite.ticket.to_string(),
+                    "peer": invite.ticket.endpoint_addr().id.to_string(),
+                })
+            }
+        };
+        match reply {
+            serde_json::Value::Object(map) => Ok(map),
+            _ => unreachable!("replies are objects"),
+        }
+    }
+}
+
+/// Answer every line from `lines` on `out`, one JSON line each. Requests run concurrently (a
+/// slow pairing does not hold up a dial), so replies may come out of order: match them by
+/// `id`. Returns once `lines` ends and every reply is written; what was dialed keeps running.
+pub async fn serve_control<W>(control: Arc<Control>, mut lines: mpsc::Receiver<String>, mut out: W)
+where
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    let (tx, mut rx) = mpsc::unbounded_channel::<serde_json::Value>();
+    let writer = tokio::spawn(async move {
+        while let Some(reply) = rx.recv().await {
+            let mut line = reply.to_string();
+            line.push('\n');
+            if out.write_all(line.as_bytes()).await.is_err() || out.flush().await.is_err() {
+                break;
+            }
+        }
+    });
+    while let Some(line) = lines.recv().await {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let (control, tx) = (control.clone(), tx.clone());
+        tokio::spawn(async move {
+            tx.send(control.handle(&line).await).ok();
+        });
+    }
+    drop(tx);
+    writer.await.ok();
 }
 
 #[cfg(test)]

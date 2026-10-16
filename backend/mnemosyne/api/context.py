@@ -29,6 +29,7 @@ from ..services.session_service import SessionService
 from ..services.speaker_service import SpeakerService
 from ..services.storage_service import StorageService
 from ..services.summarization_service import SummarizationService
+from ..services.sync_peers import SyncPeerStore, dial_all
 from ..services.team_host import TeamHost
 from ..services.users import UserService
 from ..storage.sqlite import SessionRepository, import_json_sessions
@@ -52,6 +53,7 @@ class AppContext:
     pairing: PairingService
     users: UserService
     link: LinkService
+    sync_peers: SyncPeerStore
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
     startup_problems: list[str] = field(default_factory=list)  # shown by the app
     starting: set[str] = field(default_factory=set)  # sessions whose recording is starting
@@ -88,6 +90,7 @@ class AppContext:
     level_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     http_transport: object | None = None  # tests inject an httpx transport for integrations
     app_watch: Any = None  # api/app_watch.py: the desktop app this backend belongs to
+    sync: Any = None  # services/sync_service.py SyncService: library sync with the peers
 
     def __post_init__(self) -> None:
         self.summarizer.name_source = self.known_names
@@ -164,7 +167,7 @@ class AppContext:
             repo = SessionRepository(settings.db_path, derive(master, "db") if master else None)
             apply_path_rebase(repo, settings)
             import_json_sessions(repo, settings.sessions_dir)
-        return cls(
+        ctx = cls(
             keystore=keystore,
             master_key=master,
             locked=locked,
@@ -181,6 +184,7 @@ class AppContext:
             pairing=PairingService(settings.data_dir / "paired_devices.json"),
             users=UserService(settings.data_dir / "users.json"),
             link=LinkService(settings.data_dir, int(os.environ.get("MNEMOSYNE_BIND_PORT", "8008"))),
+            sync_peers=SyncPeerStore(settings.data_dir / "sync_peers.json"),
             jobs=JobManager(
                 bus,
                 concurrency={
@@ -193,6 +197,17 @@ class AppContext:
                 },
             ),
         )
+        from ..services.sync_service import SyncService
+
+        ctx.sync = SyncService(ctx)  # also names this machine in version vectors
+
+        # The sidecar's listeners are new each start: dial the sync peers again, then pull.
+        async def redial() -> None:
+            await dial_all(ctx.link, ctx.sync_peers)
+            ctx.sync.wake()
+
+        ctx.link.on_ready.append(redial)
+        return ctx
 
     async def apply_settings(self, settings: Settings) -> None:
         """Swap in new settings and rebuild anything that depends on them."""
@@ -442,7 +457,7 @@ class AppContext:
 
         def reset_transcribing():
             for s in self.sessions.list_sessions():
-                if s.status == SessionStatus.TRANSCRIBING:
+                if s.status == SessionStatus.TRANSCRIBING and not s.origin:
                     done = SessionStatus.COMPLETED if s.has_transcript else SessionStatus.CREATED
                     self.sessions.set_status(s.id, done)
 
@@ -462,6 +477,8 @@ class AppContext:
             from ..services.vault_sync import sync_loop
 
             self._vault_task = asyncio.create_task(sync_loop(self, self.vault_sync_interval))
+        # Library sync: claim meetings from before it, then pull from the peers and watch.
+        await self._try("Library sync", self.sync.start)
 
     async def _start_echo(self) -> None:
         try:
@@ -500,6 +517,7 @@ class AppContext:
                 reason="shutdown",
                 seconds=round(time.time() - recording.started_at, 1),
             )
+        await self.sync.stop()
         await self.link.stop()
         await self.index.stop()
         for task in (

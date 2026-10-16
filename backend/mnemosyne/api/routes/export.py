@@ -110,8 +110,9 @@ def before_export(ctx: AppContext, session, vault_path: str):
     so exporting again never undoes them (services/vault_sync.py)."""
     from ...services.vault_sync import apply_vault_edits, apply_vault_ticks
 
-    apply_vault_ticks(ctx, session, vault_path)
-    apply_vault_edits(ctx, session, vault_path)
+    if not session.origin:  # a meeting recorded elsewhere has its note read there
+        apply_vault_ticks(ctx, session, vault_path)
+        apply_vault_edits(ctx, session, vault_path)
     # Read again in any case: taking edits may also have given the summary's items their ids.
     return ctx.sessions.get_session(session.id) or session
 
@@ -236,7 +237,9 @@ async def export_all_to_obsidian(ctx: AppContext = Depends(get_ctx)):
     if any(j.kind == "obsidian_export_all" for j in ctx.jobs.list(active_only=True)):
         raise HTTPException(status_code=409, detail="The meetings are already being exported")
     wanted = [
-        s for s in ctx.repo.list_summaries() if s.has_summary and access.can_write(s.owner_id)
+        s
+        for s in ctx.repo.list_summaries()
+        if s.has_summary and not s.origin and access.can_write(s.owner_id)
     ]
 
     async def run(job) -> dict:

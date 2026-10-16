@@ -111,8 +111,16 @@ class SessionService:
             return self.get_session(session_id)
         return self._notify(self.repo.update_fields(session_id, status=status))
 
-    def set_audio(self, session_id: str, audio_file: str, recordings: list[Recording]) -> None:
-        self.repo.add_recordings(session_id, recordings)
+    def set_audio(
+        self,
+        session_id: str,
+        audio_file: str,
+        recordings: list[Recording],
+        *,
+        quiet: bool = False,
+    ) -> None:
+        """`quiet`: only the files' paths changed (encryption): no new version for sync."""
+        self.repo.add_recordings(session_id, recordings, quiet=quiet)
         self._notify(self.repo.update_fields(session_id, audio_file=audio_file))
 
     def set_transcript(self, session_id: str, segments: list[TranscriptSegment]) -> Session | None:

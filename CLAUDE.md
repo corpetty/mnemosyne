@@ -392,6 +392,18 @@ transcription/speech_gate.py (Silero from the HF cache, onnx extra) drops mic li
 8 speech frames around their words (34 of 34 phantoms, 0 of 40 real lines) and skips live mic
 buffers with fewer than 3 (`mic_speech_gate`). Live lines can be marked "Not said" (`live_flags`,
 dropped from the final transcript of their part). dedup.similarity works on words.
+Library sync (unreleased, phase 3; design in the hashseq plan, rules in
+docs/plans/2026-10-14-library-sync-rules.md): two of Corey's computers share one library. Each
+`mnemosyne-link home` also dials its sync peers (stdin control channel: pair/dial/hangup) and the
+backends PULL each other over HTTP through the tunnel (services/sync_service.py, routes/sync.py;
+peers and their tokens in `<data_dir>/sync_peers.json`). A meeting travels whole as a
+`SyncSession` (models/sync_session.py, services/sync_state.py); `sessions.origin` names the
+recording machine, `sync_vv`/`sync_seq` + repo `_touch` (every travelling write) track changes,
+`sync_served` keeps merge bases, `sync_tombstones` deletes. Concurrent edits merge three-way
+against the state the peer last saw (services/sync_merge.py; texts via the sidecar's `base`
+form). Audio never travels: the origin does transcription and automation (services/origin.py,
+409 "The audio is on <name>"), playback streams from it. Refused in team mode. New meeting ids
+are 12 hex. Tests: test_sync_*.py run two apps through httpx.ASGITransport.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

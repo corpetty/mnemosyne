@@ -100,7 +100,13 @@ def transcribe_session(
 ):
     """Build the transcription job runner for a session: every part of it, or only `parts`
     (a part recorded after the rest was transcribed), keeping the other parts' lines.
-    `summarize`: queue a summary afterwards (None: when `auto_summarize` is on)."""
+    `summarize`: queue a summary afterwards (None: when `auto_summarize` is on).
+    A meeting recorded on another computer has its audio there: 409 naming it."""
+    from .origin import require_local_audio
+
+    known = app.sessions.get_session(session_id)
+    if known is not None:
+        require_local_audio(app, known)
 
     async def run(ctx: JobContext) -> dict:
         from .parts import match_speakers, offsets, part_of, shift
@@ -371,9 +377,12 @@ def _item_line(a) -> str:
 def _auto_export(app: AppContext, session_id: str) -> str | None:
     """Export to Obsidian after a summary; failures are logged, never raised."""
     from ..api.routes.export import export_session
+    from .origin import skip_foreign
 
     try:
         session = app.sessions.get_session(session_id)
+        if session is not None and skip_foreign(session, "Auto-export"):
+            return None  # the computer that recorded it exports it
         path = export_session(app, session, app.settings.obsidian_vault_path)
         logger.info("Auto-exported session %s to %s", session_id, path)
         return str(path)
@@ -519,6 +528,7 @@ def summarize_session(
             st.auto_name_sessions
             and title
             and current is not None
+            and not current.origin  # the computer that recorded it names it
             and current.name == DEFAULT_SESSION_NAME
         ):
             app.sessions.rename_session(session_id, title)

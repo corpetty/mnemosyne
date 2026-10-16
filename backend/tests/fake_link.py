@@ -7,11 +7,50 @@ app's side as it last was, so the user's edits stay in when the vault has not ch
 
 `install(tmp_path, monkeypatch)` puts it on MNEMOSYNE_LINK_BIN and returns a handle whose
 `requests` are the requests it got, one per run (a list for a batch). FAKE_MERGE_FAIL makes every
-run fail; FAKE_MERGE_ITEM_FAIL makes every item of a batch fail."""
+run fail; FAKE_MERGE_ITEM_FAIL makes every item of a batch fail.
+
+Run as `home` it is the sidecar of services/link.py with its control channel (link/README.md):
+it prints the ready line, then answers `dial`, `hangup` and `pair` lines on stdin. The handle's
+`ops` are the requests it got (without ids). What it answers is set on the handle:
+`endpoint_id` and `ticket` (the ready line), `pair_reply` (fields added to a successful `pair`;
+default a token, the invite's ticket and a `sync` identity), and `fail` (op -> error message)."""
 
 import json
 import stat
 import sys
+
+HOME_PRELUDE = "import json, os, sys\n"
+HOME = r"""
+if sys.argv[1:2] == ["home"]:
+    cfg = json.loads(os.environ.get("FAKE_LINK_CONFIG", "{}"))
+    log = os.environ.get("FAKE_LINK_LOG")
+    print(json.dumps({"endpoint_id": cfg["endpoint_id"], "ticket": cfg["ticket"]}), flush=True)
+    dialed = {}
+    for line in sys.stdin:
+        req = json.loads(line)
+        if log:
+            with open(log, "a") as f:
+                f.write(json.dumps({k: v for k, v in req.items() if k != "id"}) + "\n")
+        reply = {"id": req["id"], "op": req["op"]}
+        if req["op"] in cfg.get("fail", {}):
+            reply.update(ok=False, error=cfg["fail"][req["op"]])
+        elif req["op"] == "dial":
+            peer = cfg.get("peers", {}).get(req["ticket"], req["ticket"])
+            listen = dialed.setdefault(peer, "127.0.0.1:%d" % (41000 + len(dialed)))
+            reply.update(ok=True, peer=peer, listen=listen)
+        elif req["op"] == "hangup":
+            closed = dialed.pop(req["peer"], None) is not None
+            reply.update(ok=True, peer=req["peer"], closed=closed)
+        elif req["op"] == "pair":
+            ticket = req["invite"].rpartition("#")[0]
+            peer = cfg.get("peers", {}).get(ticket, ticket)
+            reply.update(ok=True, token="token-from-peer", ticket=ticket, peer=peer)
+            reply.update(cfg.get("pair_reply", {"sync": {"id": "peerpeerpeer", "name": "Desk"}}))
+        else:
+            reply.update(ok=False, error="unknown op")
+        print(json.dumps(reply), flush=True)
+    sys.exit(0)
+"""
 
 FAKE = r"""#!{python}
 import base64, difflib, json, os, re, sys
@@ -108,9 +147,30 @@ else:
 
 
 class Sidecar:
-    def __init__(self, path, log):
+    def __init__(self, path, log, ops_log=None, monkeypatch=None):
         self.path = path
         self.log = log
+        self.ops_log = ops_log
+        self.config: dict = {
+            "endpoint_id": "e" * 64,
+            "ticket": "endpoint-stand-in",
+            "fail": {},
+            "peers": {},  # ticket -> endpoint id, for dial and pair replies
+        }
+        self._monkeypatch = monkeypatch
+        self.sync()
+
+    def sync(self) -> None:
+        """Hand `config` to the next run of the stand-in."""
+        if self._monkeypatch is not None:
+            self._monkeypatch.setenv("FAKE_LINK_CONFIG", json.dumps(self.config))
+
+    @property
+    def ops(self) -> list[dict]:
+        """The control requests `home` got, in order, without their ids."""
+        if self.ops_log is None or not self.ops_log.exists():
+            return []
+        return [json.loads(x) for x in self.ops_log.read_text().splitlines()]
 
     @property
     def requests(self) -> list:
@@ -123,9 +183,12 @@ class Sidecar:
 def install(tmp_path, monkeypatch) -> Sidecar:
     """Put the stand-in on MNEMOSYNE_LINK_BIN; its requests are logged."""
     script = tmp_path / "mnemosyne-link"
-    script.write_text(FAKE.format(python=sys.executable))
+    first, rest = FAKE.format(python=sys.executable).split("\n", 1)
+    script.write_text(first + "\n" + HOME_PRELUDE + HOME + rest)
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     log = tmp_path / "merge.log"
     monkeypatch.setenv("MNEMOSYNE_LINK_BIN", str(script))
     monkeypatch.setenv("FAKE_MERGE_LOG", str(log))
-    return Sidecar(script, log)
+    ops_log = tmp_path / "link-ops.log"
+    monkeypatch.setenv("FAKE_LINK_LOG", str(ops_log))
+    return Sidecar(script, log, ops_log, monkeypatch)

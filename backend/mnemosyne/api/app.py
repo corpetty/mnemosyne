@@ -42,6 +42,7 @@ from .routes.sharing import router as sharing_router
 from .routes.speakers import router as speakers_router
 from .routes.storage import router as storage_router
 from .routes.supervision import router as supervision_router
+from .routes.sync import router as sync_router
 from .routes.system import router as system_router
 from .routes.tasks import router as tasks_router
 from .routes.team import router as team_router
@@ -111,6 +112,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(topics_router)
     app.include_router(mobile_router)
     app.include_router(pairing_router)
+    app.include_router(sync_router)
     app.include_router(users_router)
     app.include_router(system_router)
     app.include_router(storage_router)

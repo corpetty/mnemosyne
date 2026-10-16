@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ...jobs import Job
 from ...models.history import SessionHistory
 from ...services import history
+from ...services.origin import require_local_audio
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/sessions/{session_id}", tags=["history"])
@@ -30,6 +31,7 @@ async def recover(session_id: str, ctx: AppContext = Depends(get_ctx)):
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    require_local_audio(ctx, session)
     if session_id in ctx.busy_sessions():
         raise HTTPException(status_code=409, detail="The meeting is recording or busy; try later")
     folder = ctx.settings.recordings_dir / session_id

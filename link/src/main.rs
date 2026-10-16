@@ -8,7 +8,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use iroh_tickets::endpoint::EndpointTicket;
 use mnemosyne_link::{
-    bind, bind_with, load_or_create_key, serve_home, serve_local, Home, Invite, Lan, Relays, Remote,
+    bind, bind_with, load_or_create_key, serve_control, serve_home, serve_local, Control, Home,
+    Invite, Lan, Relays, Remote,
 };
 use tokio::net::TcpListener;
 
@@ -22,6 +23,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Accept paired devices and forward them to the backend on this machine.
+    ///
+    /// After the ready line, stdin takes control commands (JSON lines: dial, hangup, pair; see
+    /// the README), each answered by one JSON line on stdout. Closing stdin keeps serving.
     Home {
         /// The backend's address.
         #[arg(long, default_value = "127.0.0.1:8008")]
@@ -196,10 +200,17 @@ async fn main() -> Result<()> {
                 backend,
                 devices_file: data_dir.join("paired_devices.json"),
             };
+            let control = Arc::new(Control::new(endpoint.clone()));
+            tokio::spawn(serve_control(
+                control.clone(),
+                stdin_lines(),
+                tokio::io::stdout(),
+            ));
             tokio::select! {
                 r = serve_home(endpoint.clone(), home) => r?,
                 _ = shutdown() => {}
             }
+            control.close_all().await;
             endpoint.close().await;
         }
         Command::Pair {
@@ -243,6 +254,22 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Lines from stdin, read on a plain thread: tokio's stdin cannot cancel a blocked read, which
+/// would hold up the runtime's shutdown for as long as the backend keeps the pipe open.
+fn stdin_lines() -> tokio::sync::mpsc::Receiver<String> {
+    let (tx, rx) = tokio::sync::mpsc::channel(64);
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            if tx.blocking_send(line).is_err() {
+                break;
+            }
+        }
+    });
+    rx
 }
 
 async fn shutdown() {

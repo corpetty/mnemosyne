@@ -4,9 +4,11 @@
 	interface Props {
 		onStartOverride?: () => Promise<void>;
 		onStopOverride?: () => Promise<void>;
+		/** Why recording here is not possible (a meeting recorded on another computer); '' = it is. */
+		disabledReason?: string;
 	}
 
-	let { onStartOverride, onStopOverride }: Props = $props();
+	let { onStartOverride, onStopOverride, disabledReason = '' }: Props = $props();
 
 	function formatDuration(seconds: number): string {
 		const h = Math.floor(seconds / 3600);
@@ -36,7 +38,8 @@
 <div class="flex items-center gap-4">
 	<button
 		onclick={handleToggle}
-		disabled={!!audioState.pending || (!audioState.isRecording && audioState.selectedDeviceIds.size === 0)}
+		disabled={!!audioState.pending || (!audioState.isRecording && (audioState.selectedDeviceIds.size === 0 || !!disabledReason))}
+		title={disabledReason || undefined}
 		class="flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed
 			{audioState.isRecording
 			? 'bg-red-600 hover:bg-red-700 text-white'

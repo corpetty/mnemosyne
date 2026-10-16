@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { focusOnMount } from '$lib/app/focus.js';
 	import { combineSessions, getJob, importAudio } from '$lib/api/backend.js';
+	import { syncState } from '$lib/stores/sync.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -15,6 +16,7 @@
 	let busy = $state(false);
 
 	const session = $derived(sessionState.activeSession);
+	const foreignReason = $derived(session?.origin ? syncState.audioOn(session.origin) : '');
 	const recordingHere = $derived(audioState.isRecording && audioState.activeSessionId === session?.id);
 
 	// The other meetings with audio, closest in time first: the other half of a dropped call is
@@ -120,7 +122,9 @@
 		>
 			<button
 				role="menuitem"
-				class="block w-full px-3 py-1.5 text-left text-gray-200 hover:bg-gray-800"
+				disabled={!!foreignReason}
+				title={foreignReason || undefined}
+				class="block w-full px-3 py-1.5 text-left text-gray-200 hover:bg-gray-800 disabled:opacity-50"
 				onclick={() => {
 					open = false;
 					chooseFile();
@@ -131,7 +135,9 @@
 			</button>
 			<button
 				role="menuitem"
-				class="block w-full px-3 py-1.5 text-left text-gray-200 hover:bg-gray-800"
+				disabled={!!foreignReason}
+				title={foreignReason || undefined}
+				class="block w-full px-3 py-1.5 text-left text-gray-200 hover:bg-gray-800 disabled:opacity-50"
 				onclick={() => {
 					open = false;
 					filter = '';

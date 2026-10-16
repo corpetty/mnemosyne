@@ -2,14 +2,17 @@
 	import { audioUrl } from '$lib/api/backend.js';
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
+	import { syncState } from '$lib/stores/sync.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 
 	let el = $state<HTMLAudioElement>();
 	let sourceId = $state<string>('mixed');
+	// Audio that cannot be had here (a meeting recorded on another computer that is not reachable).
+	let unavailable = $state('');
 
 	const session = $derived(sessionState.activeSession);
 	const src = $derived(
-		session?.audio_file && !audioState.isRecording
+		(session?.audio_file || session?.origin) && !audioState.isRecording
 			? audioUrl(session.id, sourceId === 'mixed' ? undefined : sourceId)
 			: null
 	);
@@ -28,6 +31,7 @@
 			lastSessionId = id;
 			sourceId = 'mixed';
 			playerState.reset();
+			unavailable = '';
 		}
 	});
 
@@ -35,6 +39,27 @@
 	$effect(() => {
 		playerState.available = !!src;
 	});
+
+	// The element does not say why it failed; ask the same URL for the reason (409: the audio is
+	// on the computer that recorded it).
+	async function checkError() {
+		playerState.available = false;
+		if (!session?.origin || !src) return;
+		try {
+			const r = await fetch(src, { headers: { Range: 'bytes=0-0' } });
+			if (r.status === 409) {
+				let detail = '';
+				try {
+					detail = (await r.json()).detail ?? '';
+				} catch {
+					/* no body */
+				}
+				unavailable = detail || syncState.audioOn(session.origin);
+			}
+		} catch {
+			/* offline: stays silent */
+		}
+	}
 
 	function fmt(t: number): string {
 		if (!isFinite(t)) return '0:00';
@@ -44,7 +69,9 @@
 	}
 </script>
 
-{#if src}
+{#if unavailable}
+	<p class="text-xs text-gray-500">{unavailable}</p>
+{:else if src}
 	<div class="flex items-center gap-3 rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2">
 		<button
 			onclick={() => playerState.toggle()}
@@ -65,7 +92,7 @@
 					playerState.duration = el?.duration ?? 0;
 					playerState.ready();
 				}}
-				onerror={() => (playerState.available = false)}
+				onerror={checkError}
 				class="hidden"
 			></audio>
 		{/if}

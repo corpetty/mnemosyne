@@ -14,6 +14,7 @@ import threading
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from .. import access
 from ..models.ask import Ask, Citation, Passage, PassageLine
@@ -33,11 +34,15 @@ from ..models.session import (
     SummaryData,
 )
 from ..models.speaker import SpeakerProfile
+from ..models.sync_session import SyncSession, event_travels
 from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
+
+# Fields of a meeting that do not travel in library sync: changing only these is no new version.
+LOCAL_FIELDS = frozenset({"status", "audio_file"})
 
 # The search index follows its tables by rowid: an index row has the rowid of the row it
 # indexes, so removing one is a lookup. (Matching on session_id and idx, UNINDEXED columns,
@@ -338,6 +343,23 @@ CREATE TABLE IF NOT EXISTS deletions (
     role TEXT NOT NULL DEFAULT '',
     reason TEXT NOT NULL DEFAULT ''
 );
+-- Library sync (services/sync): the states served to each peer, the last few per meeting (the
+-- base of a three-way merge), and meetings deleted. No foreign key: a tombstone outlives its
+-- meeting, that is its job.
+CREATE TABLE IF NOT EXISTS sync_served (
+    session_id TEXT NOT NULL,
+    peer_id TEXT NOT NULL,
+    rev INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    at TEXT NOT NULL,
+    PRIMARY KEY (session_id, peer_id, rev)
+);
+CREATE TABLE IF NOT EXISTS sync_tombstones (
+    session_id TEXT PRIMARY KEY,
+    at TEXT NOT NULL,
+    device TEXT NOT NULL,
+    name TEXT NOT NULL
+);
 """
 SCHEMA = SCHEMA.replace("{FTS_TRIGGERS}", FTS_TRIGGERS)
 
@@ -437,6 +459,9 @@ class SessionRepository:
         self._lock = threading.RLock()
         # Called with (session id, owner id) after a new meeting is saved (services/prefs.py).
         self.on_new_session: Callable[[str, str], None] | None = None
+        # This machine's id in version vectors (services/sync sets it at startup). '' until
+        # then: writes still bump the change counter and count under the key "" in sync_vv.
+        self.device_id = ""
         self._open(db_path, key)
 
     def reopen(self, db_path: Path, key: bytes | None = None) -> None:
@@ -526,6 +551,37 @@ class SessionRepository:
             self._conn.execute(
                 "ALTER TABLE sessions ADD COLUMN legal_hold TEXT NOT NULL DEFAULT ''"
             )
+        # Library sync. origin: the machine that recorded the meeting ('' = this one);
+        # sync_vv: version vector {device id: revision}; sync_seq: position in this machine's
+        # change log (meta 'sync_seq' is the counter). Meetings that exist when the columns
+        # appear get consecutive sequence numbers in the order they were last changed, so a
+        # first sync lists them; their vectors stay empty (the sync service claims them).
+        if "sync_seq" not in cols:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN origin TEXT NOT NULL DEFAULT ''")
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN sync_vv TEXT NOT NULL DEFAULT '{}'")
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN sync_seq INTEGER NOT NULL DEFAULT 0"
+            )
+            ids = [
+                r["id"]
+                for r in self._conn.execute("SELECT id FROM sessions ORDER BY updated_at, id")
+            ]
+            self._conn.executemany(
+                "UPDATE sessions SET sync_seq=? WHERE id=?",
+                [(n, sid) for n, sid in enumerate(ids, start=1)],
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('sync_seq', ?)", (str(len(ids)),)
+            )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS sessions_sync_seq ON sessions(sync_seq)")
+        # A history event's identity across machines (the union of two histories is by uid).
+        event_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(session_events)")}
+        if "uid" not in event_cols:
+            self._conn.execute("ALTER TABLE session_events ADD COLUMN uid TEXT")
+        self._conn.execute(
+            "UPDATE session_events SET uid = lower(hex(randomblob(8))) WHERE uid IS NULL"
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS session_events_uid ON session_events(uid)")
         self._conn.commit()
 
     def _migrate_fts_rowids(self) -> None:
@@ -584,7 +640,9 @@ class SessionRepository:
         return self._lock
 
     def rebase_paths(self, old: str, new: str) -> int:
-        """Move stored audio paths from one recordings folder to another (after a restore)."""
+        """Move stored audio paths from one recordings folder to another (after a restore).
+        Never bumps the meeting's version (a path is local), and leaves the recordings rows of
+        meetings recorded elsewhere alone: their paths are the origin machine's."""
         prefix = old.rstrip("/") + "/"
         target = new.rstrip("/") + "/"
         n = len(prefix)
@@ -595,7 +653,8 @@ class SessionRepository:
                 (target, n + 1, n, prefix),
             ).rowcount
             b = self._conn.execute(
-                "UPDATE recordings SET path = ? || substr(path, ?) WHERE substr(path, 1, ?) = ?",
+                "UPDATE recordings SET path = ? || substr(path, ?) WHERE substr(path, 1, ?) = ?"
+                " AND session_id IN (SELECT id FROM sessions WHERE origin = '')",
                 (target, n + 1, n, prefix),
             ).rowcount
         return a + b
@@ -667,7 +726,7 @@ class SessionRepository:
         sql = """
         SELECT s.id, s.name, s.status, s.created_at, s.updated_at, s.participants, s.local_only,
                length(s.summary) > 0 AS has_summary,
-               s.audio_file IS NOT NULL AS has_audio, s.owner_id,
+               s.audio_file IS NOT NULL AS has_audio, s.owner_id, s.origin,
                EXISTS(SELECT 1 FROM segments g WHERE g.session_id = s.id) AS has_transcript
         FROM sessions s {where} ORDER BY s.created_at DESC
         """
@@ -692,6 +751,7 @@ class SessionRepository:
                 participant_count=len(json.loads(r["participants"])),
                 local_only=bool(r["local_only"]),
                 owner_id=r["owner_id"],
+                origin=r["origin"],
             )
             for r in rows
         ]
@@ -754,6 +814,7 @@ class SessionRepository:
             meeting_type=row["meeting_type"],
             owner_id=row["owner_id"],
             legal_hold=row["legal_hold"],
+            origin=row["origin"],
             assets=[_asset(r) for r in asset_rows],
             external_notes=[
                 ExternalNotes(
@@ -816,8 +877,9 @@ class SessionRepository:
                 """INSERT INTO sessions(id, name, status, created_at, updated_at, audio_file,
                                         summary, summary_data, notes, participants,
                                         attendees, local_only, copilot_notes,
-                                        speakers_reviewed, agenda, meeting_type, owner_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                        speakers_reviewed, agenda, meeting_type, owner_id,
+                                        origin)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      name=excluded.name, status=excluded.status, updated_at=excluded.updated_at,
                      audio_file=excluded.audio_file, summary=excluded.summary,
@@ -845,10 +907,12 @@ class SessionRepository:
                     json.dumps([a.model_dump() for a in session.agenda]),
                     session.meeting_type,
                     session.owner_id,
+                    session.origin,
                 ),
             )
             self._write_segments(session.id, session.transcript)
             self._write_recordings(session.id, session.recordings)
+            self._touch(session.id, session.updated_at.isoformat())
         if owner is None and self.on_new_session is not None:
             self.on_new_session(session.id, session.owner_id)
         return session
@@ -896,8 +960,9 @@ class SessionRepository:
                 value = value if isinstance(value, str) else value.model_dump_json()
             sets.append(f"{key}=?")
             values.append(value)
+        now = datetime.now().isoformat()
         sets.append("updated_at=?")
-        values.append(datetime.now().isoformat())
+        values.append(now)
         values.append(session_id)
         with self._lock, self._conn:
             cur = self._conn.execute(
@@ -905,6 +970,9 @@ class SessionRepository:
             )
             if cur.rowcount == 0:
                 return None
+            # A status is per machine and the audio file is local: neither travels.
+            if set(fields) - LOCAL_FIELDS:
+                self._touch(session_id, now)
         return self.get(session_id)
 
     def replace_segments(self, session_id: str, segments: list[TranscriptSegment]) -> None:
@@ -914,34 +982,40 @@ class SessionRepository:
             self.keep_version(before, "transcribed again")
         with self._lock, self._conn:
             self._write_segments(session_id, segments)
-            self._conn.execute(
-                "UPDATE sessions SET updated_at=? WHERE id=?",
-                (datetime.now().isoformat(), session_id),
-            )
+            self._touch(session_id)
 
-    def add_recordings(self, session_id: str, recordings: list[Recording]) -> None:
+    def add_recordings(
+        self, session_id: str, recordings: list[Recording], *, quiet: bool = False
+    ) -> None:
+        """Record audio sources. `quiet`: a path-only rewrite (encryption), not a new version
+        of the meeting for library sync. Adding nothing is never a change."""
         self._check_write(session_id)
         with self._lock, self._conn:
-            self._conn.executemany(
-                """INSERT OR REPLACE INTO recordings
-                   (id, session_id, source, device_id, device_name, path, created_at, part,
-                    part_offset)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
-                [
-                    (
-                        r.id,
-                        session_id,
-                        r.source,
-                        r.device_id,
-                        r.device_name,
-                        r.path,
-                        r.created_at.isoformat(),
-                        r.part,
-                        r.offset,
-                    )
-                    for r in recordings
-                ],
-            )
+            self._insert_recordings(session_id, recordings)
+            if recordings and not quiet:
+                self._touch(session_id)
+
+    def _insert_recordings(self, session_id: str, recordings: list[Recording]) -> None:
+        self._conn.executemany(
+            """INSERT OR REPLACE INTO recordings
+               (id, session_id, source, device_id, device_name, path, created_at, part,
+                part_offset)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            [
+                (
+                    r.id,
+                    session_id,
+                    r.source,
+                    r.device_id,
+                    r.device_name,
+                    r.path,
+                    r.created_at.isoformat(),
+                    r.part,
+                    r.offset,
+                )
+                for r in recordings
+            ],
+        )
 
     def clear_audio(self, session_id: str) -> bool:
         """Forget a session's audio (recordings rows + mixed file path). Files are the
@@ -955,6 +1029,7 @@ class SessionRepository:
             if cur.rowcount == 0:
                 return False
             self._conn.execute("DELETE FROM recordings WHERE session_id=?", (session_id,))
+            self._touch(session_id)
         return True
 
     # ---- other assistants' notes ---------------------------------------
@@ -974,6 +1049,7 @@ class SessionRepository:
                     notes.added_at.isoformat(),
                 ),
             )
+            self._touch(session_id)
 
     def delete_external_notes(self, session_id: str, notes_id: str) -> bool:
         self._check_write(session_id)
@@ -981,6 +1057,8 @@ class SessionRepository:
             cur = self._conn.execute(
                 "DELETE FROM external_notes WHERE id=? AND session_id=?", (notes_id, session_id)
             )
+            if cur.rowcount:
+                self._touch(session_id)
         return cur.rowcount > 0
 
     # ---- assets (resources) --------------------------------------------
@@ -1051,11 +1129,13 @@ class SessionRepository:
     def attach_asset(self, session_id: str, asset_id: str) -> None:
         self._check_write(session_id)
         with self._lock, self._conn:
-            self._conn.execute(
+            cur = self._conn.execute(
                 "INSERT OR IGNORE INTO session_assets (session_id, asset_id, added_at)"
                 " VALUES (?,?,?)",
                 (session_id, asset_id, datetime.now().isoformat()),
             )
+            if cur.rowcount:
+                self._touch(session_id)
 
     def detach_asset(self, session_id: str, asset_id: str) -> bool:
         self._check_write(session_id)
@@ -1064,6 +1144,8 @@ class SessionRepository:
                 "DELETE FROM session_assets WHERE session_id=? AND asset_id=?",
                 (session_id, asset_id),
             )
+            if cur.rowcount:
+                self._touch(session_id)
         return cur.rowcount > 0
 
     def update_asset(self, asset_id: str, **fields) -> Asset | None:
@@ -1073,14 +1155,32 @@ class SessionRepository:
         with self._lock, self._conn:
             for key, value in fields.items():
                 self._conn.execute(f"UPDATE assets SET {key}=? WHERE id=?", (value, asset_id))
+            if fields:
+                self._touch_asset_users(asset_id)
         return self.get_asset(asset_id)
 
     def delete_asset(self, asset_id: str) -> str | None:
         """Remove an asset from the library (and every meeting). Returns its file's path."""
         path, _ = self.asset_file(asset_id)
         with self._lock, self._conn:
+            users = self._asset_users(asset_id)  # the cascade removes the links
             cur = self._conn.execute("DELETE FROM assets WHERE id=?", (asset_id,))
+            if cur.rowcount:
+                for sid in users:
+                    self._touch(sid)
         return path if cur.rowcount else None
+
+    def _asset_users(self, asset_id: str) -> list[str]:
+        return [
+            r["session_id"]
+            for r in self._conn.execute(
+                "SELECT session_id FROM session_assets WHERE asset_id=?", (asset_id,)
+            )
+        ]
+
+    def _touch_asset_users(self, asset_id: str) -> None:
+        for sid in self._asset_users(asset_id):
+            self._touch(sid)
 
     def asset_paths(self) -> list[tuple[str, str]]:
         """(id, path) of every file asset: for encryption on and off."""
@@ -1110,6 +1210,7 @@ class SessionRepository:
                     datetime.now().isoformat(),
                 ),
             )
+            self._touch(session_id)
         return bookmark_id
 
     def update_bookmark(self, session_id: str, bookmark_id: str, note: str) -> bool:
@@ -1119,6 +1220,8 @@ class SessionRepository:
                 "UPDATE bookmarks SET note=? WHERE id=? AND session_id=?",
                 (note, bookmark_id, session_id),
             )
+            if cur.rowcount:
+                self._touch(session_id)
         return cur.rowcount > 0
 
     def delete_bookmark(self, session_id: str, bookmark_id: str) -> bool:
@@ -1127,6 +1230,8 @@ class SessionRepository:
             cur = self._conn.execute(
                 "DELETE FROM bookmarks WHERE id=? AND session_id=?", (bookmark_id, session_id)
             )
+            if cur.rowcount:
+                self._touch(session_id)
         return cur.rowcount > 0
 
     def move_bookmarks(self, moves: list[tuple[str, int, str, int]]) -> None:
@@ -1135,11 +1240,15 @@ class SessionRepository:
         with self._lock, self._conn:
             rows = self._conn.execute("SELECT id, session_id, part FROM bookmarks").fetchall()
             where = {(old_s, old_p): (new_s, new_p) for old_s, old_p, new_s, new_p in moves}
+            moved = False
             for r in rows:
                 if (dest := where.get((r["session_id"], r["part"]))) is not None:
                     self._conn.execute(
                         "UPDATE bookmarks SET session_id=?, part=? WHERE id=?", (*dest, r["id"])
                     )
+                    moved = True
+            if moved:
+                self._touch_all(moves)
 
     # ---- live flags ----------------------------------------------------
 
@@ -1173,6 +1282,7 @@ class SessionRepository:
                     part,
                 ),
             )
+            self._touch(session_id)
         return flag
 
     def list_live_flags(self, session_id: str) -> list[LiveFlag]:
@@ -1203,6 +1313,8 @@ class SessionRepository:
             cur = self._conn.execute(
                 "DELETE FROM live_flags WHERE id=? AND session_id=?", (flag_id, session_id)
             )
+            if cur.rowcount:
+                self._touch(session_id)
         return cur.rowcount > 0
 
     # ---- history -------------------------------------------------------
@@ -1212,9 +1324,16 @@ class SessionRepository:
     ) -> None:
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO session_events (session_id, at, kind, part, detail)"
-                " VALUES (?,?,?,?,?)",
-                (session_id, datetime.now().isoformat(), kind, part, json.dumps(detail or {})),
+                "INSERT INTO session_events (session_id, at, kind, part, detail, uid)"
+                " VALUES (?,?,?,?,?,?)",
+                (
+                    session_id,
+                    datetime.now().isoformat(),
+                    kind,
+                    part,
+                    json.dumps(detail or {}),
+                    uuid4().hex[:16],
+                ),
             )
 
     # ---- vault notes (internal bookkeeping: no access checks, like events being written) --
@@ -1285,7 +1404,8 @@ class SessionRepository:
             return []
         with self._lock:
             rows = self._conn.execute(
-                "SELECT at, kind, part, detail FROM session_events WHERE session_id=? ORDER BY id",
+                "SELECT at, kind, part, detail FROM session_events WHERE session_id=?"
+                " ORDER BY at, id",
                 (session_id,),
             ).fetchall()
         return [
@@ -1306,12 +1426,14 @@ class SessionRepository:
             rows = self._conn.execute("SELECT id, session_id, part FROM session_events").fetchall()
             targets = {new_s for _, _, new_s, _ in moves}
             sources = {old_s for old_s, _, _, _ in moves}
+            moved = False
             for r in rows:
                 if (dest := where.get((r["session_id"], r["part"]))) is not None:
                     self._conn.execute(
                         "UPDATE session_events SET session_id=?, part=? WHERE id=?",
                         (*dest, r["id"]),
                     )
+                    moved = True
                 elif (
                     r["part"] is None and r["session_id"] in sources - targets and len(targets) == 1
                 ):
@@ -1319,11 +1441,35 @@ class SessionRepository:
                         "UPDATE session_events SET session_id=? WHERE id=?",
                         (next(iter(targets)), r["id"]),
                     )
+                    moved = True
+            if moved:
+                self._touch_all(moves)
 
-    def delete(self, session_id: str) -> bool:
+    def delete(
+        self, session_id: str, *, device_id: str | None = None, tombstone: bool = True
+    ) -> bool:
+        """Delete a meeting and everything of it. Library sync learns of it from a tombstone
+        (who deleted it, when, its name): `tombstone=False` for a delete that arrived from a
+        peer, which has its tombstone already."""
         self._check_write(session_id)
         with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT name FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
             cur = self._conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+            if cur.rowcount:
+                self._conn.execute("DELETE FROM sync_served WHERE session_id=?", (session_id,))
+                if tombstone and row is not None:
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO sync_tombstones(session_id, at, device, name)"
+                        " VALUES (?,?,?,?)",
+                        (
+                            session_id,
+                            datetime.now().isoformat(),
+                            self.device_id if device_id is None else device_id,
+                            row["name"],
+                        ),
+                    )
         return cur.rowcount > 0
 
     # ---- editing -------------------------------------------------------
@@ -1368,6 +1514,7 @@ class SessionRepository:
                 "UPDATE sessions SET participants=?, updated_at=? WHERE id=?",
                 (json.dumps(participants), datetime.now().isoformat(), session_id),
             )
+            self._touch(session_id)
         return self.get(session_id)
 
     # ---- records (services/records.py) -------------------------------
@@ -1629,6 +1776,7 @@ class SessionRepository:
                 "UPDATE sessions SET summary_data=?, updated_at=? WHERE id=?",
                 (data.model_dump_json(), datetime.now().isoformat(), session_id),
             )
+            self._touch(session_id)
         return True
 
     def adopt_unowned(self, owner_id: str) -> int:
@@ -2302,6 +2450,8 @@ class SessionRepository:
                 " VALUES (?,?,?)",
                 [(session_id, label, json.dumps(vec)) for label, vec in embeddings.items()],
             )
+            if embeddings:
+                self._touch(session_id)
 
     def get_session_embeddings(self, session_id: str) -> dict[str, list[float]]:
         if not self._readable(session_id):
@@ -2337,6 +2487,7 @@ class SessionRepository:
                 (json.dumps(participants), datetime.now().isoformat(), session_id),
             )
             self._rename_item_owners(session_id, old, new)
+            self._touch(session_id)
         return self.get(session_id)
 
     def _rename_item_owners(self, session_id: str, old: str, new: str) -> None:
@@ -2428,6 +2579,345 @@ class SessionRepository:
             updated_at=_dt(row["updated_at"]),
         )
 
+    # ---- library sync (services/sync) ----------------------------------
+
+    def _touch(self, session_id: str, at: str | None = None) -> None:
+        """A meeting got a new version: move it to the head of the change log (`sync_seq`
+        from the global counter in meta), count one more revision for this machine in its
+        version vector (under `device_id`, "" until the sync service names this machine) and
+        set `updated_at`. Called inside the writer's own transaction, so a failed write leaves
+        no trace. A meeting that does not exist is left alone."""
+        row = self._conn.execute(
+            "SELECT sync_vv FROM sessions WHERE id=?", (session_id,)
+        ).fetchone()
+        if row is None:
+            return
+        counter = self._conn.execute("SELECT value FROM meta WHERE key='sync_seq'").fetchone()
+        seq = (int(counter["value"]) if counter else 0) + 1
+        self._conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('sync_seq', ?)", (str(seq),)
+        )
+        vv = json.loads(row["sync_vv"] or "{}")
+        vv[self.device_id] = vv.get(self.device_id, 0) + 1
+        self._conn.execute(
+            "UPDATE sessions SET sync_seq=?, sync_vv=?, updated_at=? WHERE id=?",
+            (seq, json.dumps(vv, sort_keys=True), at or datetime.now().isoformat(), session_id),
+        )
+
+    def _touch_all(self, moves: list[tuple[str, int, str, int]]) -> None:
+        """Every meeting a move names, source and target, once."""
+        for sid in dict.fromkeys(s for old_s, _, new_s, _ in moves for s in (old_s, new_s)):
+            self._touch(sid)
+
+    def changes_since(
+        self, seq: int, limit: int = 200
+    ) -> tuple[list[tuple[str, int, dict[str, int]]], int, bool]:
+        """Meetings changed after `seq`, oldest change first: ([(id, sync_seq, sync_vv)],
+        the seq to ask from next time, whether there are more than `limit`)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, sync_seq, sync_vv FROM sessions WHERE sync_seq > ?"
+                " ORDER BY sync_seq LIMIT ?",
+                (seq, limit + 1),
+            ).fetchall()
+        more = len(rows) > limit
+        rows = rows[:limit]
+        changes = [(r["id"], r["sync_seq"], json.loads(r["sync_vv"] or "{}")) for r in rows]
+        return changes, (changes[-1][1] if changes else seq), more
+
+    def current_sync_seq(self) -> int:
+        """The newest change number handed out (0 for none)."""
+        value = self.get_meta("sync_seq")
+        return int(value) if value else 0
+
+    def tombstones_since(self, at: str = "") -> list[dict]:
+        """Meetings deleted after the ISO time `at` ("" = all), oldest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, at, device, name FROM sync_tombstones WHERE at > ?"
+                " ORDER BY at, session_id",
+                (at,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def has_tombstone(self, session_id: str) -> bool:
+        with self._lock:
+            return (
+                self._conn.execute(
+                    "SELECT 1 FROM sync_tombstones WHERE session_id=?", (session_id,)
+                ).fetchone()
+                is not None
+            )
+
+    def add_tombstone(self, session_id: str, at: str, device: str, name: str) -> None:
+        """A deletion learned from a peer (kept so it is passed on and the meeting stays gone)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO sync_tombstones(session_id, at, device, name)"
+                " VALUES (?,?,?,?)",
+                (session_id, at, device, name),
+            )
+
+    def sync_state(self, session_id: str) -> tuple[str, dict[str, int]] | None:
+        """(origin, version vector) of a meeting; None when there is no such meeting."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT origin, sync_vv FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        return (row["origin"], json.loads(row["sync_vv"] or "{}")) if row else None
+
+    def set_sync_state(self, session_id: str, vv: dict[str, int], origin: str) -> None:
+        """Set a meeting's version vector and origin as they are (no new version)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET sync_vv=?, origin=? WHERE id=?",
+                (json.dumps(vv, sort_keys=True), origin, session_id),
+            )
+
+    SERVED_KEPT = 3
+
+    def serve_snapshot(self, session_id: str, peer_id: str, rev: int, state_json: str) -> None:
+        """Remember the state served to a peer at our revision `rev`; only the last
+        `SERVED_KEPT` revisions per (meeting, peer) are kept: the base of a later merge."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO sync_served(session_id, peer_id, rev, state, at)"
+                " VALUES (?,?,?,?,?)",
+                (session_id, peer_id, rev, state_json, datetime.now().isoformat()),
+            )
+            self._conn.execute(
+                "DELETE FROM sync_served WHERE session_id=? AND peer_id=? AND rev NOT IN"
+                " (SELECT rev FROM sync_served WHERE session_id=? AND peer_id=?"
+                "  ORDER BY rev DESC LIMIT ?)",
+                (session_id, peer_id, session_id, peer_id, self.SERVED_KEPT),
+            )
+
+    def served_snapshot(self, session_id: str, peer_id: str, rev: int) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT state FROM sync_served WHERE session_id=? AND peer_id=? AND rev=?",
+                (session_id, peer_id, rev),
+            ).fetchone()
+        return row["state"] if row else None
+
+    def sync_rows(self, session_id: str) -> dict | None:
+        """Everything of a meeting that library sync reads, as raw rows from one consistent
+        snapshot, without access checks (the sync service is the machine itself, not a
+        request): None when there is no such meeting. Keys: session, segments, recordings,
+        bookmarks, live_flags, external_notes, embeddings, assets (with `linked_at`), events
+        (with `uid`, oldest first)."""
+
+        def rows(sql: str) -> list[dict]:
+            return [dict(r) for r in self._conn.execute(sql, (session_id,)).fetchall()]
+
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
+            if row is None:
+                return None
+            return {
+                "session": dict(row),
+                "segments": rows("SELECT * FROM segments WHERE session_id=? ORDER BY idx"),
+                "recordings": rows(
+                    "SELECT * FROM recordings WHERE session_id=? ORDER BY created_at, id"
+                ),
+                "bookmarks": rows("SELECT * FROM bookmarks WHERE session_id=? ORDER BY id"),
+                "live_flags": rows(
+                    "SELECT * FROM live_flags WHERE session_id=? ORDER BY part, start, id"
+                ),
+                "external_notes": rows(
+                    "SELECT * FROM external_notes WHERE session_id=? ORDER BY added_at, id"
+                ),
+                "embeddings": rows("SELECT * FROM session_speakers WHERE session_id=?"),
+                "assets": rows(
+                    "SELECT a.*, sa.added_at AS linked_at FROM assets a"
+                    " JOIN session_assets sa ON sa.asset_id = a.id WHERE sa.session_id=?"
+                    " ORDER BY sa.added_at, a.id"
+                ),
+                "events": rows(
+                    "SELECT uid, at, kind, part, detail FROM session_events"
+                    " WHERE session_id=? ORDER BY id"
+                ),
+            }
+
+    def apply_synced(self, s: SyncSession, *, origin: str, vv: dict[str, int], bump: bool) -> str:
+        """Write a meeting that arrived from a peer (or a merge of it with ours): the apply
+        path of library sync, apart from `save` (which stamps `updated_at` and fires
+        `on_new_session`) and from every access check. One transaction. `origin` is
+        the meeting's origin as THIS machine stores it ('' = recorded here).
+
+        Sets the session row (not `status` or `audio_file` of a meeting recorded here; for any
+        other: `completed` when it has a transcript, else `created`, and no audio file), replaces
+        the transcript, bookmarks, external notes, live flags and speaker embeddings, the
+        recordings rows (not for a meeting recorded here: the paths are ours and encryption
+        rewrites them quietly), the asset links (assets we lack are added, without file bytes;
+        a link we already have under another id is reused), and adds the history events whose
+        uid we lack. Search indexes follow by their triggers; nothing else is touched.
+
+        `sync_vv` becomes `vv` as given. `bump`: this is a merge, a new version made here: our
+        revision in the vector counts one more (`_touch`, which also sets `updated_at` to now).
+        Without it (a fast-forward) the vector stays as given and `updated_at` is the document's,
+        so the meeting is identical on both machines; either way `sync_seq` advances, so a third
+        machine asking us for changes hears of the meeting. Returns the meeting id."""
+        sid = s.id
+        here = origin == ""
+        vv_json = json.dumps(dict(sorted(vv.items())))
+        with self._lock, self._conn:
+            existing = self._conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid,)).fetchone()
+            common = (
+                s.name,
+                s.updated_at.isoformat(),
+                s.summary,
+                s.summary_data.model_dump_json() if s.summary_data else None,
+                s.notes,
+                json.dumps(s.participants),
+                json.dumps(s.attendees),
+                int(s.local_only),
+                s.copilot_notes.model_dump_json() if s.copilot_notes else None,
+                int(s.speakers_reviewed),
+                json.dumps([a.model_dump() for a in s.agenda]),
+                s.meeting_type,
+                s.owner_id,
+                origin,
+                vv_json,
+            )
+            status = SessionStatus.COMPLETED if s.transcript else SessionStatus.CREATED
+            if existing is None:
+                self._conn.execute(
+                    "INSERT INTO sessions(name, updated_at, summary, summary_data, notes,"
+                    " participants, attendees, local_only, copilot_notes, speakers_reviewed,"
+                    " agenda, meeting_type, owner_id, origin, sync_vv, id, created_at, status,"
+                    " audio_file) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
+                    (*common, sid, s.created_at.isoformat(), status.value),
+                )
+            else:
+                sets = (
+                    "name=?, updated_at=?, summary=?, summary_data=?, notes=?, participants=?,"
+                    " attendees=?, local_only=?, copilot_notes=?, speakers_reviewed=?, agenda=?,"
+                    " meeting_type=?, owner_id=?, origin=?, sync_vv=?, created_at=?"
+                )
+                if here:
+                    self._conn.execute(
+                        f"UPDATE sessions SET {sets} WHERE id=?",
+                        (*common, s.created_at.isoformat(), sid),
+                    )
+                else:
+                    self._conn.execute(
+                        f"UPDATE sessions SET {sets}, status=?, audio_file=NULL WHERE id=?",
+                        (*common, s.created_at.isoformat(), status.value, sid),
+                    )
+            self._write_segments(sid, s.transcript)
+            if not here:
+                self._write_recordings(sid, s.recordings)
+            self._conn.execute("DELETE FROM bookmarks WHERE session_id=?", (sid,))
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO bookmarks (id, session_id, part, seconds, note,"
+                " created_at) VALUES (?,?,?,?,?,?)",
+                [
+                    (b.id, sid, b.part, b.seconds, b.note, b.created_at.isoformat())
+                    for b in s.bookmarks
+                ],
+            )
+            self._conn.execute("DELETE FROM external_notes WHERE session_id=?", (sid,))
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO external_notes (id, session_id, source, text, filename,"
+                " added_at) VALUES (?,?,?,?,?,?)",
+                [
+                    (n.id, sid, n.source, n.text, n.filename, n.added_at.isoformat())
+                    for n in s.external_notes
+                ],
+            )
+            self._conn.execute("DELETE FROM live_flags WHERE session_id=?", (sid,))
+            self._conn.executemany(
+                'INSERT OR REPLACE INTO live_flags (id, session_id, source, start, "end", text,'
+                " created_at, part) VALUES (?,?,?,?,?,?,?,?)",
+                [
+                    (f.id, sid, f.source, f.start, f.end, f.text, f.created_at.isoformat(), f.part)
+                    for f in s.live_flags
+                ],
+            )
+            self._conn.execute("DELETE FROM session_speakers WHERE session_id=?", (sid,))
+            self._conn.executemany(
+                "INSERT INTO session_speakers(session_id, label, embedding) VALUES (?,?,?)",
+                [(sid, label, json.dumps(vec)) for label, vec in s.speaker_embeddings.items()],
+            )
+            self._link_synced_assets(sid, s)
+            have = {
+                r["uid"]
+                for r in self._conn.execute(
+                    "SELECT uid FROM session_events WHERE session_id=?", (sid,)
+                )
+            }
+            for e in s.events:
+                if e.uid in have or not event_travels(e.kind):
+                    continue
+                have.add(e.uid)
+                self._conn.execute(
+                    "INSERT INTO session_events (session_id, at, kind, part, detail, uid)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (sid, e.at, e.kind, e.part, json.dumps(e.detail), e.uid),
+                )
+            if bump:
+                self._touch(sid)
+            else:
+                self._advance_seq(sid)
+        return sid
+
+    def _link_synced_assets(self, session_id: str, s: SyncSession) -> None:
+        """The meeting's asset links become the incoming ones. A link asset is found by its
+        URL first (as `find_link`), then by id; one we lack is added with no file path."""
+        self._conn.execute("DELETE FROM session_assets WHERE session_id=?", (session_id,))
+        for a in s.assets:
+            row = None
+            if a.kind == "link" and a.url:
+                row = self._conn.execute(
+                    "SELECT id FROM assets WHERE kind='link' AND url=?", (a.url,)
+                ).fetchone()
+            if row is None:
+                row = self._conn.execute(
+                    "SELECT id, kind, url, filename FROM assets WHERE id=?", (a.id,)
+                ).fetchone()
+                if row is not None and (row["kind"], row["url"], row["filename"]) != (
+                    a.kind,
+                    a.url,
+                    a.filename,
+                ):
+                    row = None  # the id is another asset's here
+                    a = a.model_copy(update={"id": uuid4().hex[:8]})
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO assets (id, kind, title, url, filename, size, path, text,"
+                    " source, created_at) VALUES (?,?,?,?,?,?,NULL,?,?,?)",
+                    (
+                        a.id,
+                        a.kind,
+                        a.title,
+                        a.url,
+                        a.filename,
+                        a.size,
+                        a.text,
+                        a.source,
+                        a.created_at.isoformat(),
+                    ),
+                )
+                asset_id = a.id
+            else:
+                asset_id = row["id"]
+            self._conn.execute(
+                "INSERT OR IGNORE INTO session_assets (session_id, asset_id, added_at)"
+                " VALUES (?,?,?)",
+                (session_id, asset_id, a.added_at.isoformat()),
+            )
+
+    def _advance_seq(self, session_id: str) -> None:
+        """Move a meeting to the head of the change log without a new version (its vector and
+        `updated_at` stay): a fast-forward is news to a third machine."""
+        counter = self._conn.execute("SELECT value FROM meta WHERE key='sync_seq'").fetchone()
+        seq = (int(counter["value"]) if counter else 0) + 1
+        self._conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('sync_seq', ?)", (str(seq),)
+        )
+        self._conn.execute("UPDATE sessions SET sync_seq=? WHERE id=?", (seq, session_id))
+
     # ---- internals -----------------------------------------------------
 
     def _write_segments(self, session_id: str, segments: list[TranscriptSegment]) -> None:
@@ -2451,7 +2941,7 @@ class SessionRepository:
 
     def _write_recordings(self, session_id: str, recordings: list[Recording]) -> None:
         self._conn.execute("DELETE FROM recordings WHERE session_id=?", (session_id,))
-        self.add_recordings(session_id, recordings)
+        self._insert_recordings(session_id, recordings)
 
 
 # ---- migration from the v2 JSON-per-session layout ------------------------

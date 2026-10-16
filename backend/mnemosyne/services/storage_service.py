@@ -60,7 +60,7 @@ class StorageService:
         )
 
     def report(self, retention_days: int, top: int = 15) -> StorageReport:
-        usages = [self._usage(s) for s in self.repo.list_summaries()]
+        usages = [self._usage(s) for s in self.repo.list_summaries() if not s.origin]
         with_audio = [u for u in usages if u.audio_bytes > 0]
         db = sum(p.stat().st_size for p in self.data_dir.glob("mnemosyne.db*") if p.is_file())
         return StorageReport(
@@ -96,7 +96,7 @@ class StorageService:
         cutoff = (now or datetime.now()) - timedelta(days=retention_days)
         return [
             u
-            for u in (self._usage(s) for s in self.repo.list_summaries())
+            for u in (self._usage(s) for s in self.repo.list_summaries() if s.origin == "")
             if u.has_transcript and u.created_at < cutoff and u.audio_bytes > 0
         ]
 

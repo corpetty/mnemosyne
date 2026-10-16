@@ -698,7 +698,7 @@ async def auto_push(app: AppContext, session_id: str) -> str | None:
     if not load_state(app, session_id).contacts:
         return None
     session = app.sessions.get_session(session_id)
-    if session is None:
+    if session is None or session.origin:  # the computer that recorded it pushes it
         return None
     try:
         return (await push_session(app, session, auto=True)).message

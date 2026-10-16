@@ -2460,6 +2460,164 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sync/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Changes
+         * @description The meetings changed after `since` (this computer's change counter), whole, oldest
+         *     change first, and the meetings deleted after `tombstones_since` (ISO time, this computer's
+         *     clock). Each document is remembered as served to the calling peer: the base of a merge of
+         *     its later edits.
+         */
+        get: operations["changes_api_sync_changes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sync/hello": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hello
+         * @description Who this computer is and which sync it speaks; a peer asks first in every round.
+         */
+        get: operations["hello_api_sync_hello_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sync/now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync Now
+         * @description Pull from every paired computer now, in the background; `sync` events and
+         *     GET /api/sync/status follow it.
+         */
+        post: operations["sync_now_api_sync_now_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sync/pair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pair
+         * @description Pair with the computer that showed this invite (Settings > New sync invite there).
+         */
+        post: operations["pair_api_sync_pair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sync/peers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Peers */
+        get: operations["list_peers_api_sync_peers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sync/peers/{peer_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Peer
+         * @description Stop syncing with a computer. What it synced stays; it can pair again.
+         */
+        delete: operations["remove_peer_api_sync_peers__peer_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sync/poke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Poke
+         * @description The calling peer has news: pull from it in a moment (pokes in between make one pull).
+         */
+        post: operations["poke_api_sync_poke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sync/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["status_api_sync_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system": {
         parameters: {
             query?: never;
@@ -3384,7 +3542,7 @@ export interface components {
              * @default phone
              * @enum {string}
              */
-            kind: "phone" | "desktop";
+            kind: "phone" | "desktop" | "sync";
         };
         /** CombineRequest */
         CombineRequest: {
@@ -4584,6 +4742,7 @@ export interface components {
         /** RedeemResponse */
         RedeemResponse: {
             device: components["schemas"]["PairedDeviceInfo"];
+            sync: components["schemas"]["SyncSelf"] | null;
             /** Token */
             token: string;
         };
@@ -4862,6 +5021,11 @@ export interface components {
              */
             notes: string;
             /**
+             * Origin
+             * @default
+             */
+            origin: string;
+            /**
              * Owner Id
              * @default
              */
@@ -4957,6 +5121,11 @@ export interface components {
             local_only: boolean;
             /** Name */
             name: string;
+            /**
+             * Origin
+             * @default
+             */
+            origin: string;
             /**
              * Owner Id
              * @default
@@ -5805,6 +5974,363 @@ export interface components {
             /** Id */
             id: string;
         };
+        /**
+         * SyncAsset
+         * @description An asset a meeting uses. Links and the text read from files travel; file bytes never do
+         *     (`filename` and `size` only say what the file is). `added_at`: when it was attached to
+         *     this meeting.
+         */
+        SyncAsset: {
+            /**
+             * Added At
+             * Format: date-time
+             */
+            added_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Filename */
+            filename: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Size */
+            size: number | null;
+            /**
+             * Source
+             * @default manual
+             */
+            source: string;
+            /** Text */
+            text: string | null;
+            /** Title */
+            title: string;
+            /** Url */
+            url: string | null;
+        };
+        /**
+         * SyncBookmark
+         * @description A bookmark as stored: (part, seconds into it), not a place on the joined timeline.
+         */
+        SyncBookmark: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /**
+             * Part
+             * @default 0
+             */
+            part: number;
+            /**
+             * Seconds
+             * @default 0
+             */
+            seconds: number;
+        };
+        /**
+         * SyncChanges
+         * @description A page of a computer's changed meetings (GET /api/sync/changes): whole documents, oldest
+         *     change first, and the meetings deleted since the tombstone cursor.
+         */
+        SyncChanges: {
+            /** More */
+            more: boolean;
+            /** Next Since */
+            next_since: number;
+            /** Sessions */
+            sessions: components["schemas"]["SyncSession"][];
+            /** Tombstones */
+            tombstones: components["schemas"]["SyncTombstone"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * SyncClash
+         * @description A meeting with the same id on both computers that is not the same meeting (it started
+         *     at another time): never merged, left as it is on each.
+         */
+        SyncClash: {
+            /** Name */
+            name: string;
+            /** Session Id */
+            session_id: string;
+        };
+        /**
+         * SyncEvent
+         * @description A history event. `uid` is its identity across machines; `at` stays the stored ISO text.
+         */
+        SyncEvent: {
+            /** At */
+            at: string;
+            /** Detail */
+            detail: {
+                [key: string]: unknown;
+            };
+            /** Kind */
+            kind: string;
+            /** Part */
+            part: number | null;
+            /** Uid */
+            uid: string;
+        };
+        /**
+         * SyncHello
+         * @description Who a computer is and which sync it speaks (GET /api/sync/hello).
+         */
+        SyncHello: {
+            /** App Version */
+            app_version: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Protocol */
+            protocol: number;
+            /** Schema Version */
+            schema_version: number;
+            /** Seq */
+            seq: number;
+        };
+        /** SyncNowResponse */
+        SyncNowResponse: {
+            /** Started */
+            started: string[];
+        };
+        /** SyncPairRequest */
+        SyncPairRequest: {
+            /** Invite */
+            invite: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+        };
+        /** SyncPairResponse */
+        SyncPairResponse: {
+            peer: components["schemas"]["SyncPeerInfo"];
+        };
+        /**
+         * SyncPeerInfo
+         * @description A paired machine. Never the token this machine holds for it.
+         */
+        SyncPeerInfo: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Endpoint Id */
+            endpoint_id: string;
+            /** Id */
+            id: string;
+            /** Last Sync At */
+            last_sync_at: string | null;
+            /** Listen */
+            listen: string | null;
+            /** Name */
+            name: string;
+        };
+        /**
+         * SyncPeerPayload
+         * @description What a computer pairing for sync tells the other about itself (the sidecar passes it
+         *     through unchanged: link/src/lib.rs PeerInfo).
+         */
+        SyncPeerPayload: {
+            /**
+             * Id
+             * @default
+             */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Ticket
+             * @default
+             */
+            ticket: string;
+            /**
+             * Token
+             * @default
+             */
+            token: string;
+        };
+        /** SyncPeerStatus */
+        SyncPeerStatus: {
+            /** App Version */
+            app_version: string | null;
+            /** Clashes */
+            clashes: components["schemas"]["SyncClash"][];
+            /** Deleted */
+            deleted: number;
+            /** Done */
+            done: number;
+            /** Endpoint */
+            endpoint: string;
+            /** Error */
+            error: string | null;
+            /** Id */
+            id: string;
+            /** Last Sync At */
+            last_sync_at: string | null;
+            /** Listen */
+            listen: string | null;
+            /** Merged */
+            merged: number;
+            /** Name */
+            name: string;
+            /** Received */
+            received: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "idle" | "syncing" | "done" | "offline" | "locked" | "skew" | "error";
+            /** Total */
+            total: number;
+            /** Updated */
+            updated: number;
+        };
+        /** SyncPeers */
+        SyncPeers: {
+            /** Peers */
+            peers: components["schemas"]["SyncPeerInfo"][];
+            self: components["schemas"]["SyncSelf"];
+        };
+        /** SyncPokeResponse */
+        SyncPokeResponse: {
+            /** Scheduled */
+            scheduled: boolean;
+        };
+        /** SyncSelf */
+        SyncSelf: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** SyncSession */
+        SyncSession: {
+            /** Agenda */
+            agenda: components["schemas"]["AgendaItem-Output"][];
+            /** Assets */
+            assets: components["schemas"]["SyncAsset"][];
+            /** Attendees */
+            attendees: string[];
+            /** Bookmarks */
+            bookmarks: components["schemas"]["SyncBookmark"][];
+            copilot_notes: components["schemas"]["CopilotNotes"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Events */
+            events: components["schemas"]["SyncEvent"][];
+            /** External Notes */
+            external_notes: components["schemas"]["ExternalNotes"][];
+            /** Id */
+            id: string;
+            /** Live Flags */
+            live_flags: components["schemas"]["LiveFlag"][];
+            /**
+             * Local Only
+             * @default false
+             */
+            local_only: boolean;
+            /**
+             * Meeting Type
+             * @default
+             */
+            meeting_type: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+            /** Origin */
+            origin: string;
+            /** Origin Audio */
+            origin_audio: string | null;
+            /**
+             * Owner Id
+             * @default
+             */
+            owner_id: string;
+            /** Participants */
+            participants: string[];
+            /** Recordings */
+            recordings: components["schemas"]["Recording"][];
+            /** Speaker Embeddings */
+            speaker_embeddings: {
+                [key: string]: number[];
+            };
+            /**
+             * Speakers Reviewed
+             * @default false
+             */
+            speakers_reviewed: boolean;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            summary_data: components["schemas"]["SummaryData"] | null;
+            /** Transcript */
+            transcript: components["schemas"]["TranscriptSegment-Output"][];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Vv */
+            vv: {
+                [key: string]: number;
+            };
+        };
+        /** SyncStatus */
+        SyncStatus: {
+            /** Peers */
+            peers: components["schemas"]["SyncPeerStatus"][];
+            self: components["schemas"]["SyncSelf"];
+        };
+        /**
+         * SyncTombstone
+         * @description A meeting deleted: where, when (ISO text, as stored) and what it was called.
+         */
+        SyncTombstone: {
+            /** At */
+            at: string;
+            /** Device */
+            device: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Session Id */
+            session_id: string;
+        };
         /** SystemInfo */
         SystemInfo: {
             /** Diarizer In Use */
@@ -6269,6 +6795,7 @@ export interface components {
              * @default
              */
             name: string;
+            peer?: components["schemas"]["SyncPeerPayload"] | null;
         };
         /** FollowupRequest */
         mnemosyne__api__routes__sessions__FollowupRequest: {
@@ -10723,6 +11250,203 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+        };
+    };
+    changes_api_sync_changes_get: {
+        parameters: {
+            query?: {
+                since?: number;
+                limit?: number;
+                tombstones_since?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncChanges"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hello_api_sync_hello_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncHello"];
+                };
+            };
+        };
+    };
+    sync_now_api_sync_now_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncNowResponse"];
+                };
+            };
+        };
+    };
+    pair_api_sync_pair_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncPairRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncPairResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_peers_api_sync_peers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncPeers"];
+                };
+            };
+        };
+    };
+    remove_peer_api_sync_peers__peer_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                peer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    poke_api_sync_poke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncPokeResponse"];
+                };
+            };
+        };
+    };
+    status_api_sync_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncStatus"];
                 };
             };
         };

@@ -8,6 +8,7 @@
 	import { teamState } from '$lib/stores/team.svelte.js';
 	import JobProgress from './JobProgress.svelte';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
+	import { syncState } from '$lib/stores/sync.svelte.js';
 	import { importAudio } from '$lib/api/backend.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
@@ -166,6 +167,9 @@
 						{statusLabel[session.status] ?? session.status}
 					</span>
 					<span class="text-xs text-gray-500">{formatDate(session.created_at)}</span>
+					{#if session.origin}
+						<span class="truncate text-xs text-gray-500" title="Recorded on {syncState.name(session.origin)}">{syncState.name(session.origin)}</span>
+					{/if}
 					{#if connectionState.me?.team_mode && session.owner_id && session.owner_id !== connectionState.me.id}
 						<span class="truncate text-xs text-blue-300/70" title="Shared with you">{teamState.name(session.owner_id) || 'shared'}</span>
 					{/if}

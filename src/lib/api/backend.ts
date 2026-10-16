@@ -31,6 +31,7 @@ import type {
   PairingCode,
   PairedDevice,
   RemoteAccess,
+  SyncStatus,
   SystemInfo,
   Diagnostics,
   CopilotNotes,
@@ -811,7 +812,7 @@ export async function getPhoneLink(): Promise<PhoneLink> {
 
 /** A one-time pairing code: for a phone, the phone page addresses carrying it; for a computer,
  * the invite to paste on it (needs remote access running). */
-export async function createPairingCode(kind: 'phone' | 'desktop' = 'phone'): Promise<PairingCode> {
+export async function createPairingCode(kind: 'phone' | 'desktop' | 'sync' = 'phone'): Promise<PairingCode> {
   return request('/api/pairing/codes', { method: 'POST', body: JSON.stringify({ kind }) });
 }
 
@@ -825,6 +826,22 @@ export async function listPairedDevices(): Promise<PairedDevice[]> {
 
 export async function removePairedDevice(id: string): Promise<void> {
   await request(`/api/pairing/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function getSyncStatus(): Promise<SyncStatus> {
+  return request('/api/sync/status');
+}
+
+export async function syncPair(invite: string, name = ''): Promise<void> {
+  await request('/api/sync/pair', { method: 'POST', body: JSON.stringify({ invite, name }) });
+}
+
+export async function syncNow(): Promise<void> {
+  await request('/api/sync/now', { method: 'POST' });
+}
+
+export async function removeSyncPeer(id: string): Promise<void> {
+  await request(`/api/sync/peers/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export async function getSystemInfo(): Promise<SystemInfo> {

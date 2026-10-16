@@ -1,6 +1,7 @@
 """Audio recording endpoints."""
 
 import asyncio
+import json
 import logging
 import re
 import shutil
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from ...audio.capture import (
     is_browser,
@@ -31,6 +32,7 @@ from ...models.transcript import TranscriptSegment
 from ...services import history
 from ...services.copilot import copilot_runner
 from ...services.encryption import seal_session_audio
+from ...services.origin import audio_elsewhere, is_foreign, origin_name, require_local_audio
 from ...services.parts import add_part, next_part
 from ...services.pipeline import live_transcribe, transcribe_session
 from ...services.recovery import write_manifest
@@ -157,6 +159,8 @@ def _report_health(ctx: AppContext, session_id: str, recording, health, change) 
 async def _apply_calendar(ctx: AppContext, session: Session) -> Session:
     """Name an untitled session after the meeting in progress and keep its attendees.
     Calendar problems never block recording."""
+    if session.origin:  # the computer that recorded it named it
+        return session
     calendar = ctx.calendar_for(session.owner_id)  # the recorder's on a team server
     if not (calendar.configured and ctx.settings.calendar_auto_name):
         return session
@@ -230,6 +234,7 @@ async def _start(
         session = ctx.sessions.get_session(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
+        require_local_audio(ctx, session)  # recorded elsewhere: its audio is not here
     else:
         session = ctx.sessions.create_session()
 
@@ -629,6 +634,68 @@ def encrypted_response(request: Request, path: Path, key: bytes | None, filename
     return Response(f.read(), media_type=media, headers=headers)
 
 
+PROXY_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges")
+PROXY_CONNECT_TIMEOUT = 3.0
+
+
+async def _proxy_audio(ctx: AppContext, session: Session, request: Request, recording: str | None):
+    """A meeting recorded on another computer: stream its audio from there (ranges included)
+    when it answers, else say where the audio is."""
+    import httpx
+
+    from ...services.sync_peers import ensure_dialed
+
+    peer = ctx.sync_peers.get(session.origin)
+    if peer is None:
+        raise HTTPException(409, audio_elsewhere(ctx, session))
+    offline = HTTPException(409, f"{audio_elsewhere(ctx, session)}, which is offline")
+    try:
+        await ensure_dialed(ctx.link, ctx.sync_peers, peer)
+        peer = ctx.sync_peers.get(peer.id) or peer
+    except Exception:
+        logger.info("Audio of %s: %s cannot be dialed", session.id, origin_name(ctx, session))
+        raise offline from None
+    client = ctx.sync.client_for(peer)
+    headers = {"Range": request.headers["range"]} if "range" in request.headers else {}
+    params = {"recording": recording} if recording else None
+    try:
+        req = client.build_request(
+            "GET",
+            f"/api/audio/file/{session.id}",
+            params=params,
+            headers=headers,
+            timeout=httpx.Timeout(60.0, connect=PROXY_CONNECT_TIMEOUT),
+        )
+        resp = await client.send(req, stream=True)
+    except (httpx.HTTPError, OSError):
+        await client.aclose()
+        raise offline from None
+    if resp.status_code >= 400:
+        try:
+            body = await resp.aread()
+            detail = json.loads(body).get("detail")
+        except Exception:
+            detail = None
+        finally:
+            await resp.aclose()
+            await client.aclose()
+        raise HTTPException(resp.status_code, detail or "The audio could not be played")
+
+    async def body():
+        try:
+            async for chunk in resp.aiter_raw():
+                yield chunk
+        except httpx.HTTPError:
+            return  # the origin went away mid-stream: the player sees a short body
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
+    out = {k: resp.headers[k] for k in PROXY_HEADERS if k in resp.headers}
+    media = out.pop("content-type", "application/octet-stream")
+    return StreamingResponse(body(), status_code=resp.status_code, headers=out, media_type=media)
+
+
 @router.get("/file/{session_id}")
 async def get_audio(
     session_id: str,
@@ -641,6 +708,8 @@ async def get_audio(
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if is_foreign(session):
+        return await _proxy_audio(ctx, session, request, recording)
     history.log_access(ctx, session_id, "played")
     path = session.audio_file
     if recording:
@@ -795,6 +864,7 @@ async def _import_part(ctx: AppContext, session_id: str, file, original: Path, t
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    require_local_audio(ctx, session)
     if session_id in ctx.active_recordings or ctx.jobs.list(
         session_id=session_id, active_only=True
     ):

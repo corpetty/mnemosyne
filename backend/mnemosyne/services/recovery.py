@@ -178,7 +178,7 @@ def interrupted_sessions(app: AppContext) -> list[str]:
     return [
         s.id
         for s in app.sessions.list_sessions()
-        if s.status in INTERRUPTED and s.id not in app.active_recordings
+        if s.status in INTERRUPTED and s.id not in app.active_recordings and not s.origin
     ]
 
 

@@ -28,6 +28,7 @@ import { toastState } from '$lib/stores/toast.svelte.js';
 import { teamState } from '$lib/stores/team.svelte.js';
 import { transcriptState } from '$lib/stores/transcript.svelte.js';
 import { uiState, type ShellStage, type View } from '$lib/stores/ui.svelte.js';
+import { syncState } from '$lib/stores/sync.svelte.js';
 import { updateState } from '$lib/stores/update.svelte.js';
 import { wsState } from '$lib/stores/websocket.svelte.js';
 import type { BackendEvent, RecoveredRecording } from '$lib/types/index.js';
@@ -594,6 +595,7 @@ function onConnected(): () => void {
   // installing), so the meeting list is loaded here, once there is a backend to ask.
   sessionState.loadSessions();
   wsState.connect();
+  void syncState.load();
   transcriptState.init();
   void resumeActiveRecording();
   jobsState.init();
@@ -662,6 +664,15 @@ function onConnected(): () => void {
     }
     if (msg.type === 'recovered') {
       announceRecovered(msg);
+      return;
+    }
+    if (msg.type === 'sync') {
+      // A round with another computer: its row follows; meetings it brought in or changed are
+      // loaded when it ends (they also come as `session` events).
+      if (syncState.apply(msg.peer, msg.state, msg.done, msg.total)) {
+        sessionState.loadSessions();
+        if (sessionState.activeSession) sessionState.refreshActive();
+      }
       return;
     }
     if (msg.type === 'shares') {

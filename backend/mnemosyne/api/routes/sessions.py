@@ -14,6 +14,7 @@ from ...models.session import (
 from ...services import history, summary_edit
 from ...services.combine import combine_runner
 from ...services.copilot import copilot_ask_runner
+from ...services.origin import require_local_audio
 from ...services.pipeline import transcribe_session
 from ...services.stats import MeetingStats, meeting_stats
 from ...services.summary_edit import SummaryEdit
@@ -225,6 +226,7 @@ async def combine(session_id: str, request: CombineRequest, ctx: AppContext = De
         session = ctx.sessions.get_session(sid)
         if session is None:
             raise HTTPException(status_code=404, detail="Meeting not found")
+        require_local_audio(ctx, session)
         if not session.audio_file:
             raise HTTPException(status_code=400, detail=f"“{session.name}” has no audio")
         if sid in ctx.active_recordings:

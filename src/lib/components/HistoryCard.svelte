@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getHistory, recoverSession } from '$lib/api/backend.js';
+	import { syncState } from '$lib/stores/sync.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -186,6 +187,16 @@
 				return `${d.by || 'Someone'} edited the task “${d.task}”`;
 			case 'task_reopened':
 				return `${d.by || 'Someone'} reopened “${d.task}”`;
+			case 'sync_merged': {
+				const kept = (d.kept as number) ?? 0;
+				const both = (d.both as number) ?? 0;
+				return (
+					`Merged changes from ${d.source}` +
+					(kept > 0 ? `: ${kept} kept` : '') +
+					(both > 0 ? ` (${both} changed on both sides: worth a look)` : '') +
+					(d.transcript === 'theirs' ? `; transcript from ${d.source}` : '')
+				);
+			}
 			case 'note_merged':
 				return d.both
 					? `Your edits in Obsidian were kept in the note (${d.both} line${d.both === 1 ? '' : 's'} changed on both sides: worth a look)`
@@ -262,8 +273,8 @@
 					{#if history.pending.some((p) => p.state === 'waiting')}
 						<button
 							onclick={recover}
-							disabled={recovering || history.recording_now}
-							title={history.recording_now ? 'After this recording stops' : 'Add it to the meeting as its next part'}
+							disabled={recovering || history.recording_now || !!session.origin}
+							title={session.origin ? syncState.audioOn(session.origin) : history.recording_now ? 'After this recording stops' : 'Add it to the meeting as its next part'}
 							class="rounded bg-amber-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-50"
 						>Save it into the meeting</button>
 					{/if}

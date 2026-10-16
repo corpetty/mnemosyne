@@ -29,6 +29,9 @@ SEEN_WRITE_INTERVAL = 300.0
 
 
 PHONE, DESKTOP = "phone", "desktop"
+# A code kind, not a device kind: redeeming it makes a DESKTOP device and, in the route, a
+# sync peer (services/sync_peers.py).
+SYNC = "sync"
 
 
 class InvalidPairingCode(Exception):
@@ -88,6 +91,34 @@ class PairingService:
         self._codes[code] = (expires, kind)
         return code, expires
 
+    def code_kind(self, code: str) -> str | None:
+        """The kind a live code was made for, or None when it is unknown or expired."""
+        expires, kind = self._codes.get(code, (0.0, ""))
+        return kind if expires > self.clock() else None
+
+    def add_desktop(self, name: str, endpoint_id: str) -> tuple[PairedDevice, str]:
+        """A DESKTOP device for an endpoint without a code (this machine starts a sync pairing
+        and trusts the other first). Any earlier device for the endpoint is replaced."""
+        for old in self.desktops_for(endpoint_id):
+            del self._devices[old.token_hash]
+        token = secrets.token_urlsafe(32)
+        device = PairedDevice(
+            id=secrets.token_hex(8),
+            name=(name.strip() or "Computer")[:80],
+            token_hash=_hash(token),
+            created_at=_iso(self.clock()),
+            kind=DESKTOP,
+            endpoint_id=endpoint_id,
+        )
+        self._devices[device.token_hash] = device
+        self._save()
+        return device, token
+
+    def desktops_for(self, endpoint_id: str) -> list[PairedDevice]:
+        return [
+            d for d in self._devices.values() if d.kind == DESKTOP and d.endpoint_id == endpoint_id
+        ]
+
     def redeem(
         self, code: str, name: str, endpoint_id: str | None = None
     ) -> tuple[PairedDevice, str]:
@@ -97,6 +128,7 @@ class PairingService:
         if expires <= self.clock():
             self._codes.pop(code, None)
             raise InvalidPairingCode("This pairing code is invalid or has expired")
+        kind = DESKTOP if kind == SYNC else kind
         if (kind == DESKTOP) != bool(endpoint_id):
             raise InvalidPairingCode(
                 "This code pairs a computer through remote access"
@@ -133,6 +165,12 @@ class PairingService:
 
     def get(self, device_id: str) -> PairedDevice | None:
         return next((d for d in self._devices.values() if d.id == device_id), None)
+
+    def rename(self, device_id: str, name: str) -> None:
+        device = self.get(device_id)
+        if device is not None and name.strip():
+            device.name = name.strip()[:80]
+            self._save()
 
     def revoke(self, device_id: str) -> bool:
         device = self.get(device_id)

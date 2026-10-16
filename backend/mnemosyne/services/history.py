@@ -99,6 +99,7 @@ def build(app: AppContext, session_id: str) -> SessionHistory | None:
     if session is None:
         return None
     folder = app.settings.recordings_dir / session_id
+    elsewhere = bool(session.origin)  # the audio is on another computer: no disk checks
     events = [HistoryEvent(**e) for e in app.repo.events(session_id)]
     if not any(e.kind == "created" for e in events):
         events.insert(0, HistoryEvent(at=session.created_at, kind="created"))
@@ -128,7 +129,7 @@ def build(app: AppContext, session_id: str) -> SessionHistory | None:
         seconds = saved.detail.get("seconds") if saved else None
         if seconds is None and i + 1 < len(numbers):
             seconds = min(r.offset for r in by_part[numbers[i + 1]]) - offset
-        if seconds is None:  # the last part: measure its first source that is there
+        if seconds is None and not elsewhere:  # the last part: measure its first source there
             for r in recs:
                 if (seconds := measure(Path(r.path), app.file_key)) is not None:
                     break
@@ -212,7 +213,7 @@ def build(app: AppContext, session_id: str) -> SessionHistory | None:
         for j in app.jobs.list(session_id=session_id, active_only=True)
     )
     pending: list[PendingRecording] = []
-    if folder.is_dir():
+    if folder.is_dir() and not elsewhere:
         for _manifest, recording_id, part, tracks in pending_recordings(folder, session):
             if active is not None and (
                 recording_id == active.session_id or {t["wav"] for t in tracks} <= live_wavs
@@ -249,10 +250,10 @@ def build(app: AppContext, session_id: str) -> SessionHistory | None:
     missing = sorted(
         Path(path).name
         for path in [*(r.path for r in session.recordings), session.audio_file]
-        if path and not Path(path).exists()
+        if path and not elsewhere and not Path(path).exists()
     )
     orphans = []
-    if folder.is_dir() and not busy:  # a save in progress has files in flight
+    if folder.is_dir() and not busy and not elsewhere:  # a save in progress has files in flight
         for f in sorted(folder.iterdir()):
             if (
                 f.is_file()

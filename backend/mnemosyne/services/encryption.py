@@ -59,7 +59,7 @@ def _convert_audio(app: AppContext, session_id: str, key: bytes | None) -> tuple
     """Encrypt (key) or decrypt (None) one meeting's recordings, mix and clips, and point the
     database at the new files. Returns (files converted, errors)."""
     session = app.sessions.get_session(session_id)
-    if session is None:
+    if session is None or session.origin:  # recorded elsewhere: no audio here, and no change
         return 0, []
     converted, errors = 0, []
     # Originals are removed only once the database points at the new files: a crash between
@@ -94,7 +94,7 @@ def _convert_audio(app: AppContext, session_id: str, key: bytes | None) -> tuple
     if audio != session.audio_file or any(
         a.path != b.path for a, b in zip(recordings, session.recordings, strict=True)
     ):
-        app.sessions.set_audio(session_id, audio or "", recordings)
+        app.sessions.set_audio(session_id, audio or "", recordings, quiet=True)
     for original in originals:
         original.unlink(missing_ok=True)
     originals.clear()

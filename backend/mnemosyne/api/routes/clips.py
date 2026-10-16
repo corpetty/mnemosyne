@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, Response
 
 from ...models.base import ApiModel
 from ...services.clips import clip_filename, cut_clip, quote_text
+from ...services.origin import is_foreign, require_local_audio
 from ...storage.crypto import EncryptedFile, is_encrypted
 from ..context import AppContext, get_ctx
 
@@ -53,7 +54,7 @@ async def make_quote(session_id: str, request: ClipRequest, ctx: AppContext = De
         raise HTTPException(status_code=400, detail="Those lines are not in the transcript")
     text = quote_text(session, first, last)
     clip = None
-    if request.audio and session.audio_file:
+    if request.audio and session.audio_file and not is_foreign(session):  # text only elsewhere
         try:
             await cut_clip(session, _clips_dir(ctx, session_id), first, last, ctx.file_key)
         except ValueError as e:
@@ -79,8 +80,10 @@ def _clip_path(ctx: AppContext, session_id: str, clip_id: str) -> Path:
 
 @router.get("/{session_id}/clips/{clip_id}")
 async def get_clip(session_id: str, clip_id: str, ctx: AppContext = Depends(get_ctx)):
-    path = _clip_path(ctx, session_id, clip_id)
     session = ctx.sessions.get_session(session_id)
+    if session is not None:
+        require_local_audio(ctx, session)
+    path = _clip_path(ctx, session_id, clip_id)
     first = int(clip_id.split("-")[0])
     if session is None or first >= len(session.transcript):
         name = path.name
@@ -112,6 +115,9 @@ async def save_clip(
     computer: in server mode the path would be on the server."""
     if request.client is None or request.client.host not in ("127.0.0.1", "::1", "testclient"):
         raise HTTPException(status_code=403, detail="Saving to a path only works on this computer")
+    session = ctx.sessions.get_session(session_id)
+    if session is not None:
+        require_local_audio(ctx, session)
     source = _clip_path(ctx, session_id, clip_id)
     target = Path(body.path).expanduser()
     if not target.parent.is_dir():

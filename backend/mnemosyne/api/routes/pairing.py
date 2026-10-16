@@ -2,6 +2,7 @@
 (services/pairing.py), and remote access for computers (services/link.py). Redeeming a code
 needs no token; everything else here but /me needs the API token or a computer's (api/auth.py)."""
 
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -10,7 +11,9 @@ from pydantic import BaseModel
 
 from ... import access
 from ...models.base import ApiModel
-from ...services.pairing import DESKTOP, PHONE, InvalidPairingCode, PairedDevice
+from ...models.sync import SyncPeerPayload, SyncSelf
+from ...services import sync_peers
+from ...services.pairing import DESKTOP, PHONE, SYNC, InvalidPairingCode, PairedDevice
 from ..context import AppContext, get_ctx
 from .mobile import phone_page_urls
 
@@ -19,7 +22,7 @@ ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
 
 
 class CodeRequest(BaseModel):
-    kind: Literal["phone", "desktop"] = PHONE
+    kind: Literal["phone", "desktop", "sync"] = PHONE  # sync: a desktop that also syncs
 
 
 class PairingCode(ApiModel):
@@ -27,7 +30,7 @@ class PairingCode(ApiModel):
     kind: str
     expires_at: datetime
     urls: list[str]  # phone: the phone page with the code, one per address a phone might use
-    invite: str | None  # desktop: what the other computer pastes (<ticket>#<code>)
+    invite: str | None  # desktop or sync: what the other computer pastes (<ticket>#<code>)
 
 
 class PairedDeviceInfo(ApiModel):
@@ -42,6 +45,7 @@ class RedeemRequest(BaseModel):
     code: str
     name: str = ""
     endpoint_id: str | None = None  # set by the link sidecar for a computer
+    peer: SyncPeerPayload | None = None  # a sync code: the other computer's id, ticket, token
 
 
 class RemoteAccess(ApiModel):
@@ -54,6 +58,7 @@ class RemoteAccess(ApiModel):
 class RedeemResponse(ApiModel):
     device: PairedDeviceInfo
     token: str
+    sync: SyncSelf | None  # a sync code: this computer's sync id and name
 
 
 def _info(d: PairedDevice) -> PairedDeviceInfo:
@@ -71,7 +76,11 @@ async def create_code(body: CodeRequest | None = None, ctx: AppContext = Depends
             detail="Set an API token first: without one, anyone who reaches the backend can use it",
         )
     ticket = ctx.link.status.ticket
-    if kind == DESKTOP and not (ctx.link.status.running and ticket):
+    if kind == SYNC and ctx.settings.team_mode:
+        raise HTTPException(
+            status_code=409, detail="Library sync is for personal computers, not a team server"
+        )
+    if kind in (DESKTOP, SYNC) and not (ctx.link.status.running and ticket):
         raise HTTPException(status_code=409, detail="Turn on remote access first")
     code, expires = ctx.pairing.new_code(kind)
     return PairingCode(
@@ -79,17 +88,41 @@ async def create_code(body: CodeRequest | None = None, ctx: AppContext = Depends
         kind=kind,
         expires_at=datetime.fromtimestamp(expires, UTC),
         urls=[f"{u}?pair={code}" for u in phone_page_urls(ctx.settings)] if kind == PHONE else [],
-        invite=f"{ticket}#{code}" if kind == DESKTOP else None,
+        invite=f"{ticket}#{code}" if kind in (DESKTOP, SYNC) else None,
     )
 
 
 @router.post("/redeem", response_model=RedeemResponse)
 async def redeem(body: RedeemRequest, ctx: AppContext = Depends(get_ctx)):
+    syncing = ctx.pairing.code_kind(body.code) == SYNC
+    if syncing:
+        peer = body.peer
+        if ctx.settings.team_mode:
+            raise HTTPException(
+                status_code=403, detail="Library sync is for personal computers, not a team server"
+            )
+        if peer is None or not (peer.id and peer.ticket and peer.token):
+            raise HTTPException(
+                status_code=400,
+                detail="A sync code needs the other computer's id, ticket and token",
+            )
+        if body.endpoint_id and body.endpoint_id == ctx.link.status.endpoint_id:
+            raise HTTPException(status_code=400, detail="A computer cannot sync with itself")
     try:
         device, token = ctx.pairing.redeem(body.code, body.name, body.endpoint_id)
     except InvalidPairingCode as e:
         raise HTTPException(status_code=403, detail=f"{e}: show a new code in Settings") from e
-    return RedeemResponse(device=_info(device), token=token)
+    me = None
+    if syncing and body.peer is not None and body.endpoint_id:
+        for old in ctx.pairing.desktops_for(body.endpoint_id):  # paired again: one device
+            if old.id != device.id:
+                ctx.pairing.revoke(old.id)
+        peer = await sync_peers.record_incoming(
+            ctx, device_name=device.name, endpoint_id=body.endpoint_id, payload=body.peer
+        )
+        ctx.pairing.rename(device.id, peer.name)
+        me = SyncSelf(**asdict(ctx.sync_peers.self_info()))
+    return RedeemResponse(device=_info(device), token=token, sync=me)
 
 
 @router.get("/devices", response_model=list[PairedDeviceInfo], dependencies=ADMIN)
@@ -99,8 +132,13 @@ async def list_devices(ctx: AppContext = Depends(get_ctx)):
 
 @router.delete("/devices/{device_id}", dependencies=ADMIN)
 async def remove_device(device_id: str, ctx: AppContext = Depends(get_ctx)):
-    if not ctx.pairing.revoke(device_id):
+    device = ctx.pairing.get(device_id)
+    if device is None or not ctx.pairing.revoke(device_id):
         raise HTTPException(status_code=404, detail="Device not found")
+    # A computer syncing with this one goes with its device (what it synced stays).
+    peer = ctx.sync_peers.find_by_endpoint(device.endpoint_id) if device.endpoint_id else None
+    if peer is not None:
+        await sync_peers.forget(ctx, peer)
     return {"message": "Device removed"}
 
 

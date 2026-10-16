@@ -49,6 +49,8 @@ def _file_sha256(path: Path) -> str:
 
 
 def audio_files(session: Session) -> list[Path]:
+    if session.origin:  # recorded on another computer: its audio is not here
+        return []
     paths = [r.path for r in session.recordings] + [session.audio_file or ""]
     return [Path(p) for p in dict.fromkeys(paths) if p and Path(p).is_file()]
 
@@ -118,6 +120,14 @@ def verify(app: AppContext, session_id: str) -> Verification:
         last = seals[-1]
         if content_hash(content_of(session)) != last["content_hash"]:
             problems.append("The transcript or summary differs from the last seal")
+        if session.origin:  # the audio files are on the computer that recorded it
+            return Verification(
+                ok=not problems,
+                seals=len(seals),
+                last_sealed_at=last["at"],
+                chain_head=last["chain"],
+                problems=problems,
+            )
         now = audio_hashes(session)
         for name, digest in last["audio"].items():
             if name not in now:

@@ -7,6 +7,7 @@
 	import { connectionState, LOCAL_BACKEND, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
 	import PhoneLink from './PhoneLink.svelte';
 	import RemoteAccessHome from './RemoteAccessHome.svelte';
+	import SyncSettings from './SyncSettings.svelte';
 	import RemoteConnect from './RemoteConnect.svelte';
 	import StorageSettings from './StorageSettings.svelte';
 	import BackupSettings from './BackupSettings.svelte';
@@ -1350,6 +1351,7 @@
 					</label>
 				{/if}
 				{#if !readOnly}<RemoteAccessHome enabled={settings.values.remote_access} relays={settings.values.remote_relays} tokenSet={settings.secrets_set.api_token} />{/if}
+				{#if !readOnly}<SyncSettings enabled={settings.values.remote_access} tokenSet={settings.secrets_set.api_token} />{/if}
 				<label class="block max-w-md mt-3">
 					<span class={labelClass}>Phone address</span>
 					<input type="text" bind:value={form.phone_url} disabled={locked('phone_url')} placeholder="blank: this computer's network address" class={inputClass} />

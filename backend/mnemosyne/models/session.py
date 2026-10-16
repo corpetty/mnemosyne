@@ -177,7 +177,8 @@ class Bookmark(ApiModel):
 
 
 class Session(ApiModel):
-    id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    # 12 hex characters (older meetings keep their 8); the only place meeting ids are made.
+    id: str = Field(default_factory=lambda: uuid4().hex[:12])
     name: str = DEFAULT_SESSION_NAME
     status: SessionStatus = SessionStatus.CREATED
     created_at: datetime = Field(default_factory=datetime.now)
@@ -204,6 +205,9 @@ class Session(ApiModel):
     owner_id: str = ""
     # Why the meeting is on legal hold ("" = not held): it and its audio cannot be deleted.
     legal_hold: str = ""
+    # The machine that recorded the meeting (library sync, services/sync): its sync id;
+    # "" = this machine. Audio, and the work that needs it, stays with the origin.
+    origin: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -228,3 +232,4 @@ class SessionSummary(ApiModel):
     participant_count: int
     local_only: bool = False
     owner_id: str = ""
+    origin: str = ""  # see Session.origin

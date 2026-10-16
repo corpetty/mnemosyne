@@ -2,6 +2,7 @@
 	import { markMoment, startRecording, stopAndTranscribe } from '$lib/app/controller.svelte.js';
 	import { setLocalOnly } from '$lib/api/backend.js';
 	import { canChange } from '$lib/app/access.js';
+	import { syncState } from '$lib/stores/sync.svelte.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -35,6 +36,8 @@
 
 	// Someone else's meeting (a reviewer reading a member's): no controls the server refuses.
 	const mine = $derived(canChange(sessionState.activeSession));
+	// A meeting recorded on another computer: its audio, and recording into it, stay there.
+	const foreign = $derived(!!sessionState.activeSession?.origin);
 	// This meeting is being recorded right now.
 	const recordingHere = $derived(
 		audioState.isRecording && audioState.activeSessionId === sessionState.activeSession?.id
@@ -90,6 +93,9 @@
 			{new Date(sessionState.activeSession.created_at).toLocaleString()}
 		</span>
 	</div>
+	{#if sessionState.activeSession.origin}
+		<p class="-mt-2 mb-2 text-xs text-gray-500">Recorded on {syncState.name(sessionState.activeSession.origin)}</p>
+	{/if}
 	{#if !mine}
 		<p class="-mt-2 mb-2 text-xs text-amber-300/80">
 			{teamState.name(sessionState.activeSession.owner_id) || 'Someone else'}'s meeting: you can read, play and export it and tick off its action items, not change it.
@@ -166,11 +172,12 @@
 							<DeviceSelector />
 						{/if}
 						<AudioControls
+							disabledReason={foreign ? syncState.audioOn(sessionState.activeSession.origin) : ''}
 							onStartOverride={() => startRecording()}
 							onStopOverride={stopAndTranscribe}
 						/>
 					{/if}
-					{#if mine && sessionState.activeSession.audio_file}
+					{#if mine && !foreign && sessionState.activeSession.audio_file}
 						<p class="text-xs text-gray-500">
 							Recording again adds to this meeting (part {nextPart}); what is already recorded, transcribed and summarized
 							is kept.

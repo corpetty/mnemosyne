@@ -249,6 +249,60 @@ Sync meeting documents between two paired computers (the "desktop" devices link/
 over iroh: frontier hello, missing ops, artifacts on demand. mDNS first, relays only when needed,
 as for remote access. No authorship or access questions yet: every peer is the same person.
 
+### Phase 3 design (agreed with Corey 2026-10-14)
+
+Status: built 2026-10-14, unreleased, as designed below (details in
+docs/plans/2026-10-14-library-sync-rules.md). Additions found while building: fast-forwards are
+also stored as merge bases; a received delete is stored with local time so a third machine still
+sees it; deletes wait while the meeting is busy; the origin keeps its own recordings rows; items
+added on both machines with similar wording are one item. Not yet: renaming this computer for
+sync, sending only ids before documents (every change comes back once in full on the next pull),
+remembering id clashes across restarts.
+
+Scope (Corey): both machines record; ONE library; meetings recorded on either appear on both;
+summary and transcript travel, audio stays on the machine that recorded it. Drafted against the
+code at ea282b1, reviewed and accepted.
+
+- **Transport**: no new protocol. Each machine's `mnemosyne-link home` also dials every sync peer
+  (the client half remote.rs runs today, `Remote` + `serve_local`, same endpoint and `link.key`)
+  and serves it on a loopback port; each backend PULLS the other's changes over HTTP
+  (`/api/sync/*`) with the per-device token pairing issues; `POST /api/sync/poke` asks for an
+  immediate pull. Control of the sidecar: JSON lines on its stdin (`pair` with `peer` info,
+  `dial`, `hangup`), replies on stdout. mDNS first, relays as remote access does.
+- **Pairing**: mutual, from the existing invite flow (`kind: "sync"` codes); each side records the
+  other as a DESKTOP device (endpoint-bound) and as a sync peer in `<data_dir>/sync_peers.json`
+  (0600; holds the token for the other machine, same class of secret as link.key; not backed
+  up). Requires remote access and an API token; refused in team mode. Removing the device removes
+  the peer and keeps what was synced.
+- **Unit**: one meeting with its id; new meeting ids are 12 hex characters (Corey), old ones keep
+  theirs; same id with a different `created_at` is a clash: reported, never merged. Travels:
+  session fields, summary_data, notes, transcript, recordings rows (the origin's paths; non-origin
+  `audio_file` is NULL), bookmarks, external notes, live flags, session speakers, asset links and
+  link/text assets, history events (union by a new `uid`). Rebuilt locally: FTS, vectors,
+  people, topics. Never: audio, keys, settings, vault_notes, summary_docs, versions, seals, voice
+  profiles, shares, supervision, organizations, asks, digests.
+- **Bookkeeping**: `sessions.origin` (recording machine's sync id, '' = here), `sync_vv` (version
+  vector), `sync_seq` (global change counter); every local write goes through one `_touch`;
+  `sync_served` keeps the last 3 states served per peer (the merge base), `sync_tombstones` travel.
+- **Merge** (Corey: three-way, not history union): incoming dominated → ignore; dominates →
+  fast-forward; concurrent → three-way against OUR state the peer last incorporated (served
+  snapshot at its `vv[me]`), so a round trip never doubles text. Texts (body, notes, each item by
+  id) through the sidecar's `base` form; scalars: one side changed → it, both → newer
+  `updated_at`; sets (topics, participants, bookmarks) three-way; items by id: deleted vs edited →
+  edit kept, deleted vs untouched → deleted (tombstoned through `apply_human`); transcript: one
+  side → it, both → the recording machine wins (the other kept as a version). The summary enters
+  the local doc through `summary_doc.apply_human(by="Sync (<machine>)")`. Deletes (Corey): delete
+  everywhere, incl. the recording, after a confirm saying so; a tombstone beats edits.
+- **The recording machine does the work**: transcription, auto-summarize, auto-export, the vault
+  pass, export-all, recovery, clips, audio deletion, HubSpot auto-push, auto-naming: origin only
+  (other machines answer 409 "The audio is on <name>"); manual summarize, revise, edits and manual
+  export work anywhere. Audio plays on other machines by streaming from the origin when it is
+  reachable (Corey), else "The audio is on <name>".
+- **Skew**: `hello` carries protocol/schema/app versions; a newer protocol is shown as "Update
+  Mnemosyne on <name>" and skipped. Locked peers (423) are skipped and shown as locked.
+- **Tests**: the sync engine between two in-process apps through `httpx.ASGITransport` (no iroh);
+  the sidecar's dial/pair in Rust like link/tests/tunnel.rs.
+
 ## Later, each behind the prerequisites below
 
 - **Live shared notes** during a meeting: a scratchpad attendees type into (desktop, or the team

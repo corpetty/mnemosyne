@@ -98,6 +98,21 @@ mnemosyne-link pair '<invite>' --key-file ~/.config/mnemosyne/link.key --name La
 mnemosyne-link connect '<ticket printed by pair>' --key-file ~/.config/mnemosyne/link.key --listen 127.0.0.1:8009
 ```
 
+## Sync with your other computers
+
+Two computers that both run Mnemosyne can share one library: meetings recorded on either appear
+on both, and summaries, notes and tasks edited on either merge. Audio stays on the computer that
+recorded it; the other one plays it through the same encrypted connection while that computer is
+reachable, and leaves transcribing to it.
+
+1. On both computers: set an API token and turn on remote access (Settings, General).
+2. On one: Settings, General, Sync with your other computers, Invite a computer. Copy the invite.
+3. On the other: paste it under Sync and press Sync.
+
+They then connect directly on the same network and through the relays elsewhere, and pull each
+other's changes every half minute and right after a change. Removing a computer stops the sync;
+what was already synced stays on both. Sync is not available in team mode.
+
 ## Troubleshooting
 
 - **"This phone is not paired"**: the phone was removed, its browser data was cleared, or the address

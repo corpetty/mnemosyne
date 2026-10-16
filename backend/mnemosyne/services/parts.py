@@ -111,6 +111,10 @@ async def add_part(
     """Attach a finished recording to its meeting. Part 0 becomes the meeting's audio; a later
     part is joined after what is there. Returns the part's offset on the timeline."""
     session = app.sessions.get_session(session_id)
+    if session is not None:
+        from .origin import require_local_audio
+
+        require_local_audio(app, session)
     existing = Path(session.audio_file) if session and session.audio_file else None
     if part == 0 or existing is None or not existing.is_file():
         for r in recordings:

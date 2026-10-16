@@ -82,6 +82,9 @@ export type PhoneLink = S['PhoneLink'];
 export type PairingCode = S['PairingCode'];
 export type PairedDevice = S['PairedDeviceInfo'];
 export type RemoteAccess = S['RemoteAccess'];
+export type SyncStatus = S['SyncStatus'];
+export type SyncPeerStatus = S['SyncPeerStatus'];
+export type SyncPeerState = SyncPeerStatus['state'];
 export type SystemInfo = S['SystemInfo'];
 export type DesktopCalendar = S['DesktopCalendar'];
 export type EncryptionStatus = S['EncryptionStatus'];
@@ -142,6 +145,7 @@ export type BackendEvent =
   | { type: 'bookmarks'; session_id: string } // a meeting's bookmarks changed
   | { type: 'assets'; session_id: string } // a meeting's resources changed
   | { type: 'history'; session_id: string } // something was added to a meeting's history
+  | { type: 'sync'; peer: string; state: SyncPeerState; done: number; total: number } // library sync with a peer
   | { type: 'shares' } // a meeting was shared or unshared (which one is not said: it may no longer be yours)
   | {
       // A source stopped being captured, or is captured again (backend audio/health.py).

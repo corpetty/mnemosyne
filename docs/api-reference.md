@@ -1278,6 +1278,55 @@ transcription engine is unloaded if its configuration changed.
 
 ---
 
+## Library sync
+
+A person's computers keep one library (docs/plans/2026-10-12-hashseq-collaboration.md "Phase 3
+design"; services/sync_peers.py, services/sync_service.py). Pairing is mutual, from a `sync`
+pairing code: each side records the other as a DESKTOP device and as a sync peer in
+`<data_dir>/sync_peers.json` (0600; it holds the token for the other machine and is not backed
+up). Needs remote access and an API token; every route below answers `409` on a team server.
+
+Each backend PULLS from its peers through the link sidecar's loopback listener for that peer,
+with the token the peer gave it. The routes a peer calls know which peer asks from that token
+(its device's endpoint); with the admin token nothing is remembered as served.
+
+- `GET /api/sync/peers` → `{self: {id, name}, peers: [{id, name, endpoint_id, created_at,
+  last_sync_at, listen}]}`; never a token. `POST /api/sync/pair` `{invite, name}` pairs with the
+  computer that showed the invite; `DELETE /api/sync/peers/{id}` stops syncing with it (what it
+  synced stays).
+- `GET /api/sync/hello` → `{protocol, schema_version, app_version, id, name, seq}`. Asked first in
+  every round. `protocol` is 1; a peer speaking another one is not pulled from (state `skew`,
+  "Update Mnemosyne on <name>"); `seq` is its change counter (a cursor past it means its change
+  log started over, e.g. a restored backup: read from 0 again).
+- `GET /api/sync/changes?since=0&limit=50&tombstones_since=` → `{sessions: [SyncSession],
+  tombstones: [{session_id, at, device, name}], next_since, more, total}`. The meetings changed
+  after `since` (this computer's change counter), whole, oldest change first, at most `limit`
+  (1-200); the meetings deleted after `tombstones_since` (ISO time on this computer's clock; the
+  puller asks from two hours before the last one it saw); `total`: meetings changed after
+  `since`. Each document served is remembered for the calling peer (the last 3 per meeting), the
+  base of a three-way merge when its later edits come back concurrent.
+- `POST /api/sync/poke` → `{scheduled}`: the calling peer has news; a pull from it follows in
+  about 2 s (pokes in between make one pull). `false` when the caller is not a sync peer.
+- `POST /api/sync/now` → `{started: [peer id]}`: pull from every peer now, in the background.
+- `GET /api/sync/status` → `{self, peers: [{id, name, endpoint, listen, last_sync_at, state,
+  error, done, total, received, updated, merged, deleted, clashes: [{session_id, name}],
+  app_version}]}`. `state`: `idle` (not tried since this start), `syncing`, `done`, `offline`
+  (not reachable; tried again after 1, 2, 4 ... 10 minutes, at once on a poke or Sync now),
+  `locked` (it answered `423`), `skew`, `error` (`error` says why). The counts are the current
+  or last round's.
+
+A round with a peer: hello, then pages of changes from the peer's cursor (kept after each page,
+so an interrupted first sync resumes), then for each meeting: deleted here → ignored (never
+resurrected); new here → written as it is (`origin` = the recording computer, no audio file,
+`completed` with a transcript); its version vector dominates ours → taken as it is; ours
+dominates or equals → ignored; concurrent → merged three ways (services/sync_merge.py) and logged
+as `sync_merged` in the meeting's history; another meeting under the same id (started at another
+time) → a clash, skipped and listed. A tombstone deletes our copy, with its audio when it was
+recorded here, unless it is busy (recording, a job): then at the next round. Rounds run at
+start, every 30 s, on a poke and after the sidecar dials the peers again; local changes poke the
+peers. Meetings from before sync count their revisions under this computer's sync id from the
+first start on.
+
 ## WebSocket
 
 ### `ws://127.0.0.1:8008/ws`
@@ -1316,6 +1365,7 @@ Then every backend event, in order:
 | `meeting_app` | `status` (`started`/`stopped`), `app` | Another app started or stopped recording audio (auto-record) |
 | `copilot_notes` | `session_id`, `notes` | The live copilot's running notes were updated |
 | `shares` | — | A meeting was shared or unshared; reload the meeting list |
+| `sync` | `peer`, `state`, `done`, `total` | Library sync with a peer: a round started, a page was taken in, or it ended (`state` as in `GET /api/sync/status`); meetings it changed also get a `session` event |
 | `live_partial` | `session_id`, `source`, `speaker`, `text` | The still-changing tail for that source; replaces the previous partial (may be empty) |
 | `recovered` | `RecoveredRecording` fields | An interrupted recording was recovered (also listed in the next `hello`) |
 | `pong` | | Reply to `ping` |
