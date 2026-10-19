@@ -51,6 +51,29 @@
 		{ id: 'export', label: 'Export' }
 	];
 
+	// Renaming in place: click the title (or ✎), Enter saves, Escape cancels.
+	let editingName = $state(false);
+	let draftName = $state('');
+
+	function startRename() {
+		if (!mine || !sessionState.activeSession) return;
+		draftName = sessionState.activeSession.name;
+		editingName = true;
+	}
+
+	async function saveRename() {
+		const s = sessionState.activeSession;
+		if (!editingName || !s) return;
+		editingName = false;
+		const name = draftName.trim();
+		if (name && name !== s.name) await sessionState.renameSession(s.id, name);
+	}
+
+	function focusSelect(el: HTMLInputElement) {
+		el.focus();
+		el.select();
+	}
+
 	async function toggleLocalOnly() {
 		const s = sessionState.activeSession;
 		if (!s) return;
@@ -68,7 +91,32 @@
 <!-- Session header + tabs -->
 <div class="border-b border-gray-800 px-6 pt-4 pb-0 flex-shrink-0">
 	<div class="flex items-center justify-between mb-3">
-		<h2 class="text-xl font-semibold truncate">{sessionState.activeSession.name}</h2>
+		{#if editingName}
+			<input
+				use:focusSelect
+				bind:value={draftName}
+				onblur={saveRename}
+				onkeydown={(e) => {
+					if (e.key === 'Enter') saveRename();
+					else if (e.key === 'Escape') editingName = false;
+				}}
+				aria-label="Meeting name"
+				class="text-xl font-semibold bg-gray-900 border border-gray-700 rounded px-2 py-0.5 min-w-0 flex-1 mr-3 focus:outline-none focus:border-blue-500"
+			/>
+		{:else if mine}
+			<div class="group flex items-center gap-2 min-w-0">
+				<h2 class="min-w-0 text-xl font-semibold">
+					<button onclick={startRename} title="Rename" class="block max-w-full truncate text-left hover:text-blue-300">{sessionState.activeSession.name}</button>
+				</h2>
+				<button
+					onclick={startRename}
+					aria-label="Rename meeting"
+					class="text-sm text-gray-600 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-gray-300"
+				>✎</button>
+			</div>
+		{:else}
+			<h2 class="text-xl font-semibold truncate">{sessionState.activeSession.name}</h2>
+		{/if}
 		<span class="flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
 			<ShareMenu />
 			{#if mine}
