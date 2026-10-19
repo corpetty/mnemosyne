@@ -42,8 +42,11 @@ class AnthropicProvider:
     async def complete(
         self, system_prompt: str, user_prompt: str, model: str, think: bool = True
     ) -> str:
-        """One chat turn: system + user message, returns the assistant text."""
-        async with httpx.AsyncClient(timeout=120) as client:
+        """One chat turn: system + user message, returns the assistant text.
+
+        Claude 5 models think by default (Sonnet/Opus 5.5 cannot turn it off), so the answer
+        comes after a `thinking` block and thinking counts against `max_tokens`."""
+        async with httpx.AsyncClient(timeout=600) as client:
             resp = await client.post(
                 f"{self.base_url}/messages",
                 headers={
@@ -53,7 +56,7 @@ class AnthropicProvider:
                 },
                 json={
                     "model": model,
-                    "max_tokens": 4096,
+                    "max_tokens": 16000,
                     "system": system_prompt,
                     "messages": [
                         {
@@ -65,7 +68,12 @@ class AnthropicProvider:
             )
             resp.raise_for_status()
             data = resp.json()
-            content = data.get("content", [])
-            if content and content[0].get("type") == "text":
-                return content[0]["text"]
-            return ""
+            text = "".join(
+                b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
+            )
+            stop = data.get("stop_reason")
+            if stop == "max_tokens":
+                logger.warning("Anthropic %s stopped at max_tokens: the answer is cut", model)
+            if not text.strip():
+                raise RuntimeError(f"Anthropic {model} returned no text (stop_reason: {stop})")
+            return text
