@@ -303,6 +303,47 @@ code at ea282b1, reviewed and accepted.
 - **Tests**: the sync engine between two in-process apps through `httpx.ASGITransport` (no iroh);
   the sidecar's dial/pair in Rust like link/tests/tunnel.rs.
 
+## Phase 4: tasks and decisions as objects
+
+### Phase 4 design (agreed with Corey 2026-10-21)
+
+Drafted against the code at ae5c293, reviewed and accepted.
+
+- **The link lives on the item; objects are derived.** `ActionItem.task_id` (12 hex, "" = not
+  linked; minted on any machine). A task object = every action item (across meetings) with the
+  same `task_id`; an unlinked item is its own object (key `<session_id>:<item id>`). No new table,
+  nothing new travels in library sync (items travel inside summary_data; `task_id` joins
+  sync_merge's ITEM_SCALARS); phase 2's `_project` copies items whole, so the link survives
+  re-summarize, revise and restore. Decisions: `SummaryData.decision_links: {decision id: object
+  id}` (pruned when the decision is gone).
+- **Object state**: head = the mention in the newest meeting the caller can see. text, owner,
+  due, at = the head's (editing a task edits its head mention). done, follow, issue_url are the
+  object's: every write fans out to all mentions (each bumps its meeting, so it syncs); a
+  reconcile (head wins) after sync merges and at startup repairs mentions that disagree. Team
+  mode: a tick fans out into linked meetings the ticker cannot see (same task; the history names
+  the ticker); lists show only visible mentions.
+- **Linking** (services/task_links.py): candidates are OPEN objects of other visible meetings,
+  owner-compatible, each used once. Exact normalized text always; close text (`same_item`,
+  >= 20 characters) only when the earlier meeting is related (recurring title or same people)
+  (Corey: exact + related, setting `task_linking`). Run at summarize (after the merge) and after
+  hand edits / restore / Obsidian pull-back (exact only). A done task that comes up again is a NEW
+  open task (Corey); a manual link makes the head's state the object's and fans it out. Manual
+  link/unlink routes; "Suggested links" for close matches on existing data. Every link is a
+  `task_linked` history line. Decisions: exact text only; "supersedes" is a manual link (the head
+  is the current wording, earlier mentions what it superseded).
+- **Optional LLM-assisted linking** (Corey: build it, off by default; never with the built-in
+  local model): the summary prompt lists related meetings' open tasks by id and may mark an item
+  `"continues": "<id>"`; only offered ids are accepted.
+- **Obsidian** (Corey: one checkbox per task): only the head mention's note has the checkbox;
+  earlier mentions render as plain bullets `↩ continued in [[later note]]` (keeping their `^m-`
+  block id), so vault-wide task queries list each task once. A tick in the note fans out.
+- **Consumers**: Tasks view rows are objects with an "in N meetings" history, link/unlink,
+  suggestions; SummaryView shows "↩ continues from" and "supersedes / superseded by"; brief,
+  people, organizations, MCP collapse by object; decisions log shows superseded chains;
+  GitHub/Linear/Jira issue links fan out. HubSpot keeps one task per mention (later).
+- **Migration** (once at startup): exact links over existing meetings, then reconcile (head wins,
+  fanned out); close matches appear only as suggestions.
+
 ## Later, each behind the prerequisites below
 
 - **Live shared notes** during a meeting: a scratchpad attendees type into (desktop, or the team
