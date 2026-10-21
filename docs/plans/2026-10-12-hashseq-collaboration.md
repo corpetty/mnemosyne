@@ -351,6 +351,37 @@ Drafted against the code at ae5c293, reviewed and accepted.
 - **Migration** (once at startup): exact links over existing meetings, then reconcile (head wins,
   fanned out); close matches appear only as suggestions.
 
+## Phase 5: comments and threads
+
+### Phase 5 design (agreed with Corey 2026-10-21)
+
+Drafted against the code at 494741b, reviewed and accepted.
+
+- **No hashseq marks yet.** Transcript lines have no stable id (segments are keyed by meeting and
+  index; re-transcription replaces them) and summary docs are local and disposable (they never
+  travel). Marks need a per-meeting store that syncs; revisit with live shared notes.
+- **Anchors** (`comments` table: id 12 hex, session_id, parent_id ('' = root), target
+  segment/body/decision/question/item, target_id, anchor JSON, quote, text, author_id, author,
+  created/updated, resolved_at/by, deleted): transcript comments are a time span `(part, start,
+  end)` like bookmarks and live flags, re-anchored at read time to the line with the largest
+  overlap (follows edits, splits, merges, re-transcription; a zero-length span is a comment on a
+  moment of the audio from the player, Corey: include it); decision/question/item comments by
+  block id (survives rewording); summary-text comments by a text-quote selector (exact, prefix,
+  suffix; fuzzy fallback). A comment whose text changed is flagged; one whose anchor is gone is
+  "detached", shown with its quote in a Comments card, never deleted automatically.
+- **Tasks**: a comment attaches to one mention (session + item id) and is aggregated on the task
+  object (visible mentions only); posting from the Tasks view goes to the head mention.
+  Decisions likewise.
+- **Sync**: comments travel inside their meeting (`SyncSession.comments`), merged by id three-way
+  (added/removed/edited; text through the merge, resolved/deleted as scalars).
+- **Team mode**: anyone who can read the meeting comments; authors edit their own; delete:
+  author, meeting owner or admin; resolve/reopen: meeting owner, admin or the thread's author.
+  Desktop author = `local_speaker_name`, shown as "You". History lines `commented`,
+  `comment_resolved`, `comment_reopened`.
+- **Scope** (Corey): not exported to Obsidian in v1 (the pull-back would read them as annex lines);
+  keyword search yes, Ask and summaries no; @mentions on a team server notify the mentioned person
+  online (toast + desktop notification), no email or digest. Open comments listed in MCP.
+
 ## Later, each behind the prerequisites below
 
 - **Live shared notes** during a meeting: a scratchpad attendees type into (desktop, or the team
