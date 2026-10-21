@@ -5,6 +5,7 @@ stand-in sidecar (tests/fake_link.py), one scenario through the real mnemosyne-l
 
 import json
 from datetime import timedelta
+from importlib.metadata import version as package_version
 
 import httpx
 import pytest
@@ -185,7 +186,12 @@ async def test_a_meeting_recorded_on_a_appears_on_b(nodes):
     async with b.client() as c:
         body = (await c.get("/api/sync/status")).json()
     (p,) = body["peers"]
-    assert (p["state"], p["received"], p["clashes"], p["app_version"]) == ("done", 0, [], "0.17.0")
+    assert (p["state"], p["received"], p["clashes"], p["app_version"]) == (
+        "done",
+        0,
+        [],
+        package_version("mnemosyne-backend"),
+    )
 
 
 async def test_hello_and_changes_serve_documents_and_tombstones(nodes):
