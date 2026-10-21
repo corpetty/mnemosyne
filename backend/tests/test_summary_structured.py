@@ -91,6 +91,7 @@ def test_summarize_endpoint_stores_structured(client, ctx, fake_provider, transc
         "live": False,
         "at": None,
         "due": None,
+        "task_id": "",
     }
     assert len(data["decision_ids"]) == 1 and data["question_ids"] == []
     assert client.post(f"/api/sessions/{sid}/summarize", json={"style": "bogus"}).status_code == 400

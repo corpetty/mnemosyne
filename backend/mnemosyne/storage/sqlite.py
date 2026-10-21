@@ -1779,6 +1779,102 @@ class SessionRepository:
             self._touch(session_id)
         return True
 
+    # By item id (ActionItem.id) rather than list position, for writes that reach several
+    # meetings at once (services/task_links.py): positions shift under re-summaries, ids do not.
+    _BY_ID_FIELDS = frozenset({"done", "follow", "task_id", "issue_url"})
+    _FAN_OUT_FIELDS = frozenset({"done", "follow", "issue_url"})
+
+    def set_action_item_flag_by_id(
+        self, session_id: str, item_id: str, flag: str, value: bool
+    ) -> bool:
+        """`set_action_item_done` / `_follow` by item id: `flag` is "done" or "follow". Read
+        access suffices, as for the index-based ones."""
+        if flag not in ("done", "follow"):
+            raise ValueError(f"Not an action item flag: {flag}")
+        return self.set_action_item_fields_by_id(session_id, item_id, **{flag: value})
+
+    def set_action_item_fields_by_id(self, session_id: str, item_id: str, **fields) -> bool:
+        """Set `done`, `follow`, `task_id` and/or `issue_url` on the action item with this id.
+        `issue_url` needs write access (as creating an issue does, Forbidden/Hidden otherwise);
+        the others read access, like ticking: a reader links a task they were given. True
+        when the item exists (the meeting is only bumped when a value changed), False for no
+        such (visible) meeting or item."""
+        bad = set(fields) - self._BY_ID_FIELDS
+        if bad:
+            raise ValueError(f"Cannot set action item fields: {sorted(bad)}")
+        if "issue_url" in fields:
+            self._check_write(session_id)
+        if not self._readable(session_id):
+            return False
+        return self._write_item_by_id(session_id, item_id, fields)
+
+    def fan_out_action_item_fields(self, session_id: str, item_id: str, **fields) -> bool:
+        """INTERNAL, for services/task_links.py only: the same write WITHOUT any access check,
+        so a task's done/follow/issue_url reaches every meeting that mentions it, also on a
+        team server where the caller cannot see some of them (it is the same task; the history
+        line names who changed it). Only `done`, `follow` and `issue_url`: never text, owner or
+        the link itself. Callers must have checked that the caller may change the task."""
+        bad = set(fields) - self._FAN_OUT_FIELDS
+        if bad:
+            raise ValueError(f"Cannot fan out action item fields: {sorted(bad)}")
+        return self._write_item_by_id(session_id, item_id, fields)
+
+    def _write_item_by_id(self, session_id: str, item_id: str, fields: dict) -> bool:
+        if not item_id:
+            return False
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT summary_data FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+            if row is None or not row["summary_data"]:
+                return False
+            data = SummaryData.model_validate_json(row["summary_data"])
+            item = next((a for a in data.action_items if a.id == item_id), None)
+            if item is None:
+                return False
+            if all(getattr(item, k) == v for k, v in fields.items()):
+                return True  # already so: no new version
+            for k, v in fields.items():
+                setattr(item, k, v)
+            self._conn.execute(
+                "UPDATE sessions SET summary_data=?, updated_at=? WHERE id=?",
+                (data.model_dump_json(), datetime.now().isoformat(), session_id),
+            )
+            self._touch(session_id)
+        return True
+
+    def set_decision_links(self, session_id: str, changes: dict[str, str]) -> bool:
+        """Set (`{decision id: object id}`) or remove (object id "") links in the meeting's
+        `summary_data.decision_links`, for services/decision_links.py; the decision texts are
+        never touched. Read access suffices (a reader links a decision they were given, as
+        with `task_id`). Only decisions the meeting has (by `decision_ids`) get a link. True
+        when the meeting exists and is visible (it is only bumped when something changed)."""
+        if not self._readable(session_id):
+            return False
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT summary_data FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+            if row is None or not row["summary_data"]:
+                return False
+            data = SummaryData.model_validate_json(row["summary_data"])
+            links = dict(data.decision_links)
+            live = set(data.decision_ids)
+            for decision_id, object_id in changes.items():
+                if object_id and decision_id in live:
+                    links[decision_id] = object_id
+                else:
+                    links.pop(decision_id, None)
+            if links == data.decision_links:
+                return True
+            data.decision_links = links
+            self._conn.execute(
+                "UPDATE sessions SET summary_data=?, updated_at=? WHERE id=?",
+                (data.model_dump_json(), datetime.now().isoformat(), session_id),
+            )
+            self._touch(session_id)
+        return True
+
     def adopt_unowned(self, owner_id: str) -> int:
         """Meetings that belong to nobody (made before team mode) become this person's."""
         with self._lock, self._conn:
@@ -2150,6 +2246,28 @@ class SessionRepository:
                     )
                 )
         return out
+
+    def action_item_sources(self) -> list[dict]:
+        """Every summarized meeting, newest first, as {id, name, created_at, owner_id,
+        attendees, summary_data (SummaryData)}, NOT filtered by access: for
+        services/task_links.py, which needs every mention of a task and filters by
+        `visible_ids()` itself. Same cost as `list_action_items`."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, name, created_at, owner_id, attendees, summary_data FROM sessions"
+                " WHERE summary_data IS NOT NULL ORDER BY created_at DESC"
+            ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "created_at": _dt(r["created_at"]),
+                "owner_id": r["owner_id"],
+                "attendees": json.loads(r["attendees"] or "[]"),
+                "summary_data": SummaryData.model_validate_json(r["summary_data"]),
+            }
+            for r in rows
+        ]
 
     def meeting_meta(self):
         """Name, date, attendees and summary of every session, without transcripts."""

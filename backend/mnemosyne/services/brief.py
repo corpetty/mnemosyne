@@ -13,7 +13,7 @@ from difflib import SequenceMatcher
 from typing import Literal
 
 from ..models.base import ApiModel
-from ..models.session import DEFAULT_SESSION_NAME, SummaryData
+from ..models.session import DEFAULT_SESSION_NAME, ActionItem, SummaryData
 from .organizations import OrganizationBrief
 from .tasks import TaskItem
 
@@ -41,9 +41,13 @@ class OpenQuestion(ApiModel):
     text: str
 
 
+class BriefItem(TaskItem):
+    task_id: str = ""  # the task object it belongs to ("" = not linked)
+
+
 class Brief(ApiModel):
     meetings: list[RelatedMeeting]  # newest first
-    open_items: list[TaskItem]  # not done, from those meetings
+    open_items: list[BriefItem]  # not done, from those meetings; one row per task object
     open_questions: list[OpenQuestion]  # from the most recent summarized one
     last_summary: str  # of the most recent summarized one
     # The organization the meeting is with, and what it said last time (services/organizations.py).
@@ -100,12 +104,27 @@ def build_brief(
         if len(related) >= limit:
             break
 
-    items: list[TaskItem] = []
+    # A linked task is one object: its head (newest meeting among all given) says what it is
+    # and whether it is done; it is listed once, under its newest related meeting.
+    heads: dict[str, tuple[tuple[datetime, str, int], ActionItem]] = {}
+    for m in meetings:
+        for i, a in enumerate(m.summary_data.action_items if m.summary_data else []):
+            if a.task_id:
+                rank = (m.created_at, m.id, i)
+                if a.task_id not in heads or rank > heads[a.task_id][0]:
+                    heads[a.task_id] = (rank, a)
+    items: list[BriefItem] = []
+    listed: set[str] = set()
     for m, _ in related:
         for i, a in enumerate(m.summary_data.action_items if m.summary_data else []):
+            if a.task_id:
+                if a.task_id in listed:
+                    continue
+                a = heads[a.task_id][1]
+                listed.add(a.task_id)
             if not a.done:
                 items.append(
-                    TaskItem(
+                    BriefItem(
                         session_id=m.id,
                         session_name=m.name,
                         created_at=m.created_at,
@@ -114,6 +133,9 @@ def build_brief(
                         owner=a.owner,
                         done=False,
                         issue_url=a.issue_url,
+                        due=a.due,
+                        follow=a.follow,
+                        task_id=a.task_id,
                     )
                 )
     latest = next((m for m, _ in related if m.summary.strip()), None)

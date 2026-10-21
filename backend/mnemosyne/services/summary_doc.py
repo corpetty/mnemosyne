@@ -808,6 +808,7 @@ def _project(
             out.open_questions = [texts[i] for i in orders[sec]]
             out.question_at = ats
             out.question_ids = list(orders[sec])
+    out.decision_links = _live_links(out.decision_links, out.decision_ids)
     base_topics = current.topics if rebase else doc.llm.topics
     out.topics = merge_topics(base_topics, current.topics, new_data.topics)
     cur_ch, cur_cf = _dump(current.chapters), _dump(current.client_facts)
@@ -878,6 +879,7 @@ def apply_human(
             )
             report["changed"] += 1
         batch.run(ctx, session_id, binary)
+        data.decision_links = _live_links(data.decision_links, data.decision_ids)
         for sec in SECTIONS:
             entries = section(data, sec)
             merged = [batch[pending[i]][1] if i in pending else t for i, t in entries]
@@ -891,6 +893,12 @@ def apply_human(
             body = batch[body_req][1]
         ctx.repo.put_summary_doc(session_id, doc.to_json())
         return _stamp(data, current, body, body_now, by), body, report
+
+
+def _live_links(links: dict[str, str], decision_ids: list[str]) -> dict[str, str]:
+    """`SummaryData.decision_links` without the decisions that are gone."""
+    live = set(decision_ids)
+    return {k: v for k, v in links.items() if k in live}
 
 
 def _set_texts(data: SummaryData, sec: str, texts: list[str]) -> None:

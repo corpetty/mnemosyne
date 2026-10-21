@@ -21,6 +21,12 @@ import type {
   Digest,
   MeetingStats,
   TaskItem,
+  TaskMention,
+  TaskObject,
+  TaskSuggestion,
+  SessionLinks,
+  DecisionObject,
+  DecisionMention,
   Brief,
   IndexStatus,
   PersonSummary,
@@ -883,6 +889,83 @@ export async function updateActionItem(
     method: 'PATCH',
     body: JSON.stringify(changes)
   });
+}
+
+// Tasks across meetings: one object per task, linked action items share it (backend task_links.py)
+export async function listTasks(status: 'open' | 'done' | 'all' = 'all'): Promise<TaskObject[]> {
+  return request(`/api/tasks?status=${status}`);
+}
+
+/** Tick or star a whole task: every meeting that mentions it follows. */
+export async function updateTask(key: string, changes: { done?: boolean; follow?: boolean }): Promise<TaskObject> {
+  return request(`/api/tasks/${encodeURIComponent(key)}`, { method: 'PATCH', body: JSON.stringify(changes) });
+}
+
+type ItemRef = { session_id: string; item_id: string };
+const itemRef = (m: TaskMention): ItemRef => ({ session_id: m.session_id, item_id: m.item_id });
+
+/** Make two action items one task (or merge their tasks); the first one's state wins. */
+export async function linkTasks(a: TaskMention, b: TaskMention): Promise<TaskObject> {
+  return request('/api/tasks/link', { method: 'POST', body: JSON.stringify({ a: itemRef(a), b: itemRef(b) }) });
+}
+
+/** Take one meeting's item out of a task; it becomes a task of its own. */
+export async function unlinkTaskMention(key: string, m: TaskMention): Promise<TaskObject> {
+  return request(
+    `/api/tasks/${encodeURIComponent(key)}/mentions/${encodeURIComponent(m.session_id)}/${encodeURIComponent(m.item_id)}`,
+    { method: 'DELETE' }
+  );
+}
+
+export async function listTaskSuggestions(): Promise<TaskSuggestion[]> {
+  return request('/api/tasks/suggestions');
+}
+
+export async function applyTaskSuggestion(s: TaskSuggestion): Promise<TaskObject> {
+  return request('/api/tasks/suggestions/apply', { method: 'POST', body: JSON.stringify({ a: itemRef(s.a), b: itemRef(s.b) }) });
+}
+
+/** Never suggest these two together again. Answers 204, so it does not go through request(). */
+export async function dismissTaskSuggestion(s: TaskSuggestion): Promise<void> {
+  const res = await fetch(`${base()}/api/tasks/suggestions/dismiss`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...connectionState.headers() },
+    body: JSON.stringify({ a: itemRef(s.a), b: itemRef(s.b) })
+  });
+  if (!res.ok) {
+    let detail = await res.text();
+    try {
+      detail = JSON.parse(detail).detail ?? detail;
+    } catch {
+      /* plain text */
+    }
+    throw new Error(`${res.status}: ${detail}`);
+  }
+}
+
+// Links between meetings: the same task or decision in other meetings
+export async function getSessionLinks(sessionId: string): Promise<SessionLinks> {
+  return request(`/api/sessions/${encodeURIComponent(sessionId)}/links`);
+}
+
+export async function listDecisions(linked?: boolean): Promise<DecisionObject[]> {
+  return request(`/api/decisions${linked === undefined ? '' : `?linked=${linked}`}`);
+}
+
+/** Say two decisions are one; the newer meeting's wording becomes the current one. */
+export async function linkDecisions(
+  a: { session_id: string; decision_id: string },
+  b: { session_id: string; decision_id: string }
+): Promise<DecisionObject> {
+  return request('/api/decisions/link', { method: 'POST', body: JSON.stringify({ a, b }) });
+}
+
+/** Take one meeting's decision out of its object; it stands alone again. */
+export async function unlinkDecisionMention(key: string, sessionId: string, decisionId: string): Promise<DecisionObject> {
+  return request(
+    `/api/decisions/${encodeURIComponent(key)}/mentions/${encodeURIComponent(sessionId)}/${encodeURIComponent(decisionId)}`,
+    { method: 'DELETE' }
+  );
 }
 
 // Digests

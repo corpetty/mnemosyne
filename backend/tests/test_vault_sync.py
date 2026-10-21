@@ -329,3 +329,129 @@ def test_notes_without_ids_still_match_by_text(ctx, vault):
     _edit(path, "- [ ] Send the deck ([[Me]])", "- [x] Send the deck ([[Me]])")
     assert apply_vault_ticks(ctx, s, str(vault)) is True
     assert _done(ctx, s)[1] is True
+
+
+# ---- one task in several meetings: one checkbox, ticks fan out ------------------------------
+
+TASK = "abcdef012345"
+
+
+def _task_meeting(ctx, name, day, linked, item_id="aaaa0001"):
+    item = ActionItem(
+        id=item_id, text="Update the docs", owner="Me", task_id=TASK if linked else ""
+    )
+    s = Session(
+        name=name,
+        created_at=datetime(2026, 10, day, 9),
+        summary="s",
+        summary_data=SummaryData(action_items=[item]),
+    )
+    ctx.repo.save(s)
+    return ctx.sessions.get_session(s.id)
+
+
+def _export_all(ctx, vault, *sessions):
+    for s in sessions:
+        export_session(ctx, ctx.sessions.get_session(s.id), str(vault))
+
+
+def _link_all(ctx, *sessions):
+    for s in sessions:
+        assert ctx.repo.set_action_item_fields_by_id(s.id, "aaaa0001", task_id=TASK)
+
+
+def _note(ctx, vault, s) -> str:
+    return note_path(ctx, s, str(vault)).read_text(encoding="utf-8")
+
+
+def _tick_in_a_thread(ctx, s, vault, timeout=15):
+    """apply_vault_ticks must return: the fan-out writes notes, which takes the same lock."""
+    import threading
+
+    out = []
+    t = threading.Thread(target=lambda: out.append(apply_vault_ticks(ctx, s, str(vault))))
+    t.start()
+    t.join(timeout)
+    assert not t.is_alive(), "apply_vault_ticks hangs (deadlock on the vault lock)"
+    return out[0]
+
+
+def test_only_the_latest_mention_of_a_task_is_a_checkbox(ctx, vault):
+    a = _task_meeting(ctx, "Infra weekly", 1, linked=True)
+    b = _task_meeting(ctx, "Planning", 8, linked=True)
+    _export_all(ctx, vault, a, b)
+    assert (
+        "- Update the docs ([[Me]]) ↩ continued in [[2026-10-08-Planning]] ^m-aaaa0001\n"
+        in _note(ctx, vault, a)
+    )
+    assert "- [ ]" not in _note(ctx, vault, a)
+    assert "- [ ] Update the docs ([[Me]]) ^m-aaaa0001\n" in _note(ctx, vault, b)
+    assert "continued in" not in _note(ctx, vault, b)
+
+
+def test_a_continued_bullet_is_no_tick(ctx, vault):
+    a = _task_meeting(ctx, "Infra weekly", 1, linked=True)
+    b = _task_meeting(ctx, "Planning", 8, linked=True)
+    _export_all(ctx, vault, a, b)
+    assert parse_ticks(_note(ctx, vault, a)) == []
+    assert [t.text for t in parse_ticks(_note(ctx, vault, b))] == ["Update the docs"]
+
+
+def test_an_item_nothing_continues_renders_as_before(ctx, vault):
+    a = _task_meeting(ctx, "Infra weekly", 1, linked=False)
+    b = _task_meeting(ctx, "Planning", 8, linked=False)
+    _export_all(ctx, vault, a, b)
+    for s in (a, b):
+        assert "- [ ] Update the docs ([[Me]]) ^m-aaaa0001\n" in _note(ctx, vault, s)
+        assert "continued in" not in _note(ctx, vault, s)
+    # Linked, but a single meeting: it is the head.
+    c = _task_meeting(ctx, "Alone", 20, linked=True)
+    ctx.repo.set_action_item_fields_by_id(a.id, "aaaa0001", task_id="")
+    ctx.repo.set_action_item_fields_by_id(b.id, "aaaa0001", task_id="")
+    _export_all(ctx, vault, c)
+    assert "- [ ] Update the docs" in _note(ctx, vault, c)
+
+
+def test_a_tick_in_the_newer_note_ticks_the_older_meeting(ctx, vault):
+    a = _task_meeting(ctx, "Infra weekly", 1, linked=True)
+    b = _task_meeting(ctx, "Planning", 8, linked=True)
+    _export_all(ctx, vault, a, b)
+    path = note_path(ctx, b, str(vault))
+    _edit(path, "- [ ] Update the docs", "- [x] Update the docs")
+    assert _tick_in_a_thread(ctx, b, vault) is True
+    assert _done(ctx, b) == [True] and _done(ctx, a) == [True]
+    assert _ticks_by(ctx, a) == [("task_done", "Update the docs", "Obsidian")]
+    assert _ticks_by(ctx, b) == [("task_done", "Update the docs", "Obsidian")]
+    assert "- [" not in _note(ctx, vault, a)  # still the plain bullet
+    assert "continued in [[2026-10-08-Planning]]" in _note(ctx, vault, a)
+    # Reopened in Obsidian: both are open again.
+    _edit(path, "- [x] Update the docs", "- [ ] Update the docs")
+    assert _tick_in_a_thread(ctx, b, vault) is True
+    assert _done(ctx, b) == [False] and _done(ctx, a) == [False]
+
+
+def test_a_tick_rewrites_the_lines_of_the_other_meetings_notes(ctx, vault):
+    """Notes exported before the task was linked still have a box each."""
+    a = _task_meeting(ctx, "Infra weekly", 1, linked=False)
+    b = _task_meeting(ctx, "Planning", 8, linked=False)
+    c = _task_meeting(ctx, "Review", 15, linked=False)
+    _export_all(ctx, vault, a, b, c)
+    _link_all(ctx, a, b, c)
+    _edit(note_path(ctx, b, str(vault)), "- [ ] Update the docs", "- [x] Update the docs")
+    assert _tick_in_a_thread(ctx, b, vault) is True
+    assert _done(ctx, a) == [True] and _done(ctx, b) == [True] and _done(ctx, c) == [True]
+    for s in (a, c):
+        assert "- [x] Update the docs ([[Me]]) ✅ " in _note(ctx, vault, s)
+        assert _note(ctx, vault, s).count("^m-aaaa0001") == 1
+    # Our own writes are not read back as the user's: nothing more to do.
+    assert _tick_in_a_thread(ctx, a, vault) is False
+    assert _tick_in_a_thread(ctx, c, vault) is False
+
+
+def test_a_tick_of_an_unlinked_item_touches_no_other_meeting(ctx, vault):
+    a = _task_meeting(ctx, "Infra weekly", 1, linked=False)
+    b = _task_meeting(ctx, "Planning", 8, linked=False)
+    _export_all(ctx, vault, a, b)
+    _edit(note_path(ctx, b, str(vault)), "- [ ] Update the docs", "- [x] Update the docs")
+    assert _tick_in_a_thread(ctx, b, vault) is True
+    assert _done(ctx, b) == [True] and _done(ctx, a) == [False]

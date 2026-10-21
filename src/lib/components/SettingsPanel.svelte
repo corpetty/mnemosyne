@@ -200,6 +200,8 @@
 				obsidian_daily_notes: v.obsidian_daily_notes,
 				obsidian_daily_folder: v.obsidian_daily_folder,
 				obsidian_task_scope: v.obsidian_task_scope,
+				task_linking: v.task_linking,
+				task_linking_llm: v.task_linking_llm,
 				obsidian_link_notes: v.obsidian_link_notes,
 				obsidian_decisions_log: v.obsidian_decisions_log,
 				digest_weekday: v.digest_weekday,
@@ -1141,6 +1143,22 @@
 							<option value="all">Everyone's</option>
 						</select>
 						<span class="block text-[11px] text-gray-600 mt-1">Vault-wide task queries (Tasks, Dataview) list every unticked checkbox, so keep other people's items out of them.</span>
+					</label>
+					<label class="col-span-2">
+						<span class={labelClass}>Link tasks across meetings</span>
+						<select bind:value={form.task_linking} disabled={locked('task_linking')} class={inputClass}>
+							<option value="related">Same wording, or close wording in related meetings</option>
+							<option value="exact">Only the same wording</option>
+							<option value="off">Off</option>
+						</select>
+						<span class="block text-[11px] text-gray-600 mt-1">A task that comes up in a later meeting becomes one task: ticking it anywhere ticks it everywhere.</span>
+					</label>
+					<label class="col-span-2">
+						<span class="flex items-center gap-2">
+							<input type="checkbox" bind:checked={form.task_linking_llm} disabled={locked('task_linking_llm') || form.task_linking === 'off'} class="rounded border-gray-600 bg-gray-800" />
+							<span class="text-sm text-gray-300">Let the summary model link tasks too</span>
+						</span>
+						<span class="block text-[11px] text-gray-600 mt-1">Shows the model open tasks from related meetings. Never with the built-in model; off by default.</span>
 					</label>
 					<label class="col-span-2">
 						<span class="flex items-center gap-2">

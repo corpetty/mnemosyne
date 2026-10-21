@@ -207,13 +207,56 @@ def pairs(ticks: list[Tick], items: list[ActionItem]) -> list[tuple[int, Tick]]:
 
 def apply_vault_ticks(ctx: AppContext, session: Session, vault_path: str) -> bool:
     """Take the done state of the meeting's action items from its note in the vault. True when
-    anything changed (the caller reads the session again). Never raises."""
+    anything changed (the caller reads the session again). A tick of an item that other
+    meetings mention too (`task_id`) is the task's: it is fanned out to all of them, and their
+    notes' lines rewritten, once the lock is free (`write_tick` takes it). Never raises."""
+    fan: list[tuple[str, int, bool]] = []
     try:
         with _lock:
-            return _apply(ctx, session, note_path(ctx, session, vault_path))
+            changed = _apply(ctx, session, note_path(ctx, session, vault_path), fan)
     except Exception:
         logger.warning("Could not read the ticks of session %s", session.id, exc_info=True)
         return False
+    for task_id, _, done in fan:
+        _fan_out_tick(ctx, session.id, task_id, done, vault_path)
+    return changed
+
+
+def _fan_out_tick(
+    ctx: AppContext, session_id: str, task_id: str, done: bool, vault_path: str | None
+) -> None:
+    """A tick read from a note counts for the whole task (services/task_links.py set_done, by
+    "Obsidian"), and the other meetings' notes say so (those with a checkbox for it; the
+    plain "continued in" bullets have none). Never raises, never takes `_lock` itself."""
+    from . import task_links
+
+    try:
+        obj = task_links.index(ctx.repo).get(task_id)
+        others = [m for m in (obj.mentions if obj else []) if m.session_id != session_id]
+        if not others:
+            return
+        task_links.set_done(ctx, task_id, done, by="Obsidian")
+        for m in others:
+            other = ctx.sessions.get_session(m.session_id)
+            if other is None:
+                continue
+            ctx.bus.publish(
+                {"type": "session", "session_id": other.id, "status": other.status.value}
+            )
+            if other.origin:  # its note is read where it was recorded
+                continue
+            data = other.summary_data
+            idx = (
+                next(
+                    (i for i, a in enumerate(data.action_items) if a.id and a.id == m.item_id), None
+                )
+                if data
+                else None
+            )
+            if idx is not None:
+                write_tick(ctx, other, idx, done, vault_path)
+    except Exception:
+        logger.warning("Could not fan out a tick of task %s", task_id, exc_info=True)
 
 
 def _same_status(recorded: str, done: bool | None) -> bool:
@@ -221,7 +264,11 @@ def _same_status(recorded: str, done: bool | None) -> bool:
     return (True if recorded in "xX" else False if recorded == " " else None) == done
 
 
-def _apply(ctx: AppContext, session: Session, path: Path) -> bool:
+def _apply(
+    ctx: AppContext, session: Session, path: Path, fan: list[tuple[str, int, bool]] | None = None
+) -> bool:
+    """`fan` collects (task id, item index, done) of the changed items that belong to a task:
+    the caller fans them out after releasing `_lock`."""
     from ..export.note_merge import box_at, box_positions  # note_merge imports this module
 
     try:
@@ -259,6 +306,8 @@ def _apply(ctx: AppContext, session: Session, path: Path) -> bool:
             ctx, session.id, "task_done" if tick.done else "task_reopened",
             task=item.text, by="Obsidian",
         )  # fmt: skip
+        if fan is not None and item.task_id:
+            fan.append((item.task_id, idx, tick.done))
         changed = True
     if changed:
         logger.info("Ticks from Obsidian applied to session %s", session.id)

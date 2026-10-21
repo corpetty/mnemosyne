@@ -100,3 +100,29 @@ def test_block_ids_only_for_items_with_ids():
         "- [[Ana]]: Ask ^m-a2",
     ):
         assert line in lines
+
+
+def test_a_continued_task_is_a_plain_bullet_with_a_link_to_the_later_note():
+    from mnemosyne.models.session import ActionItem, SummaryData
+
+    items = [
+        ActionItem(id="aaaa0001", text="Update the docs", owner="Ann", due=None),
+        ActionItem(id="aaaa0002", text="Send the deck", owner="Ann"),
+    ]
+    data = SummaryData(action_items=items)
+    args = ("T", datetime(2026, 10, 1), [], [], "s", "")
+    plain = render_meeting_note(*args, summary_data=data)
+    assert "- [ ] Update the docs ([[Ann]]) ^m-aaaa0001\n" in plain
+    assert render_meeting_note(*args, summary_data=data, continued={}) == plain
+    assert render_meeting_note(*args, summary_data=data, continued={"zzzz": "x"}) == plain
+    note = render_meeting_note(
+        *args, summary_data=data, continued={"aaaa0001": "2026-10-08-Planning"}
+    )
+    assert (
+        "- Update the docs ([[Ann]]) ↩ continued in [[2026-10-08-Planning]] ^m-aaaa0001\n" in note
+    )
+    assert "- [ ] Send the deck ([[Ann]]) ^m-aaaa0002\n" in note
+    people_off = render_meeting_note(
+        *args, summary_data=data, link_people=False, continued={"aaaa0001": "N"}
+    )
+    assert "- Update the docs (Ann) ↩ continued in [[N]] ^m-aaaa0001\n" in people_off

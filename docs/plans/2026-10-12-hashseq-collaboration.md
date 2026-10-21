@@ -307,6 +307,13 @@ code at ea282b1, reviewed and accepted.
 
 ### Phase 4 design (agreed with Corey 2026-10-21)
 
+Status: built 2026-10-21, unreleased, as designed below. Found while building: linking only ever
+reaches OLDER meetings (else a done item with a newer open twin got linked and reopened, against
+the rule; also re-summarizing an old meeting could link it forward); decisions with the same
+wording read "also decided in", only different wording "supersedes"; LLM hints never offer tasks
+from local-only meetings to a cloud provider; the linking settings sit in the Obsidian section of
+Settings, next to the other task setting.
+
 Drafted against the code at ae5c293, reviewed and accepted.
 
 - **The link lives on the item; objects are derived.** `ActionItem.task_id` (12 hex, "" = not

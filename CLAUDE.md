@@ -404,6 +404,15 @@ against the state the peer last saw (services/sync_merge.py; texts via the sidec
 form). Audio never travels: the origin does transcription and automation (services/origin.py,
 409 "The audio is on <name>"), playback streams from it. Refused in team mode. New meeting ids
 are 12 hex. Tests: test_sync_*.py run two apps through httpx.ASGITransport.
+Tasks and decisions as objects (unreleased, phase 4; design in the hashseq plan): the link lives on
+the item (`ActionItem.task_id`, `SummaryData.decision_links`), objects are derived
+(services/task_links.py, decision_links.py; head = newest mention). done/follow/issue_url fan out to
+every mention (internal writer without access checks) and `reconcile` repairs after sync and at
+startup. Linking only reaches OLDER meetings' open objects: exact text always, close text
+(`same_item`, >= 20 chars) only in related meetings (`task_linking`); optional LLM hints
+(`task_linking_llm`, never provider "local", `ActionItem._continues` private attr). Obsidian: only
+the head mention has a checkbox, earlier ones `↩ continued in [[note]]`. One-off migration at
+startup (services/task_migration.py, meta `task_links_migrated`).
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

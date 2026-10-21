@@ -70,6 +70,9 @@ Rules:
   Never add a detail that was not said: no deadlines, weekdays, documents, steps or reasons of
   your own. An action item is what someone promised to do, with the deadline exactly as said
   ("by the end of the month", "this week") or none.
+- When the instructions list open tasks from earlier meetings with labels, an action item may
+  carry the optional key "continues": "<label>" if it is the same commitment as one of them.
+  Only labels from that list; leave the key out otherwise.
 - Output must be valid JSON (escape quotes and newlines inside strings).
 """
 
@@ -176,9 +179,7 @@ def part_payload(part: int, start: str, end: str, summary: str, data: SummaryDat
         "summary": summary,
         "topics": data.topics,
         "decisions": _with_at(data.decisions, data.decision_at),
-        "action_items": [
-            {"text": a.text, "owner": a.owner, "at": _mmss_or_none(a.at)} for a in data.action_items
-        ],
+        "action_items": [_item_payload(a) for a in data.action_items],
         "open_questions": _with_at(data.open_questions, data.question_at),
         "chapters": [{"start": mmss(c.start), "title": c.title} for c in data.chapters],
     }
@@ -187,6 +188,32 @@ def part_payload(part: int, start: str, end: str, summary: str, data: SummaryDat
             {"kind": f.kind, "text": f.text, "at": _mmss_or_none(f.at)} for f in data.client_facts
         ]
     return payload
+
+
+def _item_payload(a: ActionItem) -> dict:
+    item = {"text": a.text, "owner": a.owner, "at": _mmss_or_none(a.at)}
+    if a._continues:  # the label of an open task of an earlier meeting (see TASK_HINT_RULE)
+        item["continues"] = a._continues
+    return item
+
+
+def open_tasks_hint(offers: list[tuple[str, str, str | None, str]]) -> str:
+    """The block listing open tasks of earlier related meetings for the summary model, one per
+    line: (label, text, owner, meeting name). Empty for no offers."""
+    if not offers:
+        return ""
+    lines = [
+        f"- {label}: {text}"
+        + (f" (owner: {owner})" if owner else "")
+        + (f' (from "{meeting}")' if meeting else "")
+        for label, text, owner, meeting in offers
+    ]
+    return (
+        "Open tasks from earlier related meetings:\n"
+        + "\n".join(lines)
+        + '\nIf an action item is the same commitment as one of these, add "continues": '
+        '"<label>" to it. Only use these labels, and only when it is clearly the same task.'
+    )
 
 
 def _mmss_or_none(seconds: float | None) -> str | None:
@@ -262,7 +289,11 @@ def _action_items(value) -> list[ActionItem]:
                     owner = None
                 at = parse_seconds(v.get("at", v.get("time")))
                 due = _date(v.get("due", v.get("deadline")))
-                out.append(ActionItem(text=text.strip(), owner=owner, at=at, due=due))
+                item = ActionItem(text=text.strip(), owner=owner, at=at, due=due)
+                cont = v.get("continues")
+                if isinstance(cont, str) and cont.strip():
+                    item._continues = cont.strip()
+                out.append(item)
     return out
 
 

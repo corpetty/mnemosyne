@@ -17,7 +17,12 @@
 	import SummaryEditor from './SummaryEditor.svelte';
 	import SummaryVersions from './SummaryVersions.svelte';
 	import HubSpotCard from './HubSpotCard.svelte';
+	import { wsState } from '$lib/stores/websocket.svelte.js';
 	import {
+		getSessionLinks,
+		linkDecisions,
+		listDecisions,
+		unlinkDecisionMention,
 		createIssues,
 		draftFollowup,
 		getIntegrations,
@@ -195,7 +200,7 @@
 			toastState.error(e instanceof Error ? e.message : 'Could not post');
 		}
 	}
-	import type { ProviderModels, SummaryStyle } from '$lib/types/index.js';
+	import type { DecisionMention, DecisionObject, ProviderModels, SessionLinks, SummaryStyle } from '$lib/types/index.js';
 	import { groupFacts } from '$lib/app/facts.js';
 	import { canChange } from '$lib/app/access.js';
 
@@ -311,6 +316,93 @@
 	});
 
 	const data = $derived(sessionState.activeSession?.summary_data ?? null);
+
+	// The same tasks and decisions in other meetings.
+	let links = $state<SessionLinks | null>(null);
+	async function loadLinks() {
+		const id = sessionState.activeSession?.id;
+		if (!id) {
+			links = null;
+			return;
+		}
+		try {
+			const r = await getSessionLinks(id);
+			if (sessionState.activeSession?.id === id) links = r;
+		} catch {
+			if (sessionState.activeSession?.id !== id) links = null;
+		}
+	}
+	$effect(() => {
+		void sessionState.activeSession?.id;
+		void sessionState.activeSession?.summary_data; // reload after the summary changes
+		loadLinks();
+	});
+	$effect(() =>
+		wsState.onMessage((raw) => {
+			const msg = raw as { type?: string; session_id?: string };
+			if (msg.type === 'session') loadLinks();
+		})
+	);
+
+	const linkDate = (m: { created_at: string }) =>
+		new Date(m.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+	// The same decision taken again reads as such, not as superseding itself (exact links).
+	const words = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+	const sameWords = (a: string, b: string) => words(a) === words(b);
+	function openMeeting(sessionId: string) {
+		sessionState.pendingOpen = null;
+		sessionState.selectSession(sessionId);
+	}
+	const decisionId = (i: number) => data?.decision_ids?.[i] ?? '';
+
+	async function unlinkDecision(key: string, did: string) {
+		const session = sessionState.activeSession;
+		if (!session) return;
+		try {
+			await unlinkDecisionMention(key, session.id, did);
+			await loadLinks();
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not unlink the decision');
+		}
+	}
+
+	// "Supersedes…": pick an earlier decision from another meeting.
+	let pickFor = $state<string | null>(null);
+	let pickQuery = $state('');
+	let pickAll = $state<DecisionObject[]>([]);
+	async function startPick(did: string) {
+		pickFor = did;
+		pickQuery = '';
+		try {
+			pickAll = await listDecisions();
+		} catch (e) {
+			pickAll = [];
+			toastState.error(e instanceof Error ? e.message : 'Could not list decisions');
+		}
+	}
+	const pickResults = $derived.by(() => {
+		const sid = sessionState.activeSession?.id;
+		const q = pickQuery.trim().toLowerCase();
+		return pickAll
+			.filter((o) => o.mentions.length && o.mentions.every((m) => m.session_id !== sid))
+			.filter((o) => !q || o.text.toLowerCase().includes(q) || o.mentions[0].session_name.toLowerCase().includes(q))
+			.slice(0, 8);
+	});
+	async function pick(did: string, o: DecisionObject) {
+		const session = sessionState.activeSession;
+		if (!session) return;
+		const head = o.mentions[0];
+		try {
+			await linkDecisions(
+				{ session_id: session.id, decision_id: did },
+				{ session_id: head.session_id, decision_id: head.decision_id }
+			);
+			pickFor = null;
+			await loadLinks();
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not link the decision');
+		}
+	}
 	const factGroups = $derived(groupFacts(data?.client_facts ?? []));
 	// Someone else's meeting (a reviewer reading a member's): no controls the server refuses.
 	const mine = $derived(canChange(sessionState.activeSession));
@@ -332,6 +424,15 @@
 			title="Show where this came up in the transcript"
 		>{fmtTime(seconds)}</button>
 	{/if}
+{/snippet}
+
+{#snippet decisionLine(kind: 'supersedes' | 'superseded by', m: DecisionMention, key: string, did: string, text: string)}
+	{@const same = sameWords(m.text, text)}
+	<div class="text-[11px] text-gray-500 list-none">
+		{same ? (kind === 'supersedes' ? 'also decided in' : 'decided again in') : kind}
+		<button onclick={() => openMeeting(m.session_id)} class="text-left hover:text-gray-300" title="Open that meeting">{#if same}{m.session_name}, {linkDate(m)}{:else}“{m.text}” ({m.session_name}, {linkDate(m)}){/if}</button>
+		{#if mine}<button onclick={() => unlinkDecision(key, did)} class="ml-1 text-gray-600 hover:text-gray-300 underline">Unlink</button>{/if}
+	</div>
 {/snippet}
 
 <div class="space-y-3">
@@ -358,7 +459,25 @@
 						<section class="bg-gray-900 border border-gray-700 rounded-lg p-3">
 							<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Decisions</h4>
 							<ul class="space-y-1 text-sm text-gray-200 list-disc list-inside">
-								{#each data.decisions as d, i}<li>{d}{@render at(data.decision_at[i])}</li>{/each}
+								{#each data.decisions as d, i}
+										{@const did = decisionId(i)}
+										{@const dl = did ? links?.decisions[did] : undefined}
+										<li class="group">{d}{@render at(data.decision_at[i])}{#if mine && did}<button onclick={() => (pickFor === did ? (pickFor = null) : startPick(did))} class="ml-2 text-[11px] text-gray-600 hover:text-gray-300 opacity-0 group-hover:opacity-100 focus:opacity-100">Supersedes…</button>{/if}
+											{#if dl?.earlier.length}{@render decisionLine('supersedes', dl.earlier[0], dl.key, did, d)}{/if}
+											{#if dl?.later.length}{@render decisionLine('superseded by', dl.later[0], dl.key, did, d)}{/if}
+											{#if pickFor === did}
+												<div class="mt-1 space-y-1 list-none" role="presentation" onkeydown={(e) => { if (e.key === 'Escape') pickFor = null; }}>
+													<input bind:value={pickQuery} placeholder="Find an earlier decision…" aria-label="Find an earlier decision" class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 placeholder-gray-500" />
+													{#each pickResults as o (o.key)}
+														<button onclick={() => pick(did, o)} class="block w-full text-left text-xs text-gray-300 hover:bg-gray-800 rounded px-1.5 py-0.5">“{o.text}” · {o.mentions[0].session_name} · {linkDate(o.mentions[0])}</button>
+													{:else}
+														<p class="text-[11px] text-gray-600">No earlier decisions found.</p>
+													{/each}
+													<button onclick={() => (pickFor = null)} class="text-[11px] text-gray-500 hover:text-gray-300">Cancel</button>
+												</div>
+											{/if}
+										</li>
+									{/each}
 							</ul>
 						</section>
 					{/if}
@@ -379,7 +498,7 @@
 											aria-label={a.done ? `Reopen: ${a.text}` : `Mark done: ${a.text}`}
 											class="text-xs mt-0.5 {a.done ? 'text-emerald-400' : 'text-gray-600 hover:text-gray-300'}"
 										>{a.done ? '✓' : '○'}</button>
-										<span class={a.done ? 'line-through text-gray-500' : ''}>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}{#if a.due}<span class="text-amber-300/80 text-xs"> · due {new Date(`${a.due}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>{/if}{#if a.live}<span class="ml-1.5 text-[10px] px-1 rounded bg-purple-900/50 text-purple-300" title="Heard by the live copilot during the meeting; the summary did not list it">live</span>{/if}{@render at(a.at)}</span>
+										<span class={a.done ? 'line-through text-gray-500' : ''}>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}{#if a.due}<span class="text-amber-300/80 text-xs"> · due {new Date(`${a.due}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>{/if}{#if a.live}<span class="ml-1.5 text-[10px] px-1 rounded bg-purple-900/50 text-purple-300" title="Heard by the live copilot during the meeting; the summary did not list it">live</span>{/if}{@render at(a.at)}{#if a.id && links?.items[a.id]}{@const il = links.items[a.id]}{#if il.earlier.length}<button onclick={() => openMeeting(il.earlier[0].session_id)} class="ml-1.5 text-[11px] text-gray-500 hover:text-gray-300" title={il.earlier.length > 1 ? `Earlier in ${il.earlier.length} meetings` : 'Open that meeting'}>↩ continues from {il.earlier[0].session_name}, {linkDate(il.earlier[0])}</button>{/if}{#if il.later.length}<button onclick={() => openMeeting(il.later[0].session_id)} class="ml-1.5 text-[11px] text-gray-500 hover:text-gray-300" title={il.later.length > 1 ? `Continued in ${il.later.length} meetings` : 'Open that meeting'}>→ continued in {il.later[0].session_name}, {linkDate(il.later[0])}</button>{/if}{/if}</span>
 									</li>
 								{/each}
 							</ul>

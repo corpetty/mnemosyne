@@ -22,6 +22,7 @@ from .. import access
 from ..models.base import ApiModel
 from ..models.session import ActionItem, Chapter, ClientFact, Session, SummaryData
 from . import history, summary_doc
+from .summary_ids import ensure_ids
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -64,12 +65,22 @@ def _topics(topics: list[str]) -> list[str]:
 def apply_edit(data: SummaryData | None, edit: SummaryEdit, by: str) -> SummaryData:
     """The summary data after `edit`; what the edit does not cover (style, model, source
     fingerprint, follow-up draft) stays."""
+    linked = {a.id: a.task_id for a in data.action_items if a.id and a.task_id} if data else {}
     data = data.model_copy(deep=True) if data else SummaryData(style="manual")
     data.topics = _topics(edit.topics)
     data.decisions, data.decision_at, data.decision_ids = _texts(edit.decisions)
+    kept = set(data.decision_ids)  # links go with their decisions
+    data.decision_links = {k: v for k, v in data.decision_links.items() if k in kept}
     data.open_questions, data.question_at, data.question_ids = _texts(edit.open_questions)
     data.action_items = [
-        a.model_copy(update={"text": a.text.strip(), "owner": (a.owner or "").strip() or None})
+        a.model_copy(
+            update={
+                "text": a.text.strip(),
+                "owner": (a.owner or "").strip() or None,
+                # An old client must not drop links (unlinking is its own call).
+                "task_id": a.task_id or linked.get(a.id, ""),
+            }
+        )
         for a in edit.action_items
         if a.text.strip()
     ]
@@ -102,13 +113,14 @@ def edit_summary(app: AppContext, session_id: str, edit: SummaryEdit) -> Session
     try:  # recorded in the summary doc, so a later re-summarize keeps the edit
         data, summary, _ = summary_doc.apply_human(app, session_id, data, summary, by)
     except summary_doc.SummaryDocUnavailable:
-        pass
+        ensure_ids(data)  # task links need ids
     before = app.sessions.get_session(session_id) or before  # the doc may have added ids
     app.repo.keep_version(before, "edited")  # before update_fields, which would say "summarized"
     session = app.repo.update_fields(session_id, summary=summary, summary_data=data)
     if session is None:
         return None
     history.log(app, session_id, "summary_edited", by=by)
+    session = link_quietly(app, session.id) or session
     _saved(app, session, "summary_edited")
     return session
 
@@ -142,7 +154,7 @@ def restore_summary(app: AppContext, session_id: str, version_id: int) -> Sessio
                 app, session_id, data, summary, who.name if who else ""
             )
         except summary_doc.SummaryDocUnavailable:
-            pass
+            ensure_ids(data)  # task links need ids
     before = app.sessions.get_session(session_id) or before  # the doc may have added ids
     app.repo.keep_version(before, "restored an earlier summary")
     session = app.repo.update_fields(session_id, summary=summary, summary_data=data)
@@ -151,8 +163,48 @@ def restore_summary(app: AppContext, session_id: str, version_id: int) -> Sessio
     history.log(
         app, session_id, "summary_restored", version_at=version["at"], by=who.name if who else ""
     )
+    session = link_quietly(app, session.id) or session
     _saved(app, session, "summary_restored")
     return session
+
+
+def link_quietly(
+    app: AppContext,
+    session_id: str,
+    tiers: str | None = None,
+    hints: dict[str, tuple[str, str]] | None = None,
+) -> Session | None:
+    """Link the meeting's unlinked action items to earlier open tasks (services/task_links.py)
+    and its decisions to identical ones (services/decision_links.py) after its summary was
+    written; `tiers` None = by hand ("exact" when `task_linking` allows
+    any). `hints` (normalized item text -> head of an offered task, task_links.hints_from_items)
+    are what the summary model said continues an earlier task: applied first. Never raises: a
+    failure is logged. The meeting as saved when something was linked."""
+    mode = app.settings.task_linking
+    if mode == "off":
+        return None
+    linked = False
+    if hints:
+        try:
+            from . import task_links
+
+            linked = bool(task_links.apply_hints(app, session_id, hints))
+        except Exception:
+            logger.warning("Applying the task hints of %s failed", session_id, exc_info=True)
+    try:
+        from . import task_links
+
+        links = task_links.link_items(app, session_id, tiers or "exact")  # type: ignore[arg-type]
+        linked = bool(links) or linked
+    except Exception:
+        logger.warning("Linking the tasks of %s failed", session_id, exc_info=True)
+    try:  # decisions that repeat an earlier meeting's word for word (services/decision_links.py)
+        from . import decision_links
+
+        linked = bool(decision_links.link_items(app, session_id)) or linked
+    except Exception:
+        logger.warning("Linking the decisions of %s failed", session_id, exc_info=True)
+    return app.sessions.get_session(session_id) if linked else None
 
 
 def _saved(app: AppContext, session: Session, reason: str) -> None:

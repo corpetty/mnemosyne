@@ -298,6 +298,15 @@ class Settings(BaseSettings):
     backup_interval_days: int = 0
     backup_keep: int = 3
 
+    # Linking action items across meetings into one task (services/task_links.py): "exact" =
+    # the same text (normalized) in another meeting's open task; "related" = also close text
+    # (at least 20 characters) when that meeting is related (recurring title or same people).
+    task_linking: Literal["off", "exact", "related"] = "related"
+    # Let the summary model help: its prompt lists the open tasks of related meetings and it may
+    # mark an action item as continuing one (`"continues"`). Off by default; never used with the
+    # built-in model (too small to judge it). Needs task_linking not "off".
+    task_linking_llm: bool = False
+
     # GitHub issues from action items
     github_repo: str = ""  # owner/name
     github_token: str = ""  # fine-grained token with Issues: read and write on that repo

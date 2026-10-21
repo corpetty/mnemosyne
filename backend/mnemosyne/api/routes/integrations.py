@@ -1,16 +1,19 @@
 """Integrations: issues from action items (GitHub, Linear, Jira), posting follow-ups
 (Slack, Matrix) and meetings in a CRM (HubSpot)."""
 
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...models.base import ApiModel
-from ...services import hubspot
+from ...services import hubspot, task_links
 from ...services.chat_post import MatrixPoster, SlackPoster
 from ...services.github_service import GitHubService, IssueResult, RepoCheck
 from ...services.trackers import JiraTracker, LinearTracker, TrackerCheck
 from ..context import AppContext, get_ctx
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["integrations"])
 
@@ -92,6 +95,27 @@ class CreateIssuesRequest(ApiModel):
     indices: list[int]
 
 
+def _task_issue(ctx: AppContext, session_id: str, item) -> str | None:
+    """The issue link some other mention of the item's task already has, if any."""
+    if not item.task_id or not item.id:
+        return None
+    try:
+        obj = task_links.object_of(ctx.repo, session_id, item.id, ctx.repo.visible_ids())
+    except Exception:
+        return None
+    return next((m.issue_url for m in obj.mentions if m.issue_url), None) if obj else None
+
+
+def _fan_out_issues(ctx: AppContext, session_id: str, pairs) -> None:
+    """Put each issue link on the other mentions of its task. Never fails the request."""
+    for item, url in pairs:
+        if item.task_id and url:
+            try:
+                task_links.set_issue_url(ctx, item.task_id, url, acting=session_id)
+            except Exception:
+                logger.warning("Could not share an issue link across meetings", exc_info=True)
+
+
 @router.post("/sessions/{session_id}/action-items/{tracker}", response_model=IssueResult)
 async def create_issues(
     session_id: str,
@@ -109,12 +133,27 @@ async def create_issues(
     target = _tracker(ctx, tracker)
     if problem := target.validate():
         raise HTTPException(status_code=400, detail=problem)
+    # A task linked across meetings has one issue: skip items whose task already has one.
+    items = session.summary_data.action_items
+    wanted, linked_skipped = [], []
+    for i in dict.fromkeys(request.indices):
+        issue = _task_issue(ctx, session_id, items[i]) if 0 <= i < len(items) else None
+        if issue and not items[i].issue_url:
+            items[i] = items[i].model_copy(update={"issue_url": issue})
+            linked_skipped.append(i)
+        else:
+            wanted.append(i)
     try:
-        result = await target.create_issues(session, request.indices)
+        result = await target.create_issues(session, wanted)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"{tracker}: {e}") from e
-    if result.created:
+    result.skipped += linked_skipped
+    if result.created or linked_skipped:
         ctx.repo.update_fields(session_id, summary_data=session.summary_data)
+        _fan_out_issues(
+            ctx, session_id, [(items[c.index], c.url) for c in result.created]
+            + [(items[i], items[i].issue_url) for i in linked_skipped]
+        )  # fmt: skip
         ctx.bus.publish(
             {"type": "session", "session_id": session_id, "status": session.status.value}
         )

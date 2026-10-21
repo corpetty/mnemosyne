@@ -93,3 +93,32 @@ def test_brief_route(client, ctx):
         "last_summary": "",
         "organization": None,
     }
+
+
+def test_brief_collapses_linked_task_and_hides_one_done_elsewhere(client, ctx):
+    def meet(name, day, *items):
+        s = Session(
+            name=name,
+            created_at=datetime(2026, 9, day, 15),
+            attendees=["Jakub", "Corey"],
+            summary="s",
+            summary_data=SummaryData(action_items=list(items)),
+        )
+        ctx.repo.save(s)
+
+    meet(
+        "Infra weekly",
+        10,
+        ActionItem(id="a1", text="Rotate keys", owner="Jakub", task_id="t1"),
+        ActionItem(id="a2", text="Ship the docs", task_id="t2"),
+    )
+    meet(
+        "Infra weekly 09/17",
+        17,
+        ActionItem(id="b1", text="Rotate all the keys", owner="Jakub", task_id="t1"),
+        ActionItem(id="b2", text="Ship the docs", task_id="t2", done=True),
+    )
+    b = client.get("/api/brief", params={"title": "Infra weekly"}).json()
+    assert [(i["text"], i["task_id"], i["session_name"]) for i in b["open_items"]] == [
+        ("Rotate all the keys", "t1", "Infra weekly 09/17")
+    ]

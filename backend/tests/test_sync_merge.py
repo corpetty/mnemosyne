@@ -299,6 +299,95 @@ def test_tick_and_untick(binary):
     assert _item(out, "a1").done and _item(out, "a1").owner == "Cy"
 
 
+def test_the_task_link_merges_like_a_scalar(binary):
+    base = _doc()
+    # Linked there, untouched here: linked.
+    out, report = _merge(
+        base,
+        _ours(base),
+        _theirs(base, lambda d: setattr(_item(d, "a1"), "task_id", "aaaaaaaaaaaa")),
+        binary,
+    )
+    assert _item(out, "a1").task_id == "aaaaaaaaaaaa" and report["kept"] == 1
+    # Linked here, theirs changed something else: the link stays.
+    out, _ = _merge(
+        base,
+        _ours(base, lambda d: setattr(_item(d, "a1"), "task_id", "aaaaaaaaaaaa")),
+        _theirs(base, lambda d: setattr(_item(d, "a1"), "owner", "Cy")),
+        binary,
+    )
+    assert _item(out, "a1").task_id == "aaaaaaaaaaaa" and _item(out, "a1").owner == "Cy"
+
+    # Linked to different tasks on both sides: the newer side's.
+    def mine(d):
+        _item(d, "a1").task_id = "aaaaaaaaaaaa"
+
+    def yours(d):
+        _item(d, "a1").task_id = "bbbbbbbbbbbb"
+
+    out, report = _merge(
+        base, _ours(base, mine, minutes=5), _theirs(base, yours, minutes=2), binary
+    )
+    assert _item(out, "a1").task_id == "aaaaaaaaaaaa"
+    assert "action_items a1 task_id: ours" in report["fields"]
+    out, _ = _merge(base, _ours(base, mine, minutes=1), _theirs(base, yours, minutes=3), binary)
+    assert _item(out, "a1").task_id == "bbbbbbbbbbbb"
+    # Unlinked there (the link was in the base): unlinked.
+    linked = _doc()
+    _item(linked, "a1").task_id = "aaaaaaaaaaaa"
+    out, _ = _merge(
+        linked,
+        _ours(linked),
+        _theirs(linked, lambda d: setattr(_item(d, "a1"), "task_id", "")),
+        binary,
+    )
+    assert _item(out, "a1").task_id == ""
+
+    # The same item added on both sides, linked on one: the link is taken.
+    def add(d, task_id=""):
+        d.summary_data.action_items.append(ActionItem(id="n1", text=VENDOR, task_id=task_id))
+        d.summary_data.action_items[-1].id = "n1"
+
+    out, _ = _merge(base, _ours(base, add), _theirs(base, lambda d: add(d, "cccccccccccc")), binary)
+    assert _item(out, "n1").task_id == "cccccccccccc"
+
+
+def test_decision_links_merge_per_key_and_are_pruned(binary):
+    base = _doc()
+    base.summary_data.decisions = ["We ship on Friday", "Skip the beta"]
+    base.summary_data.decision_ids = ["d1", "d2"]
+    base.summary_data.decision_at = [1.0, 2.0]
+    base.summary_data.decision_links = {"d1": "x1"}
+
+    def mine(d):
+        d.summary_data.decision_links["d2"] = "x2"
+
+    def yours(d):
+        d.summary_data.decision_links["d1"] = "y1"  # relinked there
+
+    out, _ = _merge(base, _ours(base, mine), _theirs(base, yours), binary)
+    assert out.summary_data.decision_links == {"d1": "y1", "d2": "x2"}
+
+    # Unlinked there: gone. Linked on one side to a decision the other deleted untouched: gone.
+    def unlink(d):
+        d.summary_data.decision_links = {}
+
+    out, _ = _merge(base, _ours(base), _theirs(base, unlink), binary)
+    assert out.summary_data.decision_links == {}
+
+    def delete(d):
+        d.summary_data.decisions = ["We ship on Friday"]
+        d.summary_data.decision_ids = ["d1"]
+        d.summary_data.decision_at = [1.0]
+
+    def link_d2(d):
+        d.summary_data.decision_links["d2"] = "x2"
+
+    out, _ = _merge(base, _ours(base, delete), _theirs(base, link_d2), binary)
+    assert out.summary_data.decision_ids == ["d1"]
+    assert out.summary_data.decision_links == {"d1": "x1"}  # no key for a gone decision
+
+
 # ---- items by id --------------------------------------------------------------------------
 
 

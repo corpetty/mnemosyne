@@ -4,7 +4,7 @@ from the other through `httpx.ASGITransport`. No network, no iroh. Text merges r
 stand-in sidecar (tests/fake_link.py), one scenario through the real mnemosyne-link if built."""
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from importlib.metadata import version as package_version
 
 import httpx
@@ -583,3 +583,33 @@ async def test_real_sidecar_notes_merge_without_doubling(nodes, real_sidecar):
     for n in (a, b):
         assert n.repo.get(sid).notes == "Intro.\nA's line.\nPlan.\nB's line.\n", n.name
     assert vv(a, sid) == vv(b, sid)
+
+
+async def test_a_task_linked_across_meetings_settles_on_its_head_after_a_round(nodes, sidecar):
+    a, b = nodes
+    old = meeting(
+        a,
+        "Infra 1",
+        summary="S.\n",
+        summary_data=SummaryData(
+            action_items=[ActionItem(id="o1", text="Rotate keys", task_id="t1", done=True)]
+        ),
+    )
+    new = meeting(
+        a,
+        "Infra 2",
+        created_at=datetime.now() + timedelta(days=7),
+        summary="S.\n",
+        summary_data=SummaryData(
+            action_items=[ActionItem(id="n1", text="Rotate keys", task_id="t1", done=True)]
+        ),
+    )
+    await pull(b, a)
+    # A reopens the older mention only; B (concurrently) leaves the newest, the head, done.
+    assert a.repo.set_action_item_fields_by_id(old, "o1", done=False)
+    for x, y in ((b, a), (a, b), (b, a), (a, b)):
+        await pull(x, y)
+    for n in (a, b):
+        assert n.repo.get(new).summary_data.action_items[0].done is True
+        assert n.repo.get(old).summary_data.action_items[0].done is True
+    assert vv(a, old) == vv(b, old)

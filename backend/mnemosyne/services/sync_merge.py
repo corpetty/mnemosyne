@@ -63,7 +63,7 @@ SUMMARY_SCALARS = (
     "edited_at",
     "edited_by",
 )
-ITEM_SCALARS = ("owner", "due", "at", "live", "done", "follow", "issue_url")
+ITEM_SCALARS = ("owner", "due", "at", "live", "done", "follow", "issue_url", "task_id")
 
 
 # ---- version vectors ------------------------------------------------------------------------
@@ -574,6 +574,13 @@ def _merge_summary(m: _Merge, out: SyncSession) -> dict[str, dict[str, str]] | N
             ats = [values[i]["at"] for i in order]
             if sec == "decisions":
                 data.decision_ids, data.decision_at = list(order), ats
+                links = m.by_id(
+                    dict(b.decision_links),
+                    dict(o.decision_links),
+                    dict(t.decision_links),
+                    "decision link",
+                )
+                data.decision_links = {k: v for k, v in links.items() if k in set(order)}
             else:
                 data.question_ids, data.question_at = list(order), ats
     out.summary_data = data

@@ -1278,6 +1278,30 @@ transcription engine is unloaded if its configuration changed.
 
 ---
 
+## Task and decision objects
+
+A task object is every action item (across meetings) with the same `task_id`; an unlinked item is
+its own object (key `<session_id>:<item id>`). Text, owner and due are the newest mention's;
+done, follow and issue link are the object's (writes fan out to every mention). Decisions work the
+same way through `summary_data.decision_links`. Only mentions in meetings the caller can see are
+returned.
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/tasks` | Task objects (filters as `/api/action-items`); each with `mentions` newest first, `linked`, `mine`, `can_edit` |
+| PATCH | `/api/tasks/{key}` | `{done?, follow?}` for the whole task |
+| POST | `/api/tasks/link` | `{a: {session_id, item_id}, b: {...}}`: one task (merges two) |
+| DELETE | `/api/tasks/{key}/mentions/{session_id}/{item_id}` | Unlink one mention |
+| GET | `/api/tasks/suggestions` | Close matches on existing data, not linked yet |
+| POST | `/api/tasks/suggestions/apply`, `/dismiss` | `{a, b}` |
+| GET | `/api/decisions` | Decision objects (`?linked=true`) |
+| POST | `/api/decisions/link` | `{a: {session_id, decision_id}, b: {...}}`: the newer supersedes the older |
+| DELETE | `/api/decisions/{key}/mentions/{session_id}/{decision_id}` | Unlink one mention |
+| GET | `/api/sessions/{id}/links` | Per action item id and per decision id: `{key, earlier, later}` |
+
+Settings: `task_linking` (`off` / `exact` / `related`, default `related`) and `task_linking_llm`
+(default off).
+
 ## Library sync
 
 A person's computers keep one library (docs/plans/2026-10-12-hashseq-collaboration.md "Phase 3

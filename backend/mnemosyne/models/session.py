@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import Field, computed_field
+from pydantic import Field, PrivateAttr, computed_field
 
 from .base import ApiModel
 from .transcript import TranscriptSegment
@@ -59,6 +59,14 @@ class ActionItem(ApiModel):
     live: bool = False  # noted by the live copilot; the final summary did not list it
     at: float | None = None  # seconds: the transcript line where it came up
     due: date | None = None  # a deadline named in the meeting, resolved to a date
+    # The cross-meeting task object this item is a mention of (services/task_links.py): 12 hex,
+    # shared by every linked mention; "" = not linked (the item is its own task).
+    task_id: str = ""
+    # Transient, never saved or sent (a private attribute): the label of an offered open task
+    # that the summary model says this item continues (summarization/prompts.py, "continues").
+    # It travels with the item from the parse through the map-reduce merge to the pipeline,
+    # which turns it into a link (services/task_links.py `apply_hints`).
+    _continues: str = PrivateAttr(default="")
 
 
 class CopilotItem(ApiModel):
@@ -123,6 +131,8 @@ class SummaryData(ApiModel):
     question_at: list[float | None] = Field(default_factory=list)
     decision_ids: list[str] = Field(default_factory=list)  # stable ids, parallel to decisions
     question_ids: list[str] = Field(default_factory=list)  # stable ids, parallel to open_questions
+    # Decision id -> the cross-meeting decision object it belongs to (services/task_links.py).
+    decision_links: dict[str, str] = Field(default_factory=dict)
     chapters: list[Chapter] = Field(default_factory=list)
     client_facts: list[ClientFact] = Field(default_factory=list)  # client style only
     followup: str = ""  # last drafted follow-up message (email or chat)

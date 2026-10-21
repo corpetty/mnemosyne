@@ -51,6 +51,33 @@ def task_predicate(ctx: AppContext, session) -> Callable[[ActionItem], bool] | N
     return lambda item: item.follow or mine(item)
 
 
+def continued_notes(ctx: AppContext, session) -> dict[str, str]:
+    """Action item id -> the note of the later meeting that mentions the same task (the head
+    of its task object, services/task_links.py), for the items of `session` that another
+    meeting continues. {} when none; never raises."""
+    from ...export.obsidian import stem_of
+    from ...services import task_links
+
+    data = session.summary_data
+    if data is None or not any(a.task_id and a.id for a in data.action_items):
+        return {}
+    try:
+        objects = task_links.index(ctx.repo, ctx.repo.visible_ids())
+        out: dict[str, str] = {}
+        for item in data.action_items:
+            obj = objects.get(item.task_id) if item.task_id and item.id else None
+            if obj is None or not any(m.session_id == session.id for m in obj.mentions):
+                continue
+            head = obj.mentions[0]
+            if head.session_id != session.id:
+                out[item.id] = stem_of(head.session_name, head.created_at)
+        return out
+    except Exception:
+        logger.warning("Could not find the later mentions of tasks of %s", session.id,
+                       exc_info=True)  # fmt: skip
+        return {}
+
+
 def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianExporter:
     """An exporter with the settings; a session's meeting type may choose the folder."""
     from ...export.vault_index import linkable_notes
@@ -72,6 +99,7 @@ def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianEx
         is_mine=task_predicate(ctx, session) if session is not None else None,
         known_notes=(lambda: linkable_notes(root, own)) if links else None,
         annex=vault_annex(ctx, session.id) if session is not None else None,
+        continued=continued_notes(ctx, session) if session is not None else None,
     )
 
 
@@ -135,7 +163,20 @@ def write_decisions(ctx: AppContext, vault_path: str):
         meetings,
         known_notes=exporter.known_notes,
         redact=ctx.settings.redact_exports,
+        index=_decision_index(ctx),
     )
+
+
+def _decision_index(ctx: AppContext):
+    """The decision objects the caller can read (services/decision_links.py), or None when
+    they cannot be worked out: the log is then written without superseded chains."""
+    from ...services import decision_links
+
+    try:
+        return decision_links.index(ctx.repo, ctx.repo.visible_ids())
+    except Exception:
+        logger.warning("Could not read the decision links", exc_info=True)
+        return None
 
 
 def export_session(ctx: AppContext, session, vault_path: str, decisions: bool = True):

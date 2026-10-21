@@ -99,3 +99,25 @@ def test_person_notes(client, ctx, tmp_path):
     (folder / "Alice.md").write_text("edited by hand")
     client.post(f"/api/sessions/{a.id}/export/obsidian", json={})
     assert (folder / "Alice.md").read_text() == "edited by hand"
+
+
+def test_linked_task_counts_once_as_its_head(client, ctx):
+    for day, text, done in ((1, "Rotate keys", False), (8, "Rotate all the keys", True)):
+        ctx.repo.save(
+            Session(
+                name=f"Infra {day}",
+                created_at=datetime(2026, 9, day, 10),
+                participants=["Alice"],
+                summary="s",
+                summary_data=SummaryData(
+                    action_items=[
+                        ActionItem(id="i", text=text, owner="Alice", task_id="t1", done=done)
+                    ]
+                ),
+            )
+        )
+    people = {p["name"]: p for p in client.get("/api/people").json()}
+    assert people["Alice"]["open_tasks"] == 0
+    d = client.get("/api/people/Alice").json()
+    assert d["open_tasks"] == []
+    assert [t["text"] for t in d["done_tasks"]] == ["Rotate all the keys"]

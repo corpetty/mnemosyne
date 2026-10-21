@@ -14,7 +14,7 @@ from datetime import date
 from pathlib import Path
 
 from .links import link_known_notes
-from .obsidian import note_stem, sanitize_filename
+from .obsidian import note_stem, sanitize_filename, stem_of
 from .vault_index import _scans, vault_stems
 
 TOPIC_MARKER = "mnemosyne: topic"
@@ -129,8 +129,13 @@ def render_decisions(
     meetings,
     known_notes: Callable[[], Collection[str]] | None = None,
     redact: bool = False,
+    index=None,
 ) -> str:
-    """`meetings`: (summary-like with id/name/created_at, decisions) newest first."""
+    """`meetings`: (summary-like with id/name/created_at, decisions) newest first. `index`:
+    the decision objects the caller can read (services/decision_links.py `index`, by key).
+    A decision with a newer mention in another meeting gets " → superseded <date> in
+    [[note]]" (the next newer mention's note); the newest mention of a linked object gets a
+    sub-bullet per earlier mention. Without links the lines are plain bullets."""
     prep = _linker(known_notes, redact)
     out = ["---", DECISIONS_MARKER, "tags: [decisions, mnemosyne]", "---", "", "# Decisions", ""]
     for s, decisions in meetings:
@@ -139,7 +144,38 @@ def render_decisions(
         day = s.created_at.strftime("%Y-%m-%d")
         out += [f"## {day} [[{note_stem(s)}|{s.name}]]", ""]
         seen: set[str] = set()
-        out += [f"- {prep(re.sub(chr(10) + '+', ' ', d), seen)}" for d in decisions] + [""]
+        data = getattr(s, "summary_data", None)
+        ids = list(data.decision_ids) if data is not None else []
+        links = dict(data.decision_links) if data is not None else {}
+        for i, d in enumerate(decisions):
+            line = f"- {prep(re.sub(chr(10) + '+', ' ', d), seen)}"
+            extra: list[str] = []
+            decision_id = ids[i] if i < len(ids) and len(ids) == len(decisions) else ""
+            obj = index.get(links.get(decision_id, "")) if index and decision_id else None
+            mentions = obj.mentions if obj is not None else []
+            at = next(
+                (
+                    j
+                    for j, m in enumerate(mentions)
+                    if (m.session_id, m.decision_id) == (s.id, decision_id)
+                ),
+                None,
+            )
+            if at is not None and len(mentions) > 1:
+                if at > 0:  # a newer mention elsewhere: this wording was superseded
+                    later = mentions[at - 1]
+                    line += (
+                        f" → superseded {later.created_at.strftime('%Y-%m-%d')}"
+                        f" in [[{stem_of(later.session_name, later.created_at)}]]"
+                    )
+                else:  # the current wording: what it repeats or replaced
+                    for m in mentions[1:]:
+                        text = prep(re.sub(chr(10) + "+", " ", m.text), set())
+                        extra.append(
+                            f"  - earlier: {text} ([[{stem_of(m.session_name, m.created_at)}]])"
+                        )
+            out += [line] + extra
+        out.append("")
     return "\n".join(out).rstrip() + "\n"
 
 

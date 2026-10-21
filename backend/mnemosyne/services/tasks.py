@@ -38,8 +38,9 @@ def same_item(a: str, b: str) -> bool:
 
 
 def carry_over(old: SummaryData | None, new: SummaryData) -> SummaryData:
-    """Copy done and follow flags and issue links from a previous summary onto matching items of
-    a new one (re-summarizing must not reopen finished tasks or orphan issues)."""
+    """Copy done and follow flags, issue links and task links from a previous summary onto
+    matching items of a new one (re-summarizing must not reopen finished tasks, orphan issues
+    or split a task across meetings)."""
     if old is None:
         return new
     used: set[int] = set()
@@ -52,8 +53,31 @@ def carry_over(old: SummaryData | None, new: SummaryData) -> SummaryData:
                 item.issue_url = item.issue_url or prev.issue_url
                 item.due = item.due or prev.due
                 item.id = item.id or prev.id
+                item.task_id = item.task_id or prev.task_id
                 break
+    _carry_decisions(old, new)
     return new
+
+
+def _carry_decisions(old: SummaryData, new: SummaryData) -> None:
+    """A decision that comes back word for word keeps its id and its link to other meetings
+    (`decision_links`; the summary doc does this when it is available, services/summary_doc.py)."""
+    if not old.decision_links:
+        return
+    prev = {_norm(t): old.decision_ids[i] for i, t in enumerate(old.decisions)
+            if i < len(old.decision_ids) and old.decision_ids[i]}  # fmt: skip
+    ids = [
+        new.decision_ids[i] if i < len(new.decision_ids) else "" for i in range(len(new.decisions))
+    ]
+    taken = {x for x in ids if x}
+    for i, text in enumerate(new.decisions):
+        old_id = prev.get(_norm(text), "")
+        if ids[i] or not old_id or old_id in taken or old_id not in old.decision_links:
+            continue
+        ids[i] = old_id
+        taken.add(old_id)
+        new.decision_links.setdefault(old_id, old.decision_links[old_id])
+    new.decision_ids = ids
 
 
 def recorder_names(app, session) -> tuple[list[str], list[str]]:

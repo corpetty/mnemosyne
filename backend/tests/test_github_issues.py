@@ -145,3 +145,23 @@ def test_export_links_issues(tmp_path, ctx, github, session_with_items, client):
     client.post(f"/api/sessions/{session_with_items.id}/action-items/github", json={"indices": [0]})
     md = ObsidianExporter(str(tmp_path)).render(ctx.sessions.get_session(session_with_items.id))
     assert "- [ ] Update docs ([[Alice]]) [issue](https://github.com/corpetty/notes/issues/1)" in md
+
+
+def test_linked_task_gets_one_issue_for_all_its_meetings(client, ctx, github):
+    ids = []
+    for name in ("Infra 1", "Infra 2"):
+        s = ctx.sessions.create_session(name)
+        ctx.sessions.set_summary(
+            s.id,
+            "Summary",
+            SummaryData(action_items=[ActionItem(id="i1", text="Rotate keys", task_id="t1")]),
+        )
+        ids.append(s.id)
+    first, second = ids
+    r = client.post(f"/api/sessions/{second}/action-items/github", json={"indices": [0]}).json()
+    assert [c["index"] for c in r["created"]] == [0]
+    for sid in ids:  # the link reached the earlier meeting too
+        [item] = client.get(f"/api/sessions/{sid}").json()["summary_data"]["action_items"]
+        assert item["issue_url"].endswith("/issues/1")
+    again = client.post(f"/api/sessions/{first}/action-items/github", json={"indices": [0]}).json()
+    assert again["created"] == [] and again["skipped"] == [0] and len(github.created) == 1

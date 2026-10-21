@@ -310,6 +310,7 @@ class SyncService:
             async with self.client_for(peer) as client:
                 await self._hello(client, peer, st)
                 await self._pull(client, peer, st)
+            await self._reconcile_tasks(st)
         except SyncSkew as e:
             st.state, st.error = "skew", str(e)
         except PeerLocked:
@@ -334,6 +335,18 @@ class SyncService:
         else:
             st.state, st.backoff, st.retry_at = "done", 0.0, 0.0
         self._publish(peer, st)
+
+    async def _reconcile_tasks(self, st: PeerState) -> None:
+        """A round that merged or fast-forwarded meetings may have brought a tick on an older
+        mention of a linked task: make the mentions agree with their head. Never fails a round."""
+        if not (st.updated or st.merged):
+            return
+        from . import task_links
+
+        try:
+            await asyncio.to_thread(task_links.reconcile, self.ctx)
+        except Exception:
+            logger.warning("Sync: could not reconcile task links", exc_info=True)
 
     async def _get(self, client: httpx.AsyncClient, path: str, **params) -> Any:
         r = await client.get(path, params=params or None)

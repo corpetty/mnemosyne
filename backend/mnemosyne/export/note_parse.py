@@ -43,6 +43,8 @@ _OUR_ID = re.compile(r"(?:^|\s)\^m-([0-9a-f]+)(?=\s|$)")
 _DUE = re.compile("\U0001f4c5️?\\s*(\\d{4}-\\d{2}-\\d{2})")
 _SUFFIX = re.compile(r"\s*\((\[\[[^\]]+\]\]|[^()]+)\)\s*$")
 _PREFIX = re.compile(r"^(\[\[[^\]]+\]\]|[^:\[\]]{1,40}):\s+")
+# A task a later meeting continues is a plain bullet ending in this (export/templates.py).
+_CONTINUED = re.compile(r"\s*\u21a9 continued in \[\[[^\]]*\]\]\s*$")
 _DONE_MARK = re.compile(r"\s+\(done\)\s*$")
 _NAME = re.compile(r"^(?:SPEAKER_\d+|UNKNOWN|[A-Z][\w'.-]*(?: [A-Z][\w'.-]*){0,2})$")
 
@@ -193,6 +195,8 @@ def _entry(line: str, others: bool, sec: str, known: Known) -> Entry | None:
     if ours:
         rest = rest[: ours[-1].start()] + rest[ours[-1].end() :]
     rest = _BLOCK_ID.sub("", rest)
+    if sec == "action_items" and box is None and not others:
+        rest = _CONTINUED.sub("", rest)  # not part of the text, nor of the owner suffix
     entry = Entry(id=item_id, text="", box=box is not None, done=done, others=others, line=line)
     if sec != "action_items":
         entry.text = strip_links(rest).strip()

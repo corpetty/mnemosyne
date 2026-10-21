@@ -10,7 +10,7 @@ import pytest
 from mnemosyne.export.note_merge import MergeError, merge, normalize, restore
 from mnemosyne.export.note_parse import PLACEHOLDER, cut, parse, splice
 from mnemosyne.export.templates import render_meeting_note
-from mnemosyne.models.session import SummaryData
+from mnemosyne.models.session import ActionItem, Session, SummaryData
 from mnemosyne.services import summary_doc, vault_sync
 from mnemosyne.services.link import find_binary
 from mnemosyne.services.vault_sync import apply_vault_edits, note_path
@@ -481,3 +481,56 @@ def test_a_linked_body_paragraph_edit_flows_back(ctx, vault, sidecar):
     _export(ctx, s, vault)
     assert _text(path) == text
     assert len(_events(ctx, s, "note_edits_taken")) == 1
+
+
+# ---- a task a later meeting continues ---------------------------------------------------------
+
+CONTINUED = "- Send the deck ([[Me]]) ↩ continued in [[2026-10-20-Planning]] ^m-aaaa0002\n"
+
+
+def test_parse_reads_a_continued_bullet_as_the_same_item():
+    note = parse(
+        "## Action Items\n\n"
+        "- [ ] Write the guide ([[Corey Petty]]) 📅 2026-10-01 ^m-aaaa0001\n"
+        + CONTINUED
+        + "- Fix the build ([[Ana]]) ↩ continued in [[Later]] ^m-aaaa0003\n"
+        "- No owner ↩ continued in [[Later]] ^m-aaaa0004\n"
+        "    - my own annex line\n"
+    )
+    rows = {e.id: e for e in note.sections["action_items"]}
+    assert list(rows) == ["aaaa0001", "aaaa0002", "aaaa0003", "aaaa0004"]
+    deck = rows["aaaa0002"]
+    assert (deck.text, deck.owner, deck.box, deck.done) == ("Send the deck", "Me", False, None)
+    assert (rows["aaaa0003"].text, rows["aaaa0003"].owner) == ("Fix the build", "Ana")
+    assert (rows["aaaa0004"].text, rows["aaaa0004"].owner) == ("No owner", None)
+    assert rows["aaaa0004"].annex == ["    - my own annex line"]
+
+
+def test_a_note_with_a_continued_bullet_pulls_back_nothing(ctx, vault, sidecar):
+    s = _meeting(ctx, vault, export=False)
+    full = ctx.sessions.get_session(s.id)
+    full.summary_data.action_items[1].task_id = "abcdef012345"
+    ctx.repo.save(full)
+    newer = Session(
+        name="Planning",
+        created_at=datetime(2026, 10, 20, 9),
+        summary="s",
+        summary_data=SummaryData(
+            action_items=[
+                ActionItem(id="bbbb0001", text="Send the deck", owner="Me", task_id="abcdef012345")
+            ]  # fmt: skip
+        ),
+    )
+    ctx.repo.save(newer)
+    _export(ctx, s, vault)
+    path = note_path(ctx, s, str(vault))
+    assert CONTINUED in _text(path)
+    before = _data(ctx, s)
+    text = _text(path)
+    path.write_text(text + "\nMy own thoughts.\n", encoding="utf-8")  # the sha differs
+    assert apply_vault_edits(ctx, ctx.sessions.get_session(s.id), str(vault)) is False
+    assert _data(ctx, s) == before
+    assert not summary_doc.ensure_doc(ctx, s.id).tombstones
+    _export(ctx, s, vault)  # still a continued bullet, nothing doubled or lost
+    after = _text(path)
+    assert after.count("^m-aaaa0002") == 1 and CONTINUED in after

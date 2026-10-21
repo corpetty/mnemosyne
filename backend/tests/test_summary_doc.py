@@ -348,6 +348,71 @@ def test_revise_rebases_so_echoed_edits_do_not_double(ctx, sidecar):
     assert doc.body.llm == "Intro, revised.\n\nMy note.\n"
 
 
+def _link(ctx, sid, item_id, task_id="abc123def456"):
+    assert ctx.repo.set_action_item_fields_by_id(sid, item_id, task_id=task_id)
+
+
+def _by_text(ctx, sid):
+    return {a.text: a for a in ctx.repo.get(sid).summary_data.action_items}
+
+
+def test_touched_ignores_the_task_link():
+    base = {"owner": None, "due": None, "at": None, "live": False}
+    assert not touched(ActionItem(text="T", task_id="abc123def456"), base, "T")
+
+
+def test_the_task_link_survives_resummarize_revise_and_restore(ctx, sidecar):
+    from mnemosyne.services import summary_edit
+
+    sid = _meeting(ctx)
+    first, _, _ = _llm(ctx, sid, _data([BUDGET, DECK]))
+    _link(ctx, sid, first.action_items[0].id)
+    ctx.repo.keep_version(ctx.repo.get(sid), "edited")
+    # Re-summarize: the LLM's item has no link, the item keeps it.
+    _llm(ctx, sid, _data([BUDGET, DECK]))
+    assert _by_text(ctx, sid)[BUDGET].task_id == "abc123def456"
+    assert _by_text(ctx, sid)[DECK].task_id == ""
+    # Revise (rebase) with a reworded item: same id, same link.
+    _llm(ctx, sid, _data([BUDGET + " today", DECK]), rebase=True)
+    got = _by_text(ctx, sid)
+    assert got[BUDGET + " today"].task_id == "abc123def456"
+    # A hand edit that brings the item back through apply_human keeps it too.
+    _human(ctx, sid, lambda d: setattr(d.action_items[1], "owner", "Ana"))
+    assert _by_text(ctx, sid)[BUDGET + " today"].task_id == "abc123def456"
+    # Restore an earlier version (made before the link): the current link carries over.
+    version = next(v for v in ctx.repo.versions(sid) if v["has_summary"])
+    summary_edit.restore_summary(ctx, sid, version["id"])
+    assert _by_text(ctx, sid)[BUDGET].task_id == "abc123def456"
+
+
+def test_an_untouched_linked_item_the_llm_drops_goes(ctx, sidecar):
+    sid = _meeting(ctx)
+    first, _, _ = _llm(ctx, sid, _data([BUDGET, DECK]))
+    _link(ctx, sid, first.action_items[1].id)  # a link alone is not a hand edit
+    out, _, _ = _llm(ctx, sid, _data([BUDGET]))
+    assert _items(out) == [BUDGET]
+
+
+def test_decision_links_are_pruned_with_their_decisions(ctx, sidecar):
+    sid = _meeting(ctx)
+    first, _, _ = _llm(ctx, sid, _data(decisions=["We ship on Friday", "Skip the beta"]))
+    d1, d2 = first.decision_ids
+    linked = ctx.repo.get(sid).summary_data.model_copy(
+        update={"decision_links": {d1: "obj1", d2: "obj2"}}
+    )
+    ctx.repo.update_fields(sid, summary_data=linked)
+    # The LLM stops listing the second one: its link goes, the first stays.
+    out, _, _ = _llm(ctx, sid, _data(decisions=["We ship on Friday"]))
+    assert out.decision_ids == [d1] and out.decision_links == {d1: "obj1"}
+
+    # A hand edit that deletes it prunes too, even when the caller left the key behind.
+    def drop(d):
+        d.decisions, d.decision_at, d.decision_ids = [], [], []
+
+    out, _, _ = _human(ctx, sid, drop)
+    assert out.decision_links == {}
+
+
 # ---- migration ----------------------------------------------------------------------------
 
 

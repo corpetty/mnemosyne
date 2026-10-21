@@ -8,6 +8,8 @@ from datetime import datetime
 from ..models.session import ActionItem, ClientFact, SummaryData
 from .links import link_known_notes, link_topic
 
+CONTINUED_MARK = "\u21a9 continued in"  # "↩ continued in [[later note]]"
+
 
 def _yaml_str(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -72,6 +74,7 @@ def render_meeting_note(
     is_mine: Callable[[ActionItem], bool] | None = None,
     known_notes: Collection[str] | None = None,  # names of vault notes words may link to
     annex: Mapping[str, list[str]] | None = None,  # lines the user added in Obsidian, see below
+    continued: Mapping[str, str] | None = None,  # action item id -> note of its later mention
 ) -> str:
     """Render a complete Obsidian-compatible note with YAML frontmatter.
 
@@ -85,6 +88,10 @@ def render_meeting_note(
     `annex` holds lines the user wrote under items in the vault (export/note_parse.py), by item
     id, or "@decisions" / "@action_items" / "@others" / "@open_questions" for those right under
     a heading: they are rendered back in their place (services/vault_sync.py).
+    `continued` holds, by item id, the note (file name without .md) of the later meeting that
+    mentions the same task (services/task_links.py): such an item is not a checkbox, so a
+    vault-wide task query lists the task once, but a plain bullet
+    `- text (owner) ↩ continued in [[note]] ^m-<id>`.
     """
     tags = tags if tags is not None else ["meeting", "mnemosyne"]
 
@@ -158,6 +165,14 @@ def render_meeting_note(
             link = linker()  # one section: Others included
             for item in mine:
                 owner = f" ({person(item.owner)})" if item.owner else ""
+                later = (continued or {}).get(item.id) if item.id else None
+                if later:
+                    sections.append(
+                        f"- {link(item.text)}{owner} {CONTINUED_MARK} [[{later}]]"
+                        f"{_block([item.id], 0)}"
+                    )
+                    sections.extend(after(item.id))
+                    continue
                 issue = f" [issue]({item.issue_url})" if item.issue_url else ""
                 box = "x" if item.done else " "
                 due = f" 📅 {item.due.isoformat()}" if item.due else ""  # Obsidian Tasks format

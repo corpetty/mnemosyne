@@ -82,7 +82,9 @@ def _collect(repo, generic: tuple[str, ...]) -> tuple[dict[str, _Acc], dict[str,
         a.names[name.strip()] = a.names.get(name.strip(), 0) + 1
         return a
 
-    for r in repo.people_rows():
+    rows = list(repo.people_rows())
+    heads: dict[str, tuple] = {}
+    for r in rows:
         created = datetime.fromisoformat(r["created_at"])
         data = SummaryData.model_validate_json(r["summary_data"]) if r["summary_data"] else None
         meta[r["id"]] = {"name": r["name"], "created_at": created, "data": data}
@@ -97,13 +99,26 @@ def _collect(repo, generic: tuple[str, ...]) -> tuple[dict[str, _Acc], dict[str,
                 a.invited_to.add(r["id"])
                 a.last_seen = max(filter(None, [a.last_seen, created]))
         for i, item in enumerate(data.action_items if data else []):
+            if item.task_id:
+                rank = (created, r["id"], i)
+                if item.task_id not in heads or rank > heads[item.task_id][0]:
+                    heads[item.task_id] = (rank, r["id"], i, item)
+    # A linked task is one object: counted and listed once, as its head (newest meeting) says.
+    for r in rows:
+        data = meta[r["id"]]["data"]
+        for i, item in enumerate(data.action_items if data else []):
+            sid, idx = r["id"], i
+            if item.task_id:
+                _, sid, idx, item = heads[item.task_id]
+                if (sid, idx) != (r["id"], i):
+                    continue
             if is_person(item.owner, generic):
                 acc(item.owner).tasks.append(
                     TaskItem(
-                        session_id=r["id"],
-                        session_name=r["name"],
-                        created_at=created,
-                        idx=i,
+                        session_id=sid,
+                        session_name=meta[sid]["name"],
+                        created_at=meta[sid]["created_at"],
+                        idx=idx,
                         text=item.text,
                         owner=item.owner,
                         done=item.done,

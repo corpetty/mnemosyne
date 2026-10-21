@@ -477,8 +477,24 @@ class AppContext:
             from ..services.vault_sync import sync_loop
 
             self._vault_task = asyncio.create_task(sync_loop(self, self.vault_sync_interval))
+        # Linked tasks that disagree (a tick merged in elsewhere) settle on their head.
+        await self._try("Task links", self._reconcile_tasks)
         # Library sync: claim meetings from before it, then pull from the peers and watch.
         await self._try("Library sync", self.sync.start)
+
+    async def _reconcile_tasks(self) -> None:
+        from ..services import task_links, task_migration
+
+        try:
+            # Once per data dir: link what old summaries left unlinked (it reconciles itself).
+            done = await asyncio.to_thread(task_migration.migrate, self)
+            if not done.get("skipped") and not done.get("failed"):
+                return
+            n = await asyncio.to_thread(task_links.reconcile, self)
+            if n:
+                logger.info("Task links: %d meeting(s) brought in line", n)
+        except Exception:
+            logger.warning("Task links: reconcile failed", exc_info=True)
 
     async def _start_echo(self) -> None:
         try:

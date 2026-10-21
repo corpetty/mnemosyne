@@ -116,3 +116,57 @@ def test_decisions_log_keeps_users_file(client, ctx, tmp_path):
     sid = ctx.repo.list_summaries()[0].id
     assert client.post(f"/api/sessions/{sid}/export/obsidian").status_code == 200
     assert (vault / "notes" / "Decisions.md").read_text() == "my decisions"
+
+
+def _decided(ctx, name, day, decisions):
+    return ctx.repo.save(
+        Session(
+            name=name,
+            created_at=datetime(2026, 9, day, 10),
+            summary="s",
+            summary_data=SummaryData(
+                decisions=[t for _, t in decisions], decision_ids=[i for i, _ in decisions]
+            ),
+        )
+    )
+
+
+def test_decisions_log_shows_the_superseded_chain(client, ctx, tmp_path):
+    from mnemosyne.services import decision_links
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    ctx.settings.obsidian_vault_path = str(vault)
+    ctx.settings.obsidian_subfolder = "notes"
+    ctx.settings.obsidian_decisions_log = True
+    _decided(ctx, "Plan one", 1, [("d1", "Ship in October"), ("d2", "Hire a designer")])
+    m2 = _decided(ctx, "Plan two", 8, [("e1", "Ship in October"), ("e2", "Use Rust")])
+    m3 = _decided(ctx, "Plan three", 15, [("f1", "Ship in November")])
+    decision_links.link_items(ctx, m2.id)  # same words
+    decision_links.link_pair(ctx, (m2.id, "e1"), (m3.id, "f1"))  # a superseding wording
+    assert client.post(f"/api/sessions/{m3.id}/export/obsidian").status_code == 200
+    lines = (vault / "notes" / "Decisions.md").read_text().splitlines()
+    assert lines[lines.index("## 2026-09-15 [[2026-09-15-Plan three|Plan three]]") + 2 :][:3] == [
+        "- Ship in November",
+        "  - earlier: Ship in October ([[2026-09-08-Plan two]])",
+        "  - earlier: Ship in October ([[2026-09-01-Plan one]])",
+    ]
+    two = lines.index("## 2026-09-08 [[2026-09-08-Plan two|Plan two]]")
+    assert lines[two + 2 : two + 4] == [
+        "- Ship in October → superseded 2026-09-15 in [[2026-09-15-Plan three]]",
+        "- Use Rust",  # unlinked: exactly as before
+    ]
+    one = lines.index("## 2026-09-01 [[2026-09-01-Plan one|Plan one]]")
+    assert lines[one + 2 : one + 4] == [
+        "- Ship in October → superseded 2026-09-08 in [[2026-09-08-Plan two]]",
+        "- Hire a designer",
+    ]
+
+
+def test_decisions_log_without_links_is_unchanged(ctx):
+    from mnemosyne.export.topic_notes import render_decisions
+
+    m = _decided(ctx, "Solo", 3, [("d1", "Do it")])
+    text = render_decisions([(m, m.summary_data.decisions)], index={})
+    assert text == render_decisions([(m, m.summary_data.decisions)])
+    assert "- Do it\n" in text and "superseded" not in text and "earlier" not in text

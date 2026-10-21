@@ -573,6 +573,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Decisions
+         * @description Decisions across the meetings the caller can read, one object each (newest head
+         *     first). `linked=true`: only those in more than one meeting; `false`: only the others.
+         */
+        get: operations["list_decisions_api_decisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/decisions/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link Decisions
+         * @description Make two decisions one object (or merge their objects).
+         */
+        post: operations["link_decisions_api_decisions_link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/decisions/{key}/mentions/{session_id}/{decision_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unlink Decision Mention
+         * @description Take one meeting's decision out of an object. Returns it as an object of its own.
+         */
+        delete: operations["unlink_decision_mention_api_decisions__key__mentions__session_id___decision_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/devices": {
         parameters: {
             query?: never;
@@ -1851,6 +1912,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Session Links */
+        get: operations["session_links_api_sessions__session_id__links_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/live-flags": {
         parameters: {
             query?: never;
@@ -2721,6 +2799,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Tasks
+         * @description Tasks across meetings: one object per task, with its mentions the caller can read
+         *     (newest first; the first is the head, whose text, owner and due the object shows). Same
+         *     filters as /action-items, applied to the head.
+         */
+        get: operations["list_tasks_api_tasks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link Tasks
+         * @description Make two action items one task (or merge their tasks). The head's state wins.
+         */
+        post: operations["link_tasks_api_tasks_link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Task Suggestions
+         * @description Open tasks that look like one but are not linked, best match first.
+         */
+        get: operations["task_suggestions_api_tasks_suggestions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/suggestions/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply Task Suggestion */
+        post: operations["apply_task_suggestion_api_tasks_suggestions_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/suggestions/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss Task Suggestion
+         * @description Never suggest these two together again (kept for the whole library).
+         */
+        post: operations["dismiss_task_suggestion_api_tasks_suggestions_dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Task */
+        patch: operations["update_task_api_tasks__key__patch"];
+        trace?: never;
+    };
+    "/api/tasks/{key}/mentions/{session_id}/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unlink Task Mention
+         * @description Take one meeting's item out of a task. Returns the item as a task of its own.
+         */
+        delete: operations["unlink_task_mention_api_tasks__key__mentions__session_id___item_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/team": {
         parameters: {
             query?: never;
@@ -3042,6 +3256,11 @@ export interface components {
             live: boolean;
             /** Owner */
             owner?: string | null;
+            /**
+             * Task Id
+             * @default
+             */
+            task_id: string;
             /** Text */
             text: string;
         };
@@ -3075,6 +3294,11 @@ export interface components {
             live: boolean;
             /** Owner */
             owner: string | null;
+            /**
+             * Task Id
+             * @default
+             */
+            task_id: string;
             /** Text */
             text: string;
         };
@@ -3387,10 +3611,54 @@ export interface components {
             /** Meetings */
             meetings: components["schemas"]["RelatedMeeting"][];
             /** Open Items */
-            open_items: components["schemas"]["TaskItem"][];
+            open_items: components["schemas"]["BriefItem"][];
             /** Open Questions */
             open_questions: components["schemas"]["OpenQuestion"][];
             organization: components["schemas"]["OrganizationBrief"] | null;
+        };
+        /** BriefItem */
+        BriefItem: {
+            /**
+             * Can Edit
+             * @default false
+             */
+            can_edit: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Done */
+            done: boolean;
+            /** Due */
+            due: string | null;
+            /**
+             * Follow
+             * @default false
+             */
+            follow: boolean;
+            /** Idx */
+            idx: number;
+            /** Issue Url */
+            issue_url: string | null;
+            /**
+             * Mine
+             * @default false
+             */
+            mine: boolean;
+            /** Owner */
+            owner: string | null;
+            /** Session Id */
+            session_id: string;
+            /** Session Name */
+            session_name: string;
+            /**
+             * Task Id
+             * @default
+             */
+            task_id: string;
+            /** Text */
+            text: string;
         };
         /** CalendarEvent */
         CalendarEvent: {
@@ -3617,6 +3885,70 @@ export interface components {
             index: number;
             /** Url */
             url: string;
+        };
+        /**
+         * DecisionLinkRequest
+         * @description Two decisions of two meetings that are one: the newer meeting's wording becomes the
+         *     object's current one (a "supersedes" link when the wording differs).
+         */
+        DecisionLinkRequest: {
+            a: components["schemas"]["DecisionRef"];
+            b: components["schemas"]["DecisionRef"];
+        };
+        /**
+         * DecisionLinks
+         * @description The same decision in other meetings the caller can read: `earlier` ones (newest first)
+         *     and `later` ones (oldest first), as for ItemLinks.
+         */
+        DecisionLinks: {
+            /** Earlier */
+            earlier: components["schemas"]["DecisionMention"][];
+            /** Key */
+            key: string;
+            /** Later */
+            later: components["schemas"]["DecisionMention"][];
+        };
+        /**
+         * DecisionMention
+         * @description One decision of one meeting, as part of a decision object.
+         */
+        DecisionMention: {
+            /** At */
+            at: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decision Id */
+            decision_id: string;
+            /** Session Id */
+            session_id: string;
+            /** Session Name */
+            session_name: string;
+            /** Text */
+            text: string;
+        };
+        /**
+         * DecisionObject
+         * @description A decision across meetings: the head mention's text is the current wording.
+         */
+        DecisionObject: {
+            /** Key */
+            key: string;
+            /** Linked */
+            linked: boolean;
+            /** Mentions */
+            mentions: components["schemas"]["DecisionMention"][];
+            /** Text */
+            text: string;
+        };
+        /** DecisionRef */
+        DecisionRef: {
+            /** Decision Id */
+            decision_id: string;
+            /** Session Id */
+            session_id: string;
         };
         /** Deletion */
         Deletion: {
@@ -4043,6 +4375,26 @@ export interface components {
             /** Skipped */
             skipped: number[];
         };
+        /**
+         * ItemLinks
+         * @description The same task in other meetings the caller can read: `earlier` ones (newest first) and
+         *     `later` ones (oldest first).
+         */
+        ItemLinks: {
+            /** Earlier */
+            earlier: components["schemas"]["TaskMention"][];
+            /** Key */
+            key: string;
+            /** Later */
+            later: components["schemas"]["TaskMention"][];
+        };
+        /** ItemRef */
+        ItemRef: {
+            /** Item Id */
+            item_id: string;
+            /** Session Id */
+            session_id: string;
+        };
         /** Job */
         Job: {
             /**
@@ -4115,6 +4467,11 @@ export interface components {
             title: string;
             /** Url */
             url: string;
+        };
+        /** LinkRequest */
+        LinkRequest: {
+            a: components["schemas"]["ItemRef"];
+            b: components["schemas"]["ItemRef"];
         };
         /** LiveFlag */
         LiveFlag: {
@@ -5081,6 +5438,17 @@ export interface components {
             /** Session Id */
             session_id: string;
         };
+        /** SessionLinks */
+        SessionLinks: {
+            /** Decisions */
+            decisions: {
+                [key: string]: components["schemas"]["DecisionLinks"];
+            };
+            /** Items */
+            items: {
+                [key: string]: components["schemas"]["ItemLinks"];
+            };
+        };
         /** SessionSpeaker */
         SessionSpeaker: {
             /** Has Voice */
@@ -5404,6 +5772,10 @@ export interface components {
             summary_instructions?: string | null;
             /** Summary Style */
             summary_style?: string | null;
+            /** Task Linking */
+            task_linking?: ("off" | "exact" | "related") | null;
+            /** Task Linking Llm */
+            task_linking_llm?: boolean | null;
             /** Team Mode */
             team_mode?: boolean | null;
             /** Team Owner Id */
@@ -5674,6 +6046,13 @@ export interface components {
             summary_instructions: string;
             /** Summary Style */
             summary_style: string;
+            /**
+             * Task Linking
+             * @enum {string}
+             */
+            task_linking: "off" | "exact" | "related";
+            /** Task Linking Llm */
+            task_linking_llm: boolean;
             /** Team Mode */
             team_mode: boolean;
             /** Team Owner Id */
@@ -5902,6 +6281,10 @@ export interface components {
             decision_at: (number | null)[];
             /** Decision Ids */
             decision_ids: string[];
+            /** Decision Links */
+            decision_links: {
+                [key: string]: string;
+            };
             /** Decisions */
             decisions: string[];
             /** Edited At */
@@ -6408,6 +6791,99 @@ export interface components {
             session_name: string;
             /** Text */
             text: string;
+        };
+        /**
+         * TaskMention
+         * @description One action item of one meeting, as part of a task object.
+         */
+        TaskMention: {
+            /** At */
+            at: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Done */
+            done: boolean;
+            /** Due */
+            due: string | null;
+            /** Follow */
+            follow: boolean;
+            /** Idx */
+            idx: number;
+            /** Issue Url */
+            issue_url: string | null;
+            /** Item Id */
+            item_id: string;
+            /** Owner */
+            owner: string | null;
+            /** Session Id */
+            session_id: string;
+            /** Session Name */
+            session_name: string;
+            /** Text */
+            text: string;
+        };
+        /**
+         * TaskObject
+         * @description A task across meetings: the head mention's text, owner, due and at; the object's done,
+         *     follow and issue_url (the head's; mentions agree after a fan-out or reconcile).
+         */
+        TaskObject: {
+            /** At */
+            at: number | null;
+            /**
+             * Can Edit
+             * @default false
+             */
+            can_edit: boolean;
+            /** Done */
+            done: boolean;
+            /** Due */
+            due: string | null;
+            /** Follow */
+            follow: boolean;
+            /** Issue Url */
+            issue_url: string | null;
+            /** Key */
+            key: string;
+            /** Linked */
+            linked: boolean;
+            /** Mentions */
+            mentions: components["schemas"]["TaskMention"][];
+            /**
+             * Mine
+             * @default false
+             */
+            mine: boolean;
+            /** Owner */
+            owner: string | null;
+            /** Task Id */
+            task_id: string;
+            /** Text */
+            text: string;
+        };
+        /**
+         * TaskSuggestion
+         * @description Two open tasks that look like one (related tier), not linked and not dismissed: the
+         *     heads of both, the newer first.
+         */
+        TaskSuggestion: {
+            a: components["schemas"]["TaskMention"];
+            b: components["schemas"]["TaskMention"];
+            /** Score */
+            score: number;
+        };
+        /**
+         * TaskUpdate
+         * @description Tick or star a whole task: every meeting that mentions it follows.
+         */
+        TaskUpdate: {
+            /** Done */
+            done?: boolean | null;
+            /** Follow */
+            follow?: boolean | null;
         };
         /** TeamChange */
         TeamChange: {
@@ -7776,6 +8252,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DesktopCalendar"][];
+                };
+            };
+        };
+    };
+    list_decisions_api_decisions_get: {
+        parameters: {
+            query?: {
+                linked?: boolean | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionObject"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    link_decisions_api_decisions_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionObject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unlink_decision_mention_api_decisions__key__mentions__session_id___decision_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                session_id: string;
+                decision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionObject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10107,6 +10680,37 @@ export interface operations {
             };
         };
     };
+    session_links_api_sessions__session_id__links_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionLinks"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_flags_api_sessions__session_id__live_flags_get: {
         parameters: {
             query?: never;
@@ -11580,6 +12184,226 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+        };
+    };
+    list_tasks_api_tasks_get: {
+        parameters: {
+            query?: {
+                status?: "open" | "done" | "all";
+                owner?: string | null;
+                due?: ("overdue" | "week") | null;
+                mine?: boolean;
+                scope?: "mine" | "following" | "everyone";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskObject"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    link_tasks_api_tasks_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskObject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    task_suggestions_api_tasks_suggestions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskSuggestion"][];
+                };
+            };
+        };
+    };
+    apply_task_suggestion_api_tasks_suggestions_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskObject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dismiss_task_suggestion_api_tasks_suggestions_dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_task_api_tasks__key__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskObject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unlink_task_mention_api_tasks__key__mentions__session_id___item_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                session_id: string;
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskObject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -1,6 +1,7 @@
 """MCP tools against the real API in-process (httpx ASGI transport)."""
 
 import json
+from datetime import datetime, timedelta
 
 import httpx
 import pytest
@@ -14,7 +15,7 @@ from mnemosyne.mcp_server import (
     list_meetings,
     search_meetings,
 )
-from mnemosyne.models.session import ActionItem, SummaryData
+from mnemosyne.models.session import ActionItem, Session, SummaryData
 from mnemosyne.models.transcript import TranscriptSegment
 
 
@@ -119,3 +120,22 @@ async def test_local_only_meetings_are_not_shared(backend, ctx, seeded, fake_pro
     out = await ask_meetings(backend, "When does the migration ship?")
     assert "October" not in json.dumps(fake_provider.calls)
     assert "Release sync" not in out
+
+
+@pytest.mark.anyio
+async def test_action_items_linked_task_listed_once(backend, ctx):
+    for day, text in ((1, "Rotate keys"), (8, "Rotate all the keys")):
+        ctx.repo.save(
+            Session(
+                name=f"Infra {day}",
+                created_at=datetime.now().replace(microsecond=0) - timedelta(days=10 - day),
+                summary="s",
+                summary_data=SummaryData(
+                    action_items=[ActionItem(id="i", text=text, owner="Bob", task_id="t1")]
+                ),
+            )
+        )
+    out = await get_action_items(backend, days=30)
+    assert out.count("Rotate") == 1
+    assert "- [ ] Rotate all the keys (Bob) (also in 1 earlier meeting)" in out
+    assert "## Infra 8" in out and "## Infra 1" not in out

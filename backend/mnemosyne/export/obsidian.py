@@ -3,6 +3,7 @@
 import logging
 import re
 from collections.abc import Callable, Collection, Mapping
+from datetime import datetime
 from pathlib import Path
 
 from ..models.session import ActionItem, Session
@@ -18,9 +19,13 @@ def sanitize_filename(name: str) -> str:
     return name or "untitled"
 
 
+def stem_of(name: str, created_at: datetime) -> str:
+    return f"{created_at.strftime('%Y-%m-%d')}-{sanitize_filename(name)}"
+
+
 def note_stem(session: Session) -> str:
     """The note's file name without .md, which is also its [[wiki link]] target."""
-    return f"{session.created_at.strftime('%Y-%m-%d')}-{sanitize_filename(session.name)}"
+    return stem_of(session.name, session.created_at)
 
 
 def _bookmark(session: Session, bookmark) -> tuple[float, str, str]:
@@ -45,6 +50,7 @@ class ObsidianExporter:
         is_mine: Callable[[ActionItem], bool] | None = None,
         known_notes: Callable[[], Collection[str]] | None = None,
         annex: Mapping[str, list[str]] | None = None,
+        continued: Mapping[str, str] | None = None,
     ):
         self.vault_path = Path(vault_path)
         self.subfolder = subfolder
@@ -59,6 +65,9 @@ class ObsidianExporter:
         self.redact = redact  # ID, account and card numbers, see privacy.redact_identifiers
         # Lines the user added under the summary's items in the vault (services/vault_sync.py).
         self.annex = annex
+        # Action item id -> the note of the later meeting with the same task: such items are
+        # plain "continued in" bullets, only the latest mention is a checkbox (task_links.py).
+        self.continued = continued
 
     def render(self, session: Session, resources: list[str] | None = None) -> str:
         transcript = session.transcript
@@ -95,6 +104,7 @@ class ObsidianExporter:
             is_mine=self.is_mine,
             known_notes=known,
             annex=self.annex,
+            continued=self.continued,
         )
         if self.redact:  # the summary, notes, action items and the rest
             from ..summarization.privacy import redact_identifiers

@@ -244,22 +244,37 @@ def detail(app: AppContext, organization_id: str) -> OrganizationDetail | None:
     if h is None:
         return None
     rows = _rows(app, h)
-    tasks = [
-        TaskItem(
-            session_id=r.id,
-            session_name=r.name,
-            created_at=r.created_at,
-            idx=i,
-            text=a.text,
-            owner=a.owner,
-            done=a.done,
-            issue_url=a.issue_url,
-            due=a.due,
-        )
-        for r in rows
-        for i, a in enumerate(r.data.action_items if r.data else [])
-        if not a.done
-    ]
+    # A linked task is one object: listed once, as its head (newest of these meetings) says.
+    heads: dict[str, tuple] = {}
+    for r in rows:
+        for i, a in enumerate(r.data.action_items if r.data else []):
+            if a.task_id:
+                rank = (r.created_at, r.id, i)
+                if a.task_id not in heads or rank > heads[a.task_id][0]:
+                    heads[a.task_id] = (rank, r, i, a)
+    tasks = []
+    for r in rows:
+        for i, a in enumerate(r.data.action_items if r.data else []):
+            if a.task_id:
+                _, hr, hi, a = heads[a.task_id]
+                if (hr.id, hi) != (r.id, i):
+                    continue
+            else:
+                hr, hi = r, i
+            if not a.done:
+                tasks.append(
+                    TaskItem(
+                        session_id=hr.id,
+                        session_name=hr.name,
+                        created_at=hr.created_at,
+                        idx=hi,
+                        text=a.text,
+                        owner=a.owner,
+                        done=a.done,
+                        issue_url=a.issue_url,
+                        due=a.due,
+                    )
+                )
     return OrganizationDetail(
         **h.model_dump(),
         meetings=[_meeting(r) for r in rows],

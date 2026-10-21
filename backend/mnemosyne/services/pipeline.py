@@ -20,7 +20,11 @@ from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus, trans
 from ..models.transcript import TranscriptSegment
 from ..storage.crypto import plaintext_async
 from ..summarization.privacy import LOCAL_ONLY_ERROR, is_cloud, redact_transcript
-from ..summarization.prompts import meeting_date_instructions, recorder_instructions
+from ..summarization.prompts import (
+    meeting_date_instructions,
+    open_tasks_hint,
+    recorder_instructions,
+)
 from ..transcription.engine import AudioSource
 from ..transcription.glossary import (
     apply_corrections,
@@ -456,6 +460,18 @@ def summarize_session(
             instr = f"{instr}\n{marked}".strip()
         if revise.strip() and session.summary:
             instr = f"{instr}\n{revise_hint(session, revise)}".strip()
+        # The model may say which open task of an earlier related meeting an item continues
+        # (task_linking_llm; not the built-in model, which is too small to judge it).
+        offers: list = []
+        if st.task_linking_llm and st.task_linking != "off" and prov != "local":
+            from .task_links import open_task_offers
+
+            offers = await asyncio.to_thread(
+                open_task_offers, app, session_id, skip_local_only=is_cloud(prov)
+            )
+            known = open_tasks_hint([(o.label, o.text, o.owner, o.meeting) for o in offers])
+            if known:
+                instr = f"{instr}\n{known}".strip()
 
         ctx.update(f"Summarizing with {prov}/{mdl or 'default model'}")
         ctx.emit({"type": "status", "session_id": session_id, "message": "Summarizing..."})
@@ -473,6 +489,11 @@ def summarize_session(
             history.log(app, session_id, "summarize_failed", provider=prov, error=str(e))
             raise
         result["data"].source_hash = transcript_hash(session.transcript)
+        hints = None
+        if offers:  # before the merge below replaces the items; matched by text afterwards
+            from .task_links import hints_from_items
+
+            hints = hints_from_items(result["data"].action_items, offers)
         if notes_only:  # no timeline to point at
             data = result["data"]
             data.decision_at = [None] * len(data.decisions)
@@ -518,6 +539,12 @@ def summarize_session(
             carry_over(current.summary_data if current else None, result["data"])
             ensure_ids(result["data"])
         app.sessions.set_summary(session_id, result["summary"], result["data"])
+        # Items that repeat an open task of an earlier meeting join it (services/task_links.py).
+        from .summary_edit import link_quietly
+
+        await asyncio.to_thread(
+            link_quietly, app, session_id, app.settings.task_linking, hints or None
+        )
         from . import records
 
         await asyncio.to_thread(records.seal, app, session_id, "summarized")

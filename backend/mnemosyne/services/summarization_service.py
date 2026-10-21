@@ -276,9 +276,15 @@ def merge_parts(parts: list[dict], style: str) -> tuple[str, SummaryData]:
     actions: list[ActionItem] = []
     for p in parts:
         for a in p["action_items"]:
-            if not any(same_item(a["text"], b.text) for b in actions):
+            label = a.get("continues") or ""  # a hint for the pipeline (ActionItem._continues)
+            twin = next((b for b in actions if same_item(a["text"], b.text)), None)
+            if twin is None:
                 at = parse_seconds(a.get("at"))
-                actions.append(ActionItem(text=a["text"], owner=a.get("owner"), at=at))
+                item = ActionItem(text=a["text"], owner=a.get("owner"), at=at)
+                item._continues = label
+                actions.append(item)
+            elif label and not twin._continues:
+                twin._continues = label
     raw_chapters = json.dumps(
         {"summary": "x", "chapters": [c for p in parts for c in p["chapters"]]}
     )
