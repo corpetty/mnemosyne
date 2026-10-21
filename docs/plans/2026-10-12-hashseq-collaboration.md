@@ -337,14 +337,27 @@ code at ea282b1, reviewed and accepted.
 4. **Format stability.** Stores we persist must decode after a hashseq upgrade; pin the crate
    by commit and keep its grammar test vectors in our CI.
 
-## Questions for David
+## Questions for David (answered 2026-10-13)
 
-- Are signatures or authorship planned in the core or for an app layer?
-- Private (encrypted) spaces?
-- An app-conventions crate (APP_NOTES.md 5: the wrappers every app rewrites)?
-- Is the canonical encoding stable enough to persist user data now?
-- Is the Basecamp module headed for the official Logos set, and over which delivery topics?
-- Which way is QUEUE.md 56 going?
+- **Signatures or authorship in the core?** No. The plan is an authorship layer on top:
+  signatures in a side table referencing the op ids they sign. Authorship in the core would
+  break what the core is for: permissionless, no overhead between 1 editor and 1M; signatures
+  mean tracking identities, so space grows with the number of editors. → Prerequisite 2 stays
+  ours, as sketched: a signature table keyed by op id.
+- **Private (encrypted) spaces?** Not in the core either: the core is like JSON; encryption is
+  a layer on top and the app picks how. → Prerequisite 1 stays ours.
+- **An app-conventions crate?** Would be good, but he is holding off doing it too early. → Keep
+  our own thin wrappers; do not wait for it.
+- **Canonical encoding stable enough to persist user data?** Yes, stable now. → Prerequisite 4
+  is met; keep pinning the crate by rev.
+- **Basecamp module official, over which topics?** Only in his personal registry: the company
+  has no bandwidth to support it officially (a very large app; fine to be vibed on a personal
+  registry, higher stakes if official). → Publishing through it would depend on an unofficial
+  module; treat Logos publishing as exploratory.
+- **QUEUE.md 56?** Undecided, needs exploration. A shared op space would let objects move between
+  containers (e.g. elements of a parent seq moved into a child seq in a nested tree); a sharded op
+  space allows some simplifications. → Prerequisite 3 stays open; our designs avoid nested
+  objects (phase 2's per-block histories are independent seqs).
 
 ## Out of scope
 
