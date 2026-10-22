@@ -2,6 +2,14 @@ import { expect, test } from '@playwright/test';
 import { importMeeting, openApp } from './fixtures';
 
 const TASK = 'Update the docs before the release';
+const BACKEND = 'http://127.0.0.1:8018';
+
+// The demo summary is the same for every meeting: a summarized meeting left behind would add a
+// second copy of its decision and task to the specs that run after this one.
+test.afterEach(async ({ request }) => {
+  const sessions: { id: string; name: string }[] = await (await request.get(`${BACKEND}/api/sessions`)).json();
+  for (const s of sessions.filter((x) => x.name === 'comments-demo')) await request.delete(`${BACKEND}/api/sessions/${s.id}`);
+});
 
 // Comments on transcript lines and summary blocks (backend services/comments.py): a thread with a
 // reply, resolved, and one on an action item; the Comments card under the summary lists both.
