@@ -30,8 +30,11 @@ test('comment on a line, reply, resolve, then on an action item', async ({ page 
   await expect(page.getByText('Agreed, asking on Monday')).toBeVisible();
   await expect(page.getByRole('button', { name: '1 comment on line 1' })).toHaveText('1');
 
-  // Resolve it.
+  // Resolve it: the thread folds to one line; expanding it offers Reopen.
   await page.getByRole('button', { name: 'Resolve', exact: true }).click();
+  const folded = page.getByRole('button', { name: /^✓ Resolved by .*Check this claim with the team/ });
+  await expect(folded).toBeVisible();
+  await folded.click();
   await expect(page.getByRole('button', { name: 'Reopen', exact: true })).toBeVisible();
 
   // Summarize, then comment on the action item.

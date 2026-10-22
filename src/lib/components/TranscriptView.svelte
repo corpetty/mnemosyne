@@ -502,7 +502,7 @@
 								}}
 								placeholder={panel.to !== null ? `Comment on lines ${idx + 1}–${panel.to + 1}` : 'Add a comment'}
 								autofocus
-								onposted={() => (panel = null)}
+								onposted={() => (panel = panel && { ...panel, to: null })}
 								oncancel={() => (panel = null)}
 							/>
 						{/if}
