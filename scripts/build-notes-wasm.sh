@@ -10,9 +10,12 @@
 # in ~/.cache/mnemosyne-tools/bin, or named by WASM_BINDGEN (CI sets it). No wasm-pack, no wasm-opt: the
 # output should depend only on the toolchain versions.
 #
-# Paths are remapped (CARGO_HOME -> /cargo, the repo -> /mnemosyne, rust-src -> /rustc/<commit>)
-# so panic locations in the module do not carry this machine's home directory. Byte-identical
-# output across machines also needs the same rustc (and cargo: its registry directory name).
+# Paths are remapped (CARGO_HOME -> /cargo, the sources -> /mnemosyne, rust-src -> /rustc/<commit>)
+# so panic locations in the module do not carry this machine's home directory. Cargo also hashes
+# a path dependency's ABSOLUTE location into its symbols, which changes the function order: the
+# crates are copied to a fixed directory (SRC below) and built there, so a checkout anywhere gives
+# the same bytes. Byte-identical output across machines also needs the same rustc (and cargo: its
+# registry directory name).
 set -euo pipefail
 
 WANT_BINDGEN="0.2.129"
@@ -66,11 +69,19 @@ echo "wasm-bindgen: $have_bindgen ($bindgen)"
 # --- build ---
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
 target_dir="${CARGO_TARGET_DIR:-$CRATE/target}"
+# The same path on every machine (see the header); only the two crates' sources, a few hundred KB.
+SRC=/tmp/mnemosyne-notes-wasm-src
+rm -rf "$SRC"
+mkdir -p "$SRC"
+for c in notes-core notes-wasm; do
+	mkdir -p "$SRC/$c"
+	(cd "$ROOT/$c" && git ls-files -z --cached --others --exclude-standard | xargs -0 cp --parents -t "$SRC/$c")
+done
 # With the rust-src component installed, std's paths point into the sysroot: map them back to
 # the /rustc/<commit> form a toolchain without rust-src uses.
 rust_commit="$(rustc -vV | awk '/^commit-hash:/ {print $2}')"
-export RUSTFLAGS="--remap-path-prefix=$cargo_home=/cargo --remap-path-prefix=$target_dir=/target --remap-path-prefix=$ROOT=/mnemosyne --remap-path-prefix=$sysroot/lib/rustlib/src/rust=/rustc/$rust_commit"
-cargo build --locked --release --target "$TARGET"
+export RUSTFLAGS="--remap-path-prefix=$cargo_home=/cargo --remap-path-prefix=$target_dir=/target --remap-path-prefix=$SRC=/mnemosyne --remap-path-prefix=$sysroot/lib/rustlib/src/rust=/rustc/$rust_commit"
+(cd "$SRC/notes-wasm" && CARGO_TARGET_DIR="$target_dir" cargo build --locked --release --target "$TARGET")
 
 wasm="$target_dir/$TARGET/release/notes_wasm.wasm"
 rm -rf "$OUT"
