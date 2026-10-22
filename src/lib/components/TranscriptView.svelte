@@ -24,6 +24,10 @@
 	import QuoteBar from './QuoteBar.svelte';
 	import { syncState } from '$lib/stores/sync.svelte.js';
 	import { playerState } from '$lib/stores/player.svelte.js';
+	import { commentsState } from '$lib/stores/comments.svelte.js';
+	import { uiState } from '$lib/stores/ui.svelte.js';
+	import CommentThread from './CommentThread.svelte';
+	import CommentComposer from './CommentComposer.svelte';
 
 	function formatTime(seconds: number): string {
 		const m = Math.floor(seconds / 60);
@@ -54,6 +58,46 @@
 	$effect(() => {
 		void transcriptState.segments;
 		quote = null;
+	});
+
+	// Comments: one line's panel (its threads and a composer) is open at a time. `to` is the last
+	// line of a range comment started from the quote bar.
+	let panel = $state<{ idx: number; to: number | null } | null>(null);
+	function togglePanel(idx: number) {
+		panel = panel?.idx === idx && panel.to === null ? null : { idx, to: null };
+	}
+	function openCommentFromQuote() {
+		if (!quote) return;
+		panel = { idx: quote.from, to: quote.to > quote.from ? quote.to : null };
+		quote = null;
+	}
+	/** Open threads on a line, or all of them when every one is resolved. */
+	function badge(idx: number): { open: number; total: number } | null {
+		const ts = commentsState.bySegment.get(idx);
+		if (!ts?.length) return null;
+		return { open: ts.filter((t) => !t.root.resolved_at && !t.root.deleted).length, total: ts.length };
+	}
+	$effect(() => {
+		void transcriptState.sessionId;
+		panel = null;
+	});
+
+	// Search hand-off: scroll to the comment's line and open its panel.
+	$effect(() => {
+		const id = uiState.focusComment;
+		if (!id || !container) return;
+		if (commentsState.sessionId !== transcriptState.sessionId) return;
+		if (commentsState.threads.length === 0 || transcriptState.segments.length === 0) return;
+		const t = commentsState.threads.find((x) => x.root.id === id || x.replies.some((r) => r.id === id));
+		const idx = t?.root.segment_idx;
+		if (idx == null) return; // not a line's thread: the Summary view's
+		uiState.focusComment = null;
+		if (idx >= transcriptState.segments.length) return;
+		panel = { idx, to: null };
+		if (idx >= shownCount) reveal = { id: transcriptState.sessionId, n: idx + STEP };
+		void tick().then(() => {
+			container?.querySelector<HTMLElement>(`[data-idx="${idx}"]`)?.scrollIntoView({ block: 'center' });
+		});
 	});
 
 	$effect(() => {
@@ -202,6 +246,10 @@
 		await run(() => splitSegment(session.id, idx, offset), 'Segment split');
 	}
 
+	function onWindowKey(e: KeyboardEvent) {
+		if (e.key === 'Escape' && panel && editingIdx === null) panel = null;
+	}
+
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			editingIdx = null;
@@ -271,6 +319,8 @@
 	}
 </script>
 
+<svelte:window onkeydown={onWindowKey} />
+
 <div class="space-y-2">
 	<div class="flex items-center justify-between gap-3">
 		<div class="flex items-center gap-2 text-sm text-gray-400 min-h-5">
@@ -316,7 +366,7 @@
 
 	<div bind:this={container} class="max-h-[max(500px,70vh)] overflow-y-auto space-y-1 pr-2">
 		{#if quote}
-			<QuoteBar from={quote.from} to={quote.to} onclose={() => (quote = null)} />
+			<QuoteBar from={quote.from} to={quote.to} onclose={() => (quote = null)} oncomment={openCommentFromQuote} />
 		{/if}
 		{#each visibleSegments as segment, idx (idx)}
 			{#if chapterAt.has(idx)}
@@ -326,8 +376,9 @@
 				</div>
 			{/if}
 			{@const playingHere = idx === playingIdx}
+			{@const b = badge(idx)}
 			{@const quoted = quote !== null && idx >= quote.from && idx <= quote.to}
-			<div data-idx={idx} style="content-visibility: auto; contain-intrinsic-size: auto 28px" class="group flex gap-3 text-sm rounded px-1 py-1 transition-colors {editingIdx === idx ? 'bg-gray-900' : quoted ? 'bg-amber-950/40' : playingHere ? 'bg-blue-950/40' : 'hover:bg-gray-900/50'}">
+			<div data-idx={idx} style="content-visibility: auto; contain-intrinsic-size: auto 28px" class="group flex flex-wrap gap-3 text-sm rounded px-1 py-1 transition-colors {editingIdx === idx ? 'bg-gray-900' : quoted ? 'bg-amber-950/40' : playingHere ? 'bg-blue-950/40' : 'hover:bg-gray-900/50'}">
 				<div class="flex-shrink-0 w-14 text-right pt-0.5">
 					<button
 						onclick={() => playerState.seek(segment.start)}
@@ -397,6 +448,14 @@
 						{/if}
 					{/if}
 				</div>
+				{#if b}
+					<button
+						onclick={() => togglePanel(idx)}
+						title="{b.total} comment{b.total === 1 ? '' : 's'}"
+						aria-label="{b.total} comment{b.total === 1 ? '' : 's'} on line {idx + 1}"
+						class="flex-shrink-0 self-start text-[11px] rounded-full bg-gray-800 px-1.5 {b.open ? 'text-sky-300' : 'text-gray-500'}"
+					>{b.open || b.total}</button>
+				{/if}
 				{#if editingIdx !== idx}
 					<div class="flex-shrink-0 flex items-start gap-1 {quoted ? '' : 'opacity-0'} group-hover:opacity-100 transition-opacity text-xs text-gray-500">
 						<button
@@ -405,11 +464,47 @@
 							aria-label="Quote from line {idx + 1}"
 							class="px-1 {quoted ? 'text-amber-300' : 'hover:text-amber-300'}"
 						>❝</button>
+						{#if commentsState.canComment}
+							<button
+								onclick={() => togglePanel(idx)}
+								title="Comment"
+								aria-label="Comment on line {idx + 1}"
+								class="px-1 {panel?.idx === idx ? 'text-sky-300' : 'hover:text-sky-300'}"
+							>
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+							</button>
+						{/if}
 						{#if canEdit}
 							{#if idx > 0}
 								<button onclick={() => mergeUp(idx)} disabled={busy} title="Merge into previous segment" class="px-1 hover:text-gray-200">⤒</button>
 							{/if}
 							<button onclick={() => remove(idx)} disabled={busy} title="Delete segment" class="px-1 hover:text-red-400">✕</button>
+						{/if}
+					</div>
+				{/if}
+				{#if panel?.idx === idx && sessionState.activeSession}
+					<div class="basis-full space-y-2 pl-[4.25rem] pb-1">
+						{#each commentsState.bySegment.get(idx) ?? [] as thread (thread.root.id)}
+							<CommentThread {thread} sessionId={sessionState.activeSession.id} compact />
+						{/each}
+						{#if commentsState.canComment}
+							<CommentComposer
+								sessionId={sessionState.activeSession.id}
+								target={{
+									target: 'segment',
+									target_id: '',
+									parent_id: '',
+									exact: '',
+									prefix: '',
+									suffix: '',
+									idx,
+									...(panel.to !== null ? { idx_to: panel.to } : {})
+								}}
+								placeholder={panel.to !== null ? `Comment on lines ${idx + 1}–${panel.to + 1}` : 'Add a comment'}
+								autofocus
+								onposted={() => (panel = null)}
+								oncancel={() => (panel = null)}
+							/>
 						{/if}
 					</div>
 				{/if}

@@ -599,6 +599,60 @@ button, Ctrl+M, the tray's "Mark this moment", `mnemosyne --mark`). Kept as (par
 `bookmarks`; the summary is told to cover those moments; the Obsidian note lists them.
 Changes publish `{type: "bookmarks", session_id}`.
 
+### Comments: `GET|POST /api/sessions/{session_id}/comments` · `PATCH|DELETE …/comments/{id}` · `POST …/{id}/resolve|reopen`
+Threads on a meeting (services/comments.py). `GET` → `SessionComments` `{threads: [{root,
+replies}], can_comment}`, oldest first. `POST` `CommentCreate` `{text, target, target_id?,
+parent_id?, idx?, idx_to?, seconds?, exact?, prefix?, suffix?}` → `Comment`:
+
+- `target: "segment"` with `idx` (and `idx_to` for several lines): stored as a time span
+  `anchor {part, start, end}` (seconds into the part, like bookmarks), `quote` the lines' text.
+  With `seconds` (meeting timeline, from the audio player) instead: a moment, `start == end`,
+  `quote` the line playing then (`""` between lines).
+- `target: "decision" | "question" | "item"` with `target_id`, the summary block's id
+  (`decision_ids`, `question_ids`, `ActionItem.id`); `quote` its text.
+- `target: "body"`: a selection of the rendered summary, `anchor {exact, prefix, suffix}`
+  (`exact` must be in the summary's plain text; `""` = the whole summary), `quote = exact`.
+- `target: ""`: the meeting as a whole. A reply names `parent_id` (a thread's first comment in the
+  same meeting) and carries no target or anchor.
+
+Comments are re-anchored when read: a transcript comment is on the line it overlaps most (a line
+counts when the overlap is at least half the comment's span or half the line's own duration), so it
+follows edits, splits, merges and a new transcription; `segment_idx` is that line and `at_seconds`
+where the comment starts on the meeting's timeline. A moment is never detached while its part is
+there: it is on the line containing it, else the nearest line whose start or end is within 5 s, else
+on no line (`segment_idx` null, shown "at" `at_seconds`). A block comment follows its id (rewording
+keeps it). A text comment is a selection of the rendered summary: it is matched against the
+summary's plain text (no Markdown markers, emphasis or code ticks, links as their text, whitespace
+collapsed), by its exact text (prefix/suffix choose among repeats), else by a fuzzy match (≥ 0.85)
+over windows of sentences; the anchor is stored as sent. `changed`: the quoted words are no longer
+there as written; `detached`: the place is gone (deleted line, removed item, rewritten text);
+detached comments are kept, with their `quote`.
+
+`PATCH` `{text}` (the author, or an admin) → `Comment`. `DELETE` (the author, the meeting's owner
+or an admin) → `{deleted: true}`; a first comment with replies stays as an empty `deleted` one
+until its last reply goes. `resolve` / `reopen` (threads only; the meeting's owner, an admin or the
+thread's author) → `Comment` with `resolved_at` / `resolved_by`. Each comment carries `can_edit`,
+`can_delete`, `can_resolve` for the caller. On a team server anyone who can read the meeting
+comments; `author_id`/`author` are the signed-in person; `@Full Name` or `@First` (unique on the
+server) become user ids in `mentions`. On the desktop `author_id` is `""`, `author` the
+`local_speaker_name` (`"You"` when blank), everything is allowed and `mentions` is empty.
+
+Errors: `404` for a meeting the caller may not see or a comment not in it, `403` not allowed,
+`400` bad target, line, block, text or thread. History gets `commented` (`by`, `target`, `reply`,
+`excerpt` ≤ 80 characters), `comment_resolved` and `comment_reopened`. Every change publishes
+`{type: "comments", session_id, mentions}` (`mentions`: user ids newly named by this change), only
+to those who may read the meeting.
+
+### Comments on tasks and decisions: `GET|POST /api/tasks/{key}/comments` · `GET|POST /api/decisions/{key}/comments`
+A task or decision is one object across meetings (services/task_links.py, decision_links.py), and
+its threads are the comments on its mentions. `GET` → `ObjectComments` `{mentions: [{session_id,
+session_name, created_at, item_id, threads}]}`, newest meeting first, only meetings the caller may
+see. `POST` `{text, parent_id?}` → `Comment`: a new thread goes on the newest visible mention (as an
+`item` / `decision` block comment there), a reply (`parent_id` = the thread's root id) on the
+meeting of the thread it answers. Edit, resolve and delete use the meeting routes above. `404` for an
+unknown key or thread, `400` for an empty text or an object without an id. Tasks and decisions carry
+`open_comments` (open root threads over all their mentions).
+
 ### History: `GET /api/sessions/{session_id}/history` · `POST …/recover`
 What a meeting is made of and what happened to it (services/history.py): `parts` (each with its
 `offset`, `seconds`, wall-clock `started_at`/`ended_at` (`approximate` when worked out from when it

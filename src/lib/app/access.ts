@@ -10,3 +10,12 @@ export function canChange(session: { owner_id: string } | null | undefined): boo
   const me = connectionState.me;
   return !me?.id || me.role === 'admin' || session.owner_id === me.id;
 }
+
+/**
+ * Whether this person may comment on the meeting: it is readable by them (the backend only
+ * serves meetings they may see), so on the desktop always, and on a team server whenever it is
+ * loaded. The backend's `can_comment` on the comment list is the final word.
+ */
+export function canComment(session: { id: string } | null | undefined): boolean {
+  return !!session;
+}

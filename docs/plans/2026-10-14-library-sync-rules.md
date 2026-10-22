@@ -17,8 +17,10 @@ Bump: `save` (new meeting: origin '', fresh vv), `update_fields` (except the fie
 `clear_audio` (the peer learns the audio is gone), external notes add/delete, `attach_asset` /
 `detach_asset`, `update_asset` and `delete_asset` (bump every meeting that references the asset;
 query session_assets before the delete), bookmarks add/update/delete, `move_bookmarks` and
-`move_events` (bump source and target), live flags add/delete, `set_action_item_done` /
-`_follow` / `_set_action_item_flag`, `relabel_session_speaker`, `set_session_embeddings`.
+`move_events` (bump source and target), live flags add/delete, comments add / edit / resolve /
+delete (`add_comment`, `update_comment_text`, `set_comment_resolved`, `delete_comment`),
+`set_action_item_done` / `_follow` / `_set_action_item_flag`, `relabel_session_speaker`,
+`set_session_embeddings`.
 
 Never bump (local bookkeeping or machine-local data): `add_event` (events travel with the
 meeting, see 2), vault_notes, summary_docs, `keep_version`, seals, `log_deletion`, supervision
@@ -46,6 +48,8 @@ merged `sync_vv` itself, bumps `sync_seq` only for a merge (not a fast-forward),
 - `session_events`: travel with the meeting as a union by a new `uid`; event writes do not bump.
   Never sent: viewed, played, exported (access log), recover_*, interrupted, capture_problem,
   capture_ok, hubspot_* (machine-local happenings).
+- Comments travel inside their meeting (`SyncSession.comments`, all columns), replaced whole on
+  write and merged by id three ways (text through the merge, resolved/deleted as scalars).
 - Assets: link and text assets travel (dedupe links by URL on arrival, as `find_link` does);
   file assets show "on <machine>" without bytes.
 - Topic renames (services/topics.py rewrites summary_data across meetings) bump and travel as

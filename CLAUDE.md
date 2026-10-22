@@ -413,6 +413,14 @@ startup. Linking only reaches OLDER meetings' open objects: exact text always, c
 (`task_linking_llm`, never provider "local", `ActionItem._continues` private attr). Obsidian: only
 the head mention has a checkbox, earlier ones `↩ continued in [[note]]`. One-off migration at
 startup (services/task_migration.py, meta `task_links_migrated`).
+Comments (unreleased, phase 5): threads on transcript lines, audio moments, the summary text,
+decisions, questions and action items (services/comments.py, routes/comments.py, `comments` table).
+Anchors are re-found at read time, not stored positions: transcript = time span (part, start,
+end) like bookmarks; items = block id; summary text = quote with prefix/suffix matched against
+the RENDERED markdown (`plain_markdown`). Changed/detached comments are kept and shown. Comments
+travel inside SyncSession, are keyword-searchable (`comments_fts`, never Ask/semantic), not exported
+to Obsidian. Readers may comment; resolve = meeting owner, admin or thread author. Task comments
+attach to a mention and are aggregated on the task object.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

@@ -11,12 +11,18 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
+	import { uiState } from '$lib/stores/ui.svelte.js';
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import Markdown from './Markdown.svelte';
 	import ExternalNotesCard from './ExternalNotesCard.svelte';
 	import SummaryEditor from './SummaryEditor.svelte';
 	import SummaryVersions from './SummaryVersions.svelte';
 	import HubSpotCard from './HubSpotCard.svelte';
+	import CommentThread from './CommentThread.svelte';
+	import CommentComposer from './CommentComposer.svelte';
+	import SummaryComments from './SummaryComments.svelte';
+	import { commentsState } from '$lib/stores/comments.svelte.js';
+	import { tick } from 'svelte';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
 	import {
 		getSessionLinks,
@@ -45,8 +51,113 @@
 			selected = new Set();
 			editing = false;
 			showVersions = false;
+			commentPanel = null;
+			bodyDraft = null;
+			selectionAnchor = null;
 		}
 	});
+
+	// Comments on decisions, action items and questions: one inline panel open at a time.
+	type BlockKind = 'decision' | 'item' | 'question';
+	let commentPanel = $state<string | null>(null);
+	function toggleComments(id: string) {
+		commentPanel = commentPanel === id ? null : id;
+	}
+	function panelKey(e: KeyboardEvent) {
+		// The composer's Esc cancels (and closes); an edit's Esc only ends the edit.
+		if (e.key === 'Escape' && !e.defaultPrevented) commentPanel = null;
+	}
+	let summaryRoot = $state<HTMLElement | null>(null);
+	/** "Go to" from the Comments card: open the block's panel and bring it into view. */
+	async function goToBlock(id: string) {
+		commentPanel = id;
+		await tick();
+		summaryRoot
+			?.querySelector<HTMLElement>(`[data-comment-block="${CSS.escape(id)}"]`)
+			?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+	}
+	let commentsFilter = $state<'open' | 'resolved' | 'all'>('open');
+	// Search hand-off: a comment on the summary opens its block's panel, or shows its thread
+	// in the Comments card. Roots on transcript lines are the Transcript view's.
+	$effect(() => {
+		const id = uiState.focusComment;
+		if (!id || !summaryRoot || !sessionState.activeSession?.summary_data) return;
+		if (commentsState.sessionId !== sessionState.activeSession.id) return;
+		if (commentsState.threads.length === 0) return;
+		const t = commentsState.threads.find((x) => x.root.id === id || x.replies.some((r) => r.id === id));
+		if (!t || t.root.segment_idx != null || t.root.target === 'segment') return;
+		uiState.focusComment = null;
+		const r = t.root;
+		if (!r.detached && r.target_id && commentsState.byBlock.has(r.target_id)) {
+			void goToBlock(r.target_id);
+			return;
+		}
+		if (r.resolved_at && commentsFilter === 'open') commentsFilter = 'resolved';
+		void tick().then(() =>
+			summaryRoot
+				?.querySelector<HTMLElement>(`[data-comment-thread="${CSS.escape(r.id)}"]`)
+				?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+		);
+	});
+	function blockCounts(id: string): { total: number; open: number } {
+		const ts = commentsState.byBlock.get(id) ?? [];
+		return { total: ts.length, open: ts.filter((t) => !t.root.resolved_at && !t.root.deleted).length };
+	}
+
+	// Comments on a selection of the rendered summary text.
+	type Quote = { exact: string; prefix: string; suffix: string };
+	const CONTEXT = 32; // characters of rendered text kept before and after a selection
+	const collapse = (t: string) => t.replace(/\s+/g, ' ').trim();
+	let summaryCard = $state<HTMLElement | null>(null);
+	let summaryText = $state<HTMLElement | null>(null);
+	let selectionAnchor = $state<(Quote & { top: number; left: number }) | null>(null);
+	let bodyDraft = $state<Quote | null>(null);
+
+	function onSelectionChange() {
+		const sel = document.getSelection();
+		if (!commentsState.canComment || !summaryCard || !summaryText || !sel || sel.isCollapsed || !sel.rangeCount) {
+			selectionAnchor = null;
+			return;
+		}
+		const range = sel.getRangeAt(0);
+		if (!summaryText.contains(range.startContainer) || !summaryText.contains(range.endContainer)) {
+			selectionAnchor = null;
+			return;
+		}
+		const exact = collapse(sel.toString());
+		if (!exact) {
+			selectionAnchor = null;
+			return;
+		}
+		// The rendered text before and after the selection (what Range.toString / textContent see).
+		const before = document.createRange();
+		before.selectNodeContents(summaryText);
+		before.setEnd(range.startContainer, range.startOffset);
+		const after = document.createRange();
+		after.selectNodeContents(summaryText);
+		after.setStart(range.endContainer, range.endOffset);
+		const prefix = collapse(before.toString()).slice(-CONTEXT).trimStart();
+		const suffix = collapse(after.toString()).slice(0, CONTEXT).trimEnd();
+		// Just above where the selection ends.
+		const rects = range.getClientRects();
+		const end = rects.length ? rects[rects.length - 1] : range.getBoundingClientRect();
+		const card = summaryCard.getBoundingClientRect();
+		selectionAnchor = {
+			exact,
+			prefix,
+			suffix,
+			top: Math.max(0, end.top - card.top - 28),
+			left: Math.min(Math.max(0, end.right - card.left - 36), Math.max(0, card.width - 80))
+		};
+	}
+
+	function commentOnSelection() {
+		if (!selectionAnchor) return;
+		const { exact, prefix, suffix } = selectionAnchor;
+		bodyDraft = { exact, prefix, suffix };
+		selectionAnchor = null;
+		document.getSelection()?.removeAllRanges();
+	}
 
 	let followupStyle = $state<'email' | 'chat'>('email');
 	let followupText = $state('');
@@ -435,11 +546,53 @@
 	</div>
 {/snippet}
 
+{#snippet commentControls(id: string, what: string)}
+	{#if id}
+		{@const c = blockCounts(id)}
+		{#if c.total}
+			<button
+				onclick={() => toggleComments(id)}
+				title="{c.total} comment{c.total === 1 ? '' : 's'}{c.open && c.open < c.total ? `, ${c.open} open` : ''}"
+				aria-label="{c.total} comment{c.total === 1 ? '' : 's'} on {what}"
+				aria-expanded={commentPanel === id}
+				class="ml-1.5 text-[11px] rounded-full bg-gray-800 px-1.5 {c.open ? 'text-sky-300' : 'text-gray-500'}"
+			>{c.open || c.total}</button>
+		{/if}
+		{#if commentsState.canComment}
+			<button
+				onclick={() => toggleComments(id)}
+				aria-label="Comment on {what}"
+				class="ml-2 text-[11px] text-gray-600 hover:text-gray-300 opacity-0 group-hover:opacity-100 focus:opacity-100">Comment</button>
+		{/if}
+	{/if}
+{/snippet}
+
+{#snippet commentPanelFor(kind: BlockKind, id: string)}
+	{#if id && commentPanel === id && sessionState.activeSession}
+		{@const sid = sessionState.activeSession.id}
+		<div class="mt-1.5 mb-1 space-y-1.5 list-none text-left" role="presentation" onkeydown={panelKey}>
+			{#each commentsState.byBlock.get(id) ?? [] as t (t.root.id)}
+				<CommentThread thread={t} sessionId={sid} compact />
+			{/each}
+			{#if commentsState.canComment}
+				<CommentComposer
+					sessionId={sid}
+					target={{ target: kind, target_id: id, exact: '', prefix: '', suffix: '', parent_id: '' }}
+					autofocus
+					oncancel={() => (commentPanel = null)}
+				/>
+			{/if}
+		</div>
+	{/if}
+{/snippet}
+
+<svelte:document onselectionchange={onSelectionChange} />
+
 <div class="space-y-3">
 	{#if editing && sessionState.activeSession}
 		<SummaryEditor session={sessionState.activeSession} ondone={() => (editing = false)} />
 	{:else if sessionState.activeSession?.summary}
-		<div class="relative space-y-3">
+		<div bind:this={summaryRoot} class="relative space-y-3">
 			{#if data && data.topics.length}
 				<div class="flex flex-wrap gap-1">
 					{#each data.topics as t}
@@ -450,9 +603,30 @@
 			{#if showVersions}
 				<SummaryVersions sessionId={sessionState.activeSession.id} canRestore={mine} onclose={() => (showVersions = false)} />
 			{/if}
-			<div class="bg-gray-900 border border-gray-700 rounded-lg p-4">
-				<Markdown text={sessionState.activeSession.summary} />
+			<div bind:this={summaryCard} class="relative bg-gray-900 border border-gray-700 rounded-lg p-4">
+				<div bind:this={summaryText}><Markdown text={sessionState.activeSession.summary} /></div>
+				{#if selectionAnchor}
+					<button
+						onmousedown={(e) => e.preventDefault()}
+						onclick={commentOnSelection}
+						style="top: {selectionAnchor.top}px; left: {selectionAnchor.left}px"
+						class="absolute z-10 px-2 py-0.5 text-[11px] rounded bg-gray-800 border border-gray-600 text-gray-200 hover:bg-gray-700 shadow"
+					>Comment</button>
+				{/if}
 			</div>
+			{#if bodyDraft && commentsState.canComment}
+				<div class="bg-gray-900 border border-gray-700 rounded-lg p-3 space-y-1.5">
+					<p class="text-xs text-gray-400 italic border-l-2 border-gray-600 pl-2">“{bodyDraft.exact.length > 240 ? `${bodyDraft.exact.slice(0, 240)}…` : bodyDraft.exact}”</p>
+					<CommentComposer
+						sessionId={sessionState.activeSession.id}
+						target={{ target: 'body', target_id: '', parent_id: '', ...bodyDraft }}
+						placeholder="Comment on this"
+						autofocus
+						onposted={() => (bodyDraft = null)}
+						oncancel={() => (bodyDraft = null)}
+					/>
+				</div>
+			{/if}
 			{#if data}
 				<div class="grid gap-3 md:grid-cols-2">
 					{#if data.decisions.length}
@@ -462,7 +636,7 @@
 								{#each data.decisions as d, i}
 										{@const did = decisionId(i)}
 										{@const dl = did ? links?.decisions[did] : undefined}
-										<li class="group">{d}{@render at(data.decision_at[i])}{#if mine && did}<button onclick={() => (pickFor === did ? (pickFor = null) : startPick(did))} class="ml-2 text-[11px] text-gray-600 hover:text-gray-300 opacity-0 group-hover:opacity-100 focus:opacity-100">Supersedes…</button>{/if}
+										<li class="group" data-comment-block={did || undefined}>{d}{@render at(data.decision_at[i])}{#if mine && did}<button onclick={() => (pickFor === did ? (pickFor = null) : startPick(did))} class="ml-2 text-[11px] text-gray-600 hover:text-gray-300 opacity-0 group-hover:opacity-100 focus:opacity-100">Supersedes…</button>{/if}{@render commentControls(did, 'this decision')}
 											{#if dl?.earlier.length}{@render decisionLine('supersedes', dl.earlier[0], dl.key, did, d)}{/if}
 											{#if dl?.later.length}{@render decisionLine('superseded by', dl.later[0], dl.key, did, d)}{/if}
 											{#if pickFor === did}
@@ -476,6 +650,7 @@
 													<button onclick={() => (pickFor = null)} class="text-[11px] text-gray-500 hover:text-gray-300">Cancel</button>
 												</div>
 											{/if}
+											{@render commentPanelFor('decision', did)}
 										</li>
 									{/each}
 							</ul>
@@ -486,7 +661,8 @@
 							<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Action items</h4>
 							<ul class="space-y-1 text-sm text-gray-200">
 								{#each data.action_items as a, i}
-									<li class="flex gap-2 items-start">
+									<li class="group" data-comment-block={a.id || undefined}>
+									<div class="flex gap-2 items-start">
 										{#if a.issue_url}
 											<a href={a.issue_url} target="_blank" rel="noopener noreferrer" onclick={(e) => { e.preventDefault(); openLink(a.issue_url!); }} class="text-green-500 hover:text-green-300 text-xs mt-0.5" title="Open the GitHub issue">✓ issue</a>
 										{:else if mine}
@@ -498,7 +674,9 @@
 											aria-label={a.done ? `Reopen: ${a.text}` : `Mark done: ${a.text}`}
 											class="text-xs mt-0.5 {a.done ? 'text-emerald-400' : 'text-gray-600 hover:text-gray-300'}"
 										>{a.done ? '✓' : '○'}</button>
-										<span class={a.done ? 'line-through text-gray-500' : ''}>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}{#if a.due}<span class="text-amber-300/80 text-xs"> · due {new Date(`${a.due}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>{/if}{#if a.live}<span class="ml-1.5 text-[10px] px-1 rounded bg-purple-900/50 text-purple-300" title="Heard by the live copilot during the meeting; the summary did not list it">live</span>{/if}{@render at(a.at)}{#if a.id && links?.items[a.id]}{@const il = links.items[a.id]}{#if il.earlier.length}<button onclick={() => openMeeting(il.earlier[0].session_id)} class="ml-1.5 text-[11px] text-gray-500 hover:text-gray-300" title={il.earlier.length > 1 ? `Earlier in ${il.earlier.length} meetings` : 'Open that meeting'}>↩ continues from {il.earlier[0].session_name}, {linkDate(il.earlier[0])}</button>{/if}{#if il.later.length}<button onclick={() => openMeeting(il.later[0].session_id)} class="ml-1.5 text-[11px] text-gray-500 hover:text-gray-300" title={il.later.length > 1 ? `Continued in ${il.later.length} meetings` : 'Open that meeting'}>→ continued in {il.later[0].session_name}, {linkDate(il.later[0])}</button>{/if}{/if}</span>
+										<span class={a.done ? 'line-through text-gray-500' : ''}>{a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}{#if a.due}<span class="text-amber-300/80 text-xs"> · due {new Date(`${a.due}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>{/if}{#if a.live}<span class="ml-1.5 text-[10px] px-1 rounded bg-purple-900/50 text-purple-300" title="Heard by the live copilot during the meeting; the summary did not list it">live</span>{/if}{@render at(a.at)}{#if a.id && links?.items[a.id]}{@const il = links.items[a.id]}{#if il.earlier.length}<button onclick={() => openMeeting(il.earlier[0].session_id)} class="ml-1.5 text-[11px] text-gray-500 hover:text-gray-300" title={il.earlier.length > 1 ? `Earlier in ${il.earlier.length} meetings` : 'Open that meeting'}>↩ continues from {il.earlier[0].session_name}, {linkDate(il.earlier[0])}</button>{/if}{#if il.later.length}<button onclick={() => openMeeting(il.later[0].session_id)} class="ml-1.5 text-[11px] text-gray-500 hover:text-gray-300" title={il.later.length > 1 ? `Continued in ${il.later.length} meetings` : 'Open that meeting'}>→ continued in {il.later[0].session_name}, {linkDate(il.later[0])}</button>{/if}{/if}{@render commentControls(a.id ?? '', 'this action item')}</span>
+									</div>
+									{@render commentPanelFor('item', a.id ?? '')}
 									</li>
 								{/each}
 							</ul>
@@ -535,7 +713,10 @@
 						<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 md:col-span-2">
 							<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Open questions</h4>
 							<ul class="space-y-1 text-sm text-gray-200 list-disc list-inside">
-								{#each data.open_questions as q, i}<li>{q}{@render at(data.question_at[i])}</li>{/each}
+								{#each data.open_questions as q, i}
+									{@const qid = data.question_ids?.[i] ?? ''}
+									<li class="group" data-comment-block={qid || undefined}>{q}{@render at(data.question_at[i])}{@render commentControls(qid, 'this question')}{@render commentPanelFor('question', qid)}</li>
+								{/each}
 							</ul>
 						</section>
 					{/if}
@@ -555,6 +736,9 @@
 						</section>
 					{/if}
 				</div>
+			{/if}
+			<SummaryComments ongoto={goToBlock} bind:filter={commentsFilter} />
+			{#if data}
 				<p class="text-[11px] text-gray-600">
 					{data.style} summary{#if data.provider} · {data.provider}/{data.model}{/if}{#if data.edited_at} · edited {new Date(data.edited_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}{#if data.edited_by} by {data.edited_by}{/if}{/if}
 				</p>

@@ -1,4 +1,8 @@
 import type {
+  SessionComments,
+  ObjectComments,
+  Comment,
+  CommentCreate,
   ActiveRecording,
   TranscriptSegment,
   ExternalNotes,
@@ -1138,5 +1142,44 @@ export async function sendFollowup(sessionId: string, destination: DestinationNa
   return request(`/api/sessions/${sessionId}/followup/send`, {
     method: 'POST',
     body: JSON.stringify({ destination, text })
+  });
+}
+
+// Comments and threads on a meeting (backend routes/comments.py)
+const commentsPath = (sessionId: string) => `/api/sessions/${encodeURIComponent(sessionId)}/comments`;
+
+export async function listComments(sessionId: string): Promise<SessionComments> {
+  return request(commentsPath(sessionId));
+}
+
+export async function addComment(sessionId: string, body: CommentCreate): Promise<Comment> {
+  return request(commentsPath(sessionId), { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function editComment(sessionId: string, cid: string, text: string): Promise<Comment> {
+  return request(`${commentsPath(sessionId)}/${encodeURIComponent(cid)}`, { method: 'PATCH', body: JSON.stringify({ text }) });
+}
+
+export async function deleteComment(sessionId: string, cid: string): Promise<{ deleted: boolean }> {
+  return request(`${commentsPath(sessionId)}/${encodeURIComponent(cid)}`, { method: 'DELETE' });
+}
+
+export async function resolveComment(sessionId: string, cid: string): Promise<Comment> {
+  return request(`${commentsPath(sessionId)}/${encodeURIComponent(cid)}/resolve`, { method: 'POST' });
+}
+
+export async function reopenComment(sessionId: string, cid: string): Promise<Comment> {
+  return request(`${commentsPath(sessionId)}/${encodeURIComponent(cid)}/reopen`, { method: 'POST' });
+}
+
+// Comments on a task across the meetings that mention it
+export async function taskComments(key: string): Promise<ObjectComments> {
+  return request(`/api/tasks/${encodeURIComponent(key)}/comments`);
+}
+
+export async function postTaskComment(key: string, text: string, parentId = ''): Promise<Comment> {
+  return request(`/api/tasks/${encodeURIComponent(key)}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ text, parent_id: parentId })
   });
 }

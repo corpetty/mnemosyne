@@ -139,3 +139,28 @@ async def test_action_items_linked_task_listed_once(backend, ctx):
     assert out.count("Rotate") == 1
     assert "- [ ] Rotate all the keys (Bob) (also in 1 earlier meeting)" in out
     assert "## Infra 8" in out and "## Infra 1" not in out
+
+
+@pytest.mark.anyio
+async def test_get_meeting_lists_open_comment_threads(backend, ctx, seeded):
+    from mnemosyne.models.comment import CommentCreate
+    from mnemosyne.services import comments
+
+    root = comments.create(
+        ctx,
+        seeded.id,
+        CommentCreate(text="Is October firm?", target="body", exact="We agreed on October."),
+    )
+    comments.create(ctx, seeded.id, CommentCreate(text="Yes, it is", parent_id=root.id))
+    done = comments.create(
+        ctx, seeded.id, CommentCreate(text="Old question", target="body", exact="agreed on October")
+    )
+    comments.resolve(ctx, seeded.id, done.id)
+
+    out = await get_meeting(backend, seeded.id)
+    section = out.split("## Open comments\n", 1)[1]
+    assert section.startswith("- ")
+    assert "- " in section.splitlines()[0] and "Is October firm?" in section.splitlines()[0]
+    assert "(on “We agreed on October.”)" in section.splitlines()[0]
+    assert "\n  - " in section and "Yes, it is" in section
+    assert "Old question" not in out

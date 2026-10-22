@@ -21,6 +21,7 @@ from ..models.session import (
 from ..models.sync_session import (
     SyncAsset,
     SyncBookmark,
+    SyncComment,
     SyncEvent,
     SyncSession,
     event_travels,
@@ -115,6 +116,9 @@ def export_session(repo: SessionRepository, session_id: str, device_id: str) -> 
                 created_at=x["created_at"],
             )
             for x in rows["live_flags"]
+        ],
+        comments=[
+            SyncComment(**{k: x[k] for k in SyncComment.model_fields}) for x in rows["comments"]
         ],
         speaker_embeddings={x["label"]: json.loads(x["embedding"]) for x in rows["embeddings"]},
         assets=[

@@ -216,8 +216,12 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
             audio.unlink(missing_ok=True)
 
     app.sessions.set_audio(target.id, str(final), recordings)
-    # Bookmarks follow their parts, which are numbered anew (before the other meeting goes).
+    # Bookmarks and comments follow their parts, which are numbered anew (before the other
+    # meeting goes).
     app.repo.move_bookmarks(
+        [(piece.session.id, piece.part, target.id, n) for n, piece in enumerate(all_pieces)]
+    )
+    app.repo.move_comments(
         [(piece.session.id, piece.part, target.id, n) for n, piece in enumerate(all_pieces)]
     )
     if segments:

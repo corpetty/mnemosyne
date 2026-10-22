@@ -107,6 +107,15 @@
 	};
 	const ACCESS: Record<string, string> = { viewed: 'Opened', played: 'Listened to', exported: 'Exported' };
 
+	const COMMENT_ON: Record<string, string> = {
+		body: 'the summary',
+		decision: 'a decision',
+		item: 'an action item',
+		question: 'a question',
+		segment: 'a line of the transcript',
+		'': 'the transcript'
+	};
+
 	function describe(e: HistoryEvent): string {
 		const d = e.detail as Record<string, unknown>;
 		const p = partName(e.part);
@@ -187,6 +196,15 @@
 				return `${d.by || 'Someone'} edited the task “${d.task}”`;
 			case 'task_reopened':
 				return `${d.by || 'Someone'} reopened “${d.task}”`;
+			case 'commented': {
+				const who = (d.by as string) || 'You';
+				if (d.reply) return `${who} replied: “${d.excerpt}”`;
+				return `${who} commented on ${COMMENT_ON[d.target as string] ?? 'the meeting'}: “${d.excerpt}”`;
+			}
+			case 'comment_resolved':
+				return `${(d.by as string) || 'Someone'} resolved a comment thread`;
+			case 'comment_reopened':
+				return `${(d.by as string) || 'Someone'} reopened a comment thread`;
 			case 'sync_merged': {
 				const kept = (d.kept as number) ?? 0;
 				const both = (d.both as number) ?? 0;

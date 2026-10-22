@@ -11,6 +11,7 @@ import logging
 import re
 import sqlite3
 import threading
+from collections import Counter
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -18,9 +19,10 @@ from uuid import uuid4
 
 from .. import access
 from ..models.ask import Ask, Citation, Passage, PassageLine
+from ..models.comment import Comment
 from ..models.digest import Digest
 from ..models.live_flag import LiveFlag
-from ..models.search import SearchHit, SegmentHit
+from ..models.search import CommentHit, SearchHit, SegmentHit
 from ..models.session import (
     AgendaItem,
     Asset,
@@ -71,6 +73,28 @@ CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE OF name, summary, notes ON
 END;
 CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
     DELETE FROM sessions_fts WHERE rowid = old.rowid;
+END;
+"""
+
+# Keyword search over comments (text + the quote they were written about); a deleted comment is
+# not indexed. Own constant: it needs the comments table, which comes late in SCHEMA.
+COMMENT_FTS = """
+CREATE VIRTUAL TABLE IF NOT EXISTS comments_fts USING fts5(
+    text, quote, session_id UNINDEXED, comment_id UNINDEXED,
+    tokenize='unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER IF NOT EXISTS comments_ai AFTER INSERT ON comments WHEN new.deleted = 0 BEGIN
+    INSERT INTO comments_fts(rowid, text, quote, session_id, comment_id)
+    VALUES (new.rowid, new.text, new.quote, new.session_id, new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS comments_au AFTER UPDATE OF text, quote, deleted, session_id
+ON comments BEGIN
+    DELETE FROM comments_fts WHERE rowid = old.rowid;
+    INSERT INTO comments_fts(rowid, text, quote, session_id, comment_id)
+    SELECT new.rowid, new.text, new.quote, new.session_id, new.id WHERE new.deleted = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS comments_ad AFTER DELETE ON comments BEGIN
+    DELETE FROM comments_fts WHERE rowid = old.rowid;
 END;
 """
 
@@ -183,6 +207,29 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 );
 CREATE INDEX IF NOT EXISTS bookmarks_session ON bookmarks(session_id);
 
+-- Comments travel inside their meeting (library sync). `anchor` is JSON: {part, start, end} for
+-- a transcript span, {exact, prefix, suffix} for summary text; `target_id` names a summary
+-- block. A deleted comment with replies stays as an empty row (`deleted`).
+CREATE TABLE IF NOT EXISTS comments (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    parent_id TEXT NOT NULL DEFAULT '',
+    target TEXT NOT NULL DEFAULT '',
+    target_id TEXT NOT NULL DEFAULT '',
+    anchor TEXT NOT NULL DEFAULT '{}',
+    quote TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL,
+    author_id TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT '',
+    mentions TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    resolved_at TEXT,
+    resolved_by TEXT NOT NULL DEFAULT '',
+    deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS comments_session ON comments(session_id);
+{COMMENT_FTS}
 -- Live lines marked "Not said" while recording (keyboard noise heard as "yeah"): the final
 -- transcript drops its lines that overlap them (services/live_flags.py). start/"end" are the
 -- live transcript's own seconds, i.e. into `part`'s recording, as the live_segment events had.
@@ -361,7 +408,7 @@ CREATE TABLE IF NOT EXISTS sync_tombstones (
     name TEXT NOT NULL
 );
 """
-SCHEMA = SCHEMA.replace("{FTS_TRIGGERS}", FTS_TRIGGERS)
+SCHEMA = SCHEMA.replace("{FTS_TRIGGERS}", FTS_TRIGGERS).replace("{COMMENT_FTS}", COMMENT_FTS)
 
 
 def _dt(value: str) -> datetime:
@@ -625,6 +672,11 @@ class SessionRepository:
                 self._conn.execute(
                     "INSERT INTO sessions_fts(rowid, name, summary, notes, session_id)"
                     " SELECT rowid, name, summary, notes, id FROM sessions"
+                )
+            if self._conn.execute("SELECT count(*) FROM comments_fts").fetchone()[0] == 0:
+                self._conn.execute(
+                    "INSERT INTO comments_fts(rowid, text, quote, session_id, comment_id)"
+                    " SELECT rowid, text, quote, session_id, id FROM comments WHERE deleted=0"
                 )
             self._conn.execute(
                 "UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),)
@@ -1247,6 +1299,241 @@ class SessionRepository:
                         "UPDATE bookmarks SET session_id=?, part=? WHERE id=?", (*dest, r["id"])
                     )
                     moved = True
+            if moved:
+                self._touch_all(moves)
+
+    # ---- comments ------------------------------------------------------
+
+    _COMMENT_FIELDS = frozenset(
+        {
+            "parent_id", "target", "target_id", "anchor", "quote", "text", "author_id",
+            "author", "mentions", "created_at", "updated_at",
+        }
+    )  # fmt: skip
+
+    @staticmethod
+    def _comment(r: sqlite3.Row) -> Comment:
+        return Comment(
+            id=r["id"],
+            session_id=r["session_id"],
+            parent_id=r["parent_id"],
+            target=r["target"],
+            target_id=r["target_id"],
+            anchor=json.loads(r["anchor"] or "{}"),
+            quote=r["quote"],
+            text=r["text"],
+            author_id=r["author_id"],
+            author=r["author"],
+            mentions=json.loads(r["mentions"] or "[]"),
+            created_at=_dt(r["created_at"]),
+            updated_at=_dt(r["updated_at"]),
+            resolved_at=_dt(r["resolved_at"]) if r["resolved_at"] else None,
+            resolved_by=r["resolved_by"],
+            deleted=bool(r["deleted"]),
+        )
+
+    def _comment_session(self, comment_id: str) -> str | None:
+        """The meeting a comment is in, or None; Hidden when the caller may not see it."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT session_id FROM comments WHERE id=?", (comment_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        if not self._readable(row["session_id"]):
+            raise access.Hidden("Session not found")
+        return row["session_id"]
+
+    def comment_rows(self, session_id: str) -> list[dict]:
+        """A meeting's comments as stored (JSON columns decoded), no access check: for library
+        sync, which sends whole meetings."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM comments WHERE session_id=? ORDER BY created_at, id", (session_id,)
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["anchor"] = json.loads(d["anchor"] or "{}")
+            d["mentions"] = json.loads(d["mentions"] or "[]")
+            d["deleted"] = bool(d["deleted"])
+            out.append(d)
+        return out
+
+    def open_comment_counts(self, visible: set[str] | None = None) -> Counter:
+        """Open (not resolved, not deleted) root threads on action items and decisions, by
+        (session_id, target, target_id), over the meetings in `visible` (None = all)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, target, target_id, COUNT(*) AS n FROM comments"
+                " WHERE parent_id='' AND deleted=0 AND resolved_at IS NULL"
+                " AND target IN ('item','decision') AND target_id!=''"
+                " GROUP BY session_id, target, target_id"
+            ).fetchall()
+        out: Counter = Counter()
+        for r in rows:
+            if visible is None or r["session_id"] in visible:
+                out[(r["session_id"], r["target"], r["target_id"])] += r["n"]
+        return out
+
+    def list_comments(self, session_id: str) -> list[Comment]:
+        """A meeting's comments, oldest first, deleted ones included (they hold threads
+        together). Empty for a meeting that is not there; Hidden when the caller may not
+        see it."""
+        if self._owner(session_id) is None:
+            return []
+        if not self._readable(session_id):
+            raise access.Hidden("Session not found")
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM comments WHERE session_id=? ORDER BY created_at, id", (session_id,)
+            ).fetchall()
+        return [self._comment(r) for r in rows]
+
+    def get_comment(self, comment_id: str) -> Comment | None:
+        if self._comment_session(comment_id) is None:
+            return None
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM comments WHERE id=?", (comment_id,)).fetchone()
+        return None if row is None else self._comment(row)
+
+    def add_comment(self, session_id: str, **fields) -> str:
+        """Add a comment (any of `_COMMENT_FIELDS`; `text` is required) and return its id.
+        Readers may comment: who may do what beyond that is the service's rule."""
+        unknown = set(fields) - self._COMMENT_FIELDS
+        if unknown:
+            raise TypeError(f"Unknown comment fields: {', '.join(sorted(unknown))}")
+        if "text" not in fields:
+            raise TypeError("A comment needs text")
+        if not self._readable(session_id):
+            raise access.Hidden("Session not found")
+        now = datetime.now().isoformat()
+        comment_id = uuid4().hex[:12]
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO comments (id, session_id, parent_id, target, target_id, anchor,"
+                " quote, text, author_id, author, mentions, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    comment_id,
+                    session_id,
+                    fields.get("parent_id", ""),
+                    fields.get("target", ""),
+                    fields.get("target_id", ""),
+                    json.dumps(fields.get("anchor") or {}, sort_keys=True),
+                    fields.get("quote", ""),
+                    fields["text"],
+                    fields.get("author_id", ""),
+                    fields.get("author", ""),
+                    json.dumps(fields.get("mentions") or []),
+                    fields.get("created_at") or now,
+                    fields.get("updated_at") or now,
+                ),
+            )
+            self._touch(session_id)
+        return comment_id
+
+    def update_comment_text(
+        self, comment_id: str, text: str, mentions: list[str] | None = None
+    ) -> bool:
+        """Edit a comment (and its @mentions when given). False when it is gone or deleted."""
+        session_id = self._comment_session(comment_id)
+        if session_id is None:
+            return False
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE comments SET text=?, updated_at=?,"
+                " mentions=CASE WHEN ? IS NULL THEN mentions ELSE ? END"
+                " WHERE id=? AND deleted=0",
+                (
+                    text,
+                    datetime.now().isoformat(),
+                    None if mentions is None else json.dumps(mentions),
+                    None if mentions is None else json.dumps(mentions),
+                    comment_id,
+                ),
+            )
+            if cur.rowcount:
+                self._touch(session_id)
+        return cur.rowcount > 0
+
+    def set_comment_resolved(
+        self, comment_id: str, resolved_at: datetime | None, resolved_by: str = ""
+    ) -> bool:
+        """Resolve a comment (when, by whom) or reopen it (`resolved_at=None`)."""
+        session_id = self._comment_session(comment_id)
+        if session_id is None:
+            return False
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE comments SET resolved_at=?, resolved_by=? WHERE id=?",
+                (
+                    None if resolved_at is None else resolved_at.isoformat(),
+                    "" if resolved_at is None else resolved_by,
+                    comment_id,
+                ),
+            )
+            if cur.rowcount:
+                self._touch(session_id)
+        return cur.rowcount > 0
+
+    def delete_comment(self, comment_id: str) -> bool:
+        """Remove a comment: the row goes when nothing replies to it, else it stays as an empty
+        `deleted` one so the replies keep their thread. False when it is gone or already deleted."""
+        session_id = self._comment_session(comment_id)
+        if session_id is None:
+            return False
+        with self._lock, self._conn:
+            replied = self._conn.execute(
+                "SELECT 1 FROM comments WHERE parent_id=? LIMIT 1", (comment_id,)
+            ).fetchone()
+            if replied is None:
+                cur = self._conn.execute("DELETE FROM comments WHERE id=?", (comment_id,))
+            else:
+                cur = self._conn.execute(
+                    "UPDATE comments SET deleted=1, text='', mentions='[]', updated_at=?"
+                    " WHERE id=? AND deleted=0",
+                    (datetime.now().isoformat(), comment_id),
+                )
+            if cur.rowcount:
+                self._touch(session_id)
+        return cur.rowcount > 0
+
+    def move_comments(self, moves: list[tuple[str, int, str, int]]) -> None:
+        """(session, part) -> (session, part), all at once, like move_bookmarks: meetings
+        combined (services/combine.py) renumber their parts, and a transcript comment's anchor
+        carries its `part`. Comments of a meeting that is absorbed and name no part (on the
+        summary) come along to the one meeting it joins; one on a part that is not in `moves`
+        comes along without its place (it shows as detached, with its quote)."""
+        where = {(old_s, old_p): (new_s, new_p) for old_s, old_p, new_s, new_p in moves}
+        targets = {new_s for _, _, new_s, _ in moves}
+        sources = {old_s for old_s, _, _, _ in moves} - targets
+        join = next(iter(targets)) if len(targets) == 1 else None
+        with self._lock, self._conn:
+            rows = self._conn.execute("SELECT id, session_id, anchor FROM comments").fetchall()
+            moved = False
+            for r in rows:
+                anchor = json.loads(r["anchor"] or "{}")
+                part = anchor.get("part")
+                if isinstance(part, int):
+                    if (dest := where.get((r["session_id"], part))) is not None:
+                        anchor["part"] = dest[1]
+                        new_session = dest[0]
+                    elif r["session_id"] in sources and join is not None:
+                        for key in ("part", "start", "end"):
+                            anchor.pop(key, None)
+                        new_session = join
+                    else:
+                        continue
+                elif r["session_id"] in sources and join is not None:
+                    new_session = join
+                else:
+                    continue
+                self._conn.execute(
+                    "UPDATE comments SET session_id=?, anchor=? WHERE id=?",
+                    (new_session, json.dumps(anchor, sort_keys=True), r["id"]),
+                )
+                moved = True
             if moved:
                 self._touch_all(moves)
 
@@ -2006,6 +2293,15 @@ class SessionRepository:
                    ORDER BY score LIMIT ?""",
                 (fts, limit),
             ).fetchall()
+            com_rows = self._conn.execute(
+                """SELECT c.session_id, c.id, c.target, c.target_id, c.author,
+                          snippet(comments_fts, -1, '[[', ']]', '…', 12) AS snip,
+                          bm25(comments_fts) AS score
+                   FROM comments_fts JOIN comments c ON c.rowid = comments_fts.rowid
+                   WHERE comments_fts MATCH ?
+                   ORDER BY score LIMIT ?""",
+                (fts, limit * 2),
+            ).fetchall()
             # speaker/start for segment hits
             details = {}
             for r in seg_rows:
@@ -2049,6 +2345,20 @@ class SessionRepository:
                     idx=r["idx"],
                     speaker=d["speaker"] if d else "",
                     start=float(d["start"]) if d else 0.0,
+                    snippet=r["snip"],
+                )
+            )
+            h.score += -float(r["score"])
+        for r in com_rows:
+            h = hit(r["session_id"])
+            if h is None or len(h.comments) >= per_session:
+                continue
+            h.comments.append(
+                CommentHit(
+                    id=r["id"],
+                    author=r["author"],
+                    target=r["target"],
+                    target_id=r["target_id"],
                     snippet=r["snip"],
                 )
             )
@@ -2822,8 +3132,8 @@ class SessionRepository:
         """Everything of a meeting that library sync reads, as raw rows from one consistent
         snapshot, without access checks (the sync service is the machine itself, not a
         request): None when there is no such meeting. Keys: session, segments, recordings,
-        bookmarks, live_flags, external_notes, embeddings, assets (with `linked_at`), events
-        (with `uid`, oldest first)."""
+        bookmarks, live_flags, external_notes, comments (`comment_rows`),
+        embeddings, assets (with `linked_at`), events (with `uid`, oldest first)."""
 
         def rows(sql: str) -> list[dict]:
             return [dict(r) for r in self._conn.execute(sql, (session_id,)).fetchall()]
@@ -2845,6 +3155,7 @@ class SessionRepository:
                 "external_notes": rows(
                     "SELECT * FROM external_notes WHERE session_id=? ORDER BY added_at, id"
                 ),
+                "comments": self.comment_rows(session_id),
                 "embeddings": rows("SELECT * FROM session_speakers WHERE session_id=?"),
                 "assets": rows(
                     "SELECT a.*, sa.added_at AS linked_at FROM assets a"
@@ -2865,7 +3176,7 @@ class SessionRepository:
 
         Sets the session row (not `status` or `audio_file` of a meeting recorded here; for any
         other: `completed` when it has a transcript, else `created`, and no audio file), replaces
-        the transcript, bookmarks, external notes, live flags and speaker embeddings, the
+        the transcript, bookmarks, external notes, live flags, comments and speaker embeddings, the
         recordings rows (not for a meeting recorded here: the paths are ours and encryption
         rewrites them quietly), the asset links (assets we lack are added, without file bytes;
         a link we already have under another id is reused), and adds the history events whose
@@ -2951,6 +3262,33 @@ class SessionRepository:
                 [
                     (f.id, sid, f.source, f.start, f.end, f.text, f.created_at.isoformat(), f.part)
                     for f in s.live_flags
+                ],
+            )
+            self._conn.execute("DELETE FROM comments WHERE session_id=?", (sid,))
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO comments (id, session_id, parent_id, target, target_id,"
+                " anchor, quote, text, author_id, author, mentions, created_at, updated_at,"
+                " resolved_at, resolved_by, deleted) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        c.id,
+                        sid,
+                        c.parent_id,
+                        c.target,
+                        c.target_id,
+                        json.dumps(c.anchor),
+                        c.quote,
+                        c.text,
+                        c.author_id,
+                        c.author,
+                        json.dumps(c.mentions),
+                        c.created_at,
+                        c.updated_at,
+                        c.resolved_at,
+                        c.resolved_by,
+                        int(c.deleted),
+                    )
+                    for c in s.comments
                 ],
             )
             self._conn.execute("DELETE FROM session_speakers WHERE session_id=?", (sid,))

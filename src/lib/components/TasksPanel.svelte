@@ -3,6 +3,8 @@
 		applyTaskSuggestion,
 		dismissTaskSuggestion,
 		linkTasks,
+		postTaskComment,
+		taskComments,
 		listTaskSuggestions,
 		listTasks,
 		unlinkTaskMention,
@@ -12,7 +14,9 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
-	import type { TaskMention, TaskObject, TaskSuggestion } from '$lib/types/index.js';
+	import CommentComposer from './CommentComposer.svelte';
+	import CommentThread from './CommentThread.svelte';
+	import type { ObjectComments, TaskMention, TaskObject, TaskSuggestion } from '$lib/types/index.js';
 
 	let { onOpenSession }: { onOpenSession?: () => void } = $props();
 
@@ -173,6 +177,45 @@
 		}
 	}
 
+	// Comments of one task at a time, inline under its row, grouped by the meeting they were written on.
+	let commenting = $state<string | null>(null);
+	let commentData = $state<ObjectComments | null>(null);
+
+	async function loadComments(key: string) {
+		try {
+			const got = await taskComments(key);
+			if (commenting === key) commentData = got;
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not load the comments');
+		}
+	}
+
+	function toggleComments(t: TaskObject) {
+		if (commenting === t.key) {
+			commenting = null;
+			return;
+		}
+		commenting = t.key;
+		commentData = null;
+		loadComments(t.key);
+	}
+
+	// After any action in the panel: its threads and the counts in the list.
+	async function commentsChanged(key: string) {
+		await Promise.all([loadComments(key), load()]);
+	}
+
+	$effect(() => {
+		if (!commenting) return;
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key !== 'Escape') return;
+			if ((e.target as HTMLElement | null)?.closest('textarea, input')) return; // those handle Esc themselves
+			commenting = null;
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	});
+
 	let showSuggestions = $state(false);
 
 	async function resolve(s: TaskSuggestion, apply: boolean) {
@@ -306,6 +349,61 @@
 					<li class="text-gray-600">No task matches.</li>
 				{/each}
 			</ul>
+		</li>
+	{/if}
+{/snippet}
+
+{#snippet commentButtons(t: TaskObject)}
+	<button
+		onclick={() => toggleComments(t)}
+		class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-xs text-gray-500 hover:text-gray-200 pt-0.5"
+		aria-label="Comment on: {t.text}"
+		title="Comments on this task"
+	>Comment</button>
+{/snippet}
+
+{#snippet commentBadge(t: TaskObject)}
+	{#if t.open_comments > 0}
+		<button
+			onclick={() => toggleComments(t)}
+			class="text-[11px] rounded-full bg-gray-800 px-1.5 text-sky-300 self-start mt-0.5"
+			title="{t.open_comments} open comment{t.open_comments === 1 ? '' : 's'}"
+			aria-label="{t.open_comments} open comments on: {t.text}"
+			aria-expanded={commenting === t.key}
+		>{t.open_comments}</button>
+	{/if}
+{/snippet}
+
+{#snippet commentsPanel(t: TaskObject)}
+	{#if commenting === t.key}
+		<li class="ml-7 pb-2 space-y-2" aria-label="Comments on: {t.text}">
+			{#if !commentData}
+				<p class="text-xs text-gray-600">Loading…</p>
+			{:else}
+				{#each commentData.mentions.filter((m) => m.threads.length) as m (m.session_id + m.item_id)}
+					<div class="space-y-1">
+						<div class="text-xs text-gray-500">
+							{new Date(m.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })} ·
+							<button onclick={() => open(m.session_id)} class="hover:text-gray-300">{m.session_name}</button>
+						</div>
+						{#each m.threads as th (th.root.id)}
+							<CommentThread thread={th} sessionId={m.session_id} onchange={() => commentsChanged(t.key)} />
+						{/each}
+					</div>
+				{:else}
+					<p class="text-xs text-gray-600">No comments yet.</p>
+				{/each}
+				<CommentComposer
+					sessionId={head(t).session_id}
+					target={{ exact: '', prefix: '', suffix: '', target: 'item', target_id: '', parent_id: '' } as never}
+					placeholder="Comment on this task"
+					onsubmit={async (text) => {
+						await postTaskComment(t.key, text);
+						await commentsChanged(t.key);
+					}}
+					oncancel={() => (commenting = null)}
+				/>
+			{/if}
 		</li>
 	{/if}
 {/snippet}
@@ -450,11 +548,14 @@
 						{#if t.owner}<span class="text-xs text-gray-500 pt-0.5 whitespace-nowrap">· {t.owner}</span>{/if}
 						{@render star(t)}
 						{@render pencil(t)}
+						{@render commentButtons(t)}
 						{@render linkButton(t)}
 						<button onclick={() => open(head(t).session_id)} class="ml-auto text-xs text-gray-600 hover:text-gray-300 pt-0.5 whitespace-nowrap">{head(t).session_name}</button>
 						{@render linkedToggle(t)}
+						{@render commentBadge(t)}
 					</li>
 						{@render details(t)}
+						{@render commentsPanel(t)}
 					{/if}
 				{/each}
 			</ul>
@@ -487,10 +588,13 @@
 						{/if}
 						{@render star(t)}
 						{@render pencil(t)}
+						{@render commentButtons(t)}
 						{@render linkButton(t)}
 						{@render linkedToggle(t)}
+						{@render commentBadge(t)}
 					</li>
 						{@render details(t)}
+						{@render commentsPanel(t)}
 					{/if}
 				{/each}
 			</ul>

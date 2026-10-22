@@ -355,6 +355,11 @@ Drafted against the code at ae5c293, reviewed and accepted.
 
 ### Phase 5 design (agreed with Corey 2026-10-21)
 
+Status: built 2026-10-21, unreleased, as designed below. Found while building: a moment comment is
+never detached (a time in the audio is always valid; it shows on a line within 5 s or "at m:ss");
+summary-text anchors match the rendered text (markdown stripped on both sides); comments on other
+meetings' threads shown in Tasks act on their own meeting.
+
 Drafted against the code at 494741b, reviewed and accepted.
 
 - **No hashseq marks yet.** Transcript lines have no stable id (segments are keyed by meeting and

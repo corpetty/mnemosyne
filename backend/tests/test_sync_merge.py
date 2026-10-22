@@ -19,7 +19,13 @@ from mnemosyne.models.session import (
     SummaryData,
     TranscriptSegment,
 )
-from mnemosyne.models.sync_session import SyncAsset, SyncBookmark, SyncEvent, SyncSession
+from mnemosyne.models.sync_session import (
+    SyncAsset,
+    SyncBookmark,
+    SyncComment,
+    SyncEvent,
+    SyncSession,
+)
 from mnemosyne.services import sync_merge
 from mnemosyne.services.link import find_binary
 from mnemosyne.services.summary_doc import ensure_doc
@@ -129,6 +135,21 @@ def _items(doc: SyncSession) -> list[str]:
 
 def _item(doc: SyncSession, item_id: str) -> ActionItem | None:
     return next((a for a in doc.summary_data.action_items if a.id == item_id), None)
+
+
+def _comment(cid: str, text="Check this", **kw) -> SyncComment:
+    fields = dict(
+        id=cid,
+        target="segment",
+        anchor={"part": 0, "start": 1.0, "end": 2.0},
+        text=text,
+        author_id="u1",
+        author="Ann",
+        created_at=T0.isoformat(),
+        updated_at=T0.isoformat(),
+    )
+    fields.update(kw)
+    return SyncComment(**fields)
 
 
 def _merge(base, ours, theirs, binary, ours_is_origin=True):
@@ -901,3 +922,94 @@ def test_real_sidecar_round_trip_does_not_double(repo_a, repo_b, real_sidecar):
 
 def test_module_exports():
     assert sync_merge.BOTH_TEXTS == 5
+
+
+# ---- comments -----------------------------------------------------------------------------
+
+
+def test_comments_added_on_each_side_are_both_kept(binary):
+    base = _doc(comments=[_comment("c1")])
+
+    def mine(d):
+        d.comments.append(_comment("c2", "Mine", parent_id="c1"))
+
+    def yours(d):
+        d.comments.append(_comment("c3", "Yours"))
+
+    out, report = _merge(base, _ours(base, mine), _theirs(base, yours), binary)
+    assert [c.id for c in out.comments] == ["c1", "c2", "c3"]
+    assert report["kept"] == 1
+
+
+def test_comment_deleted_vs_edited(binary):
+    base = _doc(comments=[_comment("c1"), _comment("c2"), _comment("c3")])
+
+    def mine(d):
+        d.comments = [c for c in d.comments if c.id != "c1"]  # removed here, edited there
+        d.comments = [c for c in d.comments if c.id != "c2"]  # removed here, untouched there
+
+    def yours(d):
+        d.comments[0].text = "Edited there"
+        d.comments[0].updated_at = T0.replace(minute=5).isoformat()
+
+    out, _ = _merge(base, _ours(base, mine), _theirs(base, yours), binary)
+    assert {c.id for c in out.comments} == {"c1", "c3"}
+    assert next(c for c in out.comments if c.id == "c1").text == "Edited there"
+
+
+def test_comment_resolved_on_one_side_is_taken(binary):
+    base = _doc(comments=[_comment("c1"), _comment("c2")])
+    at = T0.replace(minute=7).isoformat()
+
+    def mine(d):
+        d.comments[0].resolved_at, d.comments[0].resolved_by = at, "u2"
+
+    def yours(d):
+        d.comments[1].text = ""
+        d.comments[1].deleted = True
+
+    out, report = _merge(base, _ours(base, mine), _theirs(base, yours), binary)
+    c1, c2 = out.comments
+    assert (c1.resolved_at, c1.resolved_by, c1.deleted) == (at, "u2", False)
+    assert c2.deleted and c2.text == "" and c2.resolved_at is None
+    assert report["kept"] >= 1 and report["both"] == 0
+
+
+def test_comment_resolved_on_both_sides_takes_the_newer_side(binary):
+    base = _doc(comments=[_comment("c1")])
+
+    def mine(d):
+        d.comments[0].resolved_at, d.comments[0].resolved_by = T0.isoformat(), "u-mine"
+
+    def yours(d):
+        d.comments[0].resolved_at, d.comments[0].resolved_by = T0.isoformat(), "u-yours"
+
+    out, report = _merge(base, _ours(base, mine), _theirs(base, yours), binary)  # theirs is newer
+    assert out.comments[0].resolved_by == "u-yours"
+    assert report["both"] == 1
+
+
+def test_comment_text_edited_on_both_sides_is_merged(sidecar, binary):
+    base = _doc(comments=[_comment("c1", "Intro.\nPlan.\n")])
+
+    def mine(d):
+        d.comments[0].text = "Intro.\nA line.\nPlan.\n"
+        d.comments[0].updated_at = T0.replace(minute=3).isoformat()
+
+    def yours(d):
+        d.comments[0].text = "Intro.\nPlan.\nB line.\n"
+        d.comments[0].updated_at = T0.replace(minute=4).isoformat()
+
+    out, report = _merge(base, _ours(base, mine), _theirs(base, yours), binary)
+    assert out.comments[0].text == "Intro.\nA line.\nPlan.\nB line.\n"
+    assert out.comments[0].updated_at == T0.replace(minute=4).isoformat()
+    assert len(sidecar.requests) == 1 and report["both"] >= 1
+
+
+def test_comment_text_edited_on_both_sides_without_a_sidecar_takes_the_newer(binary):
+    base = _doc(comments=[_comment("c1", "Intro.\n")])
+    ours = _ours(base, lambda d: setattr(d.comments[0], "text", "Mine\n"))
+    theirs = _theirs(base, lambda d: setattr(d.comments[0], "text", "Yours\n"))
+    out, report = merge(base, ours, theirs, ours_is_origin=True, binary=None)
+    assert out.comments[0].text == "Yours\n"
+    assert any("comment c1 text" in f for f in report["fields"])

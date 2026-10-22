@@ -16,6 +16,7 @@ from .routes.backup import router as backup_router
 from .routes.bookmarks import router as bookmarks_router
 from .routes.calendar import router as calendar_router
 from .routes.clips import router as clips_router
+from .routes.comments import router as comments_router
 from .routes.devices import router as devices_router
 from .routes.digests import router as digests_router
 from .routes.encryption import router as encryption_router
@@ -100,6 +101,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(speakers_router)
     app.include_router(segments_router)
     app.include_router(bookmarks_router)
+    app.include_router(comments_router)
     app.include_router(live_flags_router)
     app.include_router(assets_router)
     app.include_router(external_notes_router)

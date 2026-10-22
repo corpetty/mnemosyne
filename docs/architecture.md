@@ -357,6 +357,17 @@ scores both ways; with either, the final diarized transcript after stop remains 
 keeps it loaded across jobs, and drops it when any engine-related setting changes so the next job
 rebuilds with the new configuration. `unload()` frees GPU memory.
 
+### Comments
+
+`services/comments.py` stores threads per meeting (`comments` table, FTS-indexed). A comment is
+anchored three ways: a time span on the meeting's joined timeline (transcript lines and moments), a
+block id (summary decisions, questions and action items) or a text quote with prefix and suffix
+(a selection of the rendered summary). Anchors are re-resolved at read time, so editing lines,
+re-summarizing or rewording moves a comment to where it now belongs, or marks it detached while
+keeping its quote. Comments travel with library sync (merged by id with the rest of a meeting), are
+searchable, show in the meeting's history, and publish `comments` events. Tasks and decisions
+show the threads of all their mentions.
+
 ## Backend Lifecycle
 
 The Tauri Rust shell (`src-tauri/src/lib.rs`) supervises the Python backend from a worker thread and

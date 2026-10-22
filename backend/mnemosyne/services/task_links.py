@@ -97,6 +97,8 @@ class TaskObject(ApiModel):
     # whoever asks may edit the head's meeting (done and follow need no write access).
     mine: bool = False
     can_edit: bool = False
+    # Open (not resolved, not deleted) comment threads on the visible mentions.
+    open_comments: int = 0
 
 
 class TaskLink(ApiModel):
@@ -207,7 +209,17 @@ def index(repo: SessionRepository, visible: set[str] | None = None) -> dict[str,
     """Every task object of the summarized meetings in `visible` (None = all meetings; pass
     `repo.visible_ids()` for the caller's view), by key. Mentions in other meetings are left
     out, and the head is the newest of those left."""
-    return _objects(_meetings(repo), visible)
+    objs = _objects(_meetings(repo), visible)
+    _count_comments(repo, objs, visible)
+    return objs
+
+
+def _count_comments(repo: SessionRepository, objs: dict[str, TaskObject], visible) -> None:
+    """Fill `open_comments`: one query of the comment roots for all the objects."""
+
+    counts = repo.open_comment_counts(visible)
+    for o in objs.values():
+        o.open_comments = sum(counts.get((m.session_id, "item", m.item_id), 0) for m in o.mentions)
 
 
 def object_of(
@@ -220,7 +232,9 @@ def object_of(
         return None
     m, i, a = found
     key = _key(m.id, a, i)
-    return _objects(meetings, visible).get(key)
+    objs = _objects(meetings, visible)
+    _count_comments(repo, objs, visible)
+    return objs.get(key)
 
 
 def _find(meetings: list[_Meeting], session_id: str, item_id: str):

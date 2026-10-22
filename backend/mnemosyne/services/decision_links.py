@@ -64,6 +64,8 @@ class DecisionObject(ApiModel):
     text: str
     mentions: list[DecisionMention]  # visible ones, newest first: mentions[0] is the head
     linked: bool  # more than one visible mention
+    # Open (not resolved, not deleted) comment threads on the visible mentions.
+    open_comments: int = 0
 
 
 @dataclass
@@ -135,7 +137,19 @@ def index(repo: SessionRepository, visible: set[str] | None = None) -> dict[str,
     """Every decision object of the summarized meetings in `visible` (None = all meetings; pass
     `repo.visible_ids()` for the caller's view), by key. Mentions in other meetings are left
     out, and the head is the newest of those left."""
-    return _objects(_meetings(repo), visible)
+    objs = _objects(_meetings(repo), visible)
+    _count_comments(repo, objs, visible)
+    return objs
+
+
+def _count_comments(repo: SessionRepository, objs: dict[str, DecisionObject], visible) -> None:
+    """Fill `open_comments`: one query of the comment roots for all the objects."""
+
+    counts = repo.open_comment_counts(visible)
+    for o in objs.values():
+        o.open_comments = sum(
+            counts.get((m.session_id, "decision", m.decision_id), 0) for m in o.mentions
+        )
 
 
 def object_of(
@@ -147,7 +161,9 @@ def object_of(
         if m.id == session_id and any(d[0] == decision_id for d in m.decisions):
             if visible is not None and session_id not in visible:
                 return None
-            return _objects(meetings, visible).get(_key(m.id, decision_id, m.links))
+            objs = _objects(meetings, visible)
+            _count_comments(repo, objs, visible)
+            return objs.get(_key(m.id, decision_id, m.links))
     return None
 
 

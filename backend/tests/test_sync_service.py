@@ -325,6 +325,27 @@ async def test_notes_edited_on_both_sides_merge_without_doubling(nodes, sidecar)
         assert n.repo.get(sid).notes == "Intro.\nA's line.\nPlan.\nB's line.\n", n.name
 
 
+async def test_a_comment_added_on_b_reaches_a(nodes):
+    a, b = nodes
+    sid = meeting(a)
+    await pull(b, a)
+    root = b.repo.add_comment(sid, target="segment", text="Question?", author="B", author_id="u2")
+    b.repo.add_comment(sid, parent_id=root, text="Answer", author="B")
+    for x, y in ((a, b), (b, a)):
+        await pull(x, y)
+    assert [c["text"] for c in a.repo.comment_rows(sid)] == ["Question?", "Answer"]
+    assert a.repo.comment_rows(sid) == b.repo.comment_rows(sid)
+    # Both add one, a reply on A to B's, a resolve on B: all of it ends up on both.
+    ca = a.repo.add_comment(sid, text="From A", author="A")
+    b.repo.set_comment_resolved(root, datetime(2026, 10, 20, 12, 0, 0), "u2")
+    for x, y in ((a, b), (b, a), (a, b), (b, a)):
+        await pull(x, y)
+    for n in (a, b):
+        rows = {c["id"]: c for c in n.repo.comment_rows(sid)}
+        assert set(rows) >= {root, ca} and rows[root]["resolved_by"] == "u2", n.name
+    assert a.repo.comment_rows(sid) == b.repo.comment_rows(sid)
+
+
 # ---- deletes ------------------------------------------------------------------------------
 
 

@@ -185,7 +185,33 @@ async def get_meeting(
         out += [f"[{_mmss(x['start'])}] {x['speaker']}: {x['text']}" for x in page]
         if offset + len(page) < len(lines):
             out.append(f"... more: call again with offset={offset + len(page)}")
+    open_threads = await _open_comments(backend, session_id)
+    if open_threads:
+        out += ["", "## Open comments"] + open_threads
     return "\n".join(out)
+
+
+async def _open_comments(backend: Backend, session_id: str) -> list[str]:
+    """Open threads (root neither resolved nor deleted) as lines, a reply indented under its
+    root. Nothing when the comments cannot be read: the meeting is still worth reading."""
+    try:
+        data = await backend.get(f"/api/sessions/{session_id}/comments")
+    except Exception:
+        return []
+    lines: list[str] = []
+    for thread in data.get("threads") or []:
+        root = thread["root"]
+        if root.get("resolved_at") or root.get("deleted"):
+            continue
+        quote = (root.get("quote") or "").strip()
+        if len(quote) > 60:
+            quote = quote[:59] + "…"
+        on = f" (on “{quote}”)" if quote else ""
+        lines.append(f"- {root.get('author') or 'unknown'}: {root['text']}{on}")
+        for reply in thread.get("replies") or []:
+            if not reply.get("deleted"):
+                lines.append(f"  - {reply.get('author') or 'unknown'}: {reply['text']}")
+    return lines
 
 
 async def get_action_items(backend: Backend, days: int = 14) -> str:

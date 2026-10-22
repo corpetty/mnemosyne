@@ -15,7 +15,7 @@ from mnemosyne.models.session import (
     SummaryData,
     TranscriptSegment,
 )
-from mnemosyne.models.sync_session import SyncAsset, SyncEvent, event_travels
+from mnemosyne.models.sync_session import SyncAsset, SyncEvent, SyncSession, event_travels
 from mnemosyne.models.transcript import WordSegment
 from mnemosyne.services.sync_state import export_session, same_meeting, write_session
 from mnemosyne.storage.sqlite import SessionRepository
@@ -97,6 +97,18 @@ def _meeting(repo) -> str:
     repo.add_bookmark(s.id, 1, 12.5, "decision")
     repo.add_external_notes(s.id, ExternalNotes(source="Gemini", text="notes", filename="g.txt"))
     repo.add_live_flag(s.id, "mic", 3.0, 4.0, "yeah", part=1)
+    root = repo.add_comment(
+        s.id,
+        target="segment",
+        anchor={"part": 0, "start": 0.0, "end": 1.5},
+        quote="hello there",
+        text="Is this right?",
+        author_id="u1",
+        author="Ann",
+        mentions=["u2"],
+    )
+    repo.add_comment(s.id, parent_id=root, text="Yes", author="Bo")
+    repo.set_comment_resolved(root, datetime(2026, 10, 20, 12, 0, 0), "u2")
     repo.set_session_embeddings(s.id, {"Ann": [0.1, 0.2], "Bo": [0.3, 0.4]})
     link = repo.add_asset(Asset(id="lnk1", kind="link", title="Doc", url="https://x.test/doc"))
     repo.attach_asset(s.id, link.id)
@@ -152,6 +164,21 @@ def test_export_has_what_travels(repo):
     assert doc.external_notes[0].source == "Gemini"
     assert [(f.part, f.text) for f in doc.live_flags] == [(1, "yeah")]
     assert doc.speaker_embeddings == {"Ann": [0.1, 0.2], "Bo": [0.3, 0.4]}
+    root, reply = doc.comments
+    assert (root.text, root.target, root.author_id, root.mentions) == (
+        "Is this right?",
+        "segment",
+        "u1",
+        ["u2"],
+    )
+    assert root.anchor == {"part": 0, "start": 0.0, "end": 1.5} and root.quote == "hello there"
+    assert root.resolved_at == "2026-10-20T12:00:00" and root.resolved_by == "u2"
+    assert (reply.parent_id, reply.text, reply.deleted, reply.resolved_at) == (
+        root.id,
+        "Yes",
+        False,
+        None,
+    )
     assets = {a.id: a for a in doc.assets}
     assert assets["lnk1"].url == "https://x.test/doc"
     assert assets["fil1"].text == "the spec text" and assets["fil1"].filename == "spec.md"
@@ -204,6 +231,29 @@ def test_round_trip_into_a_second_library(repo, other):
     # Recordings keep the origin's rows; its mixed file is not ours.
     assert [r.path for r in again.recordings] == [r.path for r in doc.recordings]
     assert again.origin_audio is None
+
+
+def test_comments_round_trip_and_a_write_replaces_them(repo, other):
+    sid = _meeting(repo)
+    doc = export_session(repo, sid, "dev-a")
+    write_session(other, doc, local_device_id="dev-b", vv=doc.vv, bump=False)
+    assert other.comment_rows(sid) == repo.comment_rows(sid)
+    assert _count(other, "comments", sid) == 2
+    doc.comments = doc.comments[:1]  # the peer removed the reply
+    write_session(other, doc, local_device_id="dev-b", vv=doc.vv, bump=False)
+    assert [c["text"] for c in other.comment_rows(sid)] == ["Is this right?"]
+
+
+def test_a_document_without_comments_parses():
+    doc = SyncSession.model_validate(
+        {
+            "id": "abc123abc123",
+            "created_at": "2026-10-14T09:00:00",
+            "updated_at": "2026-10-14T09:00:00",
+            "origin": "dev-a",
+        }
+    )
+    assert doc.comments == []
 
 
 def test_non_origin_write_has_no_audio_and_is_completed(repo, other):

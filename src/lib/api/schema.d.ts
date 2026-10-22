@@ -614,6 +614,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/decisions/{key}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Decision Comments */
+        get: operations["decision_comments_api_decisions__key__comments_get"];
+        put?: never;
+        /** Add Decision Comment */
+        post: operations["add_decision_comment_api_decisions__key__comments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/decisions/{key}/mentions/{session_id}/{decision_id}": {
         parameters: {
             query?: never;
@@ -1645,6 +1663,76 @@ export interface paths {
          *     and transcript, the other meeting's speakers matched by voice. A `combine` job.
          */
         post: operations["combine_api_sessions__session_id__combine_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Comments */
+        get: operations["list_comments_api_sessions__session_id__comments_get"];
+        put?: never;
+        /** Add Comment */
+        post: operations["add_comment_api_sessions__session_id__comments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/comments/{comment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Comment */
+        delete: operations["delete_comment_api_sessions__session_id__comments__comment_id__delete"];
+        options?: never;
+        head?: never;
+        /** Edit Comment */
+        patch: operations["edit_comment_api_sessions__session_id__comments__comment_id__patch"];
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/comments/{comment_id}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reopen Comment */
+        post: operations["reopen_comment_api_sessions__session_id__comments__comment_id__reopen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/comments/{comment_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Comment */
+        post: operations["resolve_comment_api_sessions__session_id__comments__comment_id__resolve_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2915,6 +3003,27 @@ export interface paths {
         patch: operations["update_task_api_tasks__key__patch"];
         trace?: never;
     };
+    "/api/tasks/{key}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Task Comments */
+        get: operations["task_comments_api_tasks__key__comments_get"];
+        put?: never;
+        /**
+         * Add Task Comment
+         * @description A new thread lands on the task's head mention; a reply on the thread's own meeting.
+         */
+        post: operations["add_task_comment_api_tasks__key__comments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{key}/mentions/{session_id}/{item_id}": {
         parameters: {
             query?: never;
@@ -3817,6 +3926,167 @@ export interface components {
             /** Other Id */
             other_id: string;
         };
+        /** Comment */
+        Comment: {
+            /** Anchor */
+            anchor: {
+                [key: string]: unknown;
+            };
+            /** At Seconds */
+            at_seconds: number | null;
+            /**
+             * Author
+             * @default
+             */
+            author: string;
+            /**
+             * Author Id
+             * @default
+             */
+            author_id: string;
+            /**
+             * Can Delete
+             * @default false
+             */
+            can_delete: boolean;
+            /**
+             * Can Edit
+             * @default false
+             */
+            can_edit: boolean;
+            /**
+             * Can Resolve
+             * @default false
+             */
+            can_resolve: boolean;
+            /**
+             * Changed
+             * @default false
+             */
+            changed: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Deleted
+             * @default false
+             */
+            deleted: boolean;
+            /**
+             * Detached
+             * @default false
+             */
+            detached: boolean;
+            /** Id */
+            id: string;
+            /** Mentions */
+            mentions: string[];
+            /**
+             * Parent Id
+             * @default
+             */
+            parent_id: string;
+            /**
+             * Quote
+             * @default
+             */
+            quote: string;
+            /** Resolved At */
+            resolved_at: string | null;
+            /**
+             * Resolved By
+             * @default
+             */
+            resolved_by: string;
+            /** Segment Idx */
+            segment_idx: number | null;
+            /** Session Id */
+            session_id: string;
+            /**
+             * Target
+             * @default
+             */
+            target: string;
+            /**
+             * Target Id
+             * @default
+             */
+            target_id: string;
+            /** Text */
+            text: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** CommentCreate */
+        CommentCreate: {
+            /**
+             * Exact
+             * @default
+             */
+            exact: string;
+            /** Idx */
+            idx?: number | null;
+            /** Idx To */
+            idx_to?: number | null;
+            /**
+             * Parent Id
+             * @default
+             */
+            parent_id: string;
+            /**
+             * Prefix
+             * @default
+             */
+            prefix: string;
+            /** Seconds */
+            seconds?: number | null;
+            /**
+             * Suffix
+             * @default
+             */
+            suffix: string;
+            /**
+             * Target
+             * @default
+             */
+            target: string;
+            /**
+             * Target Id
+             * @default
+             */
+            target_id: string;
+            /** Text */
+            text: string;
+        };
+        /** CommentHit */
+        CommentHit: {
+            /** Author */
+            author: string;
+            /** Id */
+            id: string;
+            /** Snippet */
+            snippet: string;
+            /** Target */
+            target: string;
+            /** Target Id */
+            target_id: string;
+        };
+        /** CommentThread */
+        CommentThread: {
+            /** Replies */
+            replies: components["schemas"]["Comment"][];
+            root: components["schemas"]["Comment"];
+        };
+        /** CommentUpdate */
+        CommentUpdate: {
+            /** Text */
+            text: string;
+        };
         /** Configured */
         Configured: {
             /** Crm */
@@ -3940,6 +4210,11 @@ export interface components {
             linked: boolean;
             /** Mentions */
             mentions: components["schemas"]["DecisionMention"][];
+            /**
+             * Open Comments
+             * @default 0
+             */
+            open_comments: number;
             /** Text */
             text: string;
         };
@@ -4644,6 +4919,22 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** MentionComments */
+        MentionComments: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Item Id */
+            item_id: string;
+            /** Session Id */
+            session_id: string;
+            /** Session Name */
+            session_name: string;
+            /** Threads */
+            threads: components["schemas"]["CommentThread"][];
+        };
         /** ModelRequest */
         ModelRequest: {
             /** Model */
@@ -4678,6 +4969,24 @@ export interface components {
         NotesRequest: {
             /** Notes */
             notes: string;
+        };
+        /** ObjectCommentCreate */
+        ObjectCommentCreate: {
+            /**
+             * Parent Id
+             * @default
+             */
+            parent_id: string;
+            /** Text */
+            text: string;
+        };
+        /**
+         * ObjectComments
+         * @description The threads on a task or decision, grouped by the meeting (mention) they were written on.
+         */
+        ObjectComments: {
+            /** Mentions */
+            mentions: components["schemas"]["MentionComments"][];
         };
         /** OllamaInfo */
         OllamaInfo: {
@@ -5244,6 +5553,8 @@ export interface components {
         };
         /** SearchHit */
         SearchHit: {
+            /** Comments */
+            comments: components["schemas"]["CommentHit"][];
             /**
              * Created At
              * Format: date-time
@@ -5416,6 +5727,16 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** SessionComments */
+        SessionComments: {
+            /**
+             * Can Comment
+             * @default false
+             */
+            can_comment: boolean;
+            /** Threads */
+            threads: components["schemas"]["CommentThread"][];
         };
         /** SessionHistory */
         SessionHistory: {
@@ -6451,6 +6772,72 @@ export interface components {
             session_id: string;
         };
         /**
+         * SyncComment
+         * @description A comment as stored (models/comment.py). Timestamps stay the stored ISO text; the
+         *     computed read fields (`changed`, `detached`, ...) are not part of it.
+         */
+        SyncComment: {
+            /** Anchor */
+            anchor: {
+                [key: string]: unknown;
+            };
+            /**
+             * Author
+             * @default
+             */
+            author: string;
+            /**
+             * Author Id
+             * @default
+             */
+            author_id: string;
+            /** Created At */
+            created_at: string;
+            /**
+             * Deleted
+             * @default false
+             */
+            deleted: boolean;
+            /** Id */
+            id: string;
+            /** Mentions */
+            mentions: string[];
+            /**
+             * Parent Id
+             * @default
+             */
+            parent_id: string;
+            /**
+             * Quote
+             * @default
+             */
+            quote: string;
+            /** Resolved At */
+            resolved_at: string | null;
+            /**
+             * Resolved By
+             * @default
+             */
+            resolved_by: string;
+            /**
+             * Target
+             * @default
+             */
+            target: string;
+            /**
+             * Target Id
+             * @default
+             */
+            target_id: string;
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /**
          * SyncEvent
          * @description A history event. `uid` is its identity across machines; `at` stays the stored ISO text.
          */
@@ -6617,6 +7004,8 @@ export interface components {
             attendees: string[];
             /** Bookmarks */
             bookmarks: components["schemas"]["SyncBookmark"][];
+            /** Comments */
+            comments: components["schemas"]["SyncComment"][];
             copilot_notes: components["schemas"]["CopilotNotes"] | null;
             /**
              * Created At
@@ -6857,6 +7246,11 @@ export interface components {
              * @default false
              */
             mine: boolean;
+            /**
+             * Open Comments
+             * @default 0
+             */
+            open_comments: number;
             /** Owner */
             owner: string | null;
             /** Task Id */
@@ -8307,6 +8701,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DecisionObject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decision_comments_api_decisions__key__comments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObjectComments"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_decision_comment_api_decisions__key__comments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectCommentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comment"];
                 };
             };
             /** @description Validation Error */
@@ -10169,6 +10629,204 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_comments_api_sessions__session_id__comments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionComments"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_comment_api_sessions__session_id__comments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comment"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_comment_api_sessions__session_id__comments__comment_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_comment_api_sessions__session_id__comments__comment_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comment"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reopen_comment_api_sessions__session_id__comments__comment_id__reopen_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comment"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_comment_api_sessions__session_id__comments__comment_id__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comment"];
                 };
             };
             /** @description Validation Error */
@@ -12362,6 +13020,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskObject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    task_comments_api_tasks__key__comments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObjectComments"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_task_comment_api_tasks__key__comments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectCommentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comment"];
                 };
             };
             /** @description Validation Error */

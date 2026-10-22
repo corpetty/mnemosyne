@@ -3,6 +3,9 @@
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { syncState } from '$lib/stores/sync.svelte.js';
+	import { commentsState } from '$lib/stores/comments.svelte.js';
+	import { transcriptState } from '$lib/stores/transcript.svelte.js';
+	import CommentComposer from './CommentComposer.svelte';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 
 	let el = $state<HTMLAudioElement>();
@@ -61,6 +64,19 @@
 		}
 	}
 
+	// "Comment here": a moment on the joined timeline (the transcript's). The mixed audio is the
+	// joined file, so the playback time is already on it; one recording's own file starts at its
+	// part's offset.
+	let commentAt = $state<number | null>(null);
+	function commentHere() {
+		const r = (session?.recordings ?? []).find((x) => x.id === sourceId);
+		commentAt = Math.max(0, (sourceId === 'mixed' ? 0 : (r?.offset ?? 0)) + playerState.currentTime);
+	}
+	$effect(() => {
+		void session?.id;
+		commentAt = null;
+	});
+
 	function fmt(t: number): string {
 		if (!isFinite(t)) return '0:00';
 		const m = Math.floor(t / 60);
@@ -106,6 +122,13 @@
 			class="flex-1 accent-blue-500"
 		/>
 		<span class="font-mono text-xs text-gray-400 w-24 text-right">{fmt(playerState.currentTime)} / {fmt(playerState.duration)}</span>
+		{#if commentsState.canComment && transcriptState.segments.length > 0}
+			<button
+				onclick={commentHere}
+				class="px-2 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-sky-300 whitespace-nowrap"
+				title="Comment on this moment of the recording"
+			>Comment here</button>
+		{/if}
 		{#if (session?.recordings.length ?? 0) > 1}
 			<select bind:value={sourceId} class="bg-gray-800 border border-gray-700 rounded px-1.5 py-1 text-xs text-gray-300" title="Which audio to play">
 				<option value="mixed">Mixed</option>
@@ -115,4 +138,16 @@
 			</select>
 		{/if}
 	</div>
+	{#if commentAt !== null && session}
+		<div class="mt-2 rounded-lg border border-gray-800 bg-gray-900/60 p-2 space-y-1">
+			<p class="text-[11px] text-gray-500">Comment at {fmt(commentAt)}</p>
+			<CommentComposer
+				sessionId={session.id}
+				target={{ target: 'segment', target_id: '', parent_id: '', exact: '', prefix: '', suffix: '', seconds: commentAt }}
+				autofocus
+				onposted={() => (commentAt = null)}
+				oncancel={() => (commentAt = null)}
+			/>
+		</div>
+	{/if}
 {/if}

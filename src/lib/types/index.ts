@@ -14,6 +14,12 @@ export type RecordingStatus = S['RecordingStatus'];
 export type ActiveRecording = S['ActiveRecording'];
 export type Bookmark = S['Bookmark'];
 export type LiveFlag = S['LiveFlag'];
+export type Comment = S['Comment'];
+export type CommentThread = S['CommentThread'];
+export type SessionComments = S['SessionComments'];
+export type ObjectComments = S['ObjectComments'];
+export type CommentCreate = S['CommentCreate'];
+export type CommentUpdate = S['CommentUpdate'];
 export type SessionHistory = S['SessionHistory'];
 export type HistoryPart = S['HistoryPart'];
 export type HistoryEvent = S['HistoryEvent'];
@@ -67,6 +73,7 @@ export type SpeakerProfile = S['SpeakerProfileSummary'];
 export type SessionSpeaker = S['SessionSpeaker'];
 export type SegmentHit = S['SegmentHit'];
 export type SearchHit = S['SearchHit'];
+export type CommentHit = S['CommentHit'];
 export type Citation = S['Citation'];
 export type Ask = S['Ask'];
 export type Digest = S['Digest'];
@@ -149,6 +156,7 @@ export type BackendEvent =
   | { type: 'copilot_notes'; session_id: string; notes: CopilotNotes }
   | { type: 'levels'; session_id: string; levels: Record<string, Level> }
   | { type: 'bookmarks'; session_id: string } // a meeting's bookmarks changed
+  | { type: 'comments'; session_id: string; mentions: string[] } // a meeting's comments changed; mentions: user ids newly @named
   | { type: 'assets'; session_id: string } // a meeting's resources changed
   | { type: 'history'; session_id: string } // something was added to a meeting's history
   | { type: 'sync'; peer: string; state: SyncPeerState; done: number; total: number } // library sync with a peer

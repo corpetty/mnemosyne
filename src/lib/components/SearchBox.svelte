@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { search } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
-	import type { SearchHit } from '$lib/types/index.js';
+	import { uiState } from '$lib/stores/ui.svelte.js';
+	import type { SearchHit, CommentHit } from '$lib/types/index.js';
 
 	let query = $state('');
 	let hits = $state<SearchHit[]>([]);
@@ -58,6 +59,18 @@
 		await sessionState.selectSession(hit.session_id);
 	}
 
+	/** A comment on a transcript line opens the Transcript tab; the others the Summary. */
+	async function openComment(hit: SearchHit, c: CommentHit) {
+		if (c.target === 'segment') {
+			uiState.focusComment = c.id;
+			return open(hit, null);
+		}
+		uiState.focusComment = c.id;
+		sessionState.pendingOpen = null;
+		await sessionState.selectSession(hit.session_id);
+		uiState.activeTab = 'summary';
+	}
+
 	function clear() {
 		query = '';
 		onInput(); // also drops a search still on its way
@@ -101,6 +114,13 @@
 							{#if seg.semantic}<span class="text-purple-400" title="Matched by meaning">≈</span>{/if}
 							<span class="text-gray-500">{seg.speaker}:</span>
 							{#each runs(seg.snippet) as r}{#if r.hit}<mark class="bg-yellow-800/60 text-yellow-100 rounded px-0.5">{r.text}</mark>{:else}{r.text}{/if}{/each}
+						</button>
+					{/each}
+					{#each hit.comments as c (c.id)}
+						<button onclick={() => openComment(hit, c)} class="w-full text-left text-[11px] leading-4 text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 rounded px-1">
+							<span class="text-[10px] text-sky-400">comment</span>
+							{#if c.author}<span class="text-gray-500">{c.author}:</span>{/if}
+							{#each runs(c.snippet) as r}{#if r.hit}<mark class="bg-yellow-800/60 text-yellow-100 rounded px-0.5">{r.text}</mark>{:else}{r.text}{/if}{/each}
 						</button>
 					{/each}
 				</div>

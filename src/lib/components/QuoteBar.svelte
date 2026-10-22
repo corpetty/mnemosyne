@@ -1,10 +1,16 @@
 <script lang="ts">
 	import { addBookmark, clipUrl, makeQuote, saveClip } from '$lib/api/backend.js';
+	import { commentsState } from '$lib/stores/comments.svelte.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 
-	let { from, to, onclose }: { from: number; to: number; onclose: () => void } = $props();
+	let {
+		from,
+		to,
+		onclose,
+		oncomment
+	}: { from: number; to: number; onclose: () => void; oncomment?: () => void } = $props();
 	let busy = $state<'text' | 'audio' | null>(null);
 
 	const session = $derived(sessionState.activeSession);
@@ -86,6 +92,11 @@
 	{#if session?.audio_file}
 		<button onclick={saveAudio} disabled={!!busy} class="px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50">
 			{busy === 'audio' ? 'Cutting…' : 'Save audio clip'}
+		</button>
+	{/if}
+	{#if commentsState.canComment && oncomment}
+		<button onclick={oncomment} disabled={!!busy} class="px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-sky-300 disabled:opacity-50">
+			Comment
 		</button>
 	{/if}
 	<button onclick={bookmark} disabled={!!busy} class="px-2 py-0.5 rounded bg-amber-950/60 hover:bg-amber-900/60 border border-amber-800/70 text-amber-200 disabled:opacity-50">

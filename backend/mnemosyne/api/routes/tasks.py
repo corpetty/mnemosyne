@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from ... import access
 from ...models.base import ApiModel
-from ...services import decision_links, history, organizations, summary_doc, task_links
+from ...models.comment import Comment, CommentThread
+from ...services import comments, decision_links, history, organizations, summary_doc, task_links
 from ...services.brief import Brief, build_brief
 from ...services.decision_links import DecisionMention, DecisionObject
 from ...services.task_links import TaskMention, TaskObject, TaskSuggestion
@@ -450,3 +451,68 @@ async def unlink_decision_mention(
         raise HTTPException(status_code=404, detail="Not part of that decision")
     decision_links.unlink(ctx, session_id, decision_id)
     return _decision_or_404(ctx, f"{session_id}:{decision_id}")
+
+
+# ---- comments on tasks and decisions (services/comments.py) --------------------------------
+
+
+class MentionComments(ApiModel):
+    session_id: str
+    session_name: str
+    created_at: datetime
+    item_id: str  # the action item's or decision's id in that meeting
+    threads: list[CommentThread]
+
+
+class ObjectComments(ApiModel):
+    """The threads on a task or decision, grouped by the meeting (mention) they were written on."""
+
+    mentions: list[MentionComments]
+
+
+class ObjectCommentCreate(ApiModel):
+    text: str
+    parent_id: str = ""  # reply to this thread (its root comment id)
+
+
+def _object_comments(ctx: AppContext, kind: str, key: str) -> ObjectComments:
+    try:
+        return ObjectComments(
+            mentions=[MentionComments(**g) for g in comments.for_object(ctx, kind, key)]
+        )
+    except comments.CommentNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+
+
+def _post_object_comment(ctx: AppContext, kind: str, key: str, request: ObjectCommentCreate):
+    try:
+        return comments.post_to_object(ctx, kind, key, request.text, request.parent_id)
+    except comments.BadComment as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    except comments.CommentNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+
+
+@router.get("/tasks/{key}/comments", response_model=ObjectComments)
+async def task_comments(key: str, ctx: AppContext = Depends(get_ctx)):
+    return _object_comments(ctx, "task", key)
+
+
+@router.post("/tasks/{key}/comments", response_model=Comment)
+async def add_task_comment(
+    key: str, request: ObjectCommentCreate, ctx: AppContext = Depends(get_ctx)
+):
+    """A new thread lands on the task's head mention; a reply on the thread's own meeting."""
+    return _post_object_comment(ctx, "task", key, request)
+
+
+@router.get("/decisions/{key}/comments", response_model=ObjectComments)
+async def decision_comments(key: str, ctx: AppContext = Depends(get_ctx)):
+    return _object_comments(ctx, "decision", key)
+
+
+@router.post("/decisions/{key}/comments", response_model=Comment)
+async def add_decision_comment(
+    key: str, request: ObjectCommentCreate, ctx: AppContext = Depends(get_ctx)
+):
+    return _post_object_comment(ctx, "decision", key, request)
