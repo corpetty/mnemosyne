@@ -387,6 +387,80 @@ Drafted against the code at 494741b, reviewed and accepted.
   keyword search yes, Ask and summaries no; @mentions on a team server notify the mentioned person
   online (toast + desktop notification), no email or digest. Open comments listed in MCP.
 
+## Phase 6: live shared notes
+
+### Phase 6 design (agreed with Corey 2026-10-22)
+
+Drafted against the code at 273eaf3 (hashseq 94f5e3c), reviewed and accepted.
+
+- **The CRDT runs in every client** (the desktop webview and the team server's web app) as
+  hashseq's wasm build: one `WasmHashWeb` per meeting, the notes are one seq whose origin is
+  `sha256("mnemosyne/notes/" + session_id)`, computed in Python and sent in hello, so every client
+  and machine opens the same object with no create race. The client fixes QUEUE 39 itself: drain
+  `takeDeltas()` before applying a remote frame, then `applyFrontier(encodeFrontier())`.
+- **The backend is an opaque relay** (it cannot decode hashseq): `/ws/notes/{session_id}` (binary
+  0xDE frames plus JSON text frames; auth like `/ws`, `Hidden` closes 4404). Per meeting:
+  `shared_notes_ops(session_id, seq, frame, author_id, author, at, folded)` and
+  `shared_notes(session_id, snapshot, folded_seq, updated_at)`, both in SQLCipher, cascading on
+  delete. Join = folded snapshot, unfolded frames in order, then a JSON hello (objects, you,
+  present, last edit, `read_only`). A client frame is checked (tag, ≤ 256 KB), appended, relayed to
+  the others (never echoed). Presence (`typing`) is relayed JSON. Authorship is recorded per frame
+  from the connection (team user, desktop `local_speaker_name`, "api", "sync (<machine>)").
+- **Folding** by the stateless sidecar (`mnemosyne-link notes doc fold|set_text|merge`): 2 s after
+  the last frame, every 30 s while active, on last leave, before summarize/export/sync serve. It
+  writes the snapshot and the projection, **`Session.notes` = the rendered markdown**, through
+  `update_fields` (`_touch`, FTS), with a bus event. Search, Obsidian, MCP, combine and the summary
+  keep reading `Session.notes`. No sidecar: hello says `unavailable` and the old textarea is used.
+- **Document model: one flat seq, structure in marks** (not kb.js's page kv + block seqs: nested
+  objects, comments cannot span blocks, ~4k lines of DOM to vendor). The text is lines ending in
+  `\n` (the doc always ends with one). A line's kind is a closed `block` mark on its terminating
+  `\n`: `h1|h2|h3|bullet|number|task|task_done|quote|code|table|table_head` (`lang` on a fence's
+  first line). Inline: `bold`, `italic`, `strike` expanding (`After(p)..Before(n)`), `code` and
+  `link` (value = URL) closed, `comment:<id>` closed. Concurrent task toggles resolve to done;
+  two live link URLs render as plain text with "(link conflict)".
+- **Tables** (Corey: in v1): rows are lines of kind `table` (the first row of a run
+  `table_head`), cells separated by U+001F in the text, inline marks allowed in cells. Column
+  alignment is an `align` mark on the head row's terminator. Adding a column inserts a separator
+  in every row; ragged rows (concurrent column edits) are padded by the renderer and the editor.
+  Tab / Shift+Tab move between cells, Tab in the last cell adds a row.
+- **Markdown both ways, one implementation**: a `notes-core` Rust crate (hashseq + render +
+  parse + `set_text`) used by the sidecar AND compiled into the wasm module, so the client's
+  markdown paste and the server's fold agree. Render is canonical (fixed nesting: link, bold,
+  italic, strike, code; escapes only where needed; GFM tables with `\|`). The parser covers the
+  rendered subset plus `__`/`_`/`*` variants; anything else (HTML, images) stays literal text,
+  normalised once. `set_text(md)` diffs the plain text by lines then words (notes.rs's diff, moved
+  into notes-core) and reconciles marks, emitting nothing for an unchanged doc
+  (property-tested: `set_text(render(doc))` is empty, `render(parse(md))` is a fixpoint).
+- **Seeding and other writers**: a meeting with notes and no doc is seeded by `set_text`, only on
+  its origin machine. The old `POST /sessions/{id}/notes` (API, MCP) goes through `set_text` as
+  author "api" and is broadcast.
+- **Library sync**: `SyncSession.notes_doc` (canonical snapshot, folded at serve). Both sides
+  with a doc: union merge (no base needed). One side only: today's three-way text merge, then
+  `set_text` into the doc. Offline edits are just ops; the union merges them later.
+- **Editor: our own contenteditable** (`src/lib/notes/`, Svelte 5), porting by name (MIT,
+  attributed) kb.js's proven primitives: text extraction with fillers and sentinel, DOM point ↔
+  code-point offset, diff at the caret, mark affinity at boundaries, selection kept by element id
+  (`seqIdAt`/`seqPositionOf`), composition deferral, input rules. One line element per line,
+  re-rendered only when that line changed, so remote edits never move the caret. Plain typing is
+  native and committed by diff; Enter, Backspace at a line start, formatting shortcuts
+  (Ctrl+B/I/E/K, Ctrl+Shift+X), cut, paste and undo are `beforeinput` commands. Input rules: `# `,
+  `- `, `1. `, `> `, `[ ] `, a fence, `|a|b|` + Enter → table. **Paste** (Corey: markdown too):
+  text/plain is parsed as markdown by notes-core in wasm and inserted with its marks; copy puts
+  the selection's markdown on the clipboard. Undo is local (inverse ops of your own edits).
+  WebKitGTK (the desktop) is tested from the first DOM task, and the e2e runs in WebKit too.
+- **Access**: owner, admin and shared-with (incl. "*") edit; reviewers on others' meetings read.
+- **Copilot** (Corey): the panel stays; each line gets "Add to notes", an ordinary insert.
+- **Summary**: a `shared_notes_hint` from `Session.notes` ("notes the attendees took; the
+  transcript wins", 12k budget). Old meetings with hand notes get them on their next re-summary.
+- **Comments on notes**: `comment:<id>` marks; the thread stays in the phase 5 table (target
+  `notes`); the fold reports each comment's range, a fully deleted range = detached.
+- **Not in v1**: the phone page; per-character author colours (the per-frame data is kept);
+  rich HTML paste; images and math. Typed notes are permanent in the op history (no redaction
+  once synced; prerequisite 1 still holds).
+- **Tests**: Vitest + jsdom for the pure editor parts (Corey: yes), `cargo test` for notes-core,
+  TestClient websockets for the relay, two-app sync tests, a Playwright two-page convergence spec
+  in Chromium and WebKit (the e2e job builds link).
+
 ## Later, each behind the prerequisites below
 
 - **Live shared notes** during a meeting: a scratchpad attendees type into (desktop, or the team
