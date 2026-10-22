@@ -18,7 +18,8 @@
 //   rules (a ``` fence, "|a|b|" → table). Backspace at a line start: `joinWithPrevious`
 //   (clears the kind first, joins second); in a table row it removes an empty row and does
 //   nothing on a filled one. Delete at a line end joins the next line (never into or out of a
-//   table).
+//   table). In a table row these and the cell steps run on keydown: WebKit fires no
+//   beforeinput at a cell's edge.
 // - Cut copies the selection's markdown first; paste reads text/plain as markdown.
 //
 // Shortcuts (Ctrl is also Cmd):
@@ -230,6 +231,51 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
     const next = ls[line.index + 1];
     if (!next || line.cells || next.cells) return;
     run(() => deleteRange(doc, line.end, line.end + 1));
+  };
+
+  /**
+   * A collapsed Backspace (`back`) or Delete at `pos` that would leave its line or cell: done
+   * here (join, remove an empty row, step to the neighbouring cell); false when it stays
+   * inside one line and cell and is the browser's to do. The caller prevents the default.
+   */
+  const deleteAtBoundary = (back: boolean, ls: Line[], line: Line, pos: number): boolean => {
+    if (back) {
+      if (pos === line.start) {
+        backspaceAtLineStart(line);
+        return true;
+      }
+      if (cellBoundary(line, pos) === 'start') {
+        view.setSelection(prevCell(doc, pos).end);
+        return true;
+      }
+      return false;
+    }
+    if (pos === line.end) {
+      deleteAtLineEnd(ls, line);
+      return true;
+    }
+    if (cellBoundary(line, pos) === 'end') {
+      const r = nextCell(doc, pos);
+      if (!r.inverse.length) view.setSelection(r.caret);
+      return true;
+    }
+    return false;
+  };
+
+  /** Backspace / Delete at a table cell's edge on keydown: WebKit fires no beforeinput there
+   *  (it never deletes across cells), so the keystroke would do nothing at all. */
+  const tableDeleteKey = (e: KeyboardEvent) => {
+    if (e.shiftKey && e.key === 'Delete') return; // cut, on some platforms
+    const s = view.getSelection();
+    if (!s || s.anchor !== s.focus) return;
+    const ls = lines(doc);
+    const line = lineAt(ls, s.focus);
+    if (!line.cells) return;
+    selBefore = s;
+    if (deleteAtBoundary(e.key === 'Backspace', ls, line, s.focus)) {
+      e.preventDefault();
+      opts.onTyping?.();
+    }
   };
 
   const cellBoundary = (line: Line, pos: number): 'start' | 'end' | null => {
@@ -503,30 +549,10 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
         }
         return;
       }
-      if (BACKWARD_DELETES.has(type)) {
-        if (from === line.start) {
-          e.preventDefault();
-          backspaceAtLineStart(line);
-          return;
-        }
-        if (cellBoundary(line, from) === 'start') {
-          e.preventDefault();
-          const r = prevCell(doc, from);
-          view.setSelection(r.end);
-          return;
-        }
-      } else if (FORWARD_DELETES.has(type)) {
-        if (from === line.end) {
-          e.preventDefault();
-          deleteAtLineEnd(ls, line);
-          return;
-        }
-        if (cellBoundary(line, from) === 'end') {
-          e.preventDefault();
-          const r = nextCell(doc, from);
-          if (!r.inverse.length) view.setSelection(r.caret);
-          return;
-        }
+      const back = BACKWARD_DELETES.has(type);
+      if ((back || FORWARD_DELETES.has(type)) && deleteAtBoundary(back, ls, line, from)) {
+        e.preventDefault();
+        return;
       }
       const target = type === 'deleteContentBackward' || type === 'deleteContentForward' ? null : crossingTarget(e, ls, line);
       if (target) {
@@ -603,6 +629,10 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
     if (readOnly || composing) return;
     if (e.key === 'Tab' && !mod && !e.altKey) {
       tab(e);
+      return;
+    }
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      tableDeleteKey(e);
       return;
     }
     if (!mod) return;

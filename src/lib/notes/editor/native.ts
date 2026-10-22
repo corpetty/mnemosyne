@@ -63,8 +63,9 @@ const isCell = (n: Node): n is HTMLTableCellElement =>
 /**
  * The text one line element (a line div or a table row) shows after a native edit: fillers,
  * chrome and the sentinel stripped, cells joined by CELL_SEP, a non-sentinel <br> a newline
- * except a trailing one (the placeholder a browser leaves in an emptied block), plus where
- * `stop` (the caret) falls in it.
+ * except a trailing one (the placeholder a browser leaves in an emptied block) and any in a
+ * table cell (a cell is one line; WebKit leaves a placeholder <br> in a cell it emptied),
+ * plus where `stop` (the caret) falls in it.
  */
 export function lineContent(el: HTMLElement, stop: DomPoint | null = null): LineContent {
   let out = '';
@@ -72,7 +73,7 @@ export function lineContent(el: HTMLElement, stop: DomPoint | null = null): Line
   const mark = () => {
     if (caret === null) caret = cpLen(out);
   };
-  const walk = (n: Node): void => {
+  const walk = (n: Node, inCell = false): void => {
     if (n.nodeType === Node.TEXT_NODE) {
       const data = (n as Text).data;
       if (stop && stop.node === n) {
@@ -89,7 +90,7 @@ export function lineContent(el: HTMLElement, stop: DomPoint | null = null): Line
       return;
     }
     if (e.tagName === 'BR') {
-      if (e.dataset.sentinel === undefined) out += '\n';
+      if (e.dataset.sentinel === undefined && !inCell) out += '\n';
       return;
     }
     const kids = e.childNodes;
@@ -104,7 +105,7 @@ export function lineContent(el: HTMLElement, stop: DomPoint | null = null): Line
         }
         if (cells++ > 0) out += CELL_SEP;
       }
-      walk(k);
+      walk(k, inCell || isCell(k));
     }
     if (stop && stop.node === e && stop.offset === kids.length) mark();
   };

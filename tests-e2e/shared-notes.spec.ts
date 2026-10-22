@@ -83,8 +83,9 @@ test('two people edit the same notes live', async ({ page, browser, request }, i
     await expect(a.getByTestId('notes-status')).toHaveText('Saved as you type');
     await expect(b.getByTestId('notes-status')).toHaveText('Saved as you type');
 
-    // B reloads: the notes persist.
-    await b.reload();
+    // B loads the app again (openNotes navigates to "/"): the notes persist. No reload() before
+    // it: WebKit, its module loads cut off by the second navigation, fails to load the dev
+    // server's entry modules ("WebKit encountered an internal error") and the app never starts.
     const edB2 = await openNotes(b);
     await expect(edB2.locator('.ne-h1')).toHaveText('Agenda');
     await expect(edB2.locator('strong')).toHaveText('Alice');

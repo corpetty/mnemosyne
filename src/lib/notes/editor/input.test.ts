@@ -162,6 +162,9 @@ describe('lineContent', () => {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td>a</td><td>b</td><td data-pad="1"><br data-sentinel="1"></td>';
     expect(lineContent(tr, { node: tr.children[1].firstChild as Node, offset: 0 })).toEqual({ text: `a${CELL_SEP}b`, caret: 2 });
+    // WebKit leaves a placeholder <br> in a cell it emptied: a cell is one line, not a newline.
+    tr.innerHTML = '<td><br></td><td>2</td>';
+    expect(lineContent(tr, { node: tr.children[0], offset: 0 })).toEqual({ text: `${CELL_SEP}2`, caret: 0 });
   });
 });
 
@@ -335,6 +338,25 @@ describe('beforeinput commands', () => {
     m.view.setSelection(3); // the empty second row's start
     beforeInput(m.root, 'deleteContentBackward');
     expect(m.A.view()).toBe(`"a${SEP}":table_head cells=["a",""]\n"x":-`);
+  });
+
+  it('Backspace and Delete at a cell edge act on keydown (WebKit fires no beforeinput there)', () => {
+    const m = mount(docOf('x'));
+    insertTable(m.A.doc, 0, 2, 2);
+    insertText(m.A.doc, 0, 'a');
+    m.view.update();
+    m.view.setSelection(2); // second cell of the head row
+    expect(key(m.root, 'Backspace').defaultPrevented).toBe(true);
+    expect(sel(m)).toEqual({ anchor: 1, focus: 1 });
+    expect(key(m.root, 'Delete').defaultPrevented).toBe(true);
+    expect(sel(m)).toEqual({ anchor: 2, focus: 2 });
+    m.view.setSelection(1); // inside a cell's text: the browser's
+    expect(key(m.root, 'Backspace').defaultPrevented).toBe(false);
+    m.view.setSelection(3); // the empty second row's start
+    expect(key(m.root, 'Backspace').defaultPrevented).toBe(true);
+    expect(m.A.view()).toBe(`"a${SEP}":table_head cells=["a",""]\n"x":-`);
+    m.view.setSelection(3); // the start of the line after the table: beforeinput's
+    expect(key(m.root, 'Backspace').defaultPrevented).toBe(false);
   });
 
   it('history, format and list inputTypes route to commands', () => {

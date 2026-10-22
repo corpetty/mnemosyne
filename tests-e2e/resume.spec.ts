@@ -71,7 +71,9 @@ test('a backend that stops answering is noticed', async ({ page, request }) => {
   );
   let down = false;
   let socket: WebSocketRoute | null = null;
-  await page.routeWebSocket(/\/ws/, (ws) => {
+  // Only the event socket (`/ws`, maybe `?token=`): a meeting's live notes have their own
+  // (`/ws/notes/<id>`, opened by the copilot panel while recording), which must not take its place.
+  await page.routeWebSocket(/\/ws(\?|$)/, (ws) => {
     if (down) {
       ws.close();
       return;
