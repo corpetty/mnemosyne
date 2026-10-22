@@ -140,6 +140,13 @@ jobs:
             echo "::error::the committed wasm is stale: run scripts/build-notes-wasm.sh"
             exit 1
           fi
+      # What this compiler made, to compare with a local build when the two disagree.
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: notes-wasm-pkg
+          path: src/lib/notes/pkg/
+          retention-days: 7
 
   shell:
     name: Rust shell compiles
