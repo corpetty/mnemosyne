@@ -19,7 +19,8 @@ anyhow = "1"
 base64 = "0.22"
 getrandom = "0.2"
 hashseq = { git = "https://github.com/davidrusu/hashseq", rev = "94f5e3c" }
-similar = "2"
+# The notes document (render, parse, set_text) and the text diff, shared with notes-wasm.
+notes-core = { path = "../notes-core" }
 clap = { version = "4", features = ["derive"] }
 iroh = { version = "1.3", default-features = false, features = ["tls-ring"] }
 iroh-mdns-address-lookup = "0.6"

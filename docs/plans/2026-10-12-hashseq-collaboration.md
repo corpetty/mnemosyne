@@ -391,6 +391,32 @@ Drafted against the code at 494741b, reviewed and accepted.
 
 ### Phase 6 design (agreed with Corey 2026-10-22)
 
+Status: built 2026-10-22, unreleased, as designed below (notes-core and notes-wasm crates, the `notes`
+CI job, relay and sync in the backend, the editor in src/lib/notes, Vitest and Playwright specs).
+Found while building:
+
+- Mark strings over 14 bytes (URLs, every `comment:<id>`) are artifacts: hashseq keeps them out of
+  the delta, so they travel as 0xAF frames, drained before the delta, resent on every reconnect
+  (duplicates are harmless), and the relay logs and forwards them like deltas.
+- Enter at a line end puts the new `\n` AFTER the old terminator, so the line keeps its kind
+  and mark affinity and the new line gets the continued kind; Enter mid-line puts the new
+  terminator at the caret and the old one moves to the end.
+- Inline anchors must equal wasm's `markRange` (`Before(first)..Before(next)`, `After(last)` at the
+  document end), so bold/italic/strike grow at their end only; code, link and comments use
+  `markRangeClosed`; the Rust side (notes-core) builds the same anchors.
+- Reconnect: the hello's snapshot and backlog go into a throwaway replica whose frontier is what the
+  server holds; they are merged into the live store without sending, then `applyFrontier` with that
+  frontier makes the next drain exactly what the server lacks (offline edits included).
+- Text written around the document (the notes route, library sync's text merge, a meeting with no
+  sidecar for a while) is caught up into it as an `api` edit before a join or fold, else the next
+  fold would render over it.
+- A union that fails (sidecar missing) holds the sync cursor just before that meeting and the round
+  goes on to the other meetings, which are not blocked; it is tried again next round.
+- Comments on notes are marked by the SERVER from the element ids (`notes_ids`), not by the client,
+  so a read-only reader (a reviewer) can comment.
+- The join/fold race (a fold between reading the snapshot and reading the frames): join reads the snapshot and the frames after it together (and enters the room in
+  the same step), so a frame is in the backlog or relayed, never neither or both.
+
 Drafted against the code at 273eaf3 (hashseq 94f5e3c), reviewed and accepted.
 
 - **The CRDT runs in every client** (the desktop webview and the team server's web app) as
@@ -415,12 +441,15 @@ Drafted against the code at 273eaf3 (hashseq 94f5e3c), reviewed and accepted.
   objects, comments cannot span blocks, ~4k lines of DOM to vendor). The text is lines ending in
   `\n` (the doc always ends with one). A line's kind is a closed `block` mark on its terminating
   `\n`: `h1|h2|h3|bullet|number|task|task_done|quote|code|table|table_head` (`lang` on a fence's
-  first line). Inline: `bold`, `italic`, `strike` expanding (`After(p)..Before(n)`), `code` and
-  `link` (value = URL) closed, `comment:<id>` closed. Concurrent task toggles resolve to done;
-  two live link URLs render as plain text with "(link conflict)".
+  first line). Inline: `bold`, `italic`, `strike` grow at their end (wasm `markRange` anchors:
+  `Before(start)..Before(next)`), `code` and `link` (value = URL) closed (`markRangeClosed`),
+  `comment:<id>` closed; flag values are `"true"`. Concurrent line kinds stay live together:
+  `task`+`task_done` resolve to done, otherwise the first in `markedSpans` order; two live link
+  URLs render as plain text with "(link conflict)". Mark strings over 14 bytes (URLs, comment
+  kinds) travel as 0xAF artifact frames, which the relay forwards and logs like 0xDE deltas.
 - **Tables** (Corey: in v1): rows are lines of kind `table` (the first row of a run
   `table_head`), cells separated by U+001F in the text, inline marks allowed in cells. Column
-  alignment is an `align` mark on the head row's terminator. Adding a column inserts a separator
+  alignment is an `align` mark on the head row's terminator, one of `l c r -` per column (`"lc-r"`). Adding a column inserts a separator
   in every row; ragged rows (concurrent column edits) are padded by the renderer and the editor.
   Tab / Shift+Tab move between cells, Tab in the last cell adds a row.
 - **Markdown both ways, one implementation**: a `notes-core` Rust crate (hashseq + render +

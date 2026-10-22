@@ -59,6 +59,16 @@ def can_write(owner_id: str) -> bool:
     return p is None or p.role == ADMIN or owner_id == p.user_id
 
 
+def can_edit_notes(owner_id: str, shared_with: set[str]) -> bool:
+    """May they type into the meeting's live shared notes (services/shared_notes.py)? Its
+    owner, an admin, and anyone it is shared with, alone or with everyone ("*"); other readers
+    (a reviewer reading someone else's meeting) only read. Unrestricted (the desktop) edits."""
+    p = current.get()
+    if p is None or p.role == ADMIN or owner_id == p.user_id:
+        return True
+    return p.user_id in shared_with or "*" in shared_with
+
+
 def is_admin() -> bool:
     p = current.get()
     return p is None or p.role == ADMIN

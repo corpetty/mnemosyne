@@ -1,0 +1,22 @@
+[package]
+name = "notes-core"
+version = "0.1.0"
+description = "Mnemosyne's live shared notes: the markdown document over hashseq (render, parse, set_text, fold, merge)"
+authors = ["corpetty"]
+license = "MIT"
+edition = "2021"
+publish = false
+
+# Used by link/ (the `mnemosyne-link notes doc` sidecar) and notes-wasm/ (the browser), so the
+# server's fold and the client's markdown paste agree. Must build for wasm32-unknown-unknown:
+# no std::fs, processes, threads or clocks here.
+[dependencies]
+# Same rev as link/ and notes-wasm/: every side must agree on the encoding.
+hashseq = { git = "https://github.com/davidrusu/hashseq", rev = "94f5e3c" }
+similar = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+
+# Not part of any parent workspace (the repo root has none; keep it that way).
+[workspace]

@@ -83,6 +83,7 @@ class PeerState:
     updated: int = 0
     merged: int = 0
     deleted: int = 0
+    waiting: int = 0  # meetings left for the next round (their notes merge failed)
     clashes: dict[str, str] = field(default_factory=dict)  # meeting id -> name
     app_version: str | None = None
     backoff: float = 0.0  # seconds; 0 when the peer answered last time
@@ -91,7 +92,7 @@ class PeerState:
 
 @dataclass
 class _Outcome:
-    kind: str  # new | updated | merged | ignored | clash | deleted
+    kind: str  # new | updated | merged | ignored | clash | deleted | waiting
     session_id: str
     name: str = ""
 
@@ -299,7 +300,7 @@ class SyncService:
 
         st = self.state(peer.id)
         st.state, st.error, st.done, st.total = "syncing", None, 0, 0
-        st.received = st.updated = st.merged = st.deleted = 0
+        st.received = st.updated = st.merged = st.deleted = st.waiting = 0
         self._publish(peer, st)
         try:
             if not peer.listen and self.ctx.link.status.running:
@@ -387,9 +388,11 @@ class SyncService:
         from ..models.sync import SyncChanges
 
         first = True
+        start = pos = peer.since  # the round's first cursor; `pos` is where the next page starts
+        held: int | None = None  # the cursor kept for next time when a meeting had to wait
         while True:
             peer = self.ctx.sync_peers.get(peer.id) or peer
-            since = peer.since
+            since = pos
             cursor = self._tombstone_cursor(peer.id)
             asked = ""
             if cursor:
@@ -405,7 +408,9 @@ class SyncService:
             )
             if first:
                 st.total, first = page.total, False
-            outcomes, new_cursor = await asyncio.to_thread(self._take_page, peer, page, cursor)
+            outcomes, new_cursor, stuck = await asyncio.to_thread(
+                self._take_page, peer, page, cursor
+            )
             for o in outcomes:
                 self._count(st, o)
                 if o.kind in ("new", "updated", "merged"):
@@ -418,9 +423,18 @@ class SyncService:
                 self.ctx.repo.set_meta(TOMBSTONE_CURSOR + peer.id, new_cursor)
             if self.ctx.sync_peers.get(peer.id) is None:
                 return  # removed meanwhile
-            self.ctx.sync_peers.update(peer.id, since=page.next_since, last_sync_at=now_iso())
+            # A meeting that could not be taken in yet (its notes could not be merged) holds the
+            # stored cursor back to just before the earliest such meeting of the round, so it is
+            # asked for again next round. The round itself goes on to the following pages, so
+            # one stuck meeting blocks nothing else. What is taken twice next round is harmless
+            # (equal documents make no sidecar call).
+            if stuck is not None:
+                held = max(start, stuck - 1) if held is None else min(held, max(start, stuck - 1))
+            pos = page.next_since
+            stored = pos if held is None else min(pos, held)
+            self.ctx.sync_peers.update(peer.id, since=stored, last_sync_at=now_iso())
             self._publish(peer, st)
-            if not page.more or page.next_since <= since:
+            if not page.more or pos <= since:
                 return
 
     def _count(self, st: PeerState, o: _Outcome) -> None:
@@ -428,7 +442,12 @@ class SyncService:
             st.clashes[o.session_id] = o.name
         elif o.kind != "ignored":
             st.clashes.pop(o.session_id, None)
-        attr = {"new": "received", "updated": "updated", "merged": "merged"}.get(o.kind)
+        attr = {
+            "new": "received",
+            "updated": "updated",
+            "merged": "merged",
+            "waiting": "waiting",
+        }.get(o.kind)
         if o.kind == "deleted":
             attr = "deleted"
         if attr:
@@ -443,10 +462,17 @@ class SyncService:
 
     def _take_page(
         self, peer: SyncPeer, page: SyncChanges, cursor: str
-    ) -> tuple[list[_Outcome], str]:
-        """Every meeting of the page, then its tombstones. Returns what happened and the
-        tombstone cursor to keep (not past a tombstone that had to wait)."""
+    ) -> tuple[list[_Outcome], str, int | None]:
+        """Every meeting of the page, then its tombstones. Returns what happened, the
+        tombstone cursor to keep (not past a tombstone that had to wait) and the change number
+        of the earliest meeting that had to wait (None: all were taken). A peer that sends no
+        change numbers holds the whole page back."""
         out = [self.take(peer, doc) for doc in page.sessions]
+        stuck: int | None = None
+        for i, o in enumerate(out):
+            if o.kind == "waiting":
+                seq = page.seqs[i] if i < len(page.seqs) else 0
+                stuck = seq if stuck is None else min(stuck, seq)
         new_cursor, waiting = cursor, False
         for t in sorted(page.tombstones, key=lambda t: (t.at, t.session_id)):
             outcome = self.take_tombstone(peer, t)
@@ -457,20 +483,34 @@ class SyncService:
                 out.append(outcome)
             if not waiting and t.at > new_cursor:
                 new_cursor = t.at
-        return out, new_cursor
+        return out, new_cursor, stuck
 
     def take(self, peer: SyncPeer, theirs: SyncSession) -> _Outcome:
-        """One meeting from `peer` into the library."""
+        """One meeting from `peer` into the library. The meeting's notes lock (the one folds and
+        catch-ups take) is held throughout: nothing folds the notes document while it is merged."""
+        from . import shared_notes
+
+        sid = theirs.id
+        if self.ctx.repo.has_tombstone(sid):
+            return _Outcome("ignored", sid)
+        with shared_notes.hub(self.ctx).lock(sid):
+            # What was typed here is folded in first, so our version is current.
+            shared_notes.fold_blocking(self.ctx, sid)
+            return self._take_locked(peer, theirs)
+
+    def _take_locked(self, peer: SyncPeer, theirs: SyncSession) -> _Outcome:
+        from . import sync_notes
         from .link import find_binary
-        from .sync_merge import apply, merge, vv_relation
+        from .shared_notes import NotesDocError
+        from .sync_merge import apply, both_docs, merge, vv_relation
         from .sync_state import export_session, same_meeting, write_session
 
         repo, me, sid = self.ctx.repo, self.me, theirs.id
-        if repo.has_tombstone(sid):
-            return _Outcome("ignored", sid)
         ours = export_session(repo, sid, me)
         if ours is None:
             write_session(repo, theirs, local_device_id=me, vv=theirs.vv, bump=False)
+            if theirs.notes_doc is not None:
+                sync_notes.adopt(self.ctx, sid, theirs.notes_doc, peer.name)
             self._remember(peer, sid)
             return _Outcome("new", sid)
         if not same_meeting(ours.created_at, theirs.created_at):
@@ -478,9 +518,35 @@ class SyncService:
             return _Outcome("clash", sid, theirs.name or ours.name)
         relation = vv_relation(ours.vv, theirs.vv)
         if relation in ("equal", "dominates"):
+            if theirs.notes_doc is not None and ours.notes_doc is None:
+                # We lack the document this meeting has there (an earlier round stopped
+                # between the meeting and its document): take it, whatever the versions say.
+                sync_notes.adopt(self.ctx, sid, theirs.notes_doc, peer.name)
             return _Outcome("ignored", sid)
+        # The documents: a union when both sides have one (stored before the rest of the
+        # meeting, with `Session.notes` set to its render), adopted afterwards when only theirs
+        # has one. A union that cannot be made leaves the meeting waiting (the cursor stays
+        # before it).
+        united = None
+        if both_docs(ours, theirs):
+            try:
+                united = sync_notes.union(self.ctx, sid, theirs.notes_doc)
+            except NotesDocError as e:
+                logger.warning(
+                    "Sync: the notes of %s on %s cannot be merged yet, retried next round: %s",
+                    sid,
+                    peer.name,
+                    e,
+                )
+                return _Outcome("waiting", sid, theirs.name or ours.name)
+        adopt_doc = theirs.notes_doc is not None and ours.notes_doc is None
         if relation == "dominated":
+            if united is not None:
+                sync_notes.store_union(self.ctx, sid, united, peer.name)
+                theirs = theirs.model_copy(update={"notes": united.markdown})
             write_session(repo, theirs, local_device_id=me, vv=theirs.vv, bump=False)
+            if adopt_doc:
+                sync_notes.adopt(self.ctx, sid, theirs.notes_doc, peer.name)
             self._remember(peer, sid)
             return _Outcome("updated", sid)
         raw = repo.served_snapshot(sid, peer.id, theirs.vv.get(me, 0))
@@ -495,6 +561,10 @@ class SyncService:
             ours_is_origin=state is not None and state[0] == "",
             binary=find_binary(),
         )
+        if united is not None:
+            merged.notes = united.markdown
+            sync_notes.store_union(self.ctx, sid, united, peer.name)
+            report["notes_document"] = "union"
         apply(
             self.ctx,
             merged,
@@ -502,18 +572,18 @@ class SyncService:
             by=f"Sync ({peer.name})",
             report=report,
         )
+        if adopt_doc and sync_notes.adopt(self.ctx, sid, theirs.notes_doc, peer.name):
+            report["notes_document"] = "adopted"
         return _Outcome("merged", sid)
 
     def _remember(self, peer: SyncPeer, sid: str) -> None:
         """After a fast-forward both sides hold this state: keep it as a merge base, as if it
         had been served to the peer at our revision in it."""
-        from .sync_state import export_session
+        from .sync_state import base_json, export_session
 
         doc = export_session(self.ctx.repo, sid, self.me)
         if doc is not None:
-            self.ctx.repo.serve_snapshot(
-                sid, peer.id, doc.vv.get(self.me, 0), doc.model_dump_json()
-            )
+            self.ctx.repo.serve_snapshot(sid, peer.id, doc.vv.get(self.me, 0), base_json(doc))
 
     def take_tombstone(self, peer: SyncPeer, t: SyncTombstone) -> _Outcome | None:
         """A meeting deleted on a peer: deleted here too (with its audio when it was recorded
@@ -553,22 +623,27 @@ class SyncService:
         """A page of changed meetings for a peer; each document served is remembered as the
         base of that peer's later edits (only when the caller is a known peer)."""
         from ..models.sync import SyncChanges
-        from .sync_state import export_session
+        from . import shared_notes
+        from .sync_state import base_json, export_session
 
         repo, me = self.ctx.repo, self.me
         limit = max(1, min(limit, 200))
         changes, next_since, more = repo.changes_since(since, limit)
         total = len(repo.changes_since(since, limit=10**9)[0]) if more else len(changes)
-        docs = []
-        for sid, _seq, _vv in changes:
+        docs, seqs = [], []
+        for sid, seq, _vv in changes:
+            # The notes document goes out folded (and caught up with text written around it).
+            shared_notes.fold_blocking(self.ctx, sid)
             doc = export_session(repo, sid, me)
             if doc is None:
                 continue
             if peer is not None:
-                repo.serve_snapshot(sid, peer.id, doc.vv.get(me, 0), doc.model_dump_json())
+                repo.serve_snapshot(sid, peer.id, doc.vv.get(me, 0), base_json(doc))
             docs.append(doc)
+            seqs.append(seq)
         return SyncChanges(
             sessions=docs,
+            seqs=seqs,
             tombstones=[SyncTombstone(**t) for t in repo.tombstones_since(tombstones_since)],
             next_since=next_since,
             more=more,

@@ -17,7 +17,11 @@ item by id, bookmark notes, comment texts) go through the sidecar's one-off thre
   a deletion on the other side; the order is ours with theirs' additions placed by `place`;
 - chapters, client facts and the agenda are whole lists; agenda `covered` is OR'd per point;
 - the transcript is one unit: changed on one side → it, on both → the recording machine's;
-- history events are a union by uid; recordings rows are the origin's.
+- history events are a union by uid; recordings rows are the origin's;
+- the notes: when both sides have a live notes document and they differ, the documents are
+  merged by op-set union (services/sync_notes.py, run by the caller) and `notes` is not merged as
+  text here (it is ours until the caller sets the union's render); when only theirs has one the
+  text is merged as above and the adopted document catches up with it.
 
 Without a base (`base is None`) the side with the newer `updated_at` is taken whole.
 `apply` writes a merge through `summary_doc.apply_human` (the summary, so the local document
@@ -68,6 +72,15 @@ ITEM_SCALARS = ("owner", "due", "at", "live", "done", "follow", "issue_url", "ta
 
 
 # ---- version vectors ------------------------------------------------------------------------
+
+
+def both_docs(ours: SyncSession, theirs: SyncSession) -> bool:
+    """Both sides have a notes document and the documents differ: their union is the merge."""
+    return (
+        ours.notes_doc is not None
+        and theirs.notes_doc is not None
+        and ours.notes_doc != theirs.notes_doc
+    )
 
 
 def vv_relation(ours: dict[str, int], theirs: dict[str, int]) -> str:
@@ -407,6 +420,10 @@ def merge(
         report.update(replaced=True, taken=side, transcript=side)
         if side == "theirs":
             report["kept"] += 1
+        elif theirs.notes_doc is not None and ours.notes_doc is None:
+            # Their document is adopted: our text edits cannot be merged without a base, and
+            # catching the document up with them would delete what only the document has.
+            out.notes = theirs.notes
         _finish(out, ours, theirs, vv, now, ours_is_origin)
         return out, report
 
@@ -418,7 +435,8 @@ def merge(
             name,
             m.scalar(getattr(base, name), getattr(ours, name), getattr(theirs, name), name),
         )
-    out.notes = m.text(base.notes, ours.notes, theirs.notes, "notes", out, "notes")
+    if not both_docs(ours, theirs):  # else the caller sets the union's render
+        out.notes = m.text(base.notes, ours.notes, theirs.notes, "notes", out, "notes")
     out.participants = _set_merge(base.participants, ours.participants, theirs.participants)
     out.attendees = _set_merge(base.attendees, ours.attendees, theirs.attendees)
     for field in ("participants", "attendees"):
@@ -503,6 +521,7 @@ def _finish(
     """What every merge shares: ids and `created_at` are ours, events are a union, the
     recordings rows and the origin's audio path are the recording machine's."""
     out.id, out.created_at, out.origin = ours.id, ours.created_at, ours.origin
+    out.notes_doc = None  # documents are merged apart from the rest (services/sync_notes.py)
     out.vv, out.updated_at = vv, now
     seen = {e.uid for e in ours.events}
     out.events = [e.model_copy() for e in ours.events] + [

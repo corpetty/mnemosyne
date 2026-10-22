@@ -206,7 +206,8 @@ async def _open_comments(backend: Backend, session_id: str) -> list[str]:
         quote = (root.get("quote") or "").strip()
         if len(quote) > 60:
             quote = quote[:59] + "…"
-        on = f" (on “{quote}”)" if quote else ""
+        label = "Notes: " if root.get("target") == "notes" else ""
+        on = f" (on {label}“{quote}”)" if quote else (" (on the notes)" if label else "")
         lines.append(f"- {root.get('author') or 'unknown'}: {root['text']}{on}")
         for reply in thread.get("replies") or []:
             if not reply.get("deleted"):

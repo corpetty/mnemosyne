@@ -59,14 +59,21 @@
 		await sessionState.selectSession(hit.session_id);
 	}
 
-	/** A comment on a transcript line opens the Transcript tab; the others the Summary. */
+	/** A comment on a transcript line opens the Transcript tab, one on the notes the Notes tab;
+	 * the others the Summary. */
 	async function openComment(hit: SearchHit, c: CommentHit) {
 		if (c.target === 'segment') {
 			uiState.focusComment = c.id;
 			return open(hit, null);
 		}
-		uiState.focusComment = c.id;
 		sessionState.pendingOpen = null;
+		if (c.target === 'notes') {
+			await sessionState.selectSession(hit.session_id);
+			uiState.focusNotesComment = c.id;
+			uiState.activeTab = 'notes';
+			return;
+		}
+		uiState.focusComment = c.id;
 		await sessionState.selectSession(hit.session_id);
 		uiState.activeTab = 'summary';
 	}
@@ -118,7 +125,7 @@
 					{/each}
 					{#each hit.comments as c (c.id)}
 						<button onclick={() => openComment(hit, c)} class="w-full text-left text-[11px] leading-4 text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 rounded px-1">
-							<span class="text-[10px] text-sky-400">comment</span>
+							<span class="text-[10px] text-sky-400">comment{c.label ? ` · ${c.label}` : ''}</span>
 							{#if c.author}<span class="text-gray-500">{c.author}:</span>{/if}
 							{#each runs(c.snippet) as r}{#if r.hit}<mark class="bg-yellow-800/60 text-yellow-100 rounded px-0.5">{r.text}</mark>{:else}{r.text}{/if}{/each}
 						</button>

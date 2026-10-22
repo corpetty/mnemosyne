@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ... import access
 from ...jobs import Job
 from ...models.base import ApiModel
 from ...models.session import (
@@ -11,7 +12,7 @@ from ...models.session import (
     Session,
     SessionSummary,
 )
-from ...services import history, summary_edit
+from ...services import history, shared_notes, summary_edit
 from ...services.combine import combine_runner
 from ...services.copilot import copilot_ask_runner
 from ...services.origin import require_local_audio
@@ -147,7 +148,26 @@ async def delete_session(session_id: str, reason: str = "", ctx: AppContext = De
 
 @router.post("/{session_id}/notes", response_model=Session)
 async def update_notes(session_id: str, request: NotesRequest, ctx: AppContext = Depends(get_ctx)):
-    session = ctx.sessions.update_notes(session_id, request.notes)
+    # The notes written whole. With live shared notes this goes through the meeting's document
+    # (author "api"), broadcast to whoever has it open; without, straight to `Session.notes`.
+    # Who may: as in the live notes (access.can_edit_notes). (A comment, not a docstring: that
+    # would change the generated API types.)
+    if not ctx.repo.exists(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not shared_notes.may_edit(ctx, session_id):
+        raise access.Forbidden("You can only read these notes")
+    try:
+        through_doc = await shared_notes.set_markdown(
+            ctx, session_id, request.notes, access.user_id()
+        )
+    except shared_notes.NotesWriteFailed as e:
+        raise HTTPException(
+            status_code=503, detail="The notes could not be saved; try again"
+        ) from e
+    if not through_doc:
+        with shared_notes.unrestricted():
+            ctx.sessions.update_notes(session_id, request.notes)
+    session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session

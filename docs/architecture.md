@@ -368,6 +368,70 @@ keeping its quote. Comments travel with library sync (merged by id with the rest
 searchable, show in the meeting's history, and publish `comments` events. Tasks and decisions
 show the threads of all their mentions.
 
+### Live shared notes
+
+A meeting's notes are one hashseq document that everyone who has the meeting open edits live
+(desktop webview and the team server's web app). Design and rationale: phase 6 of
+docs/plans/2026-10-12-hashseq-collaboration.md.
+
+```
+client (wasm CRDT) <-- binary frames, JSON presence --> /ws/notes/{id} relay
+                                                          |  append (author per frame)
+                                                          v
+                                       shared_notes_ops (log)   shared_notes (snapshot)
+                                                          |  2 s after the last frame, 30 s, last leave,
+                                                          |  before summarize / export / sync serve
+                                       sidecar `notes doc fold`  --> snapshot + Session.notes (markdown)
+```
+
+- **Every client runs the CRDT.** `src/lib/notes/pkg` is notes-wasm (hashseq + the notes-core crate),
+  committed and rebuilt by scripts/build-notes-wasm.sh. The editor (`src/lib/notes/editor`) edits the
+  `WasmHashWeb` through commands (`commands.ts`, `ops.ts`, local undo); `doc.svelte.ts` owns the
+  socket, `stores/notes.svelte.ts` shares one document per meeting between the Notes tab, the
+  recording card and the Copilot's "Add to notes".
+- **The backend is an opaque relay.** It cannot decode hashseq. A join sends a JSON hello, the folded
+  snapshot, then the unfolded frames, read together so no frame is lost or doubled. A client frame
+  (0xDE delta or 0xAF artifact, at most 2 MB) is appended with its author, relayed to the others
+  and never echoed. Presence is JSON. A reconnecting client merges the hello into its live store
+  and sets the upstream clock to the server's frontier (`applyFrontier`), so its offline edits
+  go out and nothing else does.
+- **Folding.** The stateless sidecar (`mnemosyne-link notes doc`, link/src/notes.rs over notes-core)
+  folds snapshot + frames into a new snapshot and renders markdown. `Session.notes` is that
+  markdown: search, Obsidian, MCP, combine and the summary read it as before, and the summary gets
+  it as a `shared_notes_hint`. Text written around the document (the notes route, library sync's
+  text merge) is caught up into it, as an `api` edit, before a join or fold. `set_text` diffs
+  markdown into ops, empty for an unchanged document; a meeting with notes and no document is
+  seeded this way, on its origin machine.
+- **Library sync** carries the snapshot in `SyncSession.notes_doc`; two documents merge by union
+  (`notes doc merge`, no base), one side only is adopted (open sockets get `reload`). A union that
+  fails holds the sync cursor before that meeting and the round goes on.
+- **Comments** on the notes are `comment:<id>` marks. The client sends the first and last element ids;
+  the server puts the mark (`mark_comment`, frames logged and broadcast) so a read-only reader can
+  comment too. Each fold reports every mark's range (`shared_notes.plain`/`comment_ranges`), read
+  back as `notes_range`; a deleted range is detached.
+- **Access.** Owner, admin and shared-with edit; other readers get a read-only editor and the relay
+  refuses their frames (4403). Without the sidecar the hello is `unavailable` and
+  LegacyNotesEditor (textarea, `POST /notes`) is used.
+
+Document model (src/lib/notes/model.ts, notes-core/src/lib.rs): one flat seq of lines, each
+ending in `\n`; the document always ends with one. Indexes are code points.
+
+| Mark | On | Value | Anchors |
+|---|---|---|---|
+| `block` | a line's `\n` | `h1 h2 h3 bullet number task task_done quote code table table_head` | closed |
+| `lang` | a code run's first `\n` | the fence's info string, raw | closed |
+| `align` | a table head row's `\n` | one of `l c r -` per column, e.g. `"lc-r"` | closed |
+| `bold`, `italic`, `strike` | characters | `"true"` | grow at the end only (wasm `markRange`) |
+| `code` | characters | `"true"` | closed (`markRangeClosed`) |
+| `link` | characters | the URL | closed |
+| `comment:<id>` | characters | `"true"` | closed |
+
+Table cells are separated by U+001F in the row's text; ragged rows are padded when rendered.
+Concurrent values stay live: `task` with `task_done` is done, otherwise the first by mark id wins;
+two link URLs render as plain text with "(link conflict)". Mark strings over 14 bytes travel as
+0xAF artifact frames. The markdown renderer is canonical and the parser covers what it renders
+(HTML and images stay literal), shared by the fold and the client's paste.
+
 ## Backend Lifecycle
 
 The Tauri Rust shell (`src-tauri/src/lib.rs`) supervises the Python backend from a worker thread and

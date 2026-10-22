@@ -1,0 +1,223 @@
+/* The notes editor's rendered document (src/lib/notes/editor/dom.ts). Sizes and colours follow
+   the markdown preview (src/lib/components/Markdown.svelte, Tailwind's gray/blue palette), so
+   notes look the same while typing and in a summary. The root's padding, border and focus ring
+   are the component's; caret and selection are the browser's. Plain CSS: no Tailwind classes
+   reach the generated DOM. */
+
+.notes-editor {
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: rgb(229 231 235);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  outline: none;
+  counter-reset: ne-number;
+}
+
+/* One counter for numbered lines, created on the root; any other line (or table) sets it back
+   to 0 with counter-set (a sibling's counter-reset would nest a new counter instead in current
+   Chromium) so a run of numbered lines counts from 1. */
+.notes-editor .ne-line {
+  margin: 0;
+  min-height: 1.55em;
+  position: relative;
+  counter-set: ne-number 0;
+}
+
+.notes-editor .ne-table {
+  counter-set: ne-number 0;
+}
+
+/* Chrome: never editable, never part of the text, never the caret's home. */
+.notes-editor [data-chrome] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ---- headings ---- */
+
+.notes-editor .ne-h1,
+.notes-editor .ne-h2,
+.notes-editor .ne-h3 {
+  color: rgb(243 244 246);
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 0.9em;
+  margin-bottom: 0.4em;
+}
+.notes-editor .ne-h1 {
+  font-size: 1.15rem;
+}
+.notes-editor .ne-h2 {
+  font-size: 1.05rem;
+}
+.notes-editor .ne-h3 {
+  font-size: 0.95rem;
+}
+.notes-editor > .ne-line:first-child {
+  margin-top: 0;
+}
+
+/* ---- lists ---- */
+
+.notes-editor .ne-bullet,
+.notes-editor .ne-number,
+.notes-editor .ne-task,
+.notes-editor .ne-task_done {
+  padding-left: 1.5em;
+}
+.notes-editor .ne-bullet::before {
+  content: '\2022';
+  position: absolute;
+  left: 0.45em;
+  color: rgb(156 163 175);
+  pointer-events: none;
+}
+.notes-editor .ne-number {
+  counter-set: none;
+  counter-increment: ne-number;
+}
+.notes-editor .ne-number::before {
+  content: counter(ne-number) '.';
+  position: absolute;
+  left: 0;
+  width: 1.2em;
+  text-align: right;
+  color: rgb(156 163 175);
+  pointer-events: none;
+}
+
+.notes-editor .ne-check {
+  position: absolute;
+  left: 0.1em;
+  top: 0.35em;
+  width: 0.95em;
+  height: 0.95em;
+  box-sizing: border-box;
+  border: 1px solid rgb(107 114 128);
+  border-radius: 0.2em;
+  background: rgb(17 24 39);
+  cursor: pointer;
+}
+.notes-editor .ne-check[aria-checked='true'] {
+  background: rgb(96 165 250);
+  border-color: rgb(96 165 250);
+}
+.notes-editor .ne-check[aria-checked='true']::after {
+  content: '';
+  position: absolute;
+  left: 0.28em;
+  top: 0.08em;
+  width: 0.3em;
+  height: 0.55em;
+  border: solid rgb(17 24 39);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.notes-editor .ne-task_done {
+  color: rgb(156 163 175);
+  text-decoration: line-through;
+}
+
+/* ---- quote ---- */
+
+.notes-editor .ne-quote {
+  border-left: 3px solid rgb(75 85 99);
+  padding-left: 0.8em;
+  color: rgb(156 163 175);
+}
+
+/* ---- code block: consecutive code lines join into one box ---- */
+
+.notes-editor .ne-code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8em;
+  line-height: 1.6;
+  background: rgb(17 24 39);
+  border-left: 1px solid rgb(55 65 81);
+  border-right: 1px solid rgb(55 65 81);
+  padding: 0 0.8em;
+}
+.notes-editor .ne-code-first {
+  border-top: 1px solid rgb(55 65 81);
+  border-top-left-radius: 0.375rem;
+  border-top-right-radius: 0.375rem;
+  padding-top: 0.5em;
+  margin-top: 0.4em;
+}
+.notes-editor .ne-code-last {
+  border-bottom: 1px solid rgb(55 65 81);
+  border-bottom-left-radius: 0.375rem;
+  border-bottom-right-radius: 0.375rem;
+  padding-bottom: 0.5em;
+  margin-bottom: 0.4em;
+}
+.notes-editor .ne-code .ne-lang {
+  position: absolute;
+  top: 0.15em;
+  right: 0.6em;
+  font-size: 0.75em;
+  color: rgb(107 114 128);
+  pointer-events: none;
+}
+.notes-editor .ne-code code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* ---- tables ---- */
+
+.notes-editor .ne-table {
+  border-collapse: collapse;
+  margin: 0.4em 0;
+}
+.notes-editor .ne-table th,
+.notes-editor .ne-table td {
+  border: 1px solid rgb(55 65 81);
+  padding: 0.25em 0.6em;
+  text-align: left;
+  min-width: 2em;
+  vertical-align: top;
+}
+.notes-editor .ne-table th {
+  background: rgb(31 41 55);
+  font-weight: 600;
+}
+
+/* ---- inline ---- */
+
+.notes-editor a {
+  color: rgb(96 165 250);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.notes-editor .ne-link-conflict {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.notes-editor strong {
+  color: rgb(243 244 246);
+  font-weight: 600;
+}
+.notes-editor code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8em;
+  background: rgb(31 41 55);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+}
+/* A comment's mark is highlighted only while its thread is open (SharedNotes puts
+   .ne-comment-open on it); resolved and orphaned marks are plain text. */
+.notes-editor mark.ne-comment {
+  background: transparent;
+  color: inherit;
+  border-radius: 0.15em;
+}
+.notes-editor mark.ne-comment-open {
+  background: rgb(250 204 21 / 0.18);
+  cursor: pointer;
+}
+.notes-editor mark.ne-comment-open:hover {
+  background: rgb(250 204 21 / 0.3);
+}

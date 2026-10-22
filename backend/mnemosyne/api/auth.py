@@ -40,9 +40,12 @@ PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip"
 
 
 def is_open(path: str) -> bool:
-    """Paths anyone may load: the list above, and everything outside the API and WebSocket,
-    which is the web app's own files (api/web.py; the code is not a secret, the data is)."""
-    return path in OPEN_PATHS or not (path.startswith("/api/") or path == "/ws")
+    """Paths anyone may load: the list above, and everything outside the API and WebSockets
+    (/ws, /ws/notes/...), which is the web app's own files (api/web.py; the code is not a
+    secret, the data is)."""
+    return path in OPEN_PATHS or not (
+        path.startswith("/api/") or path == "/ws" or path.startswith("/ws/")
+    )
 
 
 class TokenAuthMiddleware:

@@ -76,6 +76,8 @@ class AppContext:
     # voices, so the next part of a meeting gives the same person the same live label.
     live_voices: dict = field(default_factory=dict)
     copilot_notes: dict = field(default_factory=dict)  # session id -> CopilotNotes
+    # Live shared notes (services/shared_notes.py): the open meetings' rooms and fold locks.
+    notes_hub: Any = None
     # A team server's per-person calendars (calendar_for), by ICS link.
     person_calendars: dict = field(default_factory=dict)
     team_host: TeamHost = field(default_factory=lambda: TeamHost())
@@ -550,6 +552,9 @@ class AppContext:
         await self.echo.stop()
         await self.jobs.shutdown()
         await self.models.unload()
+        from ..services import shared_notes
+
+        await shared_notes.shutdown(self)
         self.repo.close()
 
 

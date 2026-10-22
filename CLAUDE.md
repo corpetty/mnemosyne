@@ -17,6 +17,7 @@ Read `docs/architecture.md` before changing data flow. `docs/api-reference.md` i
 pnpm tauri dev                 # full app: Vite + Tauri window + backend (spawned by Rust)
 pnpm check                     # svelte-check, must stay at 0 errors
 pnpm test:backend              # backend pytest (no GPU or network needed)
+pnpm test:unit                 # Vitest + jsdom: the notes editor's pure parts (src/lib/notes)
 pnpm test:e2e                  # Playwright browser tests against a demo-mode backend (port 8018)
 pnpm lint:backend              # ruff check + format --check
 cd backend && uv run mnemosyne-bench --synthetic   # WER / speaker accuracy / speed of the engine
@@ -176,6 +177,18 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.
+
+- Live notes need the link sidecar. services/link.py prefers `link/target/release` over `debug`, so
+  a stale local release build silently turns live notes off (hello `unavailable`): rebuild it or set
+  `MNEMOSYNE_LINK_BIN`. The e2e CI job builds link, so the sidecar specs run there.
+- After changing notes-core or bumping hashseq's rev, run scripts/build-notes-wasm.sh
+  (`WASM_BINDGEN` at ~/.cache/mnemosyne-tools/bin/wasm-bindgen) and commit `src/lib/notes/pkg`;
+  keep rustc and wasm-bindgen as the script pins them or the bytes differ.
+- Notes clients must `applyFrontier(encodeFrontier())` after applying remote frames or opening a
+  snapshot (hashseq QUEUE 39) or the next drain ships everything back; mark strings over 14 bytes
+  (URLs, `comment:<id>`) travel as 0xAF artifact frames beside the 0xDE delta, never inside it.
+- Indexes in the notes model and the sidecar are code points, not UTF-16 (src/lib/notes/model.ts
+  `cpLen`/`cpIndex`/`utf16Index`); an astral character is 1 there and 2 in a JS string.
 
 ## Roadmap (agreed 2026-09-22)
 
@@ -421,6 +434,25 @@ the RENDERED markdown (`plain_markdown`). Changed/detached comments are kept and
 travel inside SyncSession, are keyword-searchable (`comments_fts`, never Ask/semantic), not exported
 to Obsidian. Readers may comment; resolve = meeting owner, admin or thread author. Task comments
 attach to a mention and are aggregated on the task object.
+Live shared notes (unreleased, phase 6; design in the hashseq plan): the meeting's notes are one
+hashseq document edited live by everyone who has them open (desktop, team web app). The CRDT runs
+in every client as wasm (notes-wasm/, `src/lib/notes/pkg`, committed, rebuilt by
+scripts/build-notes-wasm.sh with rustc 1.93.1 + wasm-bindgen 0.2.129; the CI `notes` job fails when
+it is stale). The backend is an opaque relay with an append log (`/ws/notes/{id}`, api/notes_ws.py,
+services/shared_notes.py, tables `shared_notes_ops`/`shared_notes`; origin = sha256 of
+"mnemosyne/notes/"+id, computed in Python) and folds with the stateless sidecar `mnemosyne-link
+notes doc` (fold/set_text/merge/mark_comment, from notes-core, the crate the wasm also compiles).
+`Session.notes` = the folded markdown, what search, Obsidian, MCP, combine and the summary still
+read; text written around the doc (notes route, sync's text merge, no sidecar) is caught up into it
+as an `api` edit before a join or fold. Model (src/lib/notes/model.ts, notes-core/src/lib.rs): one
+flat seq of lines ending in `\n`; the line kind is a closed `block` mark on the `\n`
+(h1..table_head); bold/italic/strike grow at the end only, code/link/`comment:<id>` closed; tables
+are `table` lines with U+001F between cells. The editor is our own contenteditable
+(src/lib/notes/editor, kb.js primitives ported by name; commands/ops/undo are local and
+id-anchored; harness at /dev/notes-editor). Library sync merges two documents by union
+(services/sync_notes.py), no base. Comments on notes are marked by the SERVER (`notes_ids` ->
+`mark_comment`), so a read-only reader can comment. Edit rule: owner, admin, shared-with; other
+readers read. No sidecar: hello says `unavailable` and LegacyNotesEditor (the textarea) is used.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

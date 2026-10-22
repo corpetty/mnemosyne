@@ -3983,6 +3983,8 @@ export interface components {
             id: string;
             /** Mentions */
             mentions: string[];
+            /** Notes Range */
+            notes_range: number[] | null;
             /**
              * Parent Id
              * @default
@@ -4033,6 +4035,8 @@ export interface components {
             idx?: number | null;
             /** Idx To */
             idx_to?: number | null;
+            /** Notes Ids */
+            notes_ids?: string[];
             /**
              * Parent Id
              * @default
@@ -4069,6 +4073,10 @@ export interface components {
             author: string;
             /** Id */
             id: string;
+            /** Label */
+            label: string;
+            /** Quote */
+            quote: string;
             /** Snippet */
             snippet: string;
             /** Target */
@@ -6753,6 +6761,8 @@ export interface components {
             more: boolean;
             /** Next Since */
             next_since: number;
+            /** Seqs */
+            seqs: number[];
             /** Sessions */
             sessions: components["schemas"]["SyncSession"][];
             /** Tombstones */
@@ -6975,6 +6985,8 @@ export interface components {
             total: number;
             /** Updated */
             updated: number;
+            /** Waiting */
+            waiting: number;
         };
         /** SyncPeers */
         SyncPeers: {
@@ -7040,6 +7052,8 @@ export interface components {
              * @default
              */
             notes: string;
+            /** Notes Doc */
+            notes_doc: string | null;
             /** Origin */
             origin: string;
             /** Origin Audio */

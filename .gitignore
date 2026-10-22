@@ -33,6 +33,8 @@ backend/.venv/
 
 # Tauri
 src-tauri/target/
+notes-core/target/
+notes-wasm/target/
 src-tauri/gen/
 
 # Runtime data

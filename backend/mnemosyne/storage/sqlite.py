@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from .. import access
 from ..models.ask import Ask, Citation, Passage, PassageLine
-from ..models.comment import Comment
+from ..models.comment import TARGET_LABELS, Comment
 from ..models.digest import Digest
 from ..models.live_flag import LiveFlag
 from ..models.search import CommentHit, SearchHit, SegmentHit
@@ -297,6 +297,35 @@ CREATE TABLE IF NOT EXISTS summary_docs (
     doc TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+-- Live shared notes (services/shared_notes.py): the frames clients sent, in arrival order, as
+-- the relay got them (opaque hashseq bytes: 0xDE deltas, 0xAF artifacts), with who sent each.
+-- `folded` frames are in the snapshot; their rows stay for per-frame authorship.
+CREATE TABLE IF NOT EXISTS shared_notes_ops (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    frame BLOB NOT NULL,
+    author_id TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT '',
+    at TEXT NOT NULL,
+    folded INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (session_id, seq)
+);
+-- The folded document (the sidecar's snapshot, up to `folded_seq`), its markdown as last
+-- folded (Session.notes differing from it = written around the document, which catches up),
+-- its plain text and each comment mark's range in it as last folded (`comment_ranges`, JSON
+-- {comment id: [start, end) | null}, code points; services/comments.py places notes comments
+-- from them), and the last edit shown.
+CREATE TABLE IF NOT EXISTS shared_notes (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    snapshot BLOB,
+    folded_seq INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    last_by TEXT NOT NULL DEFAULT '',
+    last_at TEXT,
+    markdown TEXT,
+    plain TEXT,
+    comment_ranges TEXT
+);
 CREATE TABLE IF NOT EXISTS session_assets (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
@@ -409,6 +438,11 @@ CREATE TABLE IF NOT EXISTS sync_tombstones (
 );
 """
 SCHEMA = SCHEMA.replace("{FTS_TRIGGERS}", FTS_TRIGGERS).replace("{COMMENT_FTS}", COMMENT_FTS)
+
+
+def _ranges_json(comments: dict | None) -> str | None:
+    """A fold's comment ranges ({id: [start, end] | None}) as stored; None = not known."""
+    return None if comments is None else json.dumps(comments, sort_keys=True)
 
 
 def _dt(value: str) -> datetime:
@@ -629,6 +663,14 @@ class SessionRepository:
             "UPDATE session_events SET uid = lower(hex(randomblob(8))) WHERE uid IS NULL"
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS session_events_uid ON session_events(uid)")
+        if "markdown" not in {
+            r["name"] for r in self._conn.execute("PRAGMA table_info(shared_notes)")
+        }:
+            self._conn.execute("ALTER TABLE shared_notes ADD COLUMN markdown TEXT")
+        notes_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(shared_notes)")}
+        for col in ("plain", "comment_ranges"):
+            if col not in notes_cols:
+                self._conn.execute(f"ALTER TABLE shared_notes ADD COLUMN {col} TEXT")
         self._conn.commit()
 
     def _migrate_fts_rowids(self) -> None:
@@ -1306,7 +1348,7 @@ class SessionRepository:
 
     _COMMENT_FIELDS = frozenset(
         {
-            "parent_id", "target", "target_id", "anchor", "quote", "text", "author_id",
+            "id", "parent_id", "target", "target_id", "anchor", "quote", "text", "author_id",
             "author", "mentions", "created_at", "updated_at",
         }
     )  # fmt: skip
@@ -1398,8 +1440,9 @@ class SessionRepository:
         return None if row is None else self._comment(row)
 
     def add_comment(self, session_id: str, **fields) -> str:
-        """Add a comment (any of `_COMMENT_FIELDS`; `text` is required) and return its id.
-        Readers may comment: who may do what beyond that is the service's rule."""
+        """Add a comment (any of `_COMMENT_FIELDS`; `text` is required) and return its id (minted
+        here, unless `id` is given: a notes comment's mark carries it). Readers may comment: who
+        may do what beyond that is the service's rule."""
         unknown = set(fields) - self._COMMENT_FIELDS
         if unknown:
             raise TypeError(f"Unknown comment fields: {', '.join(sorted(unknown))}")
@@ -1408,7 +1451,7 @@ class SessionRepository:
         if not self._readable(session_id):
             raise access.Hidden("Session not found")
         now = datetime.now().isoformat()
-        comment_id = uuid4().hex[:12]
+        comment_id = fields.get("id") or uuid4().hex[:12]
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO comments (id, session_id, parent_id, target, target_id, anchor,"
@@ -1685,6 +1728,241 @@ class SessionRepository:
     def delete_summary_doc(self, session_id: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM summary_docs WHERE session_id=?", (session_id,))
+
+    # ---- live shared notes (services/shared_notes.py; no access checks: the caller checks) --
+
+    def notes_doc(self, session_id: str) -> dict | None:
+        """The folded document: {snapshot (bytes or None), folded_seq, updated_at, last_by,
+        last_at, markdown}, or None when the meeting has none yet."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT snapshot, folded_seq, updated_at, last_by, last_at, markdown"
+                " FROM shared_notes"
+                " WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        return None if row is None else dict(row)
+
+    def notes_source(self, session_id: str) -> tuple[str, str] | None:
+        """(Session.notes, origin) without loading the meeting, or None for an unknown one."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT notes, origin FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        return None if row is None else (row["notes"] or "", row["origin"] or "")
+
+    def has_notes_doc(self, session_id: str) -> bool:
+        """A document exists: a stored snapshot or any frame."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT EXISTS(SELECT 1 FROM shared_notes WHERE session_id=?"
+                " AND snapshot IS NOT NULL)"
+                " OR EXISTS(SELECT 1 FROM shared_notes_ops WHERE session_id=?) AS has",
+                (session_id, session_id),
+            ).fetchone()
+        return bool(row["has"])
+
+    def notes_catchup(self, session_id: str) -> tuple[dict | None, list[tuple[int, bytes]]]:
+        """The folded document and the frames after it, read together: a fold committing between
+        two separate reads would hand out the old snapshot without the frames it just folded."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT snapshot, folded_seq, updated_at, last_by, last_at, markdown"
+                " FROM shared_notes WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            doc = None if row is None else dict(row)
+            rows = self._conn.execute(
+                "SELECT seq, frame FROM shared_notes_ops WHERE session_id=? AND seq>? ORDER BY seq",
+                (session_id, doc["folded_seq"] if doc else 0),
+            ).fetchall()
+        return doc, [(r["seq"], bytes(r["frame"])) for r in rows]
+
+    def has_unfolded_notes(self, session_id: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM shared_notes_ops WHERE session_id=? AND folded=0 LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        return row is not None
+
+    def notes_ops(self, session_id: str) -> list[dict]:
+        """Every frame with its author, in log order (folded ones too)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT seq, frame, author_id, author, at, folded FROM shared_notes_ops"
+                " WHERE session_id=? ORDER BY seq",
+                (session_id,),
+            ).fetchall()
+        return [{**dict(r), "frame": bytes(r["frame"])} for r in rows]
+
+    def append_notes_ops(
+        self, session_id: str, frames: list[bytes], author_id: str, author: str, last_edit: bool
+    ) -> list[int]:
+        """Append frames to the log; their sequence numbers. `last_edit`: show `author` as the
+        last to edit."""
+        if not frames:
+            return []
+        now = datetime.now().isoformat()
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) AS top FROM shared_notes_ops WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            seqs = list(range(row["top"] + 1, row["top"] + 1 + len(frames)))
+            self._conn.executemany(
+                "INSERT INTO shared_notes_ops (session_id, seq, frame, author_id, author, at)"
+                " VALUES (?,?,?,?,?,?)",
+                [
+                    (session_id, s, f, author_id, author, now)
+                    for s, f in zip(seqs, frames, strict=True)
+                ],
+            )
+            self._conn.execute(
+                "INSERT INTO shared_notes (session_id, updated_at, last_by, last_at)"
+                " VALUES (?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET"
+                " last_by=CASE WHEN ? THEN excluded.last_by ELSE last_by END,"
+                " last_at=CASE WHEN ? THEN excluded.last_at ELSE last_at END",
+                (
+                    session_id,
+                    now,
+                    author if last_edit else "",
+                    now if last_edit else None,
+                    int(last_edit),
+                    int(last_edit),
+                ),
+            )
+        return seqs
+
+    def store_notes_fold(
+        self,
+        session_id: str,
+        snapshot: bytes,
+        upto_seq: int,
+        markdown: str | None,
+        plain: str | None = None,
+        comments: dict | None = None,
+    ) -> None:
+        """The snapshot now holds every frame up to `upto_seq` and renders as `markdown` (None:
+        not known, e.g. a snapshot merged in by sync before its fold; no catching up then).
+        `plain` and `comments` are the fold's plain text and each comment mark's range in it
+        (the sidecar's answer; None = not known, then notes comments show as detached).
+
+        A snapshot that differs from the stored one (the document's first, or formatting, comment
+        marks and artifacts that leave the markdown alone) is a new version of the meeting for
+        library sync (`_touch`), or it would never travel. Not when `Session.notes` is about to
+        change anyway: the caller's write of it counts, once. Unchanged: no new version."""
+        now = datetime.now().isoformat()
+        with self._lock, self._conn:
+            before = self._conn.execute(
+                "SELECT snapshot FROM shared_notes WHERE session_id=?", (session_id,)
+            ).fetchone()
+            self._conn.execute(
+                "INSERT INTO shared_notes (session_id, snapshot, folded_seq, updated_at, markdown,"
+                " plain, comment_ranges) VALUES (?,?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE"
+                " SET snapshot=excluded.snapshot, folded_seq=excluded.folded_seq,"
+                " updated_at=excluded.updated_at, markdown=excluded.markdown,"
+                " plain=excluded.plain, comment_ranges=excluded.comment_ranges",
+                (session_id, snapshot, upto_seq, now, markdown, plain, _ranges_json(comments)),
+            )
+            self._conn.execute(
+                "UPDATE shared_notes_ops SET folded=1 WHERE session_id=? AND seq<=? AND folded=0",
+                (session_id, upto_seq),
+            )
+            old = (
+                None if before is None or before["snapshot"] is None else bytes(before["snapshot"])
+            )
+            if old != bytes(snapshot):
+                row = self._conn.execute(
+                    "SELECT notes FROM sessions WHERE id=?", (session_id,)
+                ).fetchone()
+                if row is not None and (markdown is None or (row["notes"] or "") == markdown):
+                    self._touch(session_id)
+
+    def store_synced_notes_doc(
+        self,
+        session_id: str,
+        snapshot: bytes,
+        markdown: str | None,
+        frames: list[bytes],
+        author: str,
+        notes: str | None = None,
+        plain: str | None = None,
+        comments: dict | None = None,
+    ) -> list[int]:
+        """A notes document that came by library sync (services/sync_notes.py), one transaction:
+        `frames` (what the local snapshot lacked of it, for the connected editors) are appended
+        to the log as `author`, already folded; `snapshot` (the union, or the peer's document
+        adopted where there was none) becomes the stored one with its `markdown`; `notes`, when
+        given, becomes `Session.notes` in the same breath; `plain` and `comments` as in
+        `store_notes_fold`. No new version (`_touch`): the sync
+        apply path counts it. Frames that arrived from editors meanwhile (unfolded, so not in
+        `snapshot`) stay unfolded. Returns the appended frames' sequence numbers."""
+        now = datetime.now().isoformat()
+        with self._lock, self._conn:
+            top = self._conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) AS top FROM shared_notes_ops WHERE session_id=?",
+                (session_id,),
+            ).fetchone()["top"]
+            seqs = list(range(top + 1, top + 1 + len(frames)))
+            self._conn.executemany(
+                "INSERT INTO shared_notes_ops (session_id, seq, frame, author_id, author, at,"
+                " folded) VALUES (?,?,?,?,?,?,1)",
+                [(session_id, q, f, "", author, now) for q, f in zip(seqs, frames, strict=True)],
+            )
+            self._conn.execute(
+                "INSERT INTO shared_notes (session_id, snapshot, folded_seq, updated_at, markdown,"
+                " plain, comment_ranges) VALUES (?,?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE"
+                " SET snapshot=excluded.snapshot, updated_at=excluded.updated_at,"
+                " markdown=excluded.markdown, plain=excluded.plain,"
+                " comment_ranges=excluded.comment_ranges,"
+                " folded_seq=MAX(folded_seq, excluded.folded_seq)",
+                (
+                    session_id,
+                    snapshot,
+                    seqs[-1] if seqs else 0,
+                    now,
+                    markdown,
+                    plain,
+                    _ranges_json(comments),
+                ),
+            )
+            if notes is not None:
+                self._conn.execute("UPDATE sessions SET notes=? WHERE id=?", (notes, session_id))
+        return seqs
+
+    def notes_marks(self, session_id: str) -> tuple[str, dict[str, list[int] | None]] | None:
+        """(plain text, {comment id: [start, end) | None}) of the document as last folded, for
+        placing notes comments; None when nothing was stored (no document, or folded before the
+        ranges were kept, or by a sidecar that did not report them)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT plain, comment_ranges FROM shared_notes WHERE session_id=?", (session_id,)
+            ).fetchone()
+        if row is None or row["plain"] is None or row["comment_ranges"] is None:
+            return None
+        try:
+            ranges = json.loads(row["comment_ranges"])
+        except ValueError:
+            return None
+        return row["plain"], ranges if isinstance(ranges, dict) else {}
+
+    def set_notes_markdown(self, session_id: str, markdown: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE shared_notes SET markdown=? WHERE session_id=?", (markdown, session_id)
+            )
+
+    def notes_drift(self, session_id: str) -> str | None:
+        """Session.notes when it differs from the document's last folded markdown (it was
+        written around the document), else None. None too without a folded document."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT s.notes FROM sessions s JOIN shared_notes n ON n.session_id = s.id"
+                " WHERE s.id=? AND n.markdown IS NOT NULL AND s.notes IS NOT n.markdown",
+                (session_id,),
+            ).fetchone()
+        return None if row is None else (row["notes"] or "")
 
     def events(self, session_id: str) -> list[dict]:
         if not self._readable(session_id):
@@ -2294,7 +2572,7 @@ class SessionRepository:
                 (fts, limit),
             ).fetchall()
             com_rows = self._conn.execute(
-                """SELECT c.session_id, c.id, c.target, c.target_id, c.author,
+                """SELECT c.session_id, c.id, c.target, c.target_id, c.author, c.quote,
                           snippet(comments_fts, -1, '[[', ']]', '…', 12) AS snip,
                           bm25(comments_fts) AS score
                    FROM comments_fts JOIN comments c ON c.rowid = comments_fts.rowid
@@ -2358,6 +2636,8 @@ class SessionRepository:
                     id=r["id"],
                     author=r["author"],
                     target=r["target"],
+                    label=TARGET_LABELS.get(r["target"], ""),
+                    quote=r["quote"],
                     target_id=r["target_id"],
                     snippet=r["snip"],
                 )

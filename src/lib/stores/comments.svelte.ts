@@ -39,10 +39,26 @@ class CommentsState {
     return m;
   });
 
+  /** Threads on the live notes, by comment id (the id of the mark `comment:<id>` in the document). */
+  byNotesMark = $derived.by(() => {
+    const m = new Map<string, CommentThread>();
+    for (const t of this.threads) if (t.root.target === 'notes' && !t.root.deleted) m.set(t.root.id, t);
+    return m;
+  });
+
+  /** Ids of the notes threads still open: only their marks are highlighted. */
+  openNotesIds = $derived(
+    new Set([...this.byNotesMark.values()].filter((t) => !t.root.resolved_at).map((t) => t.root.id))
+  );
+
   /** Threads on the meeting as a whole. */
   body = $derived(
     this.threads.filter(
-      (t) => !t.root.detached && t.root.segment_idx == null && !(BLOCKS.has(t.root.target) && t.root.target_id)
+      (t) =>
+        !t.root.detached &&
+        t.root.segment_idx == null &&
+        t.root.target !== 'notes' &&
+        !(BLOCKS.has(t.root.target) && t.root.target_id)
     )
   );
 

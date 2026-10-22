@@ -100,6 +100,10 @@ class SyncSession(ApiModel):
     summary: str = ""
     summary_data: SummaryData | None = None
     notes: str = ""
+    # The live shared notes document (services/shared_notes.py): base64 of the canonical
+    # snapshot, folded when served; None when the meeting has none (or the sidecar is missing
+    # there). Merged by op-set union (services/sync_notes.py), never three-way.
+    notes_doc: str | None = None
     participants: list[str] = Field(default_factory=list)
     attendees: list[str] = Field(default_factory=list)
     local_only: bool = False

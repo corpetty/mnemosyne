@@ -146,7 +146,15 @@
 					</div>
 					<!-- Side by side when wide; stacked (copilot, then the live transcript) when narrow. -->
 					<div class="grid gap-4 lg:grid-cols-5">
-						<div class="lg:col-span-2 lg:order-2 space-y-4"><CopilotPanel /><ResourcesCard compact /><HistoryCard /></div>
+						<div class="lg:col-span-2 lg:order-2 space-y-4">
+							<CopilotPanel />
+							<section class="rounded-lg border border-gray-800 bg-gray-900/40 p-3 space-y-2" aria-label="Notes">
+								<h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">Notes</h3>
+								<NotesEditor maxHeight="max-h-[50vh] overflow-y-auto" />
+							</section>
+							<ResourcesCard compact />
+							<HistoryCard />
+						</div>
 						<div class="lg:col-span-3 lg:order-1"><LiveTranscript tall /></div>
 					</div>
 				</div>

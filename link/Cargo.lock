@@ -1903,9 +1903,9 @@ dependencies = [
  "iroh-mdns-address-lookup",
  "iroh-relay",
  "iroh-tickets",
+ "notes-core",
  "serde",
  "serde_json",
- "similar",
  "tempfile",
  "tokio",
  "tracing",
@@ -2235,6 +2235,17 @@ dependencies = [
  "socket2",
  "tracing",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "notes-core"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "hashseq",
+ "serde",
+ "serde_json",
+ "similar",
 ]
 
 [[package]]

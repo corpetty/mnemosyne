@@ -20,6 +20,8 @@ class UiState {
   personRequest = $state<string | null>(null);
   /** A comment (id) the transcript should scroll to and open, set by search. */
   focusComment = $state<string | null>(null);
+  /** A notes comment (id) the Notes tab should select in the text and open ("Go to" in the Comments card). */
+  focusNotesComment = $state<string | null>(null);
   topicRequest = $state<string | null>(null);
   importRequest = $state(0); // bumped to open the sidebar's file picker
   /** Meetings are encrypted and the key is missing: show the unlock screen. */

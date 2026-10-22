@@ -27,7 +27,16 @@ export default defineConfig({
       ]
     }
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    // The notes editor is its own input layer (beforeinput, selection, IME): the specs about it
+    // also run in WebKit, the engine of the desktop app's window.
+    {
+      name: 'webkit',
+      testMatch: ['shared-notes.spec.ts', 'notes-editor.spec.ts'],
+      use: { ...devices['Desktop Safari'] }
+    }
+  ],
   webServer: [
     {
       command: 'bash tests-e2e/start-backend.sh',

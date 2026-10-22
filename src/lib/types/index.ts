@@ -158,6 +158,7 @@ export type BackendEvent =
   | { type: 'bookmarks'; session_id: string } // a meeting's bookmarks changed
   | { type: 'comments'; session_id: string; mentions: string[] } // a meeting's comments changed; mentions: user ids newly @named
   | { type: 'assets'; session_id: string } // a meeting's resources changed
+  | { type: 'notes'; session_id: string } // a meeting's live notes were folded into Session.notes
   | { type: 'history'; session_id: string } // something was added to a meeting's history
   | { type: 'sync'; peer: string; state: SyncPeerState; done: number; total: number } // library sync with a peer
   | { type: 'shares' } // a meeting was shared or unshared (which one is not said: it may no longer be yours)
@@ -169,3 +170,47 @@ export type BackendEvent =
       state: 'stopped' | 'stalled' | 'ok';
       message: string;
     };
+
+// ---- Live notes: /ws/notes/{session_id} (docs/api-reference.md "Live notes") -------------------
+// Binary messages (0xDE delta, 0xAF artifact) go both ways and are not described here.
+
+export interface NotesPerson {
+  /** User id; "" on the desktop. */
+  id: string;
+  name: string;
+}
+
+export interface NotesHello {
+  type: 'hello';
+  /** sha256("mnemosyne/notes/" + session_id) in hex: the notes object's origin. */
+  notes: string;
+  you: NotesPerson;
+  read_only: boolean;
+  /** Set (with read_only) for a meeting whose document has not arrived by library sync yet. */
+  waiting_for_sync?: boolean;
+  present: string[];
+  last_edit: { by: string; at: string } | null;
+  /** One binary snapshot follows. */
+  snapshot: boolean;
+  /** This many binary frames follow the snapshot. */
+  backlog: number;
+}
+
+/** No sidecar: use the plain-text notes route. The socket is closed (1000) after it. */
+export interface NotesUnavailable {
+  type: 'hello';
+  unavailable: true;
+}
+
+/** JSON the notes relay sends. */
+export type NotesServerMessage =
+  | NotesHello
+  | NotesUnavailable
+  | { type: 'presence'; present: string[]; typing: string[] }
+  | { type: 'last_edit'; by: string; at: string }
+  /** The stored document was replaced (library sync): rejoin to receive it. The close follows. */
+  | { type: 'reload' }
+  | { type: 'pong' };
+
+/** JSON the client sends to the notes relay. */
+export type NotesClientMessage = { type: 'presence'; typing: boolean } | { type: 'ping' };

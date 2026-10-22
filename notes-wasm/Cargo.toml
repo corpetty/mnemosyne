@@ -1,0 +1,31 @@
+[package]
+name = "notes-wasm"
+version = "0.1.0"
+description = "hashseq's browser bindings for Mnemosyne's live shared notes"
+authors = ["corpetty"]
+license = "MIT"
+edition = "2021"
+publish = false
+
+# Built by scripts/build-notes-wasm.sh into src/lib/notes/pkg/ (wasm-bindgen --target web).
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Same rev as link/Cargo.toml: the sidecar and the browser must agree on the encoding.
+hashseq = { git = "https://github.com/davidrusu/hashseq", rev = "94f5e3c" }
+# Must equal the wasm-bindgen CLI version the build script checks (0.2.129).
+wasm-bindgen = "=0.2.129"
+# Markdown parse/render, shared with link (the server's fold) so a paste and a fold agree.
+notes-core = { path = "../notes-core" }
+
+# Not part of any parent workspace (the repo root has none; keep it that way).
+[workspace]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false

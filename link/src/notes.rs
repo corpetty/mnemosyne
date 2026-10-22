@@ -21,7 +21,7 @@ use hashseq::{
     encoding::{decode_hashseq, encode_hashseq},
     HashSeq, Id,
 };
-use similar::{Algorithm, ChangeTag, DiffOp, TextDiff};
+use notes_core::diff;
 
 /// Start of a stored history.
 pub const MAGIC: &[u8; 4] = b"MNHS";
@@ -33,14 +33,6 @@ pub const VERSION: u8 = 1;
 pub struct Merged {
     pub history: Vec<u8>,
     pub text: String,
-}
-
-/// One step of an edit script over characters.
-#[derive(Debug, PartialEq, Eq)]
-enum Edit {
-    Equal(usize),
-    Delete(usize),
-    Insert(String),
 }
 
 /// The stored state: two sequences with one origin.
@@ -173,129 +165,9 @@ fn decode(bytes: &[u8]) -> Result<History> {
 
 /// Turn `old` into `new` on `seq` (whose text is `old`), and check it got there.
 fn replay(seq: &mut HashSeq, old: &str, new: &str) -> Result<()> {
-    let mut pos = 0;
-    for edit in edits(old, new) {
-        match edit {
-            Edit::Equal(n) => pos += n,
-            Edit::Delete(n) => {
-                seq.remove_batch(pos, n);
-            }
-            Edit::Insert(text) => {
-                seq.insert_batch(pos, text.chars());
-                pos += text.chars().count();
-            }
-        }
-    }
     ensure!(
-        seq.iter().eq(new.chars()),
+        diff::replay(seq, old, new),
         "replaying the diff did not produce the target text"
     );
     Ok(())
-}
-
-fn push(out: &mut Vec<Edit>, edit: Edit) {
-    match (out.last_mut(), edit) {
-        (Some(Edit::Equal(a)), Edit::Equal(b)) => *a += b,
-        (Some(Edit::Delete(a)), Edit::Delete(b)) => *a += b,
-        (Some(Edit::Insert(a)), Edit::Insert(b)) => a.push_str(&b),
-        (_, edit) => out.push(edit),
-    }
-}
-
-/// The edit script from `old` to `new`: patience over lines, then over words inside each
-/// replaced block of lines.
-fn edits(old: &str, new: &str) -> Vec<Edit> {
-    let diff = TextDiff::configure()
-        .algorithm(Algorithm::Patience)
-        .diff_lines(old, new);
-    let (old_lines, new_lines) = (diff.old_slices(), diff.new_slices());
-    let mut out = Vec::new();
-    for op in diff.ops() {
-        match *op {
-            DiffOp::Equal { old_index, len, .. } => {
-                let n: usize = old_lines[old_index..old_index + len]
-                    .iter()
-                    .map(|l| l.chars().count())
-                    .sum();
-                push(&mut out, Edit::Equal(n));
-            }
-            DiffOp::Delete {
-                old_index, old_len, ..
-            } => {
-                let n: usize = old_lines[old_index..old_index + old_len]
-                    .iter()
-                    .map(|l| l.chars().count())
-                    .sum();
-                push(&mut out, Edit::Delete(n));
-            }
-            DiffOp::Insert {
-                new_index, new_len, ..
-            } => push(
-                &mut out,
-                Edit::Insert(new_lines[new_index..new_index + new_len].concat()),
-            ),
-            DiffOp::Replace {
-                old_index,
-                old_len,
-                new_index,
-                new_len,
-            } => {
-                let a = old_lines[old_index..old_index + old_len].concat();
-                let b = new_lines[new_index..new_index + new_len].concat();
-                let (a, b) = (tokens(&a), tokens(&b));
-                let words = TextDiff::configure()
-                    .algorithm(Algorithm::Patience)
-                    .diff_slices(&a, &b);
-                for change in words.iter_all_changes() {
-                    let value: &str = change.value();
-                    push(
-                        &mut out,
-                        match change.tag() {
-                            ChangeTag::Equal => Edit::Equal(value.chars().count()),
-                            ChangeTag::Delete => Edit::Delete(value.chars().count()),
-                            ChangeTag::Insert => Edit::Insert(value.to_string()),
-                        },
-                    );
-                }
-            }
-        }
-    }
-    out
-}
-
-/// Split text for the word-level diff: runs of letters and digits, runs of whitespace, and
-/// every other character on its own. Punctuation apart from its word matters: a user who
-/// appends ", pending" to a line the app reworded must not be seen as rewriting the last word
-/// (`similar`'s own word split would keep "April," as one token).
-fn tokens(text: &str) -> Vec<&str> {
-    #[derive(PartialEq, Clone, Copy)]
-    enum Kind {
-        Word,
-        Space,
-        Other,
-    }
-    let kind = |c: char| {
-        if c.is_alphanumeric() || c == '_' {
-            Kind::Word
-        } else if c.is_whitespace() {
-            Kind::Space
-        } else {
-            Kind::Other
-        }
-    };
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut current: Option<Kind> = None;
-    for (i, c) in text.char_indices() {
-        let k = kind(c);
-        if current.is_some_and(|cur| cur != k || k == Kind::Other) {
-            out.push(&text[start..i]);
-            start = i;
-        }
-        current = Some(k);
-    }
-    if start < text.len() {
-        out.push(&text[start..]);
-    }
-    out
 }

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from ..models.session import Recording, Session, SessionStatus
 from ..models.transcript import TranscriptSegment
+from . import shared_notes
 from .parts import audio_seconds, cut, join, match_speakers, offsets, part_of, shift
 
 if TYPE_CHECKING:
@@ -147,6 +148,27 @@ def combine_runner(app: AppContext, target_id: str, other_id: str):
 def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
     from .encryption import seal_session_audio
 
+    # The notes first, before anything else changes: a failure here leaves both meetings as
+    # they were (a later one leaves the other meeting's notes in this one twice at worst, never
+    # a half-combined meeting). Live shared notes (services/shared_notes.py): both folded
+    # first, so their latest text counts, and the combined text goes through the target's
+    # document, else a later fold would put the document's older text back.
+    shared_notes.fold_blocking(app, other.id)
+    shared_notes.fold_blocking(app, target.id)
+    other_notes = (app.repo.notes_source(other.id) or (other.notes or "", ""))[0]
+    if other_notes.strip():
+        notes = (app.repo.notes_source(target.id) or (target.notes or "", ""))[0].rstrip()
+        add = f"## From “{other.name}”\n\n{other_notes.strip()}"
+        combined = f"{notes}\n\n{add}" if notes else add
+        try:
+            through_doc = shared_notes.set_markdown_blocking(app, target.id, combined)
+        except shared_notes.NotesWriteFailed as e:
+            # Never around the document: the next fold would drop the other meeting's notes.
+            raise RuntimeError(
+                f"The notes of “{other.name}” could not be added ({e}): nothing was combined"
+            ) from e
+        if not through_doc:
+            app.sessions.update_notes(target.id, combined)
     folder = app.settings.recordings_dir / target.id
     folder.mkdir(parents=True, exist_ok=True)
     with contextlib.ExitStack() as stack:
@@ -234,10 +256,6 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
         embeddings.setdefault(relabel.get(label, label), vector)
     if embeddings:
         app.repo.set_session_embeddings(target.id, embeddings)
-    if other.notes and other.notes.strip():
-        notes = (target.notes or "").rstrip()
-        add = f"## From “{other.name}”\n\n{other.notes.strip()}"
-        app.sessions.update_notes(target.id, f"{notes}\n\n{add}" if notes else add)
     fields = {"attendees": list(dict.fromkeys([*target.attendees, *other.attendees]))}
     if other.local_only:  # the stricter privacy wins
         fields["local_only"] = True

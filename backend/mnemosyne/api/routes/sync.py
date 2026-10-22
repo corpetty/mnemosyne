@@ -78,6 +78,7 @@ def _status(ctx: AppContext) -> SyncStatus:
                 updated=st.updated,
                 merged=st.merged,
                 deleted=st.deleted,
+                waiting=st.waiting,
                 clashes=[SyncClash(session_id=k, name=v) for k, v in st.clashes.items()],
                 app_version=st.app_version,
             )

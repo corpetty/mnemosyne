@@ -44,6 +44,8 @@ jobs:
       - name: Generated API types are up to date
         run: bash scripts/gen-api-types.sh --check
       - run: pnpm check
+      # The notes editor's pure parts (src/lib/notes) against the committed wasm module.
+      - run: pnpm test:unit
       - run: pnpm build
 
   e2e:
@@ -66,9 +68,20 @@ jobs:
       - name: Sync backend (no ML extras; demo mode fakes them)
         run: uv sync --frozen
         working-directory: backend
-      - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
+      # The sidecar the backend runs for notes merges, library sync and remote access. The
+      # backend finds it through MNEMOSYNE_LINK_BIN (the pytest suite points that at nothing;
+      # this server is started by Playwright and inherits the variable from the step below).
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: link
+      - name: Build the link sidecar (debug is fast enough for the tests)
+        run: cargo build --locked --manifest-path link/Cargo.toml
+      - name: Install browsers (Chromium, and WebKit for the specs that need it)
+        run: pnpm exec playwright install --with-deps chromium webkit
       - run: pnpm test:e2e
+        env:
+          MNEMOSYNE_LINK_BIN: ${{ github.workspace }}/link/target/debug/mnemosyne-link
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
@@ -77,6 +90,56 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  notes:
+    name: Notes core and wasm module
+    runs-on: ubuntu-24.04
+    env:
+      # The CLI must equal the wasm-bindgen crate in notes-wasm/Cargo.lock (the script checks).
+      WASM_BINDGEN_VERSION: "0.2.129"
+      # sha256 of wasm-bindgen-<version>-x86_64-unknown-linux-musl.tar.gz, from the release
+      # asset's digest (gh api repos/wasm-bindgen/wasm-bindgen/releases/tags/<version>).
+      WASM_BINDGEN_SHA256: 82d12bb940e2d4e72e0d5605387fc1b8ca179044e012b620f0ce4e7440e8320e
+    steps:
+      - uses: actions/checkout@v7
+      # Pinned: the committed module (src/lib/notes/pkg) is byte-for-byte what this compiler
+      # makes of notes-wasm. Bump it here, in scripts/build-notes-wasm.sh and rebuild together.
+      - uses: dtolnay/rust-toolchain@1.93.1
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            notes-core
+            notes-wasm
+      - run: cargo fmt --check --manifest-path notes-core/Cargo.toml
+      - run: cargo clippy --locked --all-targets --manifest-path notes-core/Cargo.toml -- -D warnings
+      - run: cargo test --locked --manifest-path notes-core/Cargo.toml
+      - run: cargo fmt --check --manifest-path notes-wasm/Cargo.toml
+      - run: cargo clippy --locked --target wasm32-unknown-unknown --manifest-path notes-wasm/Cargo.toml -- -D warnings
+      - name: wasm-bindgen CLI (prebuilt release, checksum verified)
+        run: |
+          set -euo pipefail
+          archive="wasm-bindgen-${WASM_BINDGEN_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          mkdir -p "$RUNNER_TEMP/wasm-bindgen"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${WASM_BINDGEN_VERSION}/$archive"
+          echo "${WASM_BINDGEN_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/wasm-bindgen"
+          bin="$(find "$RUNNER_TEMP/wasm-bindgen" -type f -name wasm-bindgen | head -n 1)"
+          test -x "$bin"
+          echo "WASM_BINDGEN=$bin" >> "$GITHUB_ENV"
+      - name: Rebuild the wasm module
+        run: bash scripts/build-notes-wasm.sh
+      - name: The committed module is current
+        run: |
+          if [ -n "$(git status --porcelain -- src/lib/notes/pkg)" ]; then
+            git status --short -- src/lib/notes/pkg
+            git diff --stat -- src/lib/notes/pkg
+            echo "::error::the committed wasm is stale: run scripts/build-notes-wasm.sh"
+            exit 1
+          fi
 
   shell:
     name: Rust shell compiles

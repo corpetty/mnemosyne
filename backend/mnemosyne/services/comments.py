@@ -13,6 +13,13 @@ read:
 - decision / question / item: the summary block's stable id (services/summary_ids.py), which
   survives rewording.
 - body: a text-quote selector (exact, prefix, suffix) on the summary text, with a fuzzy fallback.
+- notes (the live shared notes, services/shared_notes.py): the mark `comment:<id>` the editor puts
+  on the range in the document. The thread is made first (this module mints the id and stores
+  the mark's name as its anchor), then the client marks the range; the sidecar's fold reports
+  each mark's range in the notes' plain text, kept beside the snapshot (`notes_marks`). A
+  range present: attached, `notes_range` = [start, end) in code points; `changed` when its
+  text is not the quote any more. No range (every character deleted, or the client never
+  marked it): detached, shown with its quote.
 
 `changed`: the text it was written about is not what is there now. `detached`: its place is gone;
 it is shown with its quote and never deleted on its own.
@@ -30,19 +37,20 @@ from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from .. import access
 from ..models.comment import Comment, CommentCreate, CommentThread, SessionComments
 from ..models.session import Session, SummaryData
 from ..models.transcript import TranscriptSegment
-from . import history
+from . import history, shared_notes
 from .parts import offsets, part_of
 from .summary_doc import section
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
 
-TARGETS = ("", "segment", "body", "decision", "question", "item")
+TARGETS = ("", "segment", "body", "decision", "question", "item", "notes")
 SECTIONS = {"decision": "decisions", "question": "open_questions", "item": "action_items"}
 MIN_OVERLAP = 0.5  # of the comment's span, or of the line's own duration
 NEAR = 5.0  # seconds: a moment between lines is on the nearest line this close
@@ -52,6 +60,10 @@ EXCERPT = 80  # characters of a comment in the meeting's history
 
 class BadComment(ValueError):
     """A comment that cannot be placed or a thread that is not there (answered 400)."""
+
+
+class NotesNotShared(RuntimeError):
+    """A comment on the notes without the live document to mark it in (answered 409)."""
 
 
 class CommentNotFound(LookupError):
@@ -158,13 +170,22 @@ def _block_text(data: SummaryData | None, target: str, target_id: str) -> str | 
     return None
 
 
-def _anchor(session: Session, req: CommentCreate) -> tuple[str, str, dict, str]:
-    """(target, target_id, anchor, quote) for a new thread."""
+def notes_mark(comment_id: str) -> str:
+    """The name of the mark a notes comment has in the live document."""
+    return f"comment:{comment_id}"
+
+
+def _anchor(session: Session, req: CommentCreate, comment_id: str) -> tuple[str, str, dict, str]:
+    """(target, target_id, anchor, quote) for a new thread (`comment_id`: the id it will have)."""
     target = req.target
     if target not in TARGETS:
         raise BadComment(f"Unknown target {target!r}")
     if target == "":
         return "", "", {}, ""
+    if target == "notes":
+        if not req.exact.strip():
+            raise BadComment("Select the text of the notes to comment on (exact)")
+        return target, "", {"mark": notes_mark(comment_id)}, req.exact
     if target == "segment":
         anchor, quote = _segment_anchor(session, req)
         return target, "", anchor, quote
@@ -329,12 +350,39 @@ def _fragment_ratio(want: str, window: str) -> float:
 # ---- reading -----------------------------------------------------------------------------
 
 
+def place_notes(
+    comment_id: str, quote: str, marks: tuple[str, dict] | None
+) -> tuple[list[int] | None, bool]:
+    """(range, changed) of a notes comment from the last fold's `marks` (plain text and
+    ranges): range None = detached. `changed`: the marked text is not the quote any more."""
+    if marks is None:
+        return None, False
+    plain, ranges = marks
+    found = ranges.get(comment_id)
+    if not isinstance(found, list) or len(found) != 2:
+        return None, False
+    start = max(0, min(int(found[0]), len(plain)))
+    end = max(start, min(int(found[1]), len(plain)))
+    if end == start:
+        return None, False
+    now = plain[start:end].replace("\x1f", "\t")
+    return [start, end], bool(_norm(quote)) and _norm(now) != _norm(quote)
+
+
 @dataclass
 class _Meeting:
     session: Session
     starts: dict[int, float]
     owner: str
     principal: access.Principal | None
+    app: AppContext
+    _marks: tuple[str, dict] | None = None  # the notes' plain text and comment ranges
+    _marks_read: bool = False
+
+    def marks(self) -> tuple[str, dict] | None:
+        if not self._marks_read:
+            self._marks, self._marks_read = self.app.repo.notes_marks(self.session.id), True
+        return self._marks
 
     @classmethod
     def of(cls, app: AppContext, session: Session) -> _Meeting:
@@ -343,6 +391,7 @@ class _Meeting:
             starts=offsets(session),
             owner=app.repo.session_owner(session.id) or "",
             principal=access.principal(),
+            app=app,
         )
 
     def rights(self, c: Comment, root_author: str) -> tuple[bool, bool, bool]:
@@ -373,6 +422,9 @@ class _Meeting:
                 found = locate_body(s.summary or "", c.anchor)
                 out.detached = found is None
                 out.changed = bool(found and found[2])
+            elif c.target == "notes":
+                out.notes_range, out.changed = place_notes(c.id, c.quote, self.marks())
+                out.detached = out.notes_range is None
             elif c.target in SECTIONS:
                 text = _block_text(s.summary_data, c.target, c.target_id)
                 out.detached = text is None
@@ -447,6 +499,7 @@ def create(app: AppContext, session_id: str, req: CommentCreate) -> Comment:
     if not text:
         raise BadComment("A comment needs text")
     fields: dict = {}
+    comment_id = uuid4().hex[:12]  # known first: a notes comment's mark carries it
     if req.parent_id:
         parent = app.repo.get_comment(req.parent_id)
         if parent is None or parent.session_id != session_id:
@@ -456,12 +509,20 @@ def create(app: AppContext, session_id: str, req: CommentCreate) -> Comment:
         fields["parent_id"] = parent.id
         target = parent.target
     else:
-        target, target_id, anchor, quote = _anchor(session, req)
+        if req.target == "notes" and not shared_notes.available():
+            raise NotesNotShared("The notes are not shared on this server")
+        target, target_id, anchor, quote = _anchor(session, req, comment_id)
         fields.update(target=target, target_id=target_id, anchor=anchor, quote=quote)
     author_id, author = _author(app)
     mentions = parse_mentions(app, text)
     comment_id = app.repo.add_comment(
-        session_id, text=text, author_id=author_id, author=author, mentions=mentions, **fields
+        session_id,
+        id=comment_id,
+        text=text,
+        author_id=author_id,
+        author=author,
+        mentions=mentions,
+        **fields,
     )
     history.log(
         app,
@@ -474,6 +535,23 @@ def create(app: AppContext, session_id: str, req: CommentCreate) -> Comment:
     )
     _publish(app, session_id, mentions)
     return _view_one(app, session_id, comment_id)
+
+
+async def create_marked(app: AppContext, session_id: str, req: CommentCreate) -> Comment:
+    """`create`, and for a new thread on the notes with `notes_ids`, the mark put on the range
+    in the live document (off the event loop). A mark that cannot be put leaves the thread
+    detached, with its quote."""
+    c = create(app, session_id, req)
+    if req.target != "notes" or req.parent_id:
+        return c
+    ids = [i.strip() for i in req.notes_ids]
+    if len(ids) != 2 or not all(ids):
+        return c
+    author_id, author = _author(app)
+    if await shared_notes.mark_comment(app, session_id, c.id, ids[0], ids[1], author_id, author):
+        _publish(app, session_id)  # the ranges are known now
+        return _view_one(app, session_id, c.id)
+    return c
 
 
 def _check(app: AppContext, session_id: str, c: Comment, what: str) -> None:

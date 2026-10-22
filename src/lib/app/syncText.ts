@@ -12,13 +12,19 @@ export function ago(iso: string | null | undefined, now = Date.now()): string {
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+/** " · 1 meeting waiting for its notes to merge", or nothing: meetings left for the next round. */
+export function waitingNote(p: Pick<SyncPeerStatus, 'waiting'>): string {
+  const n = p.waiting ?? 0;
+  return n > 0 ? ` · ${n} meeting${n === 1 ? '' : 's'} waiting for ${n === 1 ? 'its' : 'their'} notes to merge` : '';
+}
+
 /** One line for a sync row: what the round with that computer came to. */
 export function peerState(p: SyncPeerStatus, now = Date.now()): string {
   switch (p.state) {
     case 'syncing':
       return p.total ? `Syncing… ${p.done} of ${p.total}` : 'Syncing…';
     case 'done':
-      return `Synced ${ago(p.last_sync_at, now)}`;
+      return `Synced ${ago(p.last_sync_at, now)}${waitingNote(p)}`;
     case 'offline':
       return p.last_sync_at ? `Offline since ${clock(p.last_sync_at)}` : 'Offline';
     case 'locked':

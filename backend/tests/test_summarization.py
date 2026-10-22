@@ -150,3 +150,17 @@ def test_auto_summarize_chains_after_transcribe(client, ctx, fake_engine, fake_p
 
 def test_no_auto_summarize_by_default(client, ctx, fake_engine, fake_provider, transcribed_session):
     assert all(j["kind"] != "summarize" for j in client.get("/api/jobs").json())
+
+
+def test_summary_reads_the_attendees_notes(client, ctx, fake_provider, transcribed_session):
+    sid = transcribed_session["id"]
+    client.post(f"/api/sessions/{sid}/notes", json={"notes": "- Ana owns the budget"})
+    assert run_summarize(client, sid, {"provider": "fake"})["status"] == "completed"
+    assert "Ana owns the budget" in fake_provider.calls[-1]["system_prompt"]
+
+
+def test_empty_notes_add_nothing_to_the_summary(client, ctx, fake_provider, transcribed_session):
+    sid = transcribed_session["id"]
+    client.post(f"/api/sessions/{sid}/notes", json={"notes": "   \n"})
+    assert run_summarize(client, sid, {"provider": "fake"})["status"] == "completed"
+    assert "Attendees' notes" not in fake_provider.calls[-1]["system_prompt"]

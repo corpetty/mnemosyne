@@ -572,7 +572,13 @@ Deletes the session, its transcript, and its recordings directory. → `{ "messa
 
 ### `POST /api/sessions/{session_id}/notes`
 
-`{ "notes": "..." }` → `SessionDetail`.
+`{ "notes": "..." }` → `SessionDetail`. With live shared notes (see "Live notes") the text goes
+through the meeting's document: the sidecar's `set_text` diffs it in as author `api`, the frames
+are broadcast to everyone who has the notes open, and `notes` comes back as the document renders
+it (canonical markdown). Without (no `mnemosyne-link` with `notes doc`, or a meeting recorded on
+another machine whose document has not arrived by library sync yet) it is stored as given. Who
+may: as for live notes (owner, admin, anyone it is shared with); others get 403, a meeting they
+cannot see 404.
 
 ### `PUT /api/sessions/{session_id}/summary`
 
@@ -612,6 +618,20 @@ parent_id?, idx?, idx_to?, seconds?, exact?, prefix?, suffix?}` → `Comment`:
   (`decision_ids`, `question_ids`, `ActionItem.id`); `quote` its text.
 - `target: "body"`: a selection of the rendered summary, `anchor {exact, prefix, suffix}`
   (`exact` must be in the summary's plain text; `""` = the whole summary), `quote = exact`.
+- `target: "notes"`: the live shared notes. `exact` is the selected text (required, = `quote`);
+  the server mints the id and stores `anchor {mark: "comment:<id>"}`, `target_id ""`. `notes_ids`
+  `[first, last]` are the element ids (hex, the editor's `seqIdAt`) of the first and the last
+  selected character: the SERVER then puts the mark `comment:<id>` on that range (the sidecar's
+  `notes doc` op `mark_comment`), appends the frames to the notes' log as the commenter and sends
+  them to everyone connected, so a reader, whose editor is read-only, can comment too. Without
+  `notes_ids`, or when an id is unknown or deleted (or the sidecar fails), the comment is kept and
+  shows as detached with its quote (still `200`). `409 "The notes are not shared on this server"` when there is no
+  sidecar. Read: the fold reports each mark's range in the notes' plain text (code points, U+001F
+  cells are tabs), kept in `shared_notes.plain`/`comment_ranges` (written by every fold and by
+  library sync's union/adopt). `notes_range` `[start, end)` when the mark has text (`changed`
+  when `plain[start:end]` is not the quote, ignoring case, punctuation and whitespace), else
+  `null` and `detached` (also before the first fold that knows it). Resolve, reopen and delete
+  leave the mark alone (the client hides or removes it).
 - `target: ""`: the meeting as a whole. A reply names `parent_id` (a thread's first comment in the
   same meeting) and carries no target or anchor.
 
@@ -638,7 +658,7 @@ server) become user ids in `mentions`. On the desktop `author_id` is `""`, `auth
 `local_speaker_name` (`"You"` when blank), everything is allowed and `mentions` is empty.
 
 Errors: `404` for a meeting the caller may not see or a comment not in it, `403` not allowed,
-`400` bad target, line, block, text or thread. History gets `commented` (`by`, `target`, `reply`,
+`400` bad target, line, block, text or thread, `409` a notes comment without shared notes. History gets `commented` (`by`, `target`, `reply`,
 `excerpt` ≤ 80 characters), `comment_resolved` and `comment_reopened`. Every change publishes
 `{type: "comments", session_id, mentions}` (`mentions`: user ids newly named by this change), only
 to those who may read the meeting.
@@ -1377,17 +1397,21 @@ with the token the peer gave it. The routes a peer calls know which peer asks fr
   "Update Mnemosyne on <name>"); `seq` is its change counter (a cursor past it means its change
   log started over, e.g. a restored backup: read from 0 again).
 - `GET /api/sync/changes?since=0&limit=50&tombstones_since=` → `{sessions: [SyncSession],
-  tombstones: [{session_id, at, device, name}], next_since, more, total}`. The meetings changed
+  seqs: [int], tombstones: [{session_id, at, device, name}], next_since, more, total}`. `seqs`
+  are the sessions' change numbers, in the same order. The meetings changed
   after `since` (this computer's change counter), whole, oldest change first, at most `limit`
   (1-200); the meetings deleted after `tombstones_since` (ISO time on this computer's clock; the
   puller asks from two hours before the last one it saw); `total`: meetings changed after
   `since`. Each document served is remembered for the calling peer (the last 3 per meeting), the
-  base of a three-way merge when its later edits come back concurrent.
+  base of a three-way merge when its later edits come back concurrent. A meeting with a live
+  notes document carries it as `notes_doc` (base64 of the canonical snapshot, folded and caught up
+  with text written around it just before serving; `null` without one); the kept base leaves it
+  out. Two documents are merged by union, not by the three-way text merge (see "Live notes").
 - `POST /api/sync/poke` → `{scheduled}`: the calling peer has news; a pull from it follows in
   about 2 s (pokes in between make one pull). `false` when the caller is not a sync peer.
 - `POST /api/sync/now` → `{started: [peer id]}`: pull from every peer now, in the background.
 - `GET /api/sync/status` → `{self, peers: [{id, name, endpoint, listen, last_sync_at, state,
-  error, done, total, received, updated, merged, deleted, clashes: [{session_id, name}],
+  error, done, total, received, updated, merged, deleted, waiting, clashes: [{session_id, name}],
   app_version}]}`. `state`: `idle` (not tried since this start), `syncing`, `done`, `offline`
   (not reachable; tried again after 1, 2, 4 ... 10 minutes, at once on a poke or Sync now),
   `locked` (it answered `423`), `skew`, `error` (`error` says why). The counts are the current
@@ -1443,6 +1467,7 @@ Then every backend event, in order:
 | `meeting_app` | `status` (`started`/`stopped`), `app` | Another app started or stopped recording audio (auto-record) |
 | `copilot_notes` | `session_id`, `notes` | The live copilot's running notes were updated |
 | `shares` | — | A meeting was shared or unshared; reload the meeting list |
+| `notes` | `session_id` | The meeting's live shared notes were folded into `Session.notes` (see "Live notes"); reload it |
 | `sync` | `peer`, `state`, `done`, `total` | Library sync with a peer: a round started, a page was taken in, or it ended (`state` as in `GET /api/sync/status`); meetings it changed also get a `session` event |
 | `live_partial` | `session_id`, `source`, `speaker`, `text` | The still-changing tail for that source; replaces the previous partial (may be empty) |
 | `recovered` | `RecoveredRecording` fields | An interrupted recording was recovered (also listed in the next `hello`) |
@@ -1450,3 +1475,91 @@ Then every backend event, in order:
 
 Clients should filter `transcription`/`status`/`error`/`live_*` by `session_id` and use `job` events for
 state. Live segments are provisional: discard them when the session's final `transcribe` job starts.
+
+## Live notes
+
+### `ws://127.0.0.1:8008/ws/notes/{session_id}`
+
+The meeting's shared notes, edited live by everyone who has them open (phase 6 of
+docs/plans/2026-10-12-hashseq-collaboration.md). Every client runs the CRDT (hashseq, wasm); the
+backend cannot read it: it relays binary frames, logs them, and has the stateless sidecar
+(`mnemosyne-link notes doc`) fold them into `Session.notes` (markdown), which search, Obsidian,
+MCP, combine and the summary keep reading.
+
+Auth as `/ws` (`?token=` when a token is required; 4401 before the handshake). A meeting the
+caller may not see, or none: accepted, then closed with **4404**.
+
+Who may edit: the owner, an admin, and anyone the meeting is shared with (alone or with everyone,
+`*`); everyone else who can read it (a reviewer on someone else's meeting) is read-only. On the
+desktop (no team) the user edits, as `local_speaker_name` (or "You").
+
+**1. Hello** (JSON), first:
+
+```json
+{
+  "type": "hello",
+  "notes": "<64 hex: sha256(\"mnemosyne/notes/\" + session_id), the notes object's origin>",
+  "you": { "id": "<user id, \"\" on the desktop>", "name": "Ann Lee" },
+  "read_only": false,
+  "present": ["Ann Lee", "Bob Stone"],
+  "last_edit": { "by": "Bob Stone", "at": "2026-10-22T10:15:00" },
+  "snapshot": true,
+  "backlog": 3
+}
+```
+
+`present` is everyone connected, you included (distinct names). `last_edit` is `null` before
+anyone typed. `"waiting_for_sync": true` (with `read_only: true`): a meeting recorded on another
+computer that has notes but whose document has not come by library sync yet; editing would make a
+second document with the same text.
+
+Without a sidecar the hello is only `{"type": "hello", "unavailable": true}` and the socket is
+closed normally (1000): use `POST /api/sessions/{id}/notes` and the plain text, as before.
+
+**2. Snapshot**: when `snapshot` is true, one binary message, the folded document.
+
+**3. Backlog**: then `backlog` binary messages, the frames not folded yet, in log order.
+
+**4. Live traffic**, both ways:
+
+- Binary: a frame, `0xDE` (delta) or `0xAF` (artifact: mark strings over 14 bytes), at most 2 MB.
+  The server appends it to the log with its author and relays it to the other connections (never
+  back to the sender). Refused, and the socket closed: from a read-only client **4403**; another
+  first byte **4400**; over 2 MB **1009**.
+- Client JSON: `{"type": "presence", "typing": true|false}` (ignored from read-only clients),
+  `{"type": "ping"}` (answered `{"type": "pong"}`).
+- Server JSON: `{"type": "presence", "present": [names], "typing": [names]}` when someone joins,
+  leaves or starts/stops typing; `{"type": "last_edit", "by": name, "at": iso}` when someone else
+  typed (at most every 15 s for the same person).
+
+The notes route's writes (author `api`) arrive as ordinary frames. When the meeting had notes but
+no document, the first connection (or write) seeds one from them (author `seed`), only on the
+computer that recorded it.
+
+**Folding**: 2 s after the last frame, every 30 s while frames keep coming, when the last
+connection leaves, before a summary and before an Obsidian export. A fold stores the snapshot,
+marks the frames folded (their rows and authors are kept) and, when the markdown changed, writes
+`Session.notes` (a new version for library sync, the search index) and sends the `notes` event on
+`/ws`.
+
+**Catching up**: when `Session.notes` differs from the markdown of the last fold (it was written
+while the sidecar was missing, or by library sync's text merge), the document takes that text
+first, as an `api` edit against the folded state (broadcast like any frame), before a join is
+served and before a fold; the fold then renders the newer text. A notes route write that fails on
+a meeting with a document answers 503 and writes nothing.
+
+**Library sync**: a meeting's document travels as `SyncSession.notes_doc`. A fold that changes
+only the snapshot (comment marks, formatting, artifacts: the markdown is the same) is still a new
+version of the meeting, or it would never be pulled; a fold that changes nothing is not.
+Arriving at a computer that has a document too (and a different one) the two are merged by union
+through the sidecar (`notes doc` `merge`, no base needed; the notes are not merged as text); the
+merged snapshot becomes the stored fold, `Session.notes` its render, and what this computer's
+snapshot lacked is appended to the log as author `sync (<computer name>)` (already folded) and
+sent to the connected editors as ordinary binary frames. Where there was no document, the
+arriving one is adopted (`waiting_for_sync` ends) and the open sockets of that meeting get
+`{"type": "reload"}` and are closed normally (1000): a client rejoins and receives the stored
+document. A computer with a document that receives a meeting without one merges the text as
+text and the document catches up with it (above). Folding is blocked while a meeting is being
+taken in. A union that cannot be made (sidecar missing or failing) leaves that meeting waiting:
+the round goes on to the following pages, but the stored sync cursor stays just before the
+earliest waiting meeting, so it is tried again next round (`waiting` in the peer's status).

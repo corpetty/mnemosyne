@@ -57,6 +57,7 @@
 	/** What a thread is on, for the muted line above it. */
 	function onWhat(t: Thread): string {
 		const r = t.root;
+		if (r.target === 'notes') return `Notes${r.detached ? ' · detached' : ''}: “${clip(r.quote, 90)}”`;
 		if (r.detached) return 'No longer in the meeting';
 		switch (r.target) {
 			case 'decision':
@@ -80,6 +81,13 @@
 	function goTo(t: Thread): (() => void) | null {
 		const r = t.root;
 		if (r.detached) return null;
+		if (r.target === 'notes') {
+			// The Notes tab selects the marked text and opens the thread.
+			return () => {
+				uiState.focusNotesComment = r.id;
+				uiState.activeTab = 'notes';
+			};
+		}
 		if (r.target === 'decision' || r.target === 'item' || r.target === 'question') {
 			if (!r.target_id || !commentsState.byBlock.has(r.target_id)) return null;
 			return () => ongoto(r.target_id);

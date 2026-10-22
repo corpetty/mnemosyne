@@ -1,10 +1,12 @@
 """Comments and threads on a meeting (services/comments.py): on transcript lines, moments of the
-audio, summary blocks and summary text."""
+audio, summary blocks, summary text and the live notes."""
+
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...models.comment import Comment, CommentCreate, CommentUpdate, SessionComments
-from ...services import comments
+from ...services import comments, shared_notes
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/sessions/{session_id}/comments", tags=["comments"])
@@ -19,6 +21,8 @@ def _run(fn, *args):
         raise HTTPException(status_code=400, detail=str(e)) from e
     except comments.CommentNotFound as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    except comments.NotesNotShared as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @router.get("", response_model=SessionComments)
@@ -28,7 +32,14 @@ async def list_comments(session_id: str, ctx: AppContext = Depends(get_ctx)):
 
 @router.post("", response_model=Comment)
 async def add_comment(session_id: str, request: CommentCreate, ctx: AppContext = Depends(get_ctx)):
-    return _run(comments.create, ctx, session_id, request)
+    if request.target == "notes":
+        await asyncio.to_thread(shared_notes.available)  # the first probe runs the sidecar
+    try:
+        return await comments.create_marked(ctx, session_id, request)
+    except comments.BadComment as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except comments.NotesNotShared as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @router.patch("/{comment_id}", response_model=Comment)

@@ -13,8 +13,28 @@ Run as `home` it is the sidecar of services/link.py with its control channel (li
 it prints the ready line, then answers `dial`, `hangup` and `pair` lines on stdin. The handle's
 `ops` are the requests it got (without ids). What it answers is set on the handle:
 `endpoint_id` and `ticket` (the ready line), `pair_reply` (fields added to a successful `pair`;
-default a token, the invite's ticket and a `sync` identity), and `fail` (op -> error message)."""
+default a token, the invite's ticket and a `sync` identity), and `fail` (op -> error message).
 
+Run as `notes doc` it stands in for the shared notes document (notes-core), same requests and
+answers (`fold`, `set_text`, `merge`; see link/src/main.rs), over a toy CRDT so tests can build
+frames by hand. The handle's `doc_requests` are the requests it got; FAKE_NOTES_DOC_FAIL makes
+every run fail (stderr, exit 1).
+
+Toy frames: `0xDE` + the UTF-8 JSON `{"id": str, "ops": [op, ...]}` (build one with
+`doc_frame(id, *ops)`), where an op is `["set", text]`, `["ins", pos, text]`, `["del", pos, n]`
+or `["comment", comment_id, start, end]` (end null = detached). `0xAF` + bytes is an artifact
+frame: accepted and kept, nothing more. A frame whose id was seen before is skipped. The text is
+every frame's ops replayed in order; markdown = the text as is, plain = the text with U+001F as
+a tab. A snapshot is the base64 JSON `{"frames": [...], "artifacts": [...]}`; merge is the union
+(the shared prefix of the frame lists, then the rest ordered by frame id, so it converges in either
+order) and answers `frames`: what the first snapshot lacked, 0xAF artifacts then one 0xDE toy frame
+per new frame. set_text emits one `set` frame
+(id = sha256 of the old text and the new markdown, 16 hex) or `[]` when the text is equal.
+mark_comment takes `first`/`last` as decimal character positions (the toy's "element ids"; a
+position past the end of the text, or not a number, is "no such character") and emits one
+`["comment", id, first, last + 1]` frame (id `mark-<comment>`)."""
+
+import base64
 import json
 import stat
 import sys
@@ -50,6 +70,144 @@ if sys.argv[1:2] == ["home"]:
             reply.update(ok=False, error="unknown op")
         print(json.dumps(reply), flush=True)
     sys.exit(0)
+"""
+
+DOC = r"""
+if sys.argv[1:] == ["notes", "doc"]:
+    import base64, hashlib
+
+    request = json.load(sys.stdin)
+    log = os.environ.get("FAKE_NOTES_DOC_LOG")
+    if log:
+        with open(log, "a") as f:
+            f.write(json.dumps(request) + "\n")
+    if os.environ.get("FAKE_NOTES_DOC_FAIL"):
+        sys.stderr.write("boom\n")
+        sys.exit(1)
+
+    def fail(message):
+        sys.stderr.write(message + "\n")
+        sys.exit(1)
+
+    def load(snapshot, what="snapshot"):
+        if snapshot is None:
+            return {"frames": [], "artifacts": []}
+        try:
+            return json.loads(base64.b64decode(snapshot, validate=True))
+        except Exception:
+            fail(f"{what}: not a snapshot")
+
+    def add(state, frames):
+        seen = {f["id"] for f in state["frames"]}
+        for i, b64 in enumerate(frames):
+            try:
+                raw = base64.b64decode(b64, validate=True)
+                if raw[:1] == b"\xaf" and len(raw) > 1:
+                    state["artifacts"].append(base64.b64encode(raw[1:]).decode())
+                    continue
+                if raw[:1] != b"\xde":
+                    raise ValueError("unknown frame tag")
+                frame = json.loads(raw[1:])
+                assert isinstance(frame["id"], str) and isinstance(frame["ops"], list)
+            except Exception as e:
+                fail(f"frame {i}: {e or 'malformed'}")
+            if frame["id"] not in seen:
+                seen.add(frame["id"])
+                state["frames"].append(frame)
+
+    def replay(state):
+        text, comments = "", {}
+        for frame in state["frames"]:
+            for op in frame["ops"]:
+                if op[0] == "set":
+                    text = op[1]
+                elif op[0] == "ins":
+                    text = text[: op[1]] + op[2] + text[op[1] :]
+                elif op[0] == "del":
+                    text = text[: op[1]] + text[op[1] + op[2] :]
+                elif op[0] == "comment":
+                    comments[op[1]] = None if op[3] is None else [op[2], op[3]]
+        return text, comments
+
+    def answer(state, **extra):
+        text, comments = replay(state)
+        snapshot = base64.b64encode(json.dumps(state, sort_keys=True).encode()).decode()
+        out = {"snapshot": snapshot, "markdown": text, "plain": text.replace("\x1f", "\t"),
+               "comments": comments}
+        out.update(extra)
+        print(json.dumps(out))
+        sys.exit(0)
+
+    op = request.get("op")
+    if not isinstance(request.get("notes"), str) or len(request["notes"]) != 64:
+        fail("notes: expected 64 hex characters")
+    if op == "fold":
+        state = load(request.get("snapshot"))
+        add(state, request.get("frames", []))
+        answer(state)
+    elif op == "set_text":
+        state = load(request.get("snapshot"))
+        add(state, request.get("frames", []))
+        old, _ = replay(state)
+        md = request["markdown"]
+        if md == old:
+            answer(state, frames=[])
+        fid = hashlib.sha256((old + "\0" + md).encode()).hexdigest()[:16]
+        frame = {"id": fid, "ops": [["set", md]]}
+        state["frames"].append(frame)
+        raw = b"\xde" + json.dumps(frame).encode()
+        answer(state, frames=[base64.b64encode(raw).decode()])
+    elif op == "mark_comment":
+        state = load(request.get("snapshot"))
+        add(state, request.get("frames", []))
+        text, _ = replay(state)
+        found = {}
+        for what in ("first", "last"):
+            raw = request.get(what)
+            if not (isinstance(raw, str) and raw.isdigit() and int(raw) < len(text)):
+                fail(f"{what}: no such character (deleted or unknown)")
+            found[what] = int(raw)
+        if found["last"] < found["first"]:
+            fail("last is before first")
+        if not request.get("comment"):
+            fail("comment: empty")
+        frame = {
+            "id": f"mark-{request['comment']}",
+            "ops": [["comment", request["comment"], found["first"], found["last"] + 1]],
+        }
+        if frame["id"] in {f["id"] for f in state["frames"]}:
+            answer(state, frames=[])
+        state["frames"].append(frame)
+        raw = b"\xde" + json.dumps(frame).encode()
+        answer(state, frames=[base64.b64encode(raw).decode()])
+    elif op == "merge":
+        state = load(request.get("snapshot"))
+        other = load(request.get("other"), "other")
+        had_ids = {f["id"] for f in state["frames"]}
+        had_artifacts = list(state["artifacts"])
+        # The union converges in either order: the shared prefix, then the rest by frame id.
+        mine, theirs = state["frames"], other["frames"]
+        n = 0
+        while n < min(len(mine), len(theirs)) and mine[n]["id"] == theirs[n]["id"]:
+            n += 1
+        rest = {f["id"]: f for f in mine[n:] + theirs[n:]}
+        state["frames"] = mine[:n] + [rest[i] for i in sorted(rest)]
+        state["artifacts"] = sorted(set(state["artifacts"]) | set(other["artifacts"]))
+        add(state, request.get("frames", []))
+        # What the local snapshot lacked, for its editors: artifacts, then the new frames
+        # (the real sidecar packs the new ops into one delta).
+        news = [
+            base64.b64encode(b"\xaf" + base64.b64decode(a)).decode()
+            for a in state["artifacts"]
+            if a not in had_artifacts
+        ]
+        news += [
+            base64.b64encode(b"\xde" + json.dumps(f).encode()).decode()
+            for f in state["frames"]
+            if f["id"] not in had_ids
+        ]
+        answer(state, frames=news)
+    fail("invalid request: unknown op")
 """
 
 FAKE = r"""#!{python}
@@ -146,6 +304,12 @@ else:
 """
 
 
+def doc_frame(frame_id: str, *ops) -> str:
+    """A toy `notes doc` delta frame (base64), e.g. `doc_frame("f1", ["ins", 0, "hi\\n"])`."""
+    raw = b"\xde" + json.dumps({"id": frame_id, "ops": list(ops)}).encode()
+    return base64.b64encode(raw).decode()
+
+
 class Sidecar:
     def __init__(self, path, log, ops_log=None, monkeypatch=None):
         self.path = path
@@ -173,6 +337,14 @@ class Sidecar:
         return [json.loads(x) for x in self.ops_log.read_text().splitlines()]
 
     @property
+    def doc_requests(self) -> list[dict]:
+        """The `notes doc` requests, in order."""
+        log = self.log.parent / "notes-doc.log"
+        if not log.exists():
+            return []
+        return [json.loads(x) for x in log.read_text().splitlines()]
+
+    @property
     def requests(self) -> list:
         """What each run got: a dict (single form) or a list (batch)."""
         if not self.log.exists():
@@ -184,11 +356,12 @@ def install(tmp_path, monkeypatch) -> Sidecar:
     """Put the stand-in on MNEMOSYNE_LINK_BIN; its requests are logged."""
     script = tmp_path / "mnemosyne-link"
     first, rest = FAKE.format(python=sys.executable).split("\n", 1)
-    script.write_text(first + "\n" + HOME_PRELUDE + HOME + rest)
+    script.write_text(first + "\n" + HOME_PRELUDE + HOME + DOC + rest)
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     log = tmp_path / "merge.log"
     monkeypatch.setenv("MNEMOSYNE_LINK_BIN", str(script))
     monkeypatch.setenv("FAKE_MERGE_LOG", str(log))
+    monkeypatch.setenv("FAKE_NOTES_DOC_LOG", str(tmp_path / "notes-doc.log"))
     ops_log = tmp_path / "link-ops.log"
     monkeypatch.setenv("FAKE_LINK_LOG", str(ops_log))
     return Sidecar(script, log, ops_log, monkeypatch)

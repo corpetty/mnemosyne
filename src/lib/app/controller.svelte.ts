@@ -518,6 +518,8 @@ export function runLaunchActionOnce() {
 // ---- keyboard ------------------------------------------------------------------
 
 export function handleKeydown(e: KeyboardEvent) {
+  // A field that used the key itself (the notes editor: Ctrl+B bold, Ctrl+K link, Ctrl+E code).
+  if (e.defaultPrevented) return;
   // The palette opens from anywhere, text fields included.
   if (e.ctrlKey && e.key === 'k') {
     e.preventDefault();
@@ -668,8 +670,13 @@ function onConnected(): () => void {
       announceCaptureHealth(msg);
       return;
     }
-    if (msg.type === 'bookmarks' || msg.type === 'assets') {
+    if (msg.type === 'bookmarks' || msg.type === 'assets' || msg.type === 'notes') {
+      // 'notes': the live notes were folded into Session.notes (search, the plain-text editor);
+      // where a notes comment is now ("changed", "detached") comes from that fold.
       if (sessionState.activeSession?.id === msg.session_id) sessionState.refreshActive();
+      if (msg.type === 'notes' && commentsState.sessionId === msg.session_id) {
+        void commentsState.load(msg.session_id);
+      }
       return;
     }
     if (msg.type === 'hello') {

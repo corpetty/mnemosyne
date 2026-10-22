@@ -5,6 +5,10 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
+	import { canChange } from '$lib/app/access.js';
+	import { appendToDoc, appendToText, type CopilotItem } from '$lib/notes/copilotLines.js';
+	import type { NotesDocState } from '$lib/notes/doc.svelte.js';
+	import { acquireNotes, releaseNotes } from '$lib/stores/notes.svelte.js';
 	import AgendaCard from './AgendaCard.svelte';
 	import type { BackendEvent, CopilotNotes } from '$lib/types/index.js';
 
@@ -59,7 +63,75 @@
 	const empty = $derived(
 		!notes || (!notes.summary.length && !notes.decisions.length && !notes.action_items.length && !notes.open_questions.length)
 	);
+
+	// ---- "Add to notes": the meeting's notes document is shared with the notes editor ---------------
+	let notesDoc = $state.raw<NotesDocState | null>(null);
+	let added = $state<string | null>(null);
+	let addedTimer: ReturnType<typeof setTimeout> | null = null;
+
+	const mayAdd = $derived(!empty);
+	// Only open the notes connection when there is something to add.
+	$effect(() => {
+		const id = sessionId;
+		if (!id || !mayAdd) {
+			notesDoc = null;
+			return;
+		}
+		const st = acquireNotes(id);
+		notesDoc = st;
+		return () => {
+			st.flush();
+			releaseNotes(id);
+		};
+	});
+	$effect(() => () => {
+		if (addedTimer) clearTimeout(addedTimer);
+	});
+	// Live notes: the server says who may edit (shared-with included); the plain-text fallback
+	// keeps the old rule.
+	const canAdd = $derived(
+		mayAdd &&
+			!!notesDoc &&
+			(notesDoc.status === 'unavailable'
+				? canChange(sessionState.activeSession)
+				: !notesDoc.readOnly && notesDoc.status !== 'gone')
+	);
+
+	async function addToNotes(item: CopilotItem, key: string) {
+		const id = sessionId;
+		const st = notesDoc;
+		const session = sessionState.activeSession;
+		if (!id || !st || !session || session.id !== id) return;
+		let ok = false;
+		if (st.status === 'unavailable') {
+			// No live notes on this backend: add to the plain-text notes the old editor shows.
+			ok = await sessionState.updateNotes(id, appendToText(session.notes, item));
+		} else if (st.doc) {
+			ok = st.applyLocal((doc) => appendToDoc(doc, item)) !== undefined;
+		} else {
+			toastState.info('The notes are still connecting; try again in a moment');
+		}
+		if (!ok) return;
+		added = key;
+		if (addedTimer) clearTimeout(addedTimer);
+		addedTimer = setTimeout(() => {
+			added = null;
+			addedTimer = null;
+		}, 1500);
+	}
 </script>
+
+{#snippet add(item: CopilotItem, key: string)}
+		{#if canAdd}
+			<button
+				type="button"
+				onclick={() => addToNotes(item, key)}
+				aria-label="Add to notes: {item.text}"
+				class="ml-2 text-xs text-purple-300 hover:text-purple-100 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 {added === key ? 'opacity-100' : 'opacity-0'}"
+				>{added === key ? '✓ Added' : '+ Add to notes'}</button
+			>
+		{/if}
+	{/snippet}
 
 {#if recordingHere || notes}
 	<section class="rounded-lg border border-purple-900/60 bg-purple-950/20 p-3 space-y-3" aria-label="Copilot">
@@ -78,27 +150,27 @@
 				{#if notes.summary.length}
 					<div class="sm:col-span-2">
 						<h4 class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">So far</h4>
-						<ul class="list-disc list-inside space-y-0.5 text-gray-200">{#each notes.summary as x}<li>{x}</li>{/each}</ul>
+						<ul class="list-disc list-inside space-y-0.5 text-gray-200">{#each notes.summary as x, i}<li class="group">{x}{@render add({ kind: 'summary', text: x }, `summary:${i}`)}</li>{/each}</ul>
 					</div>
 				{/if}
 				{#if notes.decisions.length}
 					<div>
 						<h4 class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Decided</h4>
-						<ul class="space-y-0.5 text-gray-200">{#each notes.decisions as x}<li>✔ {x}</li>{/each}</ul>
+						<ul class="space-y-0.5 text-gray-200">{#each notes.decisions as x, i}<li class="group">✔ {x}{@render add({ kind: 'decision', text: x }, `decision:${i}`)}</li>{/each}</ul>
 					</div>
 				{/if}
 				{#if notes.action_items.length}
 					<div>
 						<h4 class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">To do</h4>
 						<ul class="space-y-0.5 text-gray-200">
-							{#each notes.action_items as a}<li>○ {a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}</li>{/each}
+							{#each notes.action_items as a, i}<li class="group">○ {a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}{@render add({ kind: 'action', text: a.text, owner: a.owner }, `action:${i}`)}</li>{/each}
 						</ul>
 					</div>
 				{/if}
 				{#if notes.open_questions.length}
 					<div class="sm:col-span-2">
 						<h4 class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Open</h4>
-						<ul class="space-y-0.5 text-gray-300">{#each notes.open_questions as x}<li>? {x}</li>{/each}</ul>
+						<ul class="space-y-0.5 text-gray-300">{#each notes.open_questions as x, i}<li class="group">? {x}{@render add({ kind: 'question', text: x }, `question:${i}`)}</li>{/each}</ul>
 					</div>
 				{/if}
 			</div>

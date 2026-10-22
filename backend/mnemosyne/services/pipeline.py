@@ -408,10 +408,13 @@ def summarize_session(
     instruction for changing the current summary (revise_hint) instead of starting afresh."""
 
     async def run(ctx: JobContext) -> dict:
+        from .shared_notes import fold_now
+
+        await fold_now(app, session_id)  # live notes typed so far are in Session.notes
         session = app.sessions.get_session(session_id)
         if session is None:
             raise ValueError(f"Session {session_id} not found")
-        from .external_notes import NOTES_ONLY, notes_as_transcript, notes_hint
+        from .external_notes import NOTES_ONLY, notes_as_transcript, notes_hint, shared_notes_hint
 
         notes_only = not session.transcript and bool(session.external_notes)
         if not session.transcript and not notes_only:
@@ -450,6 +453,9 @@ def summarize_session(
         others = NOTES_ONLY if notes_only else notes_hint(session.external_notes)
         if others:
             instr = f"{instr}\n{others}".strip()
+        own_notes = shared_notes_hint(session.notes or "")
+        if own_notes:
+            instr = f"{instr}\n{own_notes}".strip()
         from .assets import resources_hint
 
         shared = resources_hint(app, session_id)

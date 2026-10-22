@@ -88,3 +88,43 @@ search/vector indexing, people, topics, digest, Ask, tasks.
 New meeting ids: `uuid4().hex[:12]` in models/session.py (`Session.id` default), the only place
 meeting ids are generated. Nothing assumes 8 characters. Item, bookmark, recording, asset, flag
 and capture ids keep their lengths.
+
+## 6. The live notes document (phase 6)
+
+Code: services/sync_notes.py (union, adopt, broadcast), `SyncService.take` / `serve_changes`,
+`SessionRepository.store_notes_fold` and `store_synced_notes_doc`. Sidecar: `mnemosyne-link notes
+doc` `merge` (notes-core), whose answer now also has `frames`.
+
+- **What travels**: `SyncSession.notes_doc`, base64 of the canonical snapshot (equal op sets give
+  equal bytes), or null for a meeting without one. `serve_changes` runs `fold_blocking` for each
+  meeting first (unfolded frames, text written around the document), then exports. The base kept
+  in `sync_served` leaves `notes_doc` out; the three-way text merge keeps using `notes`.
+- **Taking a meeting in** (`take`, with the meeting's fold lock for the whole call, after folding
+  what was typed here):
+  - both have a document and they differ: union through the sidecar `merge`; `Session.notes` =
+    the union's render; the three-way merge of `notes` is skipped. The union is stored first
+    (`store_synced_notes_doc`: snapshot, markdown, `Session.notes` and the logged frames in one
+    transaction, so no catch-up can mistake it for drift), then the rest of the meeting is
+    written (`apply` for a merge, `write_session` for a fast-forward);
+  - both have the same document: nothing for the document, the usual text merge of `notes`;
+  - only theirs has one: the meeting is written as usual (text merged three ways, as text), then
+    the document is adopted (stored with its own render as `markdown`). A difference between
+    `Session.notes` and that render is drift: the next fold or join writes it into the document
+    as an `api` edit. Without a base the document's render (theirs) is taken for `notes`;
+  - only ours: the usual text merge; the catch-up does the rest;
+  - ours dominates or equals but we lack the document: adopted anyway.
+- **Connected editors** get what the merge brought: the sidecar's `frames` (artifacts, then one
+  delta of the ops the local snapshot lacked) are logged as `sync (<peer>)`, folded, and
+  broadcast like a client's frames. An adopted document has no frames to send: the open sockets
+  get `{"type":"reload"}` and a normal close.
+- **`_touch`**: `store_notes_fold` counts a new version when the stored snapshot changes (the
+  document's first, formatting, comment marks, artifacts) and `Session.notes` will not change
+  with it (that write counts, once). A fold that leaves the snapshot alone does not. Sync's own
+  stores (`store_synced_notes_doc`) never touch: the apply path counts.
+- **Failure**: a union that cannot be made (no sidecar, an error) leaves the meeting waiting
+  (`_Outcome("waiting")`, logged). `SyncChanges.seqs` gives each served meeting's change number;
+  `_take_page` reports the earliest waiting one and `_pull` goes on to the following pages but stores
+  `since` as the minimum over the round of (earliest waiting seq - 1), so nothing else is blocked
+  (`PeerState.waiting`, `waiting` in /api/sync/status). The next round asks
+  again from there (the sync card says "N meetings waiting for their notes to merge"); meetings taken before it are re-taken harmlessly (equal documents make no
+  sidecar call). A peer without `seqs` holds the whole page back.

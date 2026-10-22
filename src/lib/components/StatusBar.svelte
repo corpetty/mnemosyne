@@ -4,7 +4,7 @@
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
 	import { openView } from '$lib/app/controller.svelte.js';
-	import { ago } from '$lib/app/syncText.js';
+	import { ago, waitingNote } from '$lib/app/syncText.js';
 	import { syncState } from '$lib/stores/sync.svelte.js';
 	import LevelMeter from './LevelMeter.svelte';
 
@@ -26,7 +26,7 @@
 		if (peer.state === 'locked') return `${peer.name} locked`;
 		if (peer.state === 'skew') return `${peer.name} needs an update`;
 		if (peer.state === 'error') return `Sync with ${peer.name} failed`;
-		return `Synced with ${peer.name} ${ago(peer.last_sync_at, tick)}`;
+		return `Synced with ${peer.name} ${ago(peer.last_sync_at, tick)}${waitingNote(peer)}`;
 	});
 	function openSync() {
 		uiState.settingsTab = 'general';

@@ -51,7 +51,7 @@ enum Command {
         #[arg(long)]
         no_relay: bool,
     },
-    /// Merge markdown notes (stdin to stdout, no network).
+    /// Markdown notes: merges and the shared notes document (stdin to stdout, no network).
     Notes {
         #[command(subcommand)]
         command: NotesCommand,
@@ -85,6 +85,14 @@ enum NotesCommand {
     /// each `{"history", "text"}` or `{"error": <message>}` for a request that failed. A batch
     /// exits 0 whatever its items did; only unparsable top-level JSON exits 1.
     Merge,
+    /// The live shared notes document (notes-core). Reads one JSON request on stdin and
+    /// prints one line; on an error: a message on stderr, exit 1.
+    ///
+    /// `{"op":"fold","notes":<origin hex>,"snapshot":<b64 or null>,"frames":[<b64>]}` gives
+    /// `{"snapshot","markdown","plain","comments"}`; `"op":"set_text"` with `"markdown"` also
+    /// gives `"frames"` (0xAF artifacts, then one 0xDE delta, or `[]`); `"op":"merge"` takes
+    /// `"snapshot"` and `"other"`. See notes-core's `api` module.
+    Doc,
 }
 
 #[derive(serde::Deserialize)]
@@ -150,6 +158,18 @@ fn notes_merge() -> Result<()> {
     Ok(())
 }
 
+fn notes_doc() -> Result<()> {
+    use anyhow::Context;
+    use std::io::Read;
+
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .context("reading stdin")?;
+    println!("{}", notes_core::api::handle_str(&input)?);
+    Ok(())
+}
+
 fn print_json(value: serde_json::Value) {
     println!("{value}");
 }
@@ -168,6 +188,9 @@ async fn main() -> Result<()> {
         Command::Notes {
             command: NotesCommand::Merge,
         } => notes_merge()?,
+        Command::Notes {
+            command: NotesCommand::Doc,
+        } => notes_doc()?,
         Command::Home {
             backend,
             data_dir,

@@ -60,6 +60,18 @@ def notes_hint(notes: list[ExternalNotes], budget: int = 12000) -> str:
     )
 
 
+def shared_notes_hint(notes: str, budget: int = 12000) -> str:
+    """The attendees' own notes on the meeting (Session.notes) as extra instructions."""
+    text = (notes or "").strip()
+    if not text:
+        return ""
+    return (
+        "The attendees took these notes during the meeting (below, markdown). They may be "
+        "incomplete or wrong: where they disagree with the transcript, the transcript wins.\n"
+        "--- Attendees' notes ---\n" + text[:budget]
+    )
+
+
 def notes_as_transcript(notes: list[ExternalNotes]) -> list[TranscriptSegment]:
     """For a meeting with no recording: the notes, paragraph by paragraph, in the shape the
     summarizer reads (the instructions say they are notes, not speech)."""

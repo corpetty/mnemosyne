@@ -49,19 +49,28 @@ test('edit the text, tags, decisions, items, chapters and questions', async () =
   await expect(page.getByText(/· edited /)).toBeVisible();
 });
 
-test('summarizing again asks first without the merge sidecar', async () => {
+test('summarizing again merges with the edits (with the merge sidecar), no question asked', async () => {
   await page.reload();
   await page.getByRole('button', { name: /summary-edit/ }).first().click();
   await page.getByRole('button', { name: 'Summary', exact: true }).click();
   await expect(page.getByText('Book the release call')).toBeVisible();
-  // The demo backend has no mnemosyne-link: summarizing again would replace the edits.
-  await expect(page.getByText('Your edits are kept when the summary is made again.')).toHaveCount(0);
-  page.once('dialog', (d) => {
-    expect(d.message()).toContain('replaces your edits');
+  // The e2e backend runs mnemosyne-link (CI builds it; locally the debug build is found): a new
+  // summary is merged into the hand-edited one (services/summary_doc.py), so nothing is replaced
+  // and the browser's "replaces your edits" confirm does not appear. Without the sidecar it does.
+  await expect(page.getByText('Your edits are kept when the summary is made again.')).toBeVisible();
+  let asked = false;
+  const onDialog = (d: import('@playwright/test').Dialog) => {
+    asked = true;
     void d.dismiss();
-  });
+  };
+  page.on('dialog', onDialog);
   await page.getByRole('button', { name: 'Re-summarize' }).click();
+  // The edits survive the new summary; the model's unchanged output does not undo them.
   await expect(page.getByText('We agreed to ship in October and to fix the docs first.')).toBeVisible();
+  await expect(page.getByText('Ship the Waku migration in late October')).toBeVisible();
+  await expect(page.getByText('Book the release call')).toBeVisible();
+  page.off('dialog', onDialog);
+  expect(asked).toBe(false);
 });
 
 test('cancel leaves the summary as it was', async () => {

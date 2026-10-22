@@ -59,6 +59,7 @@ class SyncPeerStatus(ApiModel):
     updated: int  # meetings taken over as they were there (fast-forward)
     merged: int  # meetings edited on both computers and merged
     deleted: int  # meetings deleted here because they were deleted there
+    waiting: int  # meetings that could not be taken in yet (their notes merge failed): retried
     clashes: list[SyncClash]
     app_version: str | None  # the peer's Mnemosyne version, once it answered
 
@@ -79,6 +80,9 @@ class SyncChanges(ApiModel):
     change first, and the meetings deleted since the tombstone cursor."""
 
     sessions: list[SyncSession]
+    # The change number of each of `sessions` (same order): a puller that cannot take one in
+    # asks again from just before it. Empty from older peers.
+    seqs: list[int] = Field(default_factory=list)
     tombstones: list[SyncTombstone]
     next_since: int  # ask from here for the next page
     more: bool  # more changes after this page

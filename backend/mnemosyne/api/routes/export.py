@@ -136,8 +136,10 @@ def before_export(ctx: AppContext, session, vault_path: str):
     """Runs before a meeting is written to the vault, and returns the session to write (read
     again): ticks and edits to the summary made in the note in Obsidian are taken back first,
     so exporting again never undoes them (services/vault_sync.py)."""
+    from ...services.shared_notes import fold_blocking
     from ...services.vault_sync import apply_vault_edits, apply_vault_ticks
 
+    fold_blocking(ctx, session.id)  # live notes typed so far (a no-op when all are folded)
     if not session.origin:  # a meeting recorded elsewhere has its note read there
         apply_vault_ticks(ctx, session, vault_path)
         apply_vault_edits(ctx, session, vault_path)

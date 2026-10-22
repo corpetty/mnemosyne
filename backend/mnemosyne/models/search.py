@@ -19,7 +19,9 @@ class SegmentHit(ApiModel):
 class CommentHit(ApiModel):
     id: str
     author: str
-    target: str  # segment / body / decision / question / item, '' = the meeting
+    target: str  # segment / body / decision / question / item / notes, '' = the meeting
+    label: str  # what it is on, readable: "Transcript", "Summary", "Notes"... ('' = the meeting)
+    quote: str  # the text it was written about, whole
     target_id: str
     snippet: str  # matches wrapped in [[ ]]
 

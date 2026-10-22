@@ -9,6 +9,7 @@ from ..config import Settings, load_settings
 from .app_watch import outlives_app, watch_app
 from .auth import LockedMiddleware, TokenAuthMiddleware
 from .context import AppContext
+from .notes_ws import router as notes_ws_router
 from .routes.ask import router as ask_router
 from .routes.assets import router as assets_router
 from .routes.audio import router as audio_router
@@ -123,6 +124,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(calendar_router)
     app.include_router(integrations_router)
     app.include_router(ws_router)
+    app.include_router(notes_ws_router)
 
     @app.get("/health")
     async def health():
