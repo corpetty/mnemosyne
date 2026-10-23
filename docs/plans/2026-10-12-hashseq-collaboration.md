@@ -546,6 +546,124 @@ Logos: readers never write, and a curated copy must be able to lose a sentence f
   publications can be updated from either machine (clips only from the origin); one served by
   "this computer" is served by its origin only.
 
+## Phase 8: sharing with other people's computers
+
+### Phase 8 design (drafted 2026-10-23, for review)
+
+Status: draft, nothing built. Drafted against the code at 20117be. Decided by Corey (2026-10-23):
+the owner picks what each share contains; recipients get team-share parity (comment, tick and
+follow tasks, edit the live notes); the owner's machines are the hub; one key per person.
+
+The team server shares meetings from one central copy. This shares them between desktops with no
+server: each recipient's machine holds the meetings shared with it. It is the first phase where
+peers are different people, so it is also where prerequisite 2 (authorship) gets built.
+
+What exists today and does not carry over: library sync trusts a peer completely (a DESKTOP token
+opens the whole API, `apply_synced` skips every access check, every meeting is offered, and
+publication keys travel), because every peer is the same person. Authors are text labels
+(`author`, `author_id`, history `by`) that any writer can set. The only key is the iroh endpoint
+key in `link.key`. A sync peer's id is a random string it states about itself, tied to its
+endpoint only by the pairing flow.
+
+- **A key per person.** An Ed25519 signing key, made in Python with `cryptography` (already a
+  dependency), stored as `<data_dir>/person.key` sealed with the files key (storage/crypto.py),
+  so a locked app cannot sign. The person id is the public key; people compare an 8-group
+  fingerprint when pairing. The display name is self-stated, and a contact can rename it locally.
+  Library-sync pairing copies the key to your other machines (one more call over the tunnel,
+  token-gated). If both machines already have different keys, the one with no contacts or shares
+  adopts the other's; if both have them, pairing is refused ("these computers belong to different
+  people"). A lost machine means a new key: rotate it, and contacts re-pair (no revocation list
+  in v1).
+- **Contacts.** A new invite kind `contact` (services/pairing.py), the same `<ticket>#<code>`
+  string sent any way you like. Redeeming it swaps signed cards `{person key, name, endpoint ids
+  of all that person's machines, at}`. Each side stores the other in a `contacts` table, which
+  travels in library sync. Every endpoint on the card becomes a paired device of a new kind
+  CONTACT. Its token opens only `/api/share/*`, scoped in auth.py the way PHONE tokens are; the
+  sidecar needs no change, because its `T` stream already admits paired endpoints only. A re-signed
+  card (a new machine, a new name) is pushed to contacts and replaces the old one only when it
+  verifies against the stored key.
+- **Shares.** `peer_shares(session_id, contact_id, parts, transcript, by, at, revoked_at)`; it
+  travels in library sync, so any of the owner's machines can serve it. The dialog reuses the
+  Publish dialog's part picker. On by default: title, date, summary, decisions, open questions,
+  action items, chapters, topics, attendees and notes. The transcript is a tick, off by default,
+  that warns it cannot be taken back once sent. Names come as they are, with an optional "hide
+  identifiers" (publishing's `redact_identifiers` + `redact_contacts`). Never shared: audio,
+  clips, recordings paths, speaker embeddings, voice profiles, publications (keys included),
+  seals, versions, supervision and other people's shares. Recipients see the names of the others a
+  meeting is shared with, since those people's comments and notes edits are visible to them.
+- **What a recipient gets: a `SharedMeeting`** (models/shared_meeting.py), the projection of one
+  share. It holds the chosen parts, comments, item done/follow state, the notes document snapshot
+  when notes are shared, and `version`. It is signed by the owner's person key. Nothing outside
+  the chosen parts is ever serialized. The notes part carries its whole op history, so anything
+  ever typed in the notes goes with it; the dialog says so next to the tick.
+- **The hub.** The recipient's backend pulls from any of the owner's machines it can reach, using
+  `GET /api/share/changes?since=` through the tunnel with its contact token. That returns signed
+  `SharedMeeting` documents for the meetings shared with that contact, oldest change first, plus
+  tombstones for unshares and deletes. The recipient pushes its own work with
+  `POST /api/share/contributions`. That is a batch of signed records `{id, kind, session_id,
+  payload, author key, at}`, signed over canonical JSON; for notes, the payload is the frame's
+  SHA-256 and the frame travels beside it. Record kinds: `comment` (create, edit, delete,
+  resolve), `item_flag` (done or follow by item id) and `notes_frames` (0xDE / 0xAF frames).
+  `POST /api/share/poke` asks for an immediate pull in either direction, so live notes typed on
+  a recipient reach the owner's open editors within seconds while both are online. Edits made
+  offline queue on the recipient ("2 comments waiting for Corey's computer") and are pushed on the
+  next connection.
+- **The owner's machine checks every record before it is written.** The signature must verify.
+  The signer must be the contact bound to the endpoint the request came through; in hub mode,
+  nobody forwards someone else's records. The share must be live and include the part. The rule
+  must allow it: anyone shared with comments and ticks; notes edits only when notes are shared;
+  edit or delete only your own comments; resolve as the thread author. Accepted records go
+  through the normal write paths (comments service, `_set_action_item_flag`, the notes relay's
+  `receive_frame`) with author = the contact's name and `author_id = "p:<first 16 hex of key>"`.
+  They log history lines, notify open clients, travel on to the owner's other machines in library
+  sync, and are served back to every recipient. Rejected records come back with a reason, which
+  the recipient shows on the item. Records are idempotent by id.
+- **Signatures are kept.** A table `signatures(subject, signer, sig, at)` stores records by id and
+  notes frames by hash, on the owner's machines and the recipients'. Records, history and per-frame
+  authorship can then be checked later, and a future mesh has something to filter on. Because the
+  hub refuses a bad frame before it reaches the log, no op is ever orphaned: v1 signs frames, not
+  op ids. Signing op ids, and dropping unsigned ops when rendering, is what a mesh would need
+  (Later).
+- **On the recipient's side.** A shared meeting is a `sessions` row with
+  `shared_from = <contact id>` and a sidebar group "Shared with me". The header shows "Shared by
+  <name>". `canChange` is false except for the allowed writes, and no automation runs (there is no
+  audio). Keyword search covers these meetings. They are left out of Ask and semantic search, the
+  digest and Obsidian export unless a setting turns each on (all off by default; open question).
+  Tasks owned by you (`mine_matcher`) appear in your Tasks view. Shared meetings do not travel in
+  library sync: each of your machines is on your card, so each one pulls them from the owner.
+- **Unshare, delete, remove a contact.** Each one becomes a tombstone on the next pull. The
+  recipient's app deletes its copy and says why. This only works with a cooperating app, and the
+  dialog says copies cannot be recalled, as for publications. Removing a contact revokes all
+  their shares and drops their CONTACT devices.
+- **Refused in team mode** on both sides, like library sync. The team server stays the central
+  option.
+- **Hardening first** (found while mapping, independent of the rest): bind `SyncPeer.id` to its
+  endpoint id and refuse a hello from another endpoint; keep `SyncSession.publications` between
+  one person's machines only, so it never goes into any share; contact tokens can never reach
+  `/api/sync/*`.
+- **UI.** Settings → People (contacts: add by invite, compare fingerprints, rename, remove; your
+  own fingerprint and name). ShareMenu gets a "People" section that opens the part picker for each
+  person. Sidebar "Shared with me". On the recipient: a header chip and a "waiting for <owner>"
+  line on queued work. On the owner: a "from <name>" byline on contributed comments and notes
+  edits.
+- **Prerequisites.** Privacy (1): iroh is end-to-end encrypted between paired peers, content is
+  chosen per share, and the transcript is off by default; notes ops stay permanent, and the dialog
+  says so. Authorship (2): person keys plus signed records and frames, enforced at the hub;
+  op-level signing waits for a mesh. QUEUE 56 (3): avoided (no nested objects). Format (4): met.
+- **Tests.** Three in-process apps (owner, recipient A, recipient B) through
+  `httpx.ASGITransport`, like test_sync_*.py. Cover: the share projection never holds unchosen
+  parts (a test asserts there is no transcript when it is unticked); contact tokens are refused
+  outside `/api/share/*`; tampered, replayed and forwarded records are refused; notes frames from
+  A reach B through the owner; unshare deletes on the recipient; key adoption at library-sync
+  pairing; the hardening items.
+- **Not in v1:** a mesh, so nothing reaches recipients while every owner machine is offline;
+  presence across machines; audio and clips; resharing; recipients editing the summary or
+  transcript; recalling copies; per-device keys.
+
+Open for Corey: whether shared-with-me meetings join Ask, semantic search, the digest and Obsidian
+export by default; the name in the UI ("People", "Contacts" or "Share with a person"); whether to
+ship the hardening items on their own first.
+
 ## Later, each behind the prerequisites below
 
 - **Live shared notes** during a meeting: a scratchpad attendees type into (desktop, or the team
@@ -557,8 +675,9 @@ Logos: readers never write, and a curated copy must be able to lose a sentence f
 - **Tasks, people and decisions as objects** that meetings link to: an action item keeps one
   identity across meetings instead of `same_item` text matching; Tasks, topic notes and the
   decisions log read those objects.
-- **Team sharing without a central copy**: each member's machine holds the meetings shared with
-  it.
+- **Team sharing without a central copy**: drafted as phase 8 (owner as hub). Later: a mesh, so
+  recipients sync with each other while the owner is offline (per-op signatures, unsigned ops
+  dropped when rendering).
 - **Publishing**: designed as phase 7 (encrypted snapshots, not a space). Later: readers
   following live edits or commenting (a hashseq space), publishing over Logos Delivery or
   Storage once a supported module and a web reader exist.
