@@ -1,0 +1,43 @@
+# cp .env.example .env, edit it, then:  docker compose up -d
+# (on a server with ports 80/tcp and 443/tcp open). See README.md in this folder.
+services:
+  publish:
+    build: ../../publish-host
+    restart: unless-stopped
+    environment:
+      # The proxy below is the only thing that reaches this container, so its
+      # X-Forwarded-For is the client address the rate limits are keyed on.
+      PUBLISH_TRUST_PROXY: "true"
+      # Leave empty for an open host; set it to accept new publications only from people
+      # who know it (they put it in Mnemosyne as the host's upload token).
+      PUBLISH_UPLOAD_TOKEN: "${PUBLISH_UPLOAD_TOKEN:-}"
+      PUBLISH_QUOTA_BYTES: "${PUBLISH_QUOTA_BYTES:-10737418240}"
+      PUBLISH_MAX_DAYS: "${PUBLISH_MAX_DAYS:-365}"
+    volumes:
+      - data:/data
+      # The built viewer (index.html and assets/), from the Mnemosyne repo; see README.md.
+      - ./viewer:/viewer:ro
+    # Not published: only Caddy talks to it.
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      PUBLISH_DOMAIN: "${PUBLISH_DOMAIN:?set PUBLISH_DOMAIN in .env}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data    # certificates
+      - caddy-config:/config
+    depends_on:
+      - publish
+
+volumes:
+  data:
+  caddy-data:
+  caddy-config:

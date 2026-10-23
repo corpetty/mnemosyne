@@ -1,0 +1,10 @@
+# TLS for the publish host (Let's Encrypt, automatic). See README.md in this folder.
+{$PUBLISH_DOMAIN} {
+	# A little over the largest blob (20 MiB); the host enforces its own limits as well.
+	request_body {
+		max_size 21MB
+	}
+	# Caddy puts the client's address in X-Forwarded-For (replacing any the client sent),
+	# which the host trusts because PUBLISH_TRUST_PROXY is set.
+	reverse_proxy publish:8080
+}

@@ -26,6 +26,8 @@
 	import MyPreferences from './MyPreferences.svelte';
 	import LocalModelCard from './LocalModelCard.svelte';
 	import RecordsSettings from './RecordsSettings.svelte';
+	import PublicationsList from './PublicationsList.svelte';
+	import { publishingState } from '$lib/stores/publishing.svelte.js';
 	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile, SystemInfo } from '$lib/types/index.js';
 
 	// a team server: settings belong to its admins (members and reviewers only read them).
@@ -55,7 +57,8 @@
 		| 'jira_api_token'
 		| 'hubspot_token'
 		| 'slack_webhook_url'
-		| 'matrix_access_token';
+		| 'matrix_access_token'
+		| 'publish_host_token';
 	const SECRET_KEYS: SecretKey[] = [
 		'hf_token',
 		'openai_api_key',
@@ -68,7 +71,8 @@
 		'jira_api_token',
 		'hubspot_token',
 		'slack_webhook_url',
-		'matrix_access_token'
+		'matrix_access_token',
+		'publish_host_token'
 	];
 	const emptySecrets = (): Record<SecretKey, string> => ({
 		hf_token: '',
@@ -82,7 +86,8 @@
 		jira_api_token: '',
 		hubspot_token: '',
 		slack_webhook_url: '',
-		matrix_access_token: ''
+		matrix_access_token: '',
+		publish_host_token: ''
 	});
 	let connUrl = $state(connectionState.url);
 	let connToken = $state(connectionState.token);
@@ -148,6 +153,9 @@
 				copilot_interval_seconds: v.copilot_interval_seconds,
 				whisper_model_size: v.whisper_model_size,
 				whisper_compute_type: v.whisper_compute_type,
+				publish_host: v.publish_host,
+				publish_default_expiry_days: v.publish_default_expiry_days,
+				allow_publishing: v.allow_publishing,
 				whisper_batch_size: v.whisper_batch_size,
 				parakeet_model: v.parakeet_model,
 				parakeet_quantization: v.parakeet_quantization,
@@ -252,6 +260,7 @@
 			loadAutoRecordSettings();
 			calendarState.start(); // the calendar may have been turned on, off or changed
 			void refreshMe(); // supervision on or off shows or hides the Review view
+			void publishingState.loadSettings(); // publish host, default expiry, members may publish
 			secrets = emptySecrets();
 			providers = await listModels();
 			toastState.success('Settings saved');
@@ -1322,6 +1331,45 @@
 						</label>
 						{@render test('hubspot')}
 					</div>
+				</div>
+			</section>
+
+			<!-- Publishing a meeting (backend services/publishing.py) -->
+			<section aria-label="Publishing">
+				<h3 class="text-lg font-semibold text-gray-200 mb-1">Publishing</h3>
+				<p class="text-xs text-gray-500 mb-3">
+					A published meeting is a chosen part of it, encrypted, that others open with a link (from this computer or a publish
+					host) or as one file. The key is in the link: a host only ever stores encrypted data.
+				</p>
+				<div class="grid grid-cols-2 gap-3">
+					<label class="col-span-2">
+						<span class={labelClass}>Publish host (blank: none, links are served by this computer)</span>
+						<input type="url" bind:value={form.publish_host} disabled={locked('publish_host')} placeholder="https://pub.example.org" class={inputClass} />
+					</label>
+					<label class="col-span-2">
+						<span class={labelClass}>Upload token{#if settings.secrets_set.publish_host_token}<span class="text-green-500 ml-1">set</span>{/if}</span>
+						<div class="flex gap-2">
+							<input type="password" bind:value={secrets.publish_host_token} disabled={locked('publish_host_token')} placeholder={settings.secrets_set.publish_host_token ? '•••••••• (leave blank to keep)' : 'only if the host asks for one'} class={inputClass} />
+							{#if settings.secrets_set.publish_host_token && !locked('publish_host_token')}
+								<button onclick={() => clearSecret('publish_host_token')} class="text-xs text-gray-500 hover:text-red-400">Clear</button>
+							{/if}
+						</div>
+					</label>
+					<label>
+						<span class={labelClass}>New publications expire after</span>
+						<select bind:value={form.publish_default_expiry_days} disabled={locked('publish_default_expiry_days')} class={inputClass}>
+							{#each [...new Set([30, 90, 365, settings.values.publish_default_expiry_days])].sort((a, b) => a - b) as d (d)}
+								<option value={d}>{d === 365 ? '1 year' : `${d} days`}</option>
+							{/each}
+						</select>
+					</label>
+					{#if teamAdmin}
+						<label class="flex items-center gap-2 self-end pb-1.5">
+							<input type="checkbox" bind:checked={form.allow_publishing} disabled={locked('allow_publishing')} class="rounded border-gray-600 bg-gray-800" />
+							<span class="text-sm text-gray-300">Allow members to publish</span>
+						</label>
+					{/if}
+					<div class="col-span-2"><PublicationsList /></div>
 				</div>
 			</section>
 

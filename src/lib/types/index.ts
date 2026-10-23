@@ -122,6 +122,17 @@ export type HubSpotContact = S['HubSpotContact'];
 export type HubSpotState = S['HubSpotState'];
 export type HubSpotMatches = S['HubSpotMatches'];
 export type HubSpotPushResult = S['HubSpotPushResult'];
+export type Publication = S['Publication'];
+export type PublicationSelection = S['PublicationSelection-Output'];
+export type PublicationDefaults = S['PublicationDefaults'];
+export type PublicationListItem = S['PublicationListItem'];
+export type QuoteSpan = S['QuoteSpan-Output'];
+/** The result of a finished `publication_file` job (backend routes/publishing.py export_file). */
+export interface PublicationFileResult {
+  token: string;
+  filename: string;
+  size: number;
+}
 
 /** A recording interrupted by a crash, finished when the backend started again. */
 export interface RecoveredRecording {

@@ -6,6 +6,7 @@ table so listing sessions never deserializes transcripts.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -419,6 +420,34 @@ CREATE TABLE IF NOT EXISTS deletions (
     role TEXT NOT NULL DEFAULT '',
     reason TEXT NOT NULL DEFAULT ''
 );
+-- Publications (services/publishing.py): a meeting's curated, encrypted copy, readable with a
+-- link that carries `key`. `token` authorizes updates on a publish host; `place` is "local" or
+-- "host"; selection, clip_blobs (span -> sealed clip, reused by later versions) are JSON;
+-- published_digest is a hash of what the last version showed (`behind`). One live (not
+-- unpublished) row per meeting. A change here is a new version of the meeting for library sync
+-- (the row travels in SyncSession.publications); `origin` is the computer whose files serve a
+-- "local" publication ('' = this one, else its sync id).
+CREATE TABLE IF NOT EXISTS publications (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    key BLOB NOT NULL,
+    token TEXT NOT NULL,
+    place TEXT NOT NULL,
+    host_url TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL,
+    selection TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    expires_at TEXT,
+    unpublished_at TEXT,
+    clip_blobs TEXT NOT NULL DEFAULT '{}',
+    published_digest TEXT NOT NULL DEFAULT '',
+    published_by TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS publications_session ON publications(session_id);
+CREATE UNIQUE INDEX IF NOT EXISTS publications_live ON publications(session_id)
+    WHERE unpublished_at IS NULL;
 -- Library sync (services/sync): the states served to each peer, the last few per meeting (the
 -- base of a three-way merge), and meetings deleted. No foreign key: a tombstone outlives its
 -- meeting, that is its job.
@@ -671,6 +700,11 @@ class SessionRepository:
         for col in ("plain", "comment_ranges"):
             if col not in notes_cols:
                 self._conn.execute(f"ALTER TABLE shared_notes ADD COLUMN {col} TEXT")
+        pub_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(publications)")}
+        if "origin" not in pub_cols:
+            self._conn.execute(
+                "ALTER TABLE publications ADD COLUMN origin TEXT NOT NULL DEFAULT ''"
+            )
         self._conn.commit()
 
     def _migrate_fts_rowids(self) -> None:
@@ -1729,6 +1763,136 @@ class SessionRepository:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM summary_docs WHERE session_id=?", (session_id,))
 
+    # ---- publications (services/publishing.py; no access checks: the caller checks) -----
+
+    _PUB_COLS = (
+        "id, session_id, key, token, place, host_url, version, selection, created_at,"
+        " updated_at, expires_at, unpublished_at, clip_blobs, published_digest, published_by,"
+        " origin"
+    )
+
+    @staticmethod
+    def _publication(r: sqlite3.Row) -> dict:
+        row = dict(r)
+        row["key"] = bytes(row["key"])
+        row["selection"] = json.loads(row["selection"])
+        row["clip_blobs"] = json.loads(row["clip_blobs"] or "{}")
+        return row
+
+    def live_publication(self, session_id: str) -> dict | None:
+        """The meeting's publication that is not unpublished, as a dict of its columns."""
+        with self._lock:
+            r = self._conn.execute(
+                f"SELECT {self._PUB_COLS} FROM publications"
+                " WHERE session_id=? AND unpublished_at IS NULL",
+                (session_id,),
+            ).fetchone()
+        return None if r is None else self._publication(r)
+
+    def get_publication(self, pub_id: str) -> dict | None:
+        with self._lock:
+            r = self._conn.execute(
+                f"SELECT {self._PUB_COLS} FROM publications WHERE id=?", (pub_id,)
+            ).fetchone()
+        return None if r is None else self._publication(r)
+
+    def publications(self, live_only: bool = True) -> list[dict]:
+        where = " WHERE unpublished_at IS NULL" if live_only else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {self._PUB_COLS} FROM publications{where} ORDER BY updated_at DESC"
+            ).fetchall()
+        return [self._publication(r) for r in rows]
+
+    def session_publications(self, session_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {self._PUB_COLS} FROM publications WHERE session_id=?"
+                " ORDER BY created_at, id",
+                (session_id,),
+            ).fetchall()
+        return [self._publication(r) for r in rows]
+
+    @staticmethod
+    def _publication_values(row: dict) -> tuple:
+        return (
+            row["id"],
+            row["session_id"],
+            row["key"],
+            row["token"],
+            row["place"],
+            row.get("host_url", ""),
+            row["version"],
+            json.dumps(row["selection"]),
+            row["created_at"],
+            row["updated_at"],
+            row.get("expires_at"),
+            row.get("unpublished_at"),
+            json.dumps(row.get("clip_blobs") or {}),
+            row.get("published_digest", ""),
+            row.get("published_by", ""),
+            row.get("origin", ""),
+        )
+
+    _PUB_UPSERT = (
+        f"INSERT INTO publications ({_PUB_COLS}) VALUES ({','.join('?' * 16)})"
+        " ON CONFLICT(id) DO UPDATE SET "
+        + ", ".join(
+            f"{c.strip()}=excluded.{c.strip()}"
+            for c in _PUB_COLS.split(",")
+            if c.strip() not in ("id", "session_id")
+        )
+    )
+
+    def put_publication(self, row: dict) -> None:
+        """Insert or replace a publication (every column of `_PUB_COLS`). A new version of the
+        meeting for library sync (`_touch`): the row travels."""
+        with self._lock, self._conn:
+            self._conn.execute(self._PUB_UPSERT, self._publication_values(row))
+            self._touch(row["session_id"])
+
+    def mark_unpublished(self, pub_id: str, at: str, *, touch: bool = True) -> None:
+        """`touch=False` for what every machine works out for itself (an expiry)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE publications SET unpublished_at=?, updated_at=? WHERE id=?",
+                (at, at, pub_id),
+            )
+            if touch:
+                r = self._conn.execute(
+                    "SELECT session_id FROM publications WHERE id=?", (pub_id,)
+                ).fetchone()
+                if r is not None:
+                    self._touch(r["session_id"])
+
+    def store_synced_publications(self, session_id: str, publications: list) -> None:
+        """Library sync's write of a meeting's publications (`SyncPublication`s, already merged
+        with ours): written as given, unpublished ones first so a row going dead never meets
+        the live one that replaces it (one live row per meeting). The caller's transaction
+        counts the new version. Rows we have that are not listed stay. Their `origin` is the
+        sender's view: its own sync id means that computer."""
+        ordered = sorted(publications, key=lambda p: not p.unpublished_at)
+        for p in ordered:
+            row = {
+                "id": p.id,
+                "session_id": session_id,
+                "key": base64.b64decode(p.key),
+                "token": p.token,
+                "place": p.where,
+                "host_url": p.host_url,
+                "version": p.version,
+                "selection": p.selection.model_dump(mode="json"),
+                "created_at": p.created_at,
+                "updated_at": p.updated_at,
+                "expires_at": p.expires_at,
+                "unpublished_at": p.unpublished_at,
+                "clip_blobs": p.clip_blobs,
+                "published_digest": p.published_digest,
+                "published_by": p.published_by,
+                "origin": "" if p.origin == self.device_id else p.origin,
+            }
+            self._conn.execute(self._PUB_UPSERT, self._publication_values(row))
+
     # ---- live shared notes (services/shared_notes.py; no access checks: the caller checks) --
 
     def notes_doc(self, session_id: str) -> dict | None:
@@ -2139,8 +2303,11 @@ class SessionRepository:
             out.append(v)
         return out
 
-    def add_seal(self, session_id: str, reason: str, content: str, audio: dict) -> dict | None:
-        """Chain a new seal to the meeting's last one; None when nothing changed since."""
+    def add_seal(
+        self, session_id: str, reason: str, content: str, audio: dict, *, force: bool = False
+    ) -> dict | None:
+        """Chain a new seal to the meeting's last one; None when nothing changed since (unless
+        `force`: a seal that records an event, services/records.py EVENT_SEALS)."""
         from .records import chain_hash
 
         at = datetime.now().isoformat()
@@ -2151,7 +2318,8 @@ class SessionRepository:
                 (session_id,),
             ).fetchone()
             if (
-                last is not None
+                not force
+                and last is not None
                 and last["content_hash"] == content
                 and json.loads(last["audio"]) == audio
             ):
@@ -3412,7 +3580,7 @@ class SessionRepository:
         """Everything of a meeting that library sync reads, as raw rows from one consistent
         snapshot, without access checks (the sync service is the machine itself, not a
         request): None when there is no such meeting. Keys: session, segments, recordings,
-        bookmarks, live_flags, external_notes, comments (`comment_rows`),
+        bookmarks, live_flags, external_notes, comments (`comment_rows`), publications,
         embeddings, assets (with `linked_at`), events (with `uid`, oldest first)."""
 
         def rows(sql: str) -> list[dict]:
@@ -3436,6 +3604,14 @@ class SessionRepository:
                     "SELECT * FROM external_notes WHERE session_id=? ORDER BY added_at, id"
                 ),
                 "comments": self.comment_rows(session_id),
+                "publications": [
+                    dict(r)
+                    for r in self._conn.execute(
+                        f"SELECT {self._PUB_COLS} FROM publications WHERE session_id=?"
+                        " ORDER BY created_at, id",
+                        (session_id,),
+                    ).fetchall()
+                ],
                 "embeddings": rows("SELECT * FROM session_speakers WHERE session_id=?"),
                 "assets": rows(
                     "SELECT a.*, sa.added_at AS linked_at FROM assets a"
@@ -3577,6 +3753,7 @@ class SessionRepository:
                 [(sid, label, json.dumps(vec)) for label, vec in s.speaker_embeddings.items()],
             )
             self._link_synced_assets(sid, s)
+            self.store_synced_publications(sid, s.publications)
             have = {
                 r["uid"]
                 for r in self._conn.execute(

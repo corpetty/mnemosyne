@@ -130,6 +130,14 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - The Release workflow runs the AppImage smoke test (reusable `smoke.yml`) before publishing. To
   re-test an existing build without rebuilding: `gh workflow run "Smoke test" -f run_id=<Release
   run id>`. The script refuses to run outside CI (it starts PulseAudio with a null sink).
+- Publishing: after changing `viewer/` or `publication_format.py`, run `pnpm build:viewer` and commit
+  backend/mnemosyne/api/static/viewer/ (the `viewer` CI job fails on a stale build). The Python and TS formats must
+  agree: backend/tests/vectors/publication_v1.json is checked by both; regenerate it with
+  backend/scripts/make_publication_vectors.py only on purpose (a format change breaks old links: bump `FORMAT`).
+- Publish host "version already exists" (409 with `current` = ours) counts as success only when `GET /pub/<id>`
+  returns an ETag equal to the SHA-256 of our manifest; else another computer published that version (`_host_upload`).
+- A "this computer" publication link only reaches others through the team listener (or `phone_url`): `local_reach`.
+  With neither, the dialog says so. `add_seal` used to dedup publish events away; `EVENT_SEALS` forces them.
 - Meetings can have several parts (services/parts.py): `Recording.part`/`offset`, the session's
   `audio_file` is all parts joined, transcript times are on that joined timeline. Never replace a
   session's audio or transcript wholesale when recording into it again; go through `add_part()`.
@@ -453,6 +461,22 @@ id-anchored; harness at /dev/notes-editor). Library sync merges two documents by
 (services/sync_notes.py), no base. Comments on notes are marked by the SERVER (`notes_ids` ->
 `mark_comment`), so a read-only reader can comment. Edit rule: owner, admin, shared-with; other
 readers read. No sidecar: hello says `unavailable` and LegacyNotesEditor (the textarea) is used.
+Publishing (unreleased, phase 7; design in the hashseq plan, use in docs/publishing.md): a curated, encrypted
+copy of a meeting behind a link `https://<host>/p/<id>#<key>`, never the record. One encrypted snapshot per version
+(services/publication_format.py: padded JSON manifest + Ogg Opus clip blobs, AES-256-GCM, AAD
+`mnemosyne/pub/1|id|kind|version`, one random key per publication that only the fragment carries), built by the
+`publish` job (services/publishing.py: selection, names, `redact_identifiers` + `redact_contacts`, quotes with
+optional clips). The manifest has no transcript field, only chosen quotes; a test asserts it. The viewer is a
+separate Vite entry (`viewer/`, Svelte 5, WebCrypto, no wasm), committed as backend/mnemosyne/api/static/viewer/
+and rebuilt reproducibly with `pnpm build:viewer`; CI (`viewer` job) diffs it. The backend serves it and the sealed
+files on open routes `/p/` and `/pub/` (api/routes/publishing.py), also on the team listener; `publish-host/` (axum
+crate, `cargo test` in CI) + deploy/publish/ is the same read side with authenticated writes, caps and mandatory
+expiry. Also: a one-file export (services/publication_file.py, `single.html`, optional PBKDF2 password), the
+`publications` table travelling in `SyncSession.publications` (services/sync_publications.py; hosted ones editable
+from either computer, "this computer" ones only from the one serving them), and records (publish, update, unpublish
+seal a version; `publications.json` in the export, never the key). Team servers: `allow_publishing`, owner or admin.
+Logos storage/delivery is only a written trial (docs/plans/2026-10-23-logos-publishing-trial.md).
+
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

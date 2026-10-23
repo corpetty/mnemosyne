@@ -7,5 +7,8 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // The Publish dialog renders its preview with the publication viewer's own component
+    // (viewer/src/Meeting.svelte), outside SvelteKit's default allow list.
+    fs: { allow: ["viewer"] },
   },
 });

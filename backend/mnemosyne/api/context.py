@@ -99,6 +99,12 @@ class AppContext:
         self.sessions.type_source = lambda: available_types(self.settings)
         self.sessions.is_recording = lambda sid: sid in self.active_recordings
         self.repo.on_new_session = self._new_session
+        self.sessions.before_delete = self._forget_publications
+
+    def _forget_publications(self, session_id: str):
+        from ..services.publishing import forget_session
+
+        return forget_session(self, session_id)
 
     def calendar_for(self, user_id: str) -> CalendarService:
         """Whose calendar: on a team server, a person's own ICS feed (services/prefs.py),
@@ -290,6 +296,12 @@ class AppContext:
                 self.run_retention()
             except Exception:
                 logger.exception("Audio retention pass failed")
+            try:
+                from ..services.publishing import sweep_expired
+
+                sweep_expired(self)
+            except Exception:
+                logger.exception("Removing expired publications failed")
             await asyncio.sleep(interval_seconds)
 
     def maybe_schedule_digest(self, now: datetime | None = None):

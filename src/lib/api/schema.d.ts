@@ -1250,6 +1250,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/publications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Publications
+         * @description Live publications of the meetings the caller can see, newest first.
+         */
+        get: operations["list_publications_api_publications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/records/deletions": {
         parameters: {
             query?: never;
@@ -2100,6 +2120,140 @@ export interface paths {
         put?: never;
         /** Update Notes */
         post: operations["update_notes_api_sessions__session_id__notes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Publication
+         * @description The meeting's live publication, or null. Its link only for its owner or an admin.
+         */
+        get: operations["get_publication_api_sessions__session_id__publication_get"];
+        /**
+         * Publish
+         * @description Publish the meeting, or update its publication (same link): a `publish` job, whose
+         *     result is {publication}.
+         */
+        put: operations["publish_api_sessions__session_id__publication_put"];
+        post?: never;
+        /**
+         * Unpublish
+         * @description Unpublish: the hosted copy and this computer's files are deleted, the link dies.
+         */
+        delete: operations["unpublish_api_sessions__session_id__publication_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/publication/defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Publication Defaults
+         * @description What to publish: the live publication's selection, else the defaults; and who could
+         *     open a link to this computer (`local_reach`).
+         */
+        get: operations["publication_defaults_api_sessions__session_id__publication_defaults_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/publication/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export File
+         * @description The publication as one HTML file: a `publication_file` job whose result is
+         *     {token, filename, size}, downloaded once from .../publication/file/{token}. Not a
+         *     publication (nothing to update or unpublish).
+         */
+        post: operations["export_file_api_sessions__session_id__publication_file_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/publication/file/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download File
+         * @description The file a `publication_file` job made, as a download; it is deleted afterwards.
+         */
+        get: operations["download_file_api_sessions__session_id__publication_file__token__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/publication/file/{token}/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save File
+         * @description Write the made file to a path the desktop app's save dialog chose (as a clip's save,
+         *     routes/clips.py), then delete it. Only for a client on this computer: in server mode the
+         *     path would be on the server. Who may is the download's rule (its maker, or an admin).
+         */
+        post: operations["save_file_api_sessions__session_id__publication_file__token__save_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/publication/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Publication
+         * @description The manifest readers would get, unsealed; quotes' clips as `preview_url`.
+         */
+        post: operations["preview_publication_api_sessions__session_id__publication_preview_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5330,6 +5484,286 @@ export interface components {
             /** Provider */
             provider: string;
         };
+        /** Publication */
+        Publication: {
+            /** Behind */
+            behind: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at: string | null;
+            /** Host Url */
+            host_url: string;
+            /** Id */
+            id: string;
+            /**
+             * Local Reach
+             * @enum {string}
+             */
+            local_reach: "team" | "phone_url" | "this_device";
+            /** Published By */
+            published_by: string;
+            selection: components["schemas"]["PublicationSelection-Output"];
+            /** Served By */
+            served_by: string | null;
+            /** Session Id */
+            session_id: string;
+            /** Unpublished At */
+            unpublished_at: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Url */
+            url: string | null;
+            /** Version */
+            version: number;
+            /**
+             * Where
+             * @enum {string}
+             */
+            where: "local" | "host";
+        };
+        /**
+         * PublicationDefaults
+         * @description A selection to start the Publish dialog from (send it back as a selection), and who
+         *     could open a link to this computer.
+         */
+        PublicationDefaults: {
+            /**
+             * Action Items
+             * @default true
+             */
+            action_items: boolean;
+            /** Attendees */
+            attendees: string[];
+            /**
+             * Chapters
+             * @default true
+             */
+            chapters: boolean;
+            /**
+             * Decisions
+             * @default true
+             */
+            decisions: boolean;
+            /**
+             * Expires Days
+             * @default 90
+             */
+            expires_days: number | null;
+            /**
+             * Hide Identifiers
+             * @default true
+             */
+            hide_identifiers: boolean;
+            /**
+             * Local Reach
+             * @enum {string}
+             */
+            local_reach: "team" | "phone_url" | "this_device";
+            /** Local Url */
+            local_url: string;
+            /**
+             * Names
+             * @default as_is
+             * @enum {string}
+             */
+            names: "as_is" | "first" | "hidden";
+            /**
+             * Notes
+             * @default false
+             */
+            notes: boolean;
+            /**
+             * Questions
+             * @default true
+             */
+            questions: boolean;
+            /** Quotes */
+            quotes: components["schemas"]["QuoteSpan-Output"][];
+            /**
+             * Summary
+             * @default true
+             */
+            summary: boolean;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /**
+             * Topics
+             * @default true
+             */
+            topics: boolean;
+            /**
+             * Where
+             * @default local
+             * @enum {string}
+             */
+            where: "local" | "host";
+        };
+        /** PublicationFileRequest */
+        PublicationFileRequest: {
+            /** Password */
+            password?: string | null;
+            selection: components["schemas"]["PublicationSelection-Input"];
+        };
+        /** PublicationListItem */
+        PublicationListItem: {
+            publication: components["schemas"]["Publication"];
+            /** Session Name */
+            session_name: string;
+        };
+        /**
+         * PublicationSelection
+         * @description What a publication shows. The transcript is never published: only quotes' lines.
+         */
+        "PublicationSelection-Input": {
+            /**
+             * Action Items
+             * @default true
+             */
+            action_items: boolean;
+            /** Attendees */
+            attendees?: string[];
+            /**
+             * Chapters
+             * @default true
+             */
+            chapters: boolean;
+            /**
+             * Decisions
+             * @default true
+             */
+            decisions: boolean;
+            /**
+             * Expires Days
+             * @default 90
+             */
+            expires_days: number | null;
+            /**
+             * Hide Identifiers
+             * @default true
+             */
+            hide_identifiers: boolean;
+            /**
+             * Names
+             * @default as_is
+             * @enum {string}
+             */
+            names: "as_is" | "first" | "hidden";
+            /**
+             * Notes
+             * @default false
+             */
+            notes: boolean;
+            /**
+             * Questions
+             * @default true
+             */
+            questions: boolean;
+            /** Quotes */
+            quotes?: components["schemas"]["QuoteSpan-Input"][];
+            /**
+             * Summary
+             * @default true
+             */
+            summary: boolean;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /**
+             * Topics
+             * @default true
+             */
+            topics: boolean;
+            /**
+             * Where
+             * @default local
+             * @enum {string}
+             */
+            where: "local" | "host";
+        };
+        /**
+         * PublicationSelection
+         * @description What a publication shows. The transcript is never published: only quotes' lines.
+         */
+        "PublicationSelection-Output": {
+            /**
+             * Action Items
+             * @default true
+             */
+            action_items: boolean;
+            /** Attendees */
+            attendees: string[];
+            /**
+             * Chapters
+             * @default true
+             */
+            chapters: boolean;
+            /**
+             * Decisions
+             * @default true
+             */
+            decisions: boolean;
+            /**
+             * Expires Days
+             * @default 90
+             */
+            expires_days: number | null;
+            /**
+             * Hide Identifiers
+             * @default true
+             */
+            hide_identifiers: boolean;
+            /**
+             * Names
+             * @default as_is
+             * @enum {string}
+             */
+            names: "as_is" | "first" | "hidden";
+            /**
+             * Notes
+             * @default false
+             */
+            notes: boolean;
+            /**
+             * Questions
+             * @default true
+             */
+            questions: boolean;
+            /** Quotes */
+            quotes: components["schemas"]["QuoteSpan-Output"][];
+            /**
+             * Summary
+             * @default true
+             */
+            summary: boolean;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /**
+             * Topics
+             * @default true
+             */
+            topics: boolean;
+            /**
+             * Where
+             * @default local
+             * @enum {string}
+             */
+            where: "local" | "host";
+        };
         /** QueueItem */
         QueueItem: {
             /**
@@ -5361,6 +5795,44 @@ export interface components {
             clip: components["schemas"]["Clip"] | null;
             /** Text */
             text: string;
+        };
+        /**
+         * QuoteSpan
+         * @description A stretch of the meeting to quote: the transcript lines whose middle falls inside it,
+         *     and, with `with_clip`, that stretch of audio. Seconds on the meeting's joined timeline, or,
+         *     when `part` is set, seconds into that part (like bookmarks and comments).
+         */
+        "QuoteSpan-Input": {
+            /** End */
+            end: number;
+            /** Part */
+            part?: number | null;
+            /** Start */
+            start: number;
+            /**
+             * With Clip
+             * @default false
+             */
+            with_clip: boolean;
+        };
+        /**
+         * QuoteSpan
+         * @description A stretch of the meeting to quote: the transcript lines whose middle falls inside it,
+         *     and, with `with_clip`, that stretch of audio. Seconds on the meeting's joined timeline, or,
+         *     when `part` is set, seconds into that part (like bookmarks and comments).
+         */
+        "QuoteSpan-Output": {
+            /** End */
+            end: number;
+            /** Part */
+            part: number | null;
+            /** Start */
+            start: number;
+            /**
+             * With Clip
+             * @default false
+             */
+            with_clip: boolean;
         };
         /**
          * Recording
@@ -5556,6 +6028,11 @@ export interface components {
         };
         /** SaveClipRequest */
         SaveClipRequest: {
+            /** Path */
+            path: string;
+        };
+        /** SavePublicationFileRequest */
+        SavePublicationFileRequest: {
             /** Path */
             path: string;
         };
@@ -5871,6 +6348,8 @@ export interface components {
         };
         /** SettingsUpdate */
         SettingsUpdate: {
+            /** Allow Publishing */
+            allow_publishing?: boolean | null;
             /** Anthropic Api Key */
             anthropic_api_key?: string | null;
             /** Api Token */
@@ -6061,6 +6540,12 @@ export interface components {
             phone_url?: string | null;
             /** Phonon Command */
             phonon_command?: string | null;
+            /** Publish Default Expiry Days */
+            publish_default_expiry_days?: number | null;
+            /** Publish Host */
+            publish_host?: string | null;
+            /** Publish Host Token */
+            publish_host_token?: string | null;
             /** Records Retention Years */
             records_retention_years?: number | null;
             /** Redact Exports */
@@ -6136,6 +6621,8 @@ export interface components {
         };
         /** SettingsValues */
         SettingsValues: {
+            /** Allow Publishing */
+            allow_publishing: boolean;
             /** Anthropic Api Key */
             anthropic_api_key: string;
             /** Api Token */
@@ -6335,6 +6822,12 @@ export interface components {
             phone_url: string;
             /** Phonon Command */
             phonon_command: string;
+            /** Publish Default Expiry Days */
+            publish_default_expiry_days: number;
+            /** Publish Host */
+            publish_host: string;
+            /** Publish Host Token */
+            publish_host_token: string;
             /** Records Retention Years */
             records_retention_years: number;
             /** Redact Exports */
@@ -6999,6 +7492,63 @@ export interface components {
             /** Scheduled */
             scheduled: boolean;
         };
+        /**
+         * SyncPublication
+         * @description A publication row as stored (services/publishing.py), key and token included: library
+         *     sync is between one person's own computers, which must be able to update a link. Times stay
+         *     the stored ISO text. `origin`: the computer whose files serve a "this computer"
+         *     publication, as the SENDER sees it (its own sync id when it is its own).
+         */
+        SyncPublication: {
+            /** Clip Blobs */
+            clip_blobs: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+            /** Created At */
+            created_at: string;
+            /** Expires At */
+            expires_at: string | null;
+            /**
+             * Host Url
+             * @default
+             */
+            host_url: string;
+            /** Id */
+            id: string;
+            /** Key */
+            key: string;
+            /**
+             * Origin
+             * @default
+             */
+            origin: string;
+            /**
+             * Published By
+             * @default
+             */
+            published_by: string;
+            /**
+             * Published Digest
+             * @default
+             */
+            published_digest: string;
+            selection: components["schemas"]["PublicationSelection-Output"];
+            /** Token */
+            token: string;
+            /** Unpublished At */
+            unpublished_at: string | null;
+            /** Updated At */
+            updated_at: string;
+            /** Version */
+            version: number;
+            /**
+             * Where
+             * @enum {string}
+             */
+            where: "local" | "host";
+        };
         /** SyncSelf */
         SyncSelf: {
             /** Id */
@@ -7065,6 +7615,8 @@ export interface components {
             owner_id: string;
             /** Participants */
             participants: string[];
+            /** Publications */
+            publications: components["schemas"]["SyncPublication"][];
             /** Recordings */
             recordings: components["schemas"]["Recording"][];
             /** Speaker Embeddings */
@@ -9832,6 +10384,26 @@ export interface operations {
             };
         };
     };
+    list_publications_api_publications_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicationListItem"][];
+                };
+            };
+        };
+    };
     deletions_api_records_deletions_get: {
         parameters: {
             query?: {
@@ -11573,6 +12145,274 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_publication_api_sessions__session_id__publication_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Publication"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_api_sessions__session_id__publication_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublicationSelection-Input"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unpublish_api_sessions__session_id__publication_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Publication"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publication_defaults_api_sessions__session_id__publication_defaults_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicationDefaults"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_file_api_sessions__session_id__publication_file_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublicationFileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_file_api_sessions__session_id__publication_file__token__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_file_api_sessions__session_id__publication_file__token__save_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavePublicationFileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_publication_api_sessions__session_id__publication_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublicationSelection-Input"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

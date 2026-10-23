@@ -4,6 +4,8 @@
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
+	import { publishingState } from '$lib/stores/publishing.svelte.js';
+	import { canChange } from '$lib/app/access.js';
 
 	let {
 		from,
@@ -35,6 +37,21 @@
 		} catch (e) {
 			toastState.error(e instanceof Error ? e.message : 'Could not bookmark');
 		}
+	}
+
+	/** Keep the selected lines for the meeting's publication (the Publish dialog lists them). */
+	function addToPublication() {
+		const s = sessionState.activeSession;
+		if (!s || !span) return;
+		const n = publishingState.addPending(s.id, { start: span.start, end: span.end, part: null, with_clip: false });
+		toastState.show(`Added to the publication (${n} quote${n === 1 ? '' : 's'})`, 'success', 6000, {
+			label: 'Open',
+			run: () => {
+				const now = sessionState.activeSession;
+				if (now?.id === s.id) void publishingState.open(now);
+			}
+		});
+		onclose();
 	}
 
 	async function copyText() {
@@ -92,6 +109,11 @@
 	{#if session?.audio_file}
 		<button onclick={saveAudio} disabled={!!busy} class="px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50">
 			{busy === 'audio' ? 'Cutting…' : 'Save audio clip'}
+		</button>
+	{/if}
+	{#if publishingState.allowed && canChange(session) && span}
+		<button onclick={addToPublication} disabled={!!busy} class="px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50">
+			Add to publication
 		</button>
 	{/if}
 	{#if commentsState.canComment && oncomment}

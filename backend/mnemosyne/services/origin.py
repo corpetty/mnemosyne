@@ -28,7 +28,12 @@ def is_foreign(session: Any) -> bool:
 
 def origin_name(app: AppContext, session: Any) -> str:
     """The name of the computer that recorded the meeting, from sync_peers.json."""
-    origin = getattr(session, "origin", "") or ""
+    return device_name(app, getattr(session, "origin", "") or "")
+
+
+def device_name(app: AppContext, device_id: str) -> str:
+    """The name of one of this person's other computers by its sync id."""
+    origin = device_id
     try:
         raw = json.loads((app.settings.data_dir / "sync_peers.json").read_text(encoding="utf-8"))
         for peer in raw.get("peers", []):

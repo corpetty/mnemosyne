@@ -3,15 +3,17 @@
 Everything that travels between a person's machines for one meeting, per
 docs/plans/2026-10-14-library-sync-rules.md section 2. Not in it: `status` and `audio_file`
 (per machine), attendee emails, legal hold, CRM state, summary documents, vault notes,
-versions and seals (local bookkeeping), audio and keys.
+versions and seals (local bookkeeping), audio and encryption keys. Publications travel with
+their link key and token (see `SyncPublication`).
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pydantic import Field
 
 from .base import ApiModel
 from .live_flag import LiveFlag
+from .publication import PublicationSelection, Where
 from .session import (
     AgendaItem,
     CopilotNotes,
@@ -92,6 +94,68 @@ class SyncEvent(ApiModel):
     detail: dict = Field(default_factory=dict)
 
 
+class SyncPublication(ApiModel):
+    """A publication row as stored (services/publishing.py), key and token included: library
+    sync is between one person's own computers, which must be able to update a link. Times stay
+    the stored ISO text. `origin`: the computer whose files serve a "this computer"
+    publication, as the SENDER sees it (its own sync id when it is its own)."""
+
+    id: str
+    key: str  # base64 of the 32-byte key
+    token: str
+    where: Where
+    host_url: str = ""
+    version: int
+    selection: PublicationSelection
+    created_at: str
+    updated_at: str
+    expires_at: str | None = None
+    unpublished_at: str | None = None
+    clip_blobs: dict[str, dict] = Field(default_factory=dict)
+    published_digest: str = ""
+    published_by: str = ""
+    origin: str = ""
+
+
+def _when(text: str) -> datetime:
+    at = datetime.fromisoformat(text)
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
+
+
+def _rank(p: SyncPublication) -> tuple:
+    """Which of two states of one publication is the later: the newer `updated_at`; at equal
+    times an unpublished one beats a live one (a deletion must not be undone by a tie), then
+    the higher version."""
+    return (_when(p.updated_at), bool(p.unpublished_at), p.version)
+
+
+def merge_publications(
+    ours: list[SyncPublication], theirs: list[SyncPublication]
+) -> list[SyncPublication]:
+    """The publications of a meeting after two machines' states meet. By id, the row with the
+    newer `updated_at` wins whole, except that the version is the larger of the two (it never
+    goes back). A meeting has one live publication: when two machines published separately
+    (two ids, both live), the later one stays and the other becomes unpublished, as of the
+    later time, so that state travels back as an ordinary unpublish. Ours first, in order;
+    theirs that we lack after."""
+    by_id: dict[str, SyncPublication] = {}
+    for p in [*ours, *theirs]:
+        mine = by_id.get(p.id)
+        if mine is None:
+            by_id[p.id] = p
+            continue
+        win = p if _rank(p) > _rank(mine) else mine
+        by_id[p.id] = win.model_copy(update={"version": max(mine.version, p.version)})
+    live = [p for p in by_id.values() if not p.unpublished_at]
+    if len(live) > 1:
+        keep = max(live, key=lambda p: (_rank(p), p.id))
+        at = max(live, key=lambda p: _when(p.updated_at)).updated_at
+        for p in live:
+            if p is not keep:
+                by_id[p.id] = p.model_copy(update={"unpublished_at": at, "updated_at": at})
+    return list(by_id.values())
+
+
 class SyncSession(ApiModel):
     id: str
     created_at: datetime
@@ -120,6 +184,9 @@ class SyncSession(ApiModel):
     external_notes: list[ExternalNotes] = Field(default_factory=list)
     live_flags: list[LiveFlag] = Field(default_factory=list)
     comments: list[SyncComment] = Field(default_factory=list)  # absent from older peers
+    # The meeting's publications (services/publishing.py), normally none or one: merged by id
+    # (`merge_publications`), never three-way. Absent from older peers.
+    publications: list[SyncPublication] = Field(default_factory=list)
     speaker_embeddings: dict[str, list[float]] = Field(default_factory=dict)
     assets: list[SyncAsset] = Field(default_factory=list)
     events: list[SyncEvent] = Field(default_factory=list)

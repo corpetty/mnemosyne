@@ -222,7 +222,7 @@
 							{/each}
 							{#each m.decisions as d}<li class="text-gray-200">✔ {d}</li>{/each}
 							{#each m.action_items as a (a.idx)}
-								<li class={a.done ? 'text-gray-500 line-through' : 'text-gray-300'}>○ {a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}</li>
+								<li class={a.done ? 'text-gray-500 line-through' : 'text-gray-300'}>○ {a.text}{#if a.owner}<span class="text-gray-500">{' · '}{a.owner}</span>{/if}</li>
 							{/each}
 							{#each m.open_questions as q}<li class="text-gray-400">? {q}</li>{/each}
 						</ul>

@@ -116,6 +116,9 @@ class SyncService:
         self._loop_task: asyncio.Task | None = None
         self._wake: asyncio.Event | None = None  # made in start(): bound to the running loop
         self._announced = 0  # the change counter last told to the peers
+        # Hosted copies of publications that lost a merge (two machines published the same
+        # meeting): deleted from the publish host once back on the event loop (flush_host_deletes).
+        self.host_deletes: list[dict] = []
         ctx.repo.device_id = self.me
 
     # ---- identity, claiming -----------------------------------------------------------------
@@ -411,6 +414,7 @@ class SyncService:
             outcomes, new_cursor, stuck = await asyncio.to_thread(
                 self._take_page, peer, page, cursor
             )
+            await self.flush_host_deletes()
             for o in outcomes:
                 self._count(st, o)
                 if o.kind in ("new", "updated", "merged"):
@@ -436,6 +440,14 @@ class SyncService:
             self._publish(peer, st)
             if not page.more or pos <= since:
                 return
+
+    async def flush_host_deletes(self) -> None:
+        """Delete the hosted copies queued by `take` (best effort, logged when it fails)."""
+        from . import sync_publications
+
+        rows, self.host_deletes = self.host_deletes, []
+        for row in rows:
+            await sync_publications.delete_hosted(self.ctx, row)
 
     def _count(self, st: PeerState, o: _Outcome) -> None:
         if o.kind == "clash":
@@ -488,7 +500,7 @@ class SyncService:
     def take(self, peer: SyncPeer, theirs: SyncSession) -> _Outcome:
         """One meeting from `peer` into the library. The meeting's notes lock (the one folds and
         catch-ups take) is held throughout: nothing folds the notes document while it is merged."""
-        from . import shared_notes
+        from . import shared_notes, sync_publications
 
         sid = theirs.id
         if self.ctx.repo.has_tombstone(sid):
@@ -496,9 +508,18 @@ class SyncService:
         with shared_notes.hub(self.ctx).lock(sid):
             # What was typed here is folded in first, so our version is current.
             shared_notes.fold_blocking(self.ctx, sid)
-            return self._take_locked(peer, theirs)
+            before = self.ctx.repo.session_publications(sid)
+            outcome = self._take_locked(peer, theirs)
+            if outcome.kind in ("new", "updated", "merged"):
+                # Publications that arrived changed: files here that no longer match go.
+                try:
+                    self.host_deletes += sync_publications.settle(self.ctx, sid, before)
+                except Exception:
+                    logger.warning("Sync: publication files of %s not settled", sid, exc_info=True)
+            return outcome
 
     def _take_locked(self, peer: SyncPeer, theirs: SyncSession) -> _Outcome:
+        from ..models.sync_session import merge_publications
         from . import sync_notes
         from .link import find_binary
         from .shared_notes import NotesDocError
@@ -544,6 +565,9 @@ class SyncService:
             if united is not None:
                 sync_notes.store_union(self.ctx, sid, united, peer.name)
                 theirs = theirs.model_copy(update={"notes": united.markdown})
+            theirs = theirs.model_copy(
+                update={"publications": merge_publications(ours.publications, theirs.publications)}
+            )
             write_session(repo, theirs, local_device_id=me, vv=theirs.vv, bump=False)
             if adopt_doc:
                 sync_notes.adopt(self.ctx, sid, theirs.notes_doc, peer.name)

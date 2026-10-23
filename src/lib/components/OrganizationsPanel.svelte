@@ -196,7 +196,7 @@
 					<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Open tasks</h4>
 					<ul class="space-y-0.5">
 						{#each detail.open_tasks as t (t.session_id + t.idx)}
-							<li class="text-sm text-gray-300">○ {t.text}{#if t.owner}<span class="text-gray-500"> · {t.owner}</span>{/if}</li>
+							<li class="text-sm text-gray-300">○ {t.text}{#if t.owner}<span class="text-gray-500">{' · '}{t.owner}</span>{/if}</li>
 						{/each}
 					</ul>
 				</section>

@@ -368,6 +368,62 @@ keeping its quote. Comments travel with library sync (merged by id with the rest
 searchable, show in the meeting's history, and publish `comments` events. Tasks and decisions
 show the threads of all their mentions.
 
+### Publishing
+
+A curated, encrypted copy of a meeting that anyone with a link can read (phase 7; use in
+[publishing.md](publishing.md)). Flow:
+
+```
+Publish dialog (PublishDialog.svelte, stores/publishing.svelte.ts)
+  ├─ POST …/publication/preview   publishing.preview: the unsealed manifest, drawn by the viewer's own Meeting.svelte
+  └─ PUT  …/publication           `publish` job (services/publishing.py)
+        build_content (selection, names, redaction; never the transcript)
+        → clips cut from the audio (reused when their span is unchanged)
+        → seal (publication_format.py: manifest + clip blobs, AES-GCM)
+        → host: PUT blobs then manifest to publish-host   |  here: <data_dir>/publications/<id>/
+        → `publications` row, history line, records seal
+  └─ POST …/publication/file      `publication_file` job: single.html with the sealed copy inlined
+
+Reader: https://<host>/p/<id>#<key>
+  → GET /p/<id>            viewer index.html (strict CSP; the backend or the publish host)
+  → GET /p/assets/…        the viewer's JS and CSS
+  → GET /pub/<id>          sealed manifest (ETag, X-Pub-Version, X-Pub-Expires)
+  → GET /pub/<id>/<sha>    sealed clips, immutable
+  → WebCrypto decrypts with the fragment's key, which no request carries; clips become blob: URLs
+```
+
+Format rules (services/publication_format.py; the reader is viewer/src/format.ts):
+
+- One random 32-byte key per publication, shown only in the link fragment (base64url, 43 chars);
+  never in `meta.json`, never in logs, never sent to a host. Ids are 16 random hex characters, not
+  the session id. Versions reuse the key, so an update keeps the link.
+- The manifest is canonical JSON padded to a multiple of 4 KiB (4-byte length, zero padding); a clip
+  is Ogg Opus padded to 64 KiB. Blob = nonce(12) || AES-256-GCM ciphertext || tag. AAD =
+  `mnemosyne/pub/1|<id>|<manifest|clip>|<version>`; a clip's version is the first one that uploaded
+  it, so later versions can reuse it. A blob's address is the SHA-256 of the whole blob.
+- Caps on padded size: manifest 1 MiB, a clip and all clips together 20 MiB.
+- A password-protected file derives the key with PBKDF2-HMAC-SHA256 (random salt in the file).
+- The manifest has no transcript field at all; quotes are the only transcript text
+  (`tests/test_publishing.py` asserts it). Clips are not redacted.
+
+Storage and serving:
+
+- `<data_dir>/publications/<id>/{meta.json, manifest, blobs/<sha>}` is the local copy. `meta.json`
+  is all `/pub` needs, so reading works while the library is locked; after an unpublish, expiry or
+  deletion it stays as a `gone` tombstone for 30 days (410 instead of 404).
+- The `publications` table holds the row (key and host token included; encrypted with the
+  database when encryption at rest is on), one live row per meeting. It travels in `SyncSession.publications`
+  (services/sync_publications.py; see the library sync rules, section 7).
+- The backend serves `/p/` and `/pub/` as open routes (api/routes/publishing.py), also on the team
+  listener, with the headers a publish host sends. The publish host (`publish-host/`, axum) is the
+  same read interface plus authenticated writes, caps, rate limits and mandatory expiry; it only
+  ever holds ciphertext. `deploy/publish/` runs it behind Caddy.
+- The viewer (`viewer/`) is its own Vite entry (Svelte 5, Tailwind, no SvelteKit, no wasm) built by
+  `pnpm build:viewer` into `backend/mnemosyne/api/static/viewer/` (`index.html`, `assets/`,
+  `single.html`), committed and rebuilt in CI, which fails when the output differs.
+- Where a link points: a host link uses `publish_host`; a "this computer" link uses the team
+  listener, else `phone_url` (`local_reach`); with neither, only 127.0.0.1 can open it.
+
 ### Live shared notes
 
 A meeting's notes are one hashseq document that everyone who has the meeting open edits live

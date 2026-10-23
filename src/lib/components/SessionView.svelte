@@ -18,6 +18,8 @@
 	import CopilotPanel from './CopilotPanel.svelte';
 	import MeetingActions from './MeetingActions.svelte';
 	import ShareMenu from './ShareMenu.svelte';
+	import PublishDialog from './PublishDialog.svelte';
+	import { publishingState } from '$lib/stores/publishing.svelte.js';
 	import { teamState } from '$lib/stores/team.svelte.js';
 	import MeetingTypePicker from './MeetingTypePicker.svelte';
 	import MeetingBrief from './MeetingBrief.svelte';
@@ -51,6 +53,25 @@
 		{ id: 'export', label: 'Export' }
 	];
 
+	// Whether publishing is on (a team server's setting), and the open meeting's publication
+	// for the header chip; reloaded when the meeting changes, since `behind` follows it.
+	$effect(() => {
+		if (!publishingState.settingsLoaded) void publishingState.loadSettings();
+	});
+	$effect(() => {
+		const s = sessionState.activeSession;
+		if (!s) return;
+		// A re-summarize or an edit can put the publication behind: the meeting's own updated_at,
+		// and its sidebar entry's (reloaded on every session event, from any client).
+		void s.updated_at;
+		void sessionState.sessions.find((x) => x.id === s.id)?.updated_at;
+		void publishingState.load(s.id);
+	});
+	const publication = $derived(
+		sessionState.activeSession ? (publishingState.publications[sessionState.activeSession.id] ?? null) : null
+	);
+	const canPublish = $derived(mine && publishingState.allowed);
+
 	async function toggleLocalOnly() {
 		const s = sessionState.activeSession;
 		if (!s) return;
@@ -70,6 +91,20 @@
 	<div class="flex items-center justify-between mb-3">
 		<h2 class="text-xl font-semibold truncate">{sessionState.activeSession.name}</h2>
 		<span class="flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
+			{#if publication}
+				{#if canPublish}
+					<button
+						onclick={() => sessionState.activeSession && publishingState.open(sessionState.activeSession)}
+						title="Published: change, update or unpublish"
+						class="rounded border border-emerald-800 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-300 hover:bg-emerald-900/40"
+					>Published · v{publication.version}{#if publication.behind}<span class="text-amber-300">{' · behind'}</span>{/if}</button>
+				{:else}
+					<span
+						title="A copy of this meeting is published"
+						class="rounded border border-emerald-800 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-300"
+					>Published · v{publication.version}{#if publication.behind}<span class="text-amber-300">{' · behind'}</span>{/if}</span>
+				{/if}
+			{/if}
 			<ShareMenu />
 			{#if mine}
 				<MeetingTypePicker />
@@ -125,6 +160,10 @@
 		{/each}
 	</nav>
 </div>
+
+{#if publishingState.dialogFor === sessionState.activeSession.id}
+	<PublishDialog />
+{/if}
 
 <!-- Tab content -->
 <div class="flex-1 overflow-y-auto p-6">

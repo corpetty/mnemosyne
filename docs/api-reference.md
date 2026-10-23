@@ -777,6 +777,57 @@ counts in the storage report and goes with the session's audio. `GET …/clips/{
 copies it to a path chosen in the desktop app's save dialog (loopback clients only, `403`
 otherwise). `400` for lines outside the transcript.
 
+### Publishing: `GET|PUT|DELETE /api/sessions/{session_id}/publication` · `POST …/publication/preview` · `GET …/publication/defaults` · `POST …/publication/file` · `GET /api/publications`
+
+A curated, encrypted copy of a meeting (services/publishing.py, format in
+services/publication_format.py). A `PublicationSelection` says what it shows: `title`, the
+booleans `summary decisions questions action_items chapters topics notes`, `attendees` (names to
+list; everyone else of the meeting becomes "Person N" everywhere), `names`
+(`as_is|first|hidden`), `hide_identifiers` (also hides e-mail addresses and phone numbers), `quotes` (`{start, end, part?, with_clip}`: joined-
+timeline seconds, or seconds into `part`; the transcript lines whose middle is inside), `where`
+(`local|host`) and `expires_days` (`null` = never, only for `local`; at most 365 on a host).
+`GET …/defaults` gives the live publication's selection, else the defaults (`publish_default_expiry_days`,
+host when `publish_host` is set), plus `local_reach` (`team|phone_url|this_device`: who could open a
+link to this computer) and `local_url` (the base such a link uses; `""` for `this_device`, where only
+127.0.0.1 works). `POST …/preview` returns the unsealed manifest, a quote's clip as
+`{preview_url, seconds, mime}` (`/api/audio/file/{id}#t=start,end`). `PUT` starts a `publish` job
+(`result.publication`); an update keeps the id, key and link and bumps `version`. `DELETE`
+unpublishes (`404` when not published). `Publication.url` (link with the key in the fragment) is
+`null` for anyone but the owner or an admin; `behind` is true when publishing again would show
+something different; `local_reach` and `published_by` say who could open it and who published. `PUT` answers
+`400` for a selection that cannot be published (no host set, no expiry on a host, clips without audio) and `409`
+"This meeting is being published already" while a `publish` job runs; `DELETE` answers `502` when the host
+could not delete the copy. `403` when `allow_publishing` is off on a team server or the caller may not
+change the meeting; `409` for clips of a meeting whose audio is on another computer ("The audio
+is on <name>"), and `409` "Published from <name>" for `PUT`/`DELETE` of a `where: "local"`
+publication whose files are on another of the person's computers (library sync): such a
+publication has `served_by: <name>` and `url: null` here; a hosted one can be changed from either
+computer. Readers (reviewers, members it is shared with) get the publication with `url: null`.
+
+`POST …/publication/file` `{ selection, password? }` (password at least 8 characters, else `400`; `503` when the
+viewer is not built in) starts a `publication_file` job: the publication as one self-contained HTML file,
+not a publication (nothing to update or unpublish, never expires; logged and sealed like one). Its result is
+`{token, filename, size}`; `GET …/publication/file/{token}` downloads it once (attachment, then it is deleted;
+`404` when gone, files are kept a day) and `POST …/publication/file/{token}/save` `{ "path": … }` writes it to a
+path chosen in the desktop app's save dialog instead (loopback clients only, `403` otherwise; `400` when the
+folder does not exist; returns `{path}`).
+
+Open (no sign-in: the key in the link is the permission), read-only, with the publish host's headers. Every
+answer has `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`; errors are JSON
+`{"error": "not_found"|"gone"}`.
+
+- `GET /p/{id}`: the viewer's `index.html` for any id (it says "not found" itself), strict CSP
+  (`default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; media-src blob:; img-src data: blob:;
+  base-uri 'none'; form-action 'none'; frame-ancestors 'none'`), `Cache-Control: no-store`; `503` with a plain
+  page when the viewer is not built into this Mnemosyne.
+- `GET /p/{folder}/{path}`: the viewer build's files (`/p/assets/index-<hash>.js|css`), same CSP,
+  `Cache-Control: no-cache`; `404` for dotfiles or anything outside the viewer folder.
+- `GET /pub/{id}`: the sealed manifest (`application/octet-stream`) with `ETag` (its SHA-256),
+  `X-Pub-Version`, `X-Pub-Expires` (unix seconds; absent when it never expires) and `Cache-Control: no-cache`;
+  `304` on a matching `If-None-Match`; `404` unknown, `410` unpublished, expired or deleted (a tombstone for 30 days).
+- `GET /pub/{id}/{sha256}`: a sealed clip, `Cache-Control: public, max-age=31536000, immutable`; `404` if the current
+  version does not hold it.
+
 ### Transcript editing
 
 All return the updated `SessionDetail`, recompute `participants`, and emit a `session` event.

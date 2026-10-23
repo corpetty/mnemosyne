@@ -48,6 +48,36 @@ jobs:
       - run: pnpm test:unit
       - run: pnpm build
 
+  viewer:
+    name: Publication viewer is current
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Rebuild the viewer
+        run: pnpm build:viewer
+      - name: The committed viewer is current
+        run: |
+          out=backend/mnemosyne/api/static/viewer
+          if [ -n "$(git status --porcelain -- "$out")" ]; then
+            git status --short -- "$out"
+            git diff --stat -- "$out"
+            echo "::error::the committed viewer is stale: run pnpm build:viewer and commit $out"
+            exit 1
+          fi
+      # What this runner built, to compare with a local build when the two disagree.
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: viewer-build
+          path: backend/mnemosyne/api/static/viewer/
+          retention-days: 7
+
   e2e:
     name: Browser tests (Playwright, demo backend)
     runs-on: ubuntu-24.04
@@ -187,3 +217,19 @@ jobs:
       - run: cargo clippy --all-targets --manifest-path link/Cargo.toml -- -D warnings
       # Home and a device on one machine with relays off: pairing, tunnelling, removal.
       - run: cargo test --manifest-path link/Cargo.toml
+
+  publish-host:
+    name: Publish host (encrypted publications)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: publish-host
+      - run: cargo fmt --check --manifest-path publish-host/Cargo.toml
+      - run: cargo clippy --locked --all-targets --manifest-path publish-host/Cargo.toml -- -D warnings
+      # In process against a fixture viewer folder: no built viewer, network or ports needed.
+      - run: cargo test --locked --manifest-path publish-host/Cargo.toml

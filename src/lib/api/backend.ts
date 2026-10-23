@@ -48,6 +48,10 @@ import type {
   IssueResult,
   HubSpotMatches,
   HubSpotPushResult,
+  Publication,
+  PublicationDefaults,
+  PublicationListItem,
+  PublicationSelection,
   HubSpotState,
   RepoCheck,
   Level,
@@ -1182,4 +1186,70 @@ export async function postTaskComment(key: string, text: string, parentId = ''):
     method: 'POST',
     body: JSON.stringify({ text, parent_id: parentId })
   });
+}
+
+// Publishing a meeting (backend routes/publishing.py): a curated, encrypted copy readers open
+// with a link, or one HTML file.
+export async function getPublication(sessionId: string): Promise<Publication | null> {
+  return request(`/api/sessions/${sessionId}/publication`);
+}
+
+export async function getPublicationDefaults(sessionId: string): Promise<PublicationDefaults> {
+  return request(`/api/sessions/${sessionId}/publication/defaults`);
+}
+
+/** The manifest readers would get, unsealed (viewer/src/format.ts `Manifest`), except that a
+ * quote's clip is `{preview_url, seconds, mime}`. */
+export async function previewPublication(sessionId: string, selection: PublicationSelection): Promise<unknown> {
+  return request(`/api/sessions/${sessionId}/publication/preview`, {
+    method: 'POST',
+    body: JSON.stringify(selection)
+  });
+}
+
+/** Publish, or update the live publication: a `publish` job whose result is {publication}. */
+export async function publishSession(sessionId: string, selection: PublicationSelection): Promise<Job> {
+  return request(`/api/sessions/${sessionId}/publication`, { method: 'PUT', body: JSON.stringify(selection) });
+}
+
+export async function unpublishSession(sessionId: string): Promise<Publication> {
+  return request(`/api/sessions/${sessionId}/publication`, { method: 'DELETE' });
+}
+
+export async function listPublications(): Promise<PublicationListItem[]> {
+  return request('/api/publications');
+}
+
+/** One HTML file: a `publication_file` job whose result is {token, filename, size}. */
+export async function startPublicationFile(
+  sessionId: string,
+  selection: PublicationSelection,
+  password: string | null
+): Promise<Job> {
+  return request(`/api/sessions/${sessionId}/publication/file`, {
+    method: 'POST',
+    body: JSON.stringify({ selection, password })
+  });
+}
+
+/** Where to fetch a made file (once: it is deleted after the download), token included. */
+export function publicationFileUrl(sessionId: string, token: string): string {
+  return connectionState.withToken(`${base()}/api/sessions/${sessionId}/publication/file/${encodeURIComponent(token)}`);
+}
+
+/** Write a made file to a path the desktop app's save dialog chose (the backend deletes it). */
+export async function savePublicationFile(sessionId: string, token: string, path: string): Promise<{ path: string }> {
+  return request(`/api/sessions/${sessionId}/publication/file/${token}/save`, {
+    method: 'POST',
+    body: JSON.stringify({ path })
+  });
+}
+
+/** A backend-relative URL (e.g. a preview clip's `/api/audio/file/<id>#t=1,2`) made absolute,
+ * with the token before the media fragment so the fragment still reaches the player. */
+export function backendMediaUrl(path: string): string {
+  const hash = path.indexOf('#');
+  const head = hash < 0 ? path : path.slice(0, hash);
+  const frag = hash < 0 ? '' : path.slice(hash);
+  return connectionState.withToken(`${base()}${head}`) + frag;
 }

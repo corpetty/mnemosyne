@@ -128,3 +128,49 @@ doc` `merge` (notes-core), whose answer now also has `frames`.
   (`PeerState.waiting`, `waiting` in /api/sync/status). The next round asks
   again from there (the sync card says "N meetings waiting for their notes to merge"); meetings taken before it are re-taken harmlessly (equal documents make no
   sidecar call). A peer without `seqs` holds the whole page back.
+
+## 7. Publications (phase 7)
+
+Code: `models/sync_session.py` (`SyncPublication`, `merge_publications`), services/sync_publications.py
+(`settle`), `SessionRepository.store_synced_publications`, services/publishing.py. Design: "Phase 7
+design" in the hashseq plan.
+
+- **What travels**: `SyncSession.publications`, every `publications` row of the meeting, unpublished
+  ones too (they are how an unpublish reaches the other machine): id, key (base64), token, where,
+  host_url, version, selection, created/updated/expires/unpublished times (stored ISO text),
+  clip_blobs, published_digest, published_by and `origin` (the machine whose files serve a
+  "this computer" publication, as the sender sees it: its own sync id when it is its own; '' in the
+  database for this machine). Key and token travel because the machines are one person's; the
+  pair refuses team mode already. Not travelling: the files in `<data_dir>/publications/<id>/`.
+  Absent from older peers (empty list).
+- **`_touch`**: `put_publication` and `mark_unpublished` count a new version of the meeting, so a
+  publish, an update and an unpublish travel. The expiry sweep does not (`touch=False`): every
+  machine works it out from `expires_at`.
+- **Merge** (any path, fast-forward or concurrent; never three-way, no base needed): by id, the row
+  with the newer `updated_at` wins whole; at an equal time an unpublished row beats a live one; the
+  version is the larger of the two and never goes back. One live row per meeting (a unique index):
+  when two machines published the same meeting separately the later one stays, the other becomes
+  unpublished as of the later time, and that state travels back as an ordinary unpublish. Its hosted
+  copy is deleted from the publish host by the machine that sees it die (best effort, idempotent).
+- **Writes**: `store_synced_publications` upserts unpublished rows first (so a row going dead never
+  meets the live one replacing it), inside `apply_synced`'s transaction; rows we have that are not
+  listed stay.
+- **Hosted** (`where = "host"`): updated or unpublished from either machine (the token is in the
+  row). A machine without the files reuses a clip entry of the previous manifest by fetching its
+  sealed blob from the host (`GET /pub/<id>/<sha256>`, checked against its SHA-256), so it needs no
+  audio; a clip that is new needs the audio, so on a non-origin machine it is the usual 409 "The
+  audio is on <name>". Each update that lands here keeps the blobs here too (file exports use them).
+- **"This computer"** (`where = "local"`): served by the machine that made it only. Elsewhere the
+  API shows it with `served_by: <name>` and `url: null`; `PUT` and `DELETE` answer 409 "Published
+  from <name>" (the check runs before the job starts, again in the job, and in `unpublish`). An
+  update that makes a hosted one local takes it over (`origin` = this machine).
+- **Files follow the rows** (`sync_publications.settle`, after a meeting is taken in): a publication
+  now unpublished loses its files here, leaving the `gone` tombstone (readers get 410); one served
+  by another machine, or hosted at a version other than the files', loses its stale files. A deleted
+  meeting goes through `delete_session`, so `forget_session` removes the files (not creating a
+  tombstone for a publication this machine never held files of).
+- **Records**: every publish, update and unpublish seals a record version with the reasons
+  "published", "publication updated" and "unpublished" (`records.EVENT_SEALS`: sealed even when
+  nothing else changed, so the chain shows when); history lines `published`, `publication_updated`,
+  `unpublished` travel with the meeting. The records zip has `publications.json` per meeting that has
+  any (versions from the history, never the key or token). A legal hold does not stop publishing.

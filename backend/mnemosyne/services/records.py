@@ -60,6 +60,12 @@ def audio_hashes(session: Session) -> dict[str, str]:
     return {p.name: _file_sha256(p) for p in audio_files(session)}
 
 
+# Seals that record something that happened rather than a change of content: made even when the
+# content and audio are what the last seal covered, so the chain shows when and in which order
+# (services/publishing.py).
+EVENT_SEALS = frozenset({"published", "publication updated", "unpublished"})
+
+
 def seal(app: AppContext, session_id: str, reason: str) -> dict | None:
     """Chain a seal of the meeting as it is now (blocking: hashes audio; run in a thread).
     Never raises: a record that cannot be sealed must not fail what it records."""
@@ -68,7 +74,11 @@ def seal(app: AppContext, session_id: str, reason: str) -> dict | None:
         if session is None or not (session.transcript or session.summary):
             return None
         return app.repo.add_seal(
-            session_id, reason, content_hash(content_of(session)), audio_hashes(session)
+            session_id,
+            reason,
+            content_hash(content_of(session)),
+            audio_hashes(session),
+            force=reason in EVENT_SEALS,
         )
     except Exception:
         logger.warning("Could not seal session %s", session_id, exc_info=True)
@@ -205,6 +215,9 @@ One folder per meeting:
   seals.json         the chain of seals and its verification when exported
   supervision.json   lines flagged for review phrases and the reviewers' sign-offs
                      (only for meetings that have any)
+  publications.json  links made to share the meeting (only for meetings that have any): when
+                     and by whom each version was published, what it showed, where it was
+                     put, when it expired or was withdrawn. Never the links themselves
   audio/             the recordings (each channel and the mix), unencrypted
 
 deletions.json lists meetings and audio deleted in the period, with who, when and why.
@@ -300,6 +313,12 @@ def export_zip(app: AppContext, request: ExportRequest, dest: Path, progress=Non
             if flags or reviews:
                 supervised = {"flags": flags, "reviews": reviews}
                 put(f"{folder}/supervision.json", json.dumps(supervised, indent=1).encode())
+            published = publications_record(app, session)
+            if published:
+                put(
+                    f"{folder}/publications.json",
+                    json.dumps(published, indent=1, default=str).encode(),
+                )
             for path in audio_files(session):
                 with plaintext(path, app.file_key) as plain:
                     put(
@@ -324,6 +343,58 @@ def export_zip(app: AppContext, request: ExportRequest, dest: Path, progress=Non
         )
         z.writestr("SHA256SUMS", "".join(f"{h}  {name}\n" for h, name in sums))
     return {"meetings": len(meetings), "bytes": dest.stat().st_size}
+
+
+def publications_record(app: AppContext, session: Session) -> list[dict]:
+    """The meeting's publications for the records export (services/publishing.py): each one's
+    id, where it was put, its versions with their times and who made them (read from the
+    meeting's history), what it showed, its expiry and withdrawal. Never the link's key or the
+    host token."""
+    rows = app.repo.session_publications(session.id)
+    events = [
+        e
+        for e in app.repo.events(session.id)
+        if e["kind"] in ("published", "publication_updated", "unpublished", "publication_expired")
+    ]
+    out = []
+    for row in rows:
+        versions, ended = [], {}
+        for e in events:
+            d = e["detail"]
+            if d.get("publication") != row["id"]:
+                continue
+            if e["kind"] in ("published", "publication_updated"):
+                versions.append(
+                    {
+                        "version": d.get("version"),
+                        "at": e["at"],
+                        "by": d.get("by", ""),
+                        "where": d.get("where", ""),
+                        "parts": d.get("parts", []),
+                        "quotes": d.get("quotes", 0),
+                        "clips": d.get("clips", 0),
+                        "names": d.get("names", ""),
+                        "hide_identifiers": d.get("hide_identifiers"),
+                    }
+                )
+            else:
+                ended = {"kind": e["kind"], "at": e["at"], "by": d.get("by", "")}
+        out.append(
+            {
+                "id": row["id"],
+                "where": row["place"],
+                "host": row["host_url"],
+                "created_at": row["created_at"],
+                "current_version": row["version"],
+                "versions": versions,
+                "selection": row["selection"],
+                "expires_at": row["expires_at"],
+                "unpublished_at": row["unpublished_at"],
+                "unpublished_by": ended.get("by", "") if row["unpublished_at"] else "",
+                "published_by": row["published_by"],
+            }
+        )
+    return out
 
 
 def _host() -> str:

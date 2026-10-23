@@ -490,6 +490,62 @@ Drafted against the code at 273eaf3 (hashseq 94f5e3c), reviewed and accepted.
   TestClient websockets for the relay, two-app sync tests, a Playwright two-page convergence spec
   in Chromium and WebKit (the e2e job builds link).
 
+## Phase 7: publishing a meeting
+
+### Phase 7 design (agreed with Corey 2026-10-23)
+
+Status: built 2026-10-23, unreleased, as designed below (use: docs/publishing.md; flow:
+docs/architecture.md "Publishing"). Found while building: emails and phone numbers are hidden next to
+identifiers (`redact_contacts`, same `hide_identifiers` switch), since a summary names them as often as
+account numbers; `local_reach` (team / phone_url / this_device), because a desktop's link to itself only
+reaches others through the team listener, so the dialog and `Publication` say who can open it; the
+`publications.origin` column says which computer serves a "this computer" publication (library sync);
+two computers publishing the same version of a hosted publication are told apart by the manifest ETag (the
+host's 409 with our version is success only when it holds our manifest); records seals are forced for
+publish events (`add_seal` deduped them away when nothing else had changed); diarizer labels
+(SPEAKER_01) are never published as owners or speakers; files are saved through the Tauri save dialog and
+a loopback-only endpoint (`POST …/publication/file/{token}/save`), since a webview cannot download them;
+viewer assets live under `/p/assets` so the same build works at `/p/<id>` on the backend and on the
+publish host.
+
+Drafted against the code at 6020e3a (0.21.0), reviewed and accepted. It uses neither hashseq nor
+Logos: readers never write, and a curated copy must be able to lose a sentence for good.
+
+- **A curated projection, never the record.** The owner (or an admin) picks parts in a Publish
+  dialog with a live preview rendered by the viewer itself: title, date, summary, decisions, open
+  questions, action items, chapters, attendees and topics on by default; quotes (with clips,
+  chosen one by one) and the live notes off by default; the transcript never (only quote lines;
+  a test asserts no segments). Identifiers redacted by default (`redact_identifiers`); names as
+  they are by default (Corey), or first names, or Person 1 (`Redactor`). Clips cannot be
+  redacted: the dialog plays each chosen clip ("listen before you publish").
+- **Format: an encrypted snapshot per version** (Corey), not a hashseq space: a padded JSON
+  manifest plus Ogg Opus clip blobs (content-addressed by ciphertext SHA-256, reused across
+  versions), AES-256-GCM with AAD `"mnemosyne/pub/1" ‖ id ‖ kind ‖ version`. One random key per
+  publication; versions reuse it so the link stays the same. Caps: manifest 1 MB, clips 20 MB.
+- **The capability link**: `https://<host>/p/<id>#<key>` (id 16 random hex, never the session
+  id). The fragment never leaves the browser. The host sees ids, padded sizes, times, readers'
+  IPs; no text. Unpublish deletes the blobs (copies already opened cannot be revoked; the docs say
+  so). Expiry: hosted links 90 days by default, at most 365 on our host; files never expire.
+- **Where** (Corey: local + file now, host built): "this computer" (the backend serves `/p/{id}`
+  and `/pub/...` read-only, open paths; the team server too, always on), "a file" (one HTML with
+  the viewer and the ciphertext inlined, optional password via PBKDF2), and "our publish host"
+  (`publish-host/` axum crate + `deploy/publish/`, ciphertext only, caps, rate limits, mandatory
+  expiry; `publish_host` blank until one runs, then the default, as with relays). Logos
+  (storage_module/delivery_module are C++ plugins in a Logos Core host; Basecamp spaces are
+  unofficial) is a written trial only.
+- **The viewer**: its own Vite entry (`viewer/`, Svelte 5, no SvelteKit router or app stores, no
+  wasm), WebCrypto in the browser, clips as blob URLs, strict CSP, works from `file://`; built
+  reproducibly into backend static files and `single.html`, checked in CI like the notes wasm.
+- **Management**: `publications` table (one live publication per meeting), Update keeps the link,
+  "published version is behind" after re-summarizing, history lines (`published`,
+  `publication_updated`, `unpublished`), each publish sealed into the meeting's records
+  (`publications.json` in the records zip, never the key). Team servers: `allow_publishing` off
+  until an admin turns it on (Corey); then owner or admin. Readers see that a meeting is
+  published, not the link.
+- **Sync**: the publication row (key included) travels in `SyncSession.publications`; hosted
+  publications can be updated from either machine (clips only from the origin); one served by
+  "this computer" is served by its origin only.
+
 ## Later, each behind the prerequisites below
 
 - **Live shared notes** during a meeting: a scratchpad attendees type into (desktop, or the team
@@ -503,9 +559,9 @@ Drafted against the code at 273eaf3 (hashseq 94f5e3c), reviewed and accepted.
   decisions log read those objects.
 - **Team sharing without a central copy**: each member's machine holds the meetings shared with
   it.
-- **Publishing**: a curated meeting (summary, decisions, clips) as a space, through David's
-  Basecamp module over Logos Delivery or a relay, with a static wasm viewer. Fits "Logos
-  Messaging is later".
+- **Publishing**: designed as phase 7 (encrypted snapshots, not a space). Later: readers
+  following live edits or commenting (a hashseq space), publishing over Logos Delivery or
+  Storage once a supported module and a web reader exist.
 - **Records**: a meeting's frontier is a hash of its exact state, a candidate for sealing record
   versions (services/records.py); clips as artifacts can be erased for retention while the rest
   still verifies.

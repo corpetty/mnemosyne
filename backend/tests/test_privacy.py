@@ -7,7 +7,7 @@ import pytest
 
 from mnemosyne.models.session import Session, SummaryData
 from mnemosyne.models.transcript import TranscriptSegment
-from mnemosyne.summarization.privacy import RedactingProvider, Redactor
+from mnemosyne.summarization.privacy import RedactingProvider, Redactor, redact_contacts
 from tests.conftest import drain_until_job
 from tests.fakes import FakeProvider
 
@@ -118,3 +118,15 @@ def test_cloud_redaction_setting_wraps_cloud_providers(ctx, monkeypatch):
     svc = SummarizationService(st)
     assert isinstance(svc.providers["openai"], RedactingProvider)
     assert not isinstance(svc.providers["ollama"], RedactingProvider)
+
+
+def test_redact_contacts_hides_emails_and_phones_only():
+    said = (
+        "Mail jakub@status.im or call +48 601 234 567 (or 555-867-5309) at 12:30 on "
+        "2026-10-20; ext 42, budget 1 000 000."
+    )
+    assert redact_contacts(said) == (
+        "Mail [EMAIL] or call [PHONE] (or [PHONE]) at 12:30 on 2026-10-20; "
+        "ext 42, budget 1 000 000."
+    )
+    assert redact_contacts("") == ""

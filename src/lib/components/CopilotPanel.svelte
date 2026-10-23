@@ -163,7 +163,7 @@
 					<div>
 						<h4 class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">To do</h4>
 						<ul class="space-y-0.5 text-gray-200">
-							{#each notes.action_items as a, i}<li class="group">○ {a.text}{#if a.owner}<span class="text-gray-500"> · {a.owner}</span>{/if}{@render add({ kind: 'action', text: a.text, owner: a.owner }, `action:${i}`)}</li>{/each}
+							{#each notes.action_items as a, i}<li class="group">○ {a.text}{#if a.owner}<span class="text-gray-500">{' · '}{a.owner}</span>{/if}{@render add({ kind: 'action', text: a.text, owner: a.owner }, `action:${i}`)}</li>{/each}
 						</ul>
 					</div>
 				{/if}

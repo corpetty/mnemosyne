@@ -75,8 +75,8 @@
 				<ul class="space-y-0.5">
 					{#each brief.open_items.slice(0, 10) as t (t.session_id + t.idx)}
 						<li class="text-gray-300">
-							○ {t.text}{#if t.owner}<span class="text-gray-500"> · {t.owner}</span>{/if}
-							{#if t.session_id !== last.id}<span class="text-gray-600"> · {day(t.created_at)}</span>{/if}
+							○ {t.text}{#if t.owner}<span class="text-gray-500">{' · '}{t.owner}</span>{/if}
+							{#if t.session_id !== last.id}<span class="text-gray-600">{' · '}{day(t.created_at)}</span>{/if}
 						</li>
 					{/each}
 					{#if brief.open_items.length > 10}<li class="text-gray-600">… {brief.open_items.length - 10} more in Tasks</li>{/if}

@@ -332,6 +332,16 @@ def redact_identifiers(text: str, context: str = "") -> str:
     return _replace(full, spans, _marker)[offset:] if spans else text
 
 
+def redact_contacts(text: str) -> str:
+    """Replace email addresses with [EMAIL] and phone numbers (9 to 15 digits, not dates, times
+    or grouped amounts, the guards Redactor uses) with [PHONE]. One way, like
+    redact_identifiers; run that first, so account and card numbers keep their own markers."""
+    if not text:
+        return text
+    text = _EMAIL.sub("[EMAIL]", text)
+    return _PHONE.sub(lambda m: "[PHONE]" if _is_phone(m.group(0)) else m.group(0), text)
+
+
 def redact_transcript(segments: list) -> list:
     """redact_identifiers over transcript lines and their words. Each line is read after the
     end of the previous one, where the question often is. A number spread over several words

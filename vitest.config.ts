@@ -9,9 +9,17 @@ export default defineConfig({
   // Compiles runes in *.svelte.ts stores (notes/doc.svelte.ts).
   plugins: [svelte()],
   // SvelteKit's $lib, for stores that import through it.
-  resolve: { alias: { $lib: fileURLToPath(new URL('./src/lib', import.meta.url)) } },
+  resolve: {
+    alias: { $lib: fileURLToPath(new URL('./src/lib', import.meta.url)) },
+    // Svelte's client build, so component tests (viewer/src/Meeting.test.ts) can mount().
+    conditions: ['browser']
+  },
   test: {
     environment: 'jsdom',
-    include: ['src/lib/notes/**/*.test.ts', 'src/lib/stores/**/*.test.ts']
+    include: [
+      'src/lib/notes/**/*.test.ts',
+      'src/lib/stores/**/*.test.ts',
+      'viewer/src/**/*.test.ts'
+    ]
   }
 });

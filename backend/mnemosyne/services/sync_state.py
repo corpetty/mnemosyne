@@ -24,6 +24,7 @@ from ..models.sync_session import (
     SyncBookmark,
     SyncComment,
     SyncEvent,
+    SyncPublication,
     SyncSession,
     event_travels,
 )
@@ -126,6 +127,26 @@ def export_session(repo: SessionRepository, session_id: str, device_id: str) -> 
         ],
         comments=[
             SyncComment(**{k: x[k] for k in SyncComment.model_fields}) for x in rows["comments"]
+        ],
+        publications=[
+            SyncPublication(
+                id=x["id"],
+                key=base64.b64encode(bytes(x["key"])).decode("ascii"),
+                token=x["token"],
+                where=x["place"],
+                host_url=x["host_url"],
+                version=x["version"],
+                selection=json.loads(x["selection"]),
+                created_at=x["created_at"],
+                updated_at=x["updated_at"],
+                expires_at=x["expires_at"],
+                unpublished_at=x["unpublished_at"],
+                clip_blobs=json.loads(x["clip_blobs"] or "{}"),
+                published_digest=x["published_digest"],
+                published_by=x["published_by"],
+                origin=x["origin"] or device_id,
+            )
+            for x in rows["publications"]
         ],
         speaker_embeddings={x["label"]: json.loads(x["embedding"]) for x in rows["embeddings"]},
         assets=[

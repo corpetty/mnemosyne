@@ -82,9 +82,24 @@ class SessionService:
     def update_notes(self, session_id: str, notes: str) -> Session | None:
         return self.repo.update_fields(session_id, notes=notes)
 
+    # Set by AppContext: called before a meeting is deleted, returns what to do once it is
+    # (its publications' files and hosted copies removed, services/publishing.py).
+    before_delete = None
+
     def delete_session(self, session_id: str) -> bool:
+        after = None
+        if self.before_delete is not None:
+            try:
+                after = self.before_delete(session_id)
+            except Exception:
+                logger.warning("Could not prepare %s for deletion", session_id, exc_info=True)
         if not self.repo.delete(session_id):
             return False
+        if after is not None:
+            try:
+                after()
+            except Exception:
+                logger.warning("Cleanup after deleting %s failed", session_id, exc_info=True)
         recording_dir = self.recordings_dir / session_id
         if recording_dir.exists():
             shutil.rmtree(recording_dir, ignore_errors=True)

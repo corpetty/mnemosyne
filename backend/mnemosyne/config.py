@@ -20,7 +20,7 @@ from typing import Literal
 
 import tomli_w
 from dotenv import load_dotenv
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -66,6 +66,7 @@ SECRET_FIELDS = frozenset(
         "hubspot_token",
         "slack_webhook_url",
         "matrix_access_token",
+        "publish_host_token",
     }
 )
 
@@ -273,6 +274,18 @@ class Settings(BaseSettings):
     # Relays for remote access, comma-separated (e.g. https://relay.example.org, an iroh-relay
     # you run). Blank: n0's free public relays. Paired computers follow home's choice.
     remote_relays: str = ""
+    # Publishing a meeting (services/publishing.py, docs/plans/2026-10-12-hashseq-collaboration.md
+    # phase 7): a curated, encrypted copy readers open with a link. publish_host: the address of
+    # a publish host (publish-host/, e.g. https://pub.example.org); blank = none, so meetings can
+    # only be published from this computer. publish_host_token: the upload token a closed host
+    # asks for (X-Upload-Token); blank for an open host.
+    publish_host: str = ""
+    publish_host_token: str = ""
+    # Team servers only: members (owners) and admins may publish meetings only once an admin
+    # turns this on. The desktop app always may (publishing.allowed).
+    allow_publishing: bool = False
+    # How long a new publication stays up, in days (a publish host keeps one at most 365).
+    publish_default_expiry_days: int = 90
 
     # Calendar: private ICS address (or a local .ics path). Recordings started during
     # a meeting are named after it and remember its attendees.
@@ -390,6 +403,11 @@ class Settings(BaseSettings):
     # Every export also rewrites <subfolder>/Decisions.md: the decisions of all meetings, newest
     # first, each under a link to its note (export/topic_notes.py).
     obsidian_decisions_log: bool = False
+
+    @field_validator("publish_default_expiry_days")
+    @classmethod
+    def _clamp_expiry(cls, v: int) -> int:
+        return max(1, min(365, v))
 
     @classmethod
     def settings_customise_sources(

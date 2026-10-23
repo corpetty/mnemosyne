@@ -231,6 +231,19 @@
 				return `Flagged lines reviewed${d.by ? ` by ${d.by}` : ''}${d.note ? `: ${d.note}` : ''}`;
 			case 'consent':
 				return `${CONSENT[d.consent as string] ?? 'Consent recorded'}${d.by ? ` (${d.by})` : ''}`;
+			case 'published':
+			case 'publication_updated': {
+				// where: "this computer" or "publish host" (backend services/publishing.py _log).
+				const where = d.where === 'publish host' ? 'the publish host' : 'this computer';
+				const what = e.kind === 'published' ? 'Published' : 'Publication updated';
+				return `${what} (version ${d.version}, on ${where})${d.by ? ` by ${d.by}` : ''}`;
+			}
+			case 'unpublished':
+				return `Unpublished${d.by ? ` by ${d.by}` : ''}`;
+			case 'publication_expired':
+				return 'The publication expired';
+			case 'exported_publication':
+				return `Exported as a file${d.password ? ' (with a password)' : ''}${d.by ? ` by ${d.by}` : ''}`;
 			case 'viewed':
 			case 'played':
 			case 'exported':
