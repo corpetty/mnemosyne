@@ -573,6 +573,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/contacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Contacts */
+        get: operations["list_contacts_api_contacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/contacts/codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Code
+         * @description A one-time contact code: the other person pastes the invite in their own app.
+         */
+        post: operations["create_code_api_contacts_codes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/contacts/pair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pair */
+        post: operations["pair_api_contacts_pair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/contacts/{person}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove */
+        delete: operations["remove_api_contacts__person__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename
+         * @description Call a contact what you like here; an empty name goes back to the one on their card.
+         */
+        patch: operations["rename_api_contacts__person__patch"];
+        trace?: never;
+    };
     "/api/decisions": {
         parameters: {
             query?: never;
@@ -2803,6 +2878,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sync/contacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Contacts
+         * @description Every contact of this library, removed ones included, complete: card and shared secret too,
+         *     because the computer asking is another of this person's (a paired sync peer). The runtime
+         *     state of each contact (dialed machines, cursors) stays here. One step of every sync round.
+         */
+        get: operations["get_contacts_api_sync_contacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sync/hello": {
         parameters: {
             query?: never;
@@ -2896,6 +2993,34 @@ export interface paths {
          * @description Stop syncing with a computer. What it synced stays; it can pair again.
          */
         delete: operations["remove_peer_api_sync_peers__peer_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sync/person-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Person Key
+         * @description This person's private key, for the person's other computer that adopts it when pairing for
+         *     library sync (docs/plans/2026-10-23-phase-8-tasks.md, C5). Only a computer synced with this
+         *     one, over its paired tunnel.
+         */
+        get: operations["get_person_key_api_sync_person_key_get"];
+        /**
+         * Put Person Key
+         * @description Take the key another computer of this person offers (the pairing computer, when only it
+         *     had people data). Refused while this library has people data under a different key: that
+         *     would cut the contacts off.
+         */
+        put: operations["put_person_key_api_sync_person_key_put"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -4073,7 +4198,7 @@ export interface components {
              * @default phone
              * @enum {string}
              */
-            kind: "phone" | "desktop" | "sync";
+            kind: "phone" | "desktop" | "sync" | "contact";
         };
         /** CombineRequest */
         CombineRequest: {
@@ -4257,6 +4382,55 @@ export interface components {
             destinations: ("slack" | "matrix")[];
             /** Trackers */
             trackers: ("github" | "linear" | "jira")[];
+        };
+        /** ContactInfo */
+        ContactInfo: {
+            /** Card Name */
+            card_name: string;
+            /** Created At */
+            created_at: string;
+            /** Fingerprint */
+            fingerprint: string;
+            /** Machines */
+            machines: string[];
+            /** Name */
+            name: string;
+            /** Person */
+            person: string;
+            /** Pid */
+            pid: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** ContactPairRequest */
+        ContactPairRequest: {
+            /** Invite */
+            invite: string;
+        };
+        /** ContactRename */
+        ContactRename: {
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+        };
+        /** ContactsMe */
+        ContactsMe: {
+            /** Fingerprint */
+            fingerprint: string;
+            /** Name */
+            name: string;
+            /** Person */
+            person: string;
+            /** Pid */
+            pid: string;
+        };
+        /** ContactsResponse */
+        ContactsResponse: {
+            /** Contacts */
+            contacts: components["schemas"]["ContactInfo"][];
+            me: components["schemas"]["ContactsMe"];
         };
         /** CopilotAskRequest */
         CopilotAskRequest: {
@@ -5887,8 +6061,12 @@ export interface components {
         };
         /** RedeemResponse */
         RedeemResponse: {
+            /** Card */
+            card: {
+                [key: string]: unknown;
+            } | null;
             device: components["schemas"]["PairedDeviceInfo"];
-            sync: components["schemas"]["SyncSelf"] | null;
+            sync: components["schemas"]["SyncRedeemSelf"] | null;
             /** Token */
             token: string;
         };
@@ -7341,6 +7519,40 @@ export interface components {
             updated_at: string;
         };
         /**
+         * SyncContact
+         * @description A contact row as it travels between one person's computers (services/contacts.py
+         *     `export_rows`): complete, secret and card included. No runtime state.
+         */
+        SyncContact: {
+            /** Card */
+            card: {
+                [key: string]: unknown;
+            };
+            /** Created At */
+            created_at: string;
+            /** My Name */
+            my_name: string;
+            /** Name */
+            name: string;
+            /** Person */
+            person: string;
+            /** Removed At */
+            removed_at: string;
+            /** Secret */
+            secret: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** SyncContacts */
+        SyncContacts: {
+            /** Contacts */
+            contacts: components["schemas"]["SyncContact"][];
+            /** Has People Data */
+            has_people_data: boolean;
+            /** Person */
+            person: string;
+        };
+        /**
          * SyncEvent
          * @description A history event. `uid` is its identity across machines; `at` stays the stored ISO text.
          */
@@ -7394,6 +7606,8 @@ export interface components {
         /** SyncPairResponse */
         SyncPairResponse: {
             peer: components["schemas"]["SyncPeerInfo"];
+            /** Person Error */
+            person_error: string | null;
         };
         /**
          * SyncPeerInfo
@@ -7480,12 +7694,48 @@ export interface components {
             updated: number;
             /** Waiting */
             waiting: number;
+            /** Warning */
+            warning: string | null;
         };
         /** SyncPeers */
         SyncPeers: {
             /** Peers */
             peers: components["schemas"]["SyncPeerInfo"][];
             self: components["schemas"]["SyncSelf"];
+        };
+        /**
+         * SyncPerson
+         * @description The person key this computer signs with (services/person.py): computers that sync with
+         *     each other share it, so Settings can show that they are one person.
+         */
+        SyncPerson: {
+            /** Fingerprint */
+            fingerprint: string;
+            /** Pid */
+            pid: string;
+        };
+        /**
+         * SyncPersonKey
+         * @description A person's private key as hex, handed between that person's computers (never anyone else).
+         */
+        SyncPersonKey: {
+            /** Private */
+            private: string;
+        };
+        /**
+         * SyncPersonOffer
+         * @description What the computer that showed a sync code says about the person key when a sync code is
+         *     redeemed: its public key, and who adopts whose key. "mine": the redeemer takes this
+         *     computer's key; "yours": this computer takes the redeemer's; "same": nothing to do.
+         */
+        SyncPersonOffer: {
+            /**
+             * Adopt
+             * @enum {string}
+             */
+            adopt: "mine" | "yours" | "same";
+            /** Pub */
+            pub: string;
         };
         /** SyncPokeResponse */
         SyncPokeResponse: {
@@ -7549,12 +7799,25 @@ export interface components {
              */
             where: "local" | "host";
         };
+        /**
+         * SyncRedeemSelf
+         * @description This computer, as a redeemed sync code answers (SyncSelf plus the key offer; `person` is
+         *     absent from computers before the person key).
+         */
+        SyncRedeemSelf: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            person: components["schemas"]["SyncPersonOffer"] | null;
+        };
         /** SyncSelf */
         SyncSelf: {
             /** Id */
             id: string;
             /** Name */
             name: string;
+            person: components["schemas"]["SyncPerson"];
         };
         /** SyncSession */
         SyncSession: {
@@ -8222,6 +8485,10 @@ export interface components {
         };
         /** RedeemRequest */
         mnemosyne__api__routes__pairing__RedeemRequest: {
+            /** Card */
+            card?: {
+                [key: string]: unknown;
+            } | null;
             /** Code */
             code: string;
             /** Endpoint Id */
@@ -9212,6 +9479,145 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DesktopCalendar"][];
+                };
+            };
+        };
+    };
+    list_contacts_api_contacts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactsResponse"];
+                };
+            };
+        };
+    };
+    create_code_api_contacts_codes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PairingCode"];
+                };
+            };
+        };
+    };
+    pair_api_contacts_pair_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactPairRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_api_contacts__person__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                person: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_api_contacts__person__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                person: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactRename"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13403,6 +13809,26 @@ export interface operations {
             };
         };
     };
+    get_contacts_api_sync_contacts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncContacts"];
+                };
+            };
+        };
+    };
     hello_api_sync_hello_get: {
         parameters: {
             query?: never;
@@ -13514,6 +13940,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_person_key_api_sync_person_key_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncPersonKey"];
+                };
+            };
+        };
+    };
+    put_person_key_api_sync_person_key_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncPersonKey"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncPerson"];
                 };
             };
             /** @description Validation Error */

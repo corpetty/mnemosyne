@@ -11,9 +11,11 @@ run fail; FAKE_MERGE_ITEM_FAIL makes every item of a batch fail.
 
 Run as `home` it is the sidecar of services/link.py with its control channel (link/README.md):
 it prints the ready line, then answers `dial`, `hangup` and `pair` lines on stdin. The handle's
-`ops` are the requests it got (without ids). What it answers is set on the handle:
+`ops` are the requests it got (without ids;
+a `pair` keeps its `peer` and `card`). What it answers is set on the handle:
 `endpoint_id` and `ticket` (the ready line), `pair_reply` (fields added to a successful `pair`;
-default a token, the invite's ticket and a `sync` identity), and `fail` (op -> error message).
+default a token, the invite's ticket and a `sync` identity;
+put a `card` there to answer one), and `fail` (op -> error message).
 
 Run as `notes doc` it stands in for the shared notes document (notes-core), same requests and
 answers (`fold`, `set_text`, `merge`; see link/src/main.rs), over a toy CRDT so tests can build

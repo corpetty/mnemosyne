@@ -8,8 +8,18 @@ app's files and redeeming a pairing code stay open, and so does the desktop app'
 relaunched app that cannot attach loses the recording its crashed predecessor left running
 (api/app_watch.py). A paired phone's own token
 (services/pairing.py) opens only DEVICE_PATHS, what the phone page needs; a paired computer's
-opens everything. A person's token (services/users.py) opens the API as that person: the request
-runs with them in `access.current`, which decides what they see (access.py).
+opens everything. Another person's computer (a CONTACT device, services/contacts.py) opens only
+/api/share/ over HTTP, as that contact (a member principal), and only while the contact exists
+and is not removed; never on a team server. A person's token (services/users.py) opens the
+API as that person:
+the request runs with them in `access.current`, which decides what they see (access.py).
+
+Requests that came through the link sidecar's tunnel (other computers, other people's too)
+reach this process from 127.0.0.2 (TUNNEL_CLIENTS; link/src/lib.rs TUNNEL_SOURCE). They are never
+"this machine": a token is always required for them, even with no api_token and team mode off,
+and neither LOCAL_PATHS nor the tokenless desktop owner apply. Open paths stay open (redeeming a
+pairing code). If the sidecar could not bind 127.0.0.2 it connects from 127.0.0.1 and this
+distinction is lost.
 """
 
 from __future__ import annotations
@@ -20,7 +30,7 @@ from urllib.parse import parse_qs
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .. import access
-from ..services.pairing import DESKTOP
+from ..services.pairing import CONTACT, DESKTOP
 from .context import AppContext
 
 OPEN_PATHS = {
@@ -34,7 +44,9 @@ OPEN_PATHS = {
     "/api/users/redeem",
 }
 DEVICE_PATHS = {"/api/audio/import", "/api/pairing/me"}
+SHARE_PREFIX = "/api/share/"
 LOCAL_PATHS = {"/api/system/attach"}
+TUNNEL_CLIENTS = {"127.0.0.2"}
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip")
 
@@ -58,7 +70,8 @@ class TokenAuthMiddleware:
             return await self.app(scope, receive, send)
         token = self.ctx.settings.api_token
         path = scope.get("path", "")
-        required = bool(token) or self.ctx.settings.team_mode
+        tunnel = (scope.get("client") or ("", 0))[0] in TUNNEL_CLIENTS
+        required = bool(token) or self.ctx.settings.team_mode or tunnel
         if not required or is_open(path) or scope.get("method") == "OPTIONS":
             return await self.app(scope, receive, send)
 
@@ -84,7 +97,16 @@ class TokenAuthMiddleware:
             finally:
                 access.current.reset(reset)
         device = self.ctx.pairing.verify(presented)
-        if device is not None and (device.kind == DESKTOP or path in DEVICE_PATHS):
+        if device is not None and device.kind == CONTACT:
+            principal = self._contact_principal(scope, device, path)
+            if principal is not None:
+                scope.setdefault("state", {})["device_id"] = device.id
+                reset = access.current.set(principal)
+                try:
+                    return await self.app(scope, receive, send)
+                finally:
+                    access.current.reset(reset)
+        elif device is not None and (device.kind == DESKTOP or path in DEVICE_PATHS):
             scope.setdefault("state", {})["device_id"] = device.id
             return await self.app(scope, receive, send)
         owner = self._desktop_owner(scope, presented, headers)
@@ -112,6 +134,23 @@ class TokenAuthMiddleware:
         )
         await send({"type": "http.response.body", "body": body})
 
+    def _contact_principal(self, scope: Scope, device, path: str) -> access.Principal | None:
+        """Who a CONTACT token's request runs as, or None to refuse. Resolved by the device's
+        person, not its endpoint: the token is shared by all of that person's machines."""
+        if (
+            scope["type"] != "http"
+            or not path.startswith(SHARE_PREFIX)
+            or self.ctx.settings.team_mode
+            or not device.person
+        ):
+            return None
+        row = self.ctx.repo.contact(device.person)
+        if row is None or row.get("removed_at"):
+            return None
+        from ..services import contacts
+
+        return contacts.principal_of(row)
+
     def _desktop_owner(
         self, scope: Scope, presented: str, headers: dict[str, str]
     ) -> access.Principal | None:
@@ -132,6 +171,8 @@ class TokenAuthMiddleware:
     def _from_desktop_app(self, scope: Scope, headers: dict[str, str]) -> bool:
         """On 127.0.0.1, not on the network listener's port, and not passed on by a proxy."""
         server, client = scope.get("server") or ("", 0), scope.get("client") or ("", 0)
+        if client[0] in TUNNEL_CLIENTS:
+            return False
         if server[1] == self.ctx.settings.team_port or client[0] not in ("127.0.0.1", "::1"):
             return False
         host = headers.get("host", "")

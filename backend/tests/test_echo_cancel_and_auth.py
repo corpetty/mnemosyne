@@ -4,6 +4,7 @@ import stat
 
 import pytest
 
+from mnemosyne import access
 from mnemosyne.audio import echo_cancel as ec
 from mnemosyne.audio.echo_cancel import EchoCancelManager, load_command
 
@@ -236,3 +237,134 @@ def test_echo_cancel_api_mic_and_deferred_restart(
 
     body = echo("").json()
     assert body["mic"] is None and ctx.settings.echo_cancel_mic == ""  # back to the default
+
+
+# ---- contact devices (phase 8) ----------------------------------------------------
+
+CONTACT_PERSON = "ab" * 32
+CONTACT_TOKEN = "contact-token-123"
+
+
+def _make_contact(ctx, removed: bool = False):
+    import hashlib
+
+    ctx.repo.put_contact(
+        {
+            "person": CONTACT_PERSON,
+            "name": "Ada",
+            "card": {"person": CONTACT_PERSON, "name": "Ada", "machines": []},
+            "secret": "00" * 32,
+            "created_at": "2026-10-23T00:00:00+00:00",
+            "updated_at": "2026-10-23T00:00:00+00:00",
+            "removed_at": "2026-10-24T00:00:00+00:00" if removed else "",
+        }
+    )
+    ctx.pairing.set_contact_devices(
+        CONTACT_PERSON,
+        ["e1" * 32, "e2" * 32],
+        hashlib.sha256(CONTACT_TOKEN.encode()).hexdigest(),
+        "Ada",
+    )
+    ctx.settings.api_token = "s3cret"
+
+    async def whoami():
+        return {"who": access.user_id()}
+
+    ctx.app_for_test.add_api_route("/api/share/whoami", whoami)
+
+
+@pytest.fixture
+def contact_client(app, ctx, client):
+    ctx.app_for_test = app
+    return client
+
+
+CONTACT = {"Authorization": f"Bearer {CONTACT_TOKEN}"}
+
+
+def test_contact_token_opens_only_the_share_paths(contact_client, ctx):
+    _make_contact(ctx)
+    r = contact_client.get("/api/share/whoami", headers=CONTACT)
+    assert r.status_code == 200 and r.json() == {"who": "p:" + CONTACT_PERSON[:16]}
+    for path in ("/api/sessions", "/api/sync/changes", "/api/audio/import", "/api/pairing/me"):
+        assert contact_client.get(path, headers=CONTACT).status_code == 401, path
+    assert contact_client.post("/api/audio/import", headers=CONTACT).status_code == 401
+    from starlette.websockets import WebSocketDisconnect
+
+    with pytest.raises(WebSocketDisconnect):
+        with contact_client.websocket_connect(f"/ws?token={CONTACT_TOKEN}") as ws:
+            ws.receive_json()
+    assert access.principal() is None  # reset after the request
+
+
+def test_removed_or_unknown_contact_is_refused(contact_client, ctx):
+    _make_contact(ctx, removed=True)
+    assert contact_client.get("/api/share/whoami", headers=CONTACT).status_code == 401
+    ctx.repo._conn.execute("DELETE FROM contacts")
+    ctx.repo._conn.commit()
+    assert contact_client.get("/api/share/whoami", headers=CONTACT).status_code == 401
+
+
+def test_contact_token_is_refused_in_team_mode(contact_client, ctx):
+    _make_contact(ctx)
+    ctx.settings.team_mode = True
+    assert contact_client.get("/api/share/whoami", headers=CONTACT).status_code == 401
+
+
+def test_phone_and_desktop_tokens_keep_their_reach(contact_client, ctx):
+    ctx.settings.api_token = "s3cret"
+    for kind, whole_api in (("phone", False), ("desktop", True)):
+        if kind == "desktop":
+            _, token = ctx.pairing.add_desktop("Laptop", "cd" * 32)
+        else:
+            _, token = ctx.pairing.redeem(ctx.pairing.new_code()[0], "Phone")
+        h = {"Authorization": f"Bearer {token}"}
+        assert contact_client.get("/api/pairing/me", headers=h).status_code == 200
+        assert (contact_client.get("/api/sessions", headers=h).status_code == 200) is whole_api
+
+
+def test_internally_sets_and_resets():
+    assert access.is_internal() is False
+    with access.internally():
+        assert access.is_internal() is True
+        with access.internally():
+            assert access.is_internal() is True
+        assert access.is_internal() is True
+    assert access.is_internal() is False
+    with pytest.raises(RuntimeError):
+        with access.internally():
+            raise RuntimeError
+    assert access.is_internal() is False
+
+
+# ---- the link sidecar's tunnel (127.0.0.2) ----------------------------------------
+
+
+@pytest.fixture
+def tunnel_client(app):
+    from fastapi.testclient import TestClient
+
+    with TestClient(app, client=("127.0.0.2", 50000)) as c:
+        yield c
+
+
+def test_tunnel_always_needs_a_token(tunnel_client, client, ctx):
+    assert not ctx.settings.api_token and not ctx.settings.team_mode
+    assert client.get("/api/sessions").status_code == 200  # this machine: open as before
+    assert tunnel_client.get("/api/sessions").status_code == 401
+    _, token = ctx.pairing.add_desktop("Laptop", "cd" * 32)
+    h = {"Authorization": f"Bearer {token}"}
+    assert tunnel_client.get("/api/sessions", headers=h).status_code == 200
+    assert tunnel_client.get("/health").status_code == 200
+    r = tunnel_client.post("/api/pairing/redeem", json={"code": "nope", "name": "x"})
+    assert r.status_code != 401
+
+
+def test_tunnel_is_not_the_desktop_app(app, tunnel_client, ctx):
+    from fastapi.testclient import TestClient
+
+    desktop = TestClient(app, base_url="http://127.0.0.1:8008", client=("127.0.0.1", 50001))
+    assert tunnel_client.get("/api/system/attach").status_code == 401
+    ctx.settings.api_token = "s3cret"
+    assert tunnel_client.get("/api/system/attach").status_code == 401
+    assert desktop.get("/api/system/attach").status_code != 401  # LOCAL_PATHS

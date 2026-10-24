@@ -250,8 +250,14 @@ async fn main() -> Result<()> {
             };
             let endpoint = bind(load_or_create_key(&key_file)?, &relays).await?;
             let remote = Remote::new(endpoint.clone(), invite.ticket.clone());
-            let token = remote.pair(&invite.code, &name).await?;
-            print_json(serde_json::json!({"token": token, "ticket": invite.ticket.to_string()}));
+            let (token, _sync, card) = remote
+                .pair_with_peer(&invite.code, &name, None, None)
+                .await?;
+            let mut out = serde_json::json!({"token": token, "ticket": invite.ticket.to_string()});
+            if let Some(card) = card {
+                out["card"] = card;
+            }
+            print_json(out);
             endpoint.close().await;
         }
         Command::Connect {

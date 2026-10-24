@@ -93,6 +93,7 @@ class AppContext:
     http_transport: object | None = None  # tests inject an httpx transport for integrations
     app_watch: Any = None  # api/app_watch.py: the desktop app this backend belongs to
     sync: Any = None  # services/sync_service.py SyncService: library sync with the peers
+    person: Any = None  # services/person.py PersonKeys: this person's signing key
 
     def __post_init__(self) -> None:
         self.summarizer.name_source = self.known_names
@@ -205,13 +206,27 @@ class AppContext:
                 },
             ),
         )
+        from ..services.person import PersonKeys
+
+        ctx.person = PersonKeys(
+            settings.data_dir, lambda: ctx.master_key, lambda: ctx.settings.encrypt_at_rest
+        )
+        if not locked:  # while locked, unlock loads it
+            try:
+                ctx.person.ensure()
+            except Exception:
+                logger.warning("Could not load the person key", exc_info=True)
         from ..services.sync_service import SyncService
 
         ctx.sync = SyncService(ctx)  # also names this machine in version vectors
 
-        # The sidecar's listeners are new each start: dial the sync peers again, then pull.
+        # The sidecar's listeners are new each start: dial the sync peers and the contacts'
+        # machines again, then pull.
         async def redial() -> None:
+            from ..services.contacts import dial_contacts
+
             await dial_all(ctx.link, ctx.sync_peers)
+            await dial_contacts(ctx)  # never raises
             ctx.sync.wake()
 
         ctx.link.on_ready.append(redial)
@@ -459,6 +474,10 @@ class AppContext:
         apply_path_rebase(self.repo, self.settings)  # a restore from another machine
         self.keystore.set(master)
         self.master_key, self.locked = master, False
+        try:
+            self.person.ensure()
+        except Exception:
+            logger.warning("Could not load the person key", exc_info=True)
         await self._start_services()
 
     async def _start_services(self) -> None:

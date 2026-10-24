@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     import httpx
 
     from ..api.context import AppContext
-    from ..models.sync import SyncChanges
+    from ..models.sync import SyncChanges, SyncContacts
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,7 @@ class PeerState:
     waiting: int = 0  # meetings left for the next round (their notes merge failed)
     clashes: dict[str, str] = field(default_factory=dict)  # meeting id -> name
     app_version: str | None = None
+    warning: str | None = None  # sticky: set and cleared by the round that finds it (contacts)
     backoff: float = 0.0  # seconds; 0 when the peer answered last time
     retry_at: float = 0.0  # time.monotonic() before which the scheduler leaves it alone
 
@@ -317,6 +318,7 @@ class SyncService:
                 raise LinkError("Remote access is not running")
             async with self.client_for(peer) as client:
                 await self._hello(client, peer, st)
+                await self._contacts(client, peer, st)
                 await self._pull(client, peer, st)
             await self._reconcile_tasks(st)
         except SyncSkew as e:
@@ -404,6 +406,82 @@ class SyncService:
                 "Sync with %s: its change log restarted; reading it from the start", peer.name
             )
             self.ctx.sync_peers.update(peer.id, since=0)
+
+    async def _contacts(self, client: httpx.AsyncClient, peer: SyncPeer, st: PeerState) -> None:
+        """Take in the peer's contacts (global to the library, not part of any meeting: they
+        never ride in a SyncSession). Merged row by row (`contacts.merge_rows`); the live ones
+        that changed get their CONTACT devices and are dialed in the background. An older peer
+        answers 404 and a team server 409: nothing to do. A peer under another person key (paired
+        before the key was shared) is brought to one key first (`_converge_key`). Only a locked
+        or unreachable peer stops the round; any other trouble here is logged and the meetings
+        still sync."""
+        from ..models.sync import SyncContacts
+        from . import contacts
+
+        if self.ctx.settings.team_mode:
+            return
+        r = await client.get("/api/sync/contacts")
+        if r.status_code in (404, 409):
+            return
+        if r.status_code == 423:
+            raise PeerLocked()
+        if r.status_code >= 400:
+            logger.warning("Sync with %s: its contacts answered %d", peer.name, r.status_code)
+            return
+        try:
+            got = SyncContacts.model_validate(r.json())
+        except ValueError:
+            logger.warning("Sync with %s: its contacts were not understood", peer.name)
+            return
+        if got.person != self.ctx.person.public_hex:
+            if not await self._converge_key(client, peer, st, got):
+                return
+        else:
+            st.warning = None
+        changed = await contacts.apply_peer_rows(self.ctx, [c.model_dump() for c in got.contacts])
+        if changed:
+            self._spawn(contacts.dial_in_background(self.ctx, changed))
+
+    async def _converge_key(
+        self, client: httpx.AsyncClient, peer: SyncPeer, st: PeerState, got: SyncContacts
+    ) -> bool:
+        """The peer signs with another person key (the two computers were paired before the key
+        was shared, so each made its own). Same rule as pairing (`contacts.adoption`), computed on
+        both sides from what both know, so they agree without talking: both have people data:
+        different people, warn and share no contacts; exactly one has: the other adopts; neither:
+        the higher key adopts the lower. Only the adopting side acts (it reads the peer's key and
+        takes it); the other changes nothing and finds equal keys next round. True when the keys
+        are now equal and the merge can go on."""
+        from . import contacts
+        from .person import PersonKeys
+
+        mine, theirs = self.ctx.person.public_hex, got.person
+        mine_has = contacts.has_people_data(self.ctx)
+        if mine_has and got.has_people_data:
+            st.warning = f"{peer.name} belongs to another person: contacts are not shared"
+            logger.warning("Sync with %s: %s", peer.name, st.warning)
+            return False
+        if mine_has != got.has_people_data:
+            adopt = not mine_has
+        else:
+            adopt = mine > theirs
+        if not adopt:
+            return False
+        try:
+            r = await client.get("/api/sync/person-key")
+            r.raise_for_status()
+            private = str(r.json()["private"])
+            if PersonKeys.public_of(private) != theirs:
+                raise ValueError("the key sent is not the one it announced")
+            if contacts.has_people_data(self.ctx):  # got contacts since the look above
+                raise ValueError("this computer has contacts under its own key")
+            self.ctx.person.replace(private)
+            contacts.on_key_changed(self.ctx)
+        except Exception as e:  # noqa: BLE001 - meetings still sync; the next round tries again
+            logger.warning("Sync with %s: could not take its person key: %s", peer.name, e)
+            return False
+        st.warning = None
+        return True
 
     async def _pull(self, client: httpx.AsyncClient, peer: SyncPeer, st: PeerState) -> None:
         from ..models.sync import SyncChanges

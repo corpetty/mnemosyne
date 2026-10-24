@@ -9,9 +9,62 @@ from .base import ApiModel
 from .sync_session import SyncSession, SyncTombstone
 
 
+class SyncPerson(ApiModel):
+    """The person key this computer signs with (services/person.py): computers that sync with
+    each other share it, so Settings can show that they are one person."""
+
+    pid: str  # "p:" + the first 16 hex characters of the public key
+    fingerprint: str  # 8 groups of 4 characters, for reading out loud
+
+
 class SyncSelf(ApiModel):
     id: str  # this machine's stable sync id
     name: str
+    person: SyncPerson
+
+
+class SyncPersonOffer(ApiModel):
+    """What the computer that showed a sync code says about the person key when a sync code is
+    redeemed: its public key, and who adopts whose key. "mine": the redeemer takes this
+    computer's key; "yours": this computer takes the redeemer's; "same": nothing to do."""
+
+    pub: str
+    adopt: Literal["mine", "yours", "same"]
+
+
+class SyncRedeemSelf(ApiModel):
+    """This computer, as a redeemed sync code answers (SyncSelf plus the key offer; `person` is
+    absent from computers before the person key)."""
+
+    id: str
+    name: str
+    person: SyncPersonOffer | None
+
+
+class SyncPersonKey(BaseModel):
+    """A person's private key as hex, handed between that person's computers (never anyone else)."""
+
+    private: str
+
+
+class SyncContact(ApiModel):
+    """A contact row as it travels between one person's computers (services/contacts.py
+    `export_rows`): complete, secret and card included. No runtime state."""
+
+    person: str
+    name: str
+    my_name: str
+    card: dict
+    secret: str
+    created_at: str
+    updated_at: str
+    removed_at: str  # empty while the contact is live
+
+
+class SyncContacts(ApiModel):
+    person: str  # the public key these contacts belong to (a puller under another key converges)
+    has_people_data: bool  # live contacts exist here: decides who adopts whose key
+    contacts: list[SyncContact]
 
 
 class SyncPeerInfo(ApiModel):
@@ -62,6 +115,9 @@ class SyncPeerStatus(ApiModel):
     waiting: int  # meetings that could not be taken in yet (their notes merge failed): retried
     clashes: list[SyncClash]
     app_version: str | None  # the peer's Mnemosyne version, once it answered
+    # Not a failure: syncing goes on, but something is off (contacts not shared: the two computers
+    # belong to different people). Stays until a round finds the problem gone.
+    warning: str | None
 
 
 class SyncHello(ApiModel):
@@ -109,6 +165,8 @@ class SyncPairRequest(BaseModel):
 
 class SyncPairResponse(ApiModel):
     peer: SyncPeerInfo
+    # Paired, but sharing the person key with it failed: why, for the person (None: fine)
+    person_error: str | None
 
 
 class SyncPeerPayload(BaseModel):

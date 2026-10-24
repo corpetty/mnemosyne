@@ -242,13 +242,71 @@ async def fetch_peer_self(listen: str, token: str) -> dict:
         return r.json()["self"]
 
 
+async def adopt_person_key(ctx: AppContext, peer: SyncPeer, offer: object) -> str | None:
+    """B, after pairing: share the person key with A as A's reply said (`offer` is the reply's
+    `sync.person`: A's public key and who adopts: "mine" = this computer takes A's key, "yours" =
+    A takes ours, "same" = nothing). Returns None when done or when there was nothing to do (an
+    older A sends no offer), else why the key could not be shared. Pairing stays whatever
+    happens here: the next pairing can redo it."""
+    from . import contacts
+    from .person import PersonKeys
+
+    if not isinstance(offer, dict) or offer.get("adopt") not in ("mine", "yours", "same"):
+        return None
+    adopt, theirs = offer["adopt"], str(offer.get("pub") or "")
+    mine = ctx.person.public_hex
+    if adopt == "same" or theirs == mine:
+        return None
+    try:
+        if not peer.listen:
+            raise LinkError("it was not reachable")
+        async with ctx.sync.client_for(peer) as client:
+            if adopt == "mine":
+                if contacts.has_people_data(ctx):  # changed since we told A: keep our key
+                    raise SyncPairingError("this computer has contacts under its own key")
+                r = await client.get("/api/sync/person-key")
+                r.raise_for_status()
+                private = str(r.json()["private"])
+                if PersonKeys.public_of(private) != theirs:
+                    raise SyncPairingError("the key sent is not the one it announced")
+                ctx.person.replace(private)
+                contacts.on_key_changed(ctx)
+            else:
+                r = await client.put(
+                    "/api/sync/person-key", json={"private": ctx.person.export_private()}
+                )
+                r.raise_for_status()
+                if r.json().get("pid") != ctx.person.pid:
+                    raise SyncPairingError("it did not take this computer's key")
+    except Exception as e:  # noqa: BLE001 - pairing stays; the key is shared at the next pairing
+        reason = str(e) or type(e).__name__
+        if hasattr(e, "response"):
+            try:
+                reason = e.response.json().get("detail") or reason
+            except Exception:  # noqa: BLE001
+                pass
+        message = f"Paired, but the person key was not shared with {peer.name}: {reason}"
+        logger.warning(message)
+        return message
+    logger.info("Shared the person key with %s (%s)", peer.name, adopt)
+    return None
+
+
 async def pair_with_invite(
-    ctx: AppContext, invite: str, name: str = "", *, fetch_self=None
+    ctx: AppContext,
+    invite: str,
+    name: str = "",
+    *,
+    fetch_self=None,
+    outcome: dict | None = None,
 ) -> SyncPeer:
     """This machine is B: redeem the invite A showed. B trusts A's endpoint first (a DESKTOP
     device and the token A will use on B), then the sidecar pairs and hands A that token along
     with how to dial B back. A answers with the token for A and, when the sidecar relays it,
-    A's sync identity; both sides then dial each other."""
+    A's sync identity; both sides then dial each other. B also says which person key it has and
+    whether anything depends on it; A answers who adopts whose (`adopt_person_key`), and a failure
+    there is reported as `outcome["person_error"]`, not raised."""
+    from . import contacts
     from .link import endpoint_id_from_ticket
 
     check_can_pair(ctx)
@@ -273,6 +331,12 @@ async def pair_with_invite(
                 "name": me.name,
                 "ticket": ctx.link.status.ticket,
                 "token": token_for_a,
+            },
+            card={
+                "person": {
+                    "pub": ctx.person.public_hex,
+                    "has_people_data": contacts.has_people_data(ctx),
+                }
             },
         )
     except LinkError as e:
@@ -308,7 +372,11 @@ async def pair_with_invite(
         await dial(ctx.link, ctx.sync_peers, peer)
     except LinkError as e:
         logger.warning("Could not dial sync peer %s yet: %s", peer.name, e)
-    return ctx.sync_peers.get(peer.id) or peer
+    stored = ctx.sync_peers.get(peer.id) or peer
+    error = await adopt_person_key(ctx, stored, their.get("person"))
+    if outcome is not None:
+        outcome["person_error"] = error
+    return stored
 
 
 async def record_incoming(

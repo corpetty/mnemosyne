@@ -29,9 +29,15 @@ SEEN_WRITE_INTERVAL = 300.0
 
 
 PHONE, DESKTOP = "phone", "desktop"
+# Another person's machine (services/contacts.py): its token is derived from the contact's
+# shared secret, so it is supplied here, never generated. `person` names the contact.
+CONTACT = "contact"
 # A code kind, not a device kind: redeeming it makes a DESKTOP device and, in the route, a
 # sync peer (services/sync_peers.py).
 SYNC = "sync"
+# Also a code kind only: redeeming it makes no device here. The route stores the other person's
+# card and `contacts.upsert_contact` writes their CONTACT devices (`consume_code` uses it up).
+CONTACT_CODE = "contact"
 
 
 class InvalidPairingCode(Exception):
@@ -47,6 +53,7 @@ class PairedDevice:
     last_seen_at: str | None = None
     kind: str = PHONE  # PHONE: the phone page's paths only; DESKTOP: the whole API
     endpoint_id: str | None = None  # a desktop device's iroh endpoint (services/link.py)
+    person: str | None = None  # a CONTACT device's person key (64 hex)
 
 
 def _hash(token: str) -> str:
@@ -62,7 +69,8 @@ class PairingService:
         self.path = path
         self.clock = clock
         self._codes: dict[str, tuple[float, str]] = {}  # code -> (expiry, device kind)
-        self._devices: dict[str, PairedDevice] = {}  # by token hash
+        # By device id: the CONTACT devices of one person (one per endpoint) share a token hash.
+        self._devices: dict[str, PairedDevice] = {}
         self._seen_written: dict[str, float] = {}
         self._load()
 
@@ -73,7 +81,7 @@ class PairingService:
             return
         for d in raw.get("devices", []):
             device = PairedDevice(**d)
-            self._devices[device.token_hash] = device
+            self._devices[device.id] = device
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,11 +104,22 @@ class PairingService:
         expires, kind = self._codes.get(code, (0.0, ""))
         return kind if expires > self.clock() else None
 
+    def consume_code(self, code: str, kind: str) -> None:
+        """Use up a live code of exactly this kind (a contact code makes no device here: its
+        CONTACT devices come from the card). Raises InvalidPairingCode for any other code."""
+        expires, held = self._codes.get(code, (0.0, ""))
+        if expires <= self.clock():
+            self._codes.pop(code, None)
+            raise InvalidPairingCode("This pairing code is invalid or has expired")
+        if held != kind:
+            raise InvalidPairingCode("This code pairs something else")
+        del self._codes[code]
+
     def add_desktop(self, name: str, endpoint_id: str) -> tuple[PairedDevice, str]:
         """A DESKTOP device for an endpoint without a code (this machine starts a sync pairing
         and trusts the other first). Any earlier device for the endpoint is replaced."""
         for old in self.desktops_for(endpoint_id):
-            del self._devices[old.token_hash]
+            del self._devices[old.id]
         token = secrets.token_urlsafe(32)
         device = PairedDevice(
             id=secrets.token_hex(8),
@@ -110,7 +129,7 @@ class PairingService:
             kind=DESKTOP,
             endpoint_id=endpoint_id,
         )
-        self._devices[device.token_hash] = device
+        self._devices[device.id] = device
         self._save()
         return device, token
 
@@ -128,6 +147,8 @@ class PairingService:
         if expires <= self.clock():
             self._codes.pop(code, None)
             raise InvalidPairingCode("This pairing code is invalid or has expired")
+        if kind == CONTACT_CODE:
+            raise InvalidPairingCode("This code pairs a contact: it is used on the contact route")
         kind = DESKTOP if kind == SYNC else kind
         if (kind == DESKTOP) != bool(endpoint_id):
             raise InvalidPairingCode(
@@ -145,13 +166,14 @@ class PairingService:
             kind=kind,
             endpoint_id=endpoint_id if kind == DESKTOP else None,
         )
-        self._devices[device.token_hash] = device
+        self._devices[device.id] = device
         self._save()
         return device, token
 
     def verify(self, token: str) -> PairedDevice | None:
         """The device a token belongs to, noting that it was seen."""
-        device = self._devices.get(_hash(token)) if token else None
+        digest = _hash(token) if token else ""
+        device = next((d for d in self._devices.values() if d.token_hash == digest), None)
         if device is not None:
             now = self.clock()
             device.last_seen_at = _iso(now)
@@ -160,11 +182,55 @@ class PairingService:
                 self._save()
         return device
 
+    def contacts_for(self, person: str) -> list[PairedDevice]:
+        return [d for d in self._devices.values() if d.kind == CONTACT and d.person == person]
+
+    def set_contact_devices(
+        self, person: str, endpoints: list[str], token_hash: str, name: str
+    ) -> list[PairedDevice]:
+        """Exactly one CONTACT device per endpoint for `person`: missing ones are added, the rest
+        take `token_hash` and `name`, and those whose endpoint is no longer listed are revoked.
+        `token_hash` is the SHA-256 of the token the contact presents (derived, not generated).
+        The devices of one person share the hash, so `verify` finds the first of them; which
+        endpoint is calling is the sidecar's word, not the token's."""
+        wanted = list(dict.fromkeys(endpoints))
+        name = (name.strip() or "Contact")[:80]
+        mine = {d.endpoint_id: d for d in self.contacts_for(person)}
+        for endpoint, device in mine.items():
+            if endpoint not in wanted:
+                del self._devices[device.id]
+        for endpoint in wanted:
+            device = mine.get(endpoint)
+            if device is not None:
+                device.token_hash, device.name = token_hash, name
+            else:
+                device = PairedDevice(
+                    id=secrets.token_hex(8),
+                    name=name,
+                    token_hash=token_hash,
+                    created_at=_iso(self.clock()),
+                    kind=CONTACT,
+                    endpoint_id=endpoint,
+                    person=person,
+                )
+                self._devices[device.id] = device
+        self._save()
+        return self.contacts_for(person)
+
+    def revoke_contact(self, person: str) -> int:
+        """Revoke every CONTACT device of `person`; how many."""
+        found = self.contacts_for(person)
+        for device in found:
+            del self._devices[device.id]
+        if found:
+            self._save()
+        return len(found)
+
     def devices(self) -> list[PairedDevice]:
         return sorted(self._devices.values(), key=lambda d: d.created_at)
 
     def get(self, device_id: str) -> PairedDevice | None:
-        return next((d for d in self._devices.values() if d.id == device_id), None)
+        return self._devices.get(device_id)
 
     def rename(self, device_id: str, name: str) -> None:
         device = self.get(device_id)
@@ -176,6 +242,6 @@ class PairingService:
         device = self.get(device_id)
         if device is None:
             return False
-        del self._devices[device.token_hash]
+        del self._devices[device.id]
         self._save()
         return True

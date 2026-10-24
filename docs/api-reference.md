@@ -46,6 +46,14 @@ outside the database, so they are checked even while encrypted meetings are lock
   code works once. A desktop code needs `endpoint_id`, which the link sidecar sets from the
   connection's verified iroh key; a phone code must not have one. `403` when the code is unknown,
   used, expired or of the other kind (a refusal of the wrong kind does not use it up).
+- Contacts (another person's computers, services/contacts.py; admin only, `409` on a team server,
+  without an API token or without remote access): `POST /api/contacts/codes` → the same
+  `{code, kind: "contact", expires_at, urls, invite}`; `POST /api/contacts/pair` `{invite}` →
+  `ContactInfo` (the redeeming side; the other side's `POST /api/pairing/redeem` takes
+  `card: {card, secret}` for a contact code and answers `{device, token, card}` with its own card);
+  `GET /api/contacts` → `{me: {person, pid, name, fingerprint}, contacts: [{person, pid, name,
+  card_name, fingerprint, machines, created_at, updated_at}]}`; `PATCH /api/contacts/{person}`
+  `{name}` (local name; empty = the card's); `DELETE /api/contacts/{person}`.
 - `GET /api/pairing/devices` → `[{id, name, kind, created_at, last_seen_at}]`. A phone's token opens
   only the phone page's paths; a computer's opens the whole API.
 - `DELETE /api/pairing/devices/{id}`: the device's token stops working at once.
@@ -1439,9 +1447,12 @@ Each backend PULLS from its peers through the link sidecar's loopback listener f
 with the token the peer gave it. The routes a peer calls know which peer asks from that token
 (its device's endpoint); with the admin token nothing is remembered as served.
 
-- `GET /api/sync/peers` → `{self: {id, name}, peers: [{id, name, endpoint_id, created_at,
-  last_sync_at, listen}]}`; never a token. `POST /api/sync/pair` `{invite, name}` pairs with the
-  computer that showed the invite; `DELETE /api/sync/peers/{id}` stops syncing with it (what it
+- `GET /api/sync/peers` → `{self: {id, name, person: {pid, fingerprint}}, peers: [{id, name,
+  endpoint_id, created_at, last_sync_at, listen}]}`; never a token. `person` is the person key
+  (services/person.py): synced computers show the same one. `POST /api/sync/pair` `{invite, name}`
+  → `{peer, person_error}` pairs with the computer that showed the invite and shares the person
+  key (below; `person_error` says why when pairing worked and sharing the key did not: the next
+  pairing redoes it); `DELETE /api/sync/peers/{id}` stops syncing with it (what it
   synced stays).
 - `GET /api/sync/hello` → `{protocol, schema_version, app_version, id, name, seq}`. Asked first in
   every round. `protocol` is 1; a peer speaking another one is not pulled from (state `skew`,
@@ -1458,12 +1469,34 @@ with the token the peer gave it. The routes a peer calls know which peer asks fr
   notes document carries it as `notes_doc` (base64 of the canonical snapshot, folded and caught up
   with text written around it just before serving; `null` without one); the kept base leaves it
   out. Two documents are merged by union, not by the three-way text merge (see "Live notes").
+- `GET /api/sync/contacts` → `{person, has_people_data, contacts: [{person, name, my_name, card,
+  secret, created_at, updated_at, removed_at}]}`: every contact, removed ones too, complete (the shared
+  secret and card included: the caller is another of this person's computers), without the
+  runtime state. One step of every round, after hello and before the changes; merged by person,
+  the newer `updated_at` wins, a removal wins a tie (services/contacts.py `merge_rows`). An older
+  peer's `404` is skipped. If the peer's `person` differs from the puller's (computers paired
+  before the key was shared), the keys converge by the pairing rule, computed on both sides: both
+  have contacts: no merge and `warning` "<name> belongs to another person: contacts are not
+  shared" in `GET /api/sync/status` (meetings still sync); exactly one has: the other adopts its
+  key (`GET /api/sync/person-key`) and merges in the same round; neither: the higher key adopts
+  the lower. Only the adopting side acts.
+  Contacts never travel inside a `SyncSession`.
+- `GET /api/sync/person-key` → `{private}` and `PUT /api/sync/person-key` `{private}` → `{pid,
+  fingerprint}`: how pairing for library sync gives both computers one key. The computer that
+  showed the code answers the redeem with `sync.person = {pub, adopt}` (`adopt`: `mine` the
+  redeemer takes this key, `yours` this computer takes the redeemer's, `same`); the redeemer sent
+  `card.person = {pub, has_people_data}`. Neither has people data, or only the inviter: the
+  redeemer adopts the inviter's key; only the redeemer: the inviter does (`PUT`). Both have
+  contacts under different keys: the redeem answers `409` "These computers belong to different
+  people" and nothing is paired. Both routes: only a computer synced with this one (not the admin
+  token, a phone or a contact: `403`/`401`); `PUT` is `409` while this library has contacts under
+  a different key.
 - `POST /api/sync/poke` → `{scheduled}`: the calling peer has news; a pull from it follows in
   about 2 s (pokes in between make one pull). `false` when the caller is not a sync peer.
 - `POST /api/sync/now` → `{started: [peer id]}`: pull from every peer now, in the background.
 - `GET /api/sync/status` → `{self, peers: [{id, name, endpoint, listen, last_sync_at, state,
   error, done, total, received, updated, merged, deleted, waiting, clashes: [{session_id, name}],
-  app_version}]}`. `state`: `idle` (not tried since this start), `syncing`, `done`, `offline`
+  app_version, warning}]}`. `state`: `idle` (not tried since this start), `syncing`, `done`, `offline`
   (not reachable; tried again after 1, 2, 4 ... 10 minutes, at once on a poke or Sync now),
   `locked` (it answered `423`), `skew`, `error` (`error` says why). The counts are the current
   or last round's.

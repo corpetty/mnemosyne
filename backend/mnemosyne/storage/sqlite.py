@@ -42,7 +42,7 @@ from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # Fields of a meeting that do not travel in library sync: changing only these is no new version.
 LOCAL_FIELDS = frozenset({"status", "audio_file"})
@@ -465,6 +465,22 @@ CREATE TABLE IF NOT EXISTS sync_tombstones (
     device TEXT NOT NULL,
     name TEXT NOT NULL
 );
+-- Contacts (services/contacts.py): other people's keys, global to the library, not meeting data.
+-- `card` is their signed card, `secret` the pair's shared secret, `machines` runtime state per
+-- endpoint (the dialed loopback address), `cursors` pull cursors per endpoint. A removed
+-- contact keeps its row (removed_at) so the removal can travel in library sync.
+CREATE TABLE IF NOT EXISTS contacts (
+    person TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    my_name TEXT NOT NULL DEFAULT '',
+    card TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    machines TEXT NOT NULL DEFAULT '{}',
+    cursors TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    removed_at TEXT NOT NULL DEFAULT ''
+);
 """
 SCHEMA = SCHEMA.replace("{FTS_TRIGGERS}", FTS_TRIGGERS).replace("{COMMENT_FTS}", COMMENT_FTS)
 
@@ -757,6 +773,74 @@ class SessionRepository:
             self._conn.execute(
                 "UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),)
             )
+
+    # ---- contacts (services/contacts.py); no meeting is touched ---------------------------
+
+    @staticmethod
+    def _contact(row) -> dict:
+        d = dict(row)
+        d["card"] = json.loads(d["card"])
+        d["machines"] = json.loads(d["machines"])
+        d["cursors"] = json.loads(d["cursors"])
+        return d
+
+    def contacts(self, include_removed: bool = False) -> list[dict]:
+        sql = "SELECT * FROM contacts"
+        if not include_removed:
+            sql += " WHERE removed_at=''"
+        with self._lock:
+            rows = self._conn.execute(sql + " ORDER BY created_at, person").fetchall()
+        return [self._contact(r) for r in rows]
+
+    def contact(self, person: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM contacts WHERE person=?", (person,)).fetchone()
+        return self._contact(row) if row else None
+
+    def put_contact(self, row: dict) -> None:
+        """Insert or replace a contact row (a dict as `contact()` returns it)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO contacts (person, name, my_name, card, secret, machines,"
+                " cursors, created_at, updated_at, removed_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    row["person"],
+                    row["name"],
+                    row.get("my_name", ""),
+                    json.dumps(row["card"], sort_keys=True),
+                    row["secret"],
+                    json.dumps(row.get("machines") or {}, sort_keys=True),
+                    json.dumps(row.get("cursors") or {}, sort_keys=True),
+                    row["created_at"],
+                    row["updated_at"],
+                    row.get("removed_at", ""),
+                ),
+            )
+
+    def remove_contact(self, person: str, at: str) -> bool:
+        """Mark a contact removed (the row stays, so the removal can travel)."""
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE contacts SET removed_at=?, updated_at=? WHERE person=?", (at, at, person)
+            )
+        return cur.rowcount > 0
+
+    def set_contact_runtime(
+        self, person: str, machines: dict | None = None, cursors: dict | None = None
+    ) -> None:
+        """Replace a contact's per-machine runtime state and/or pull cursors (not a change that
+        travels: updated_at stays)."""
+        with self._lock, self._conn:
+            if machines is not None:
+                self._conn.execute(
+                    "UPDATE contacts SET machines=? WHERE person=?",
+                    (json.dumps(machines, sort_keys=True), person),
+                )
+            if cursors is not None:
+                self._conn.execute(
+                    "UPDATE contacts SET cursors=? WHERE person=?",
+                    (json.dumps(cursors, sort_keys=True), person),
+                )
 
     def close(self) -> None:
         with self._lock:

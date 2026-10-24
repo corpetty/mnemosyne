@@ -36,7 +36,7 @@ use iroh::{
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpSocket, TcpStream},
     sync::{mpsc, Mutex},
     task::JoinHandle,
 };
@@ -46,9 +46,44 @@ pub use iroh_tickets::endpoint::EndpointTicket;
 pub const ALPN: &[u8] = b"mnemosyne/link/1";
 /// A stream carrying one TCP connection to the backend.
 pub const TUNNEL: u8 = b'T';
-/// A stream carrying one pairing request: JSON `{code, name, peer?}` in, [`PairReply`] out.
+/// A stream carrying one pairing request: JSON `{code, name, peer?, card?}` in, [`PairReply`] out.
 pub const PAIR: u8 = b'P';
 /// How often an open connection re-checks that its device is still paired.
+/// The source address of every connection made to the backend for a remote peer. The backend
+/// tells these from the desktop app's own requests (127.0.0.1) by it. If it cannot be bound (not
+/// Linux, or the loopback /8 is not routed) the connection comes from 127.0.0.1 and the backend
+/// cannot tell the two apart: a warning is logged once.
+pub const TUNNEL_SOURCE: &str = "127.0.0.2";
+
+/// Connect to the backend on behalf of a remote peer, from `TUNNEL_SOURCE`.
+async fn connect_backend(backend: SocketAddr) -> std::io::Result<TcpStream> {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    if backend.is_ipv4() {
+        let attempt = async {
+            let socket = TcpSocket::new_v4()?;
+            socket.bind(SocketAddr::new(TUNNEL_SOURCE.parse().unwrap(), 0))?;
+            socket.connect(backend).await
+        };
+        match attempt.await {
+            Ok(tcp) => return Ok(tcp),
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AddrNotAvailable
+                    || e.kind() == std::io::ErrorKind::PermissionDenied
+                    || e.kind() == std::io::ErrorKind::InvalidInput =>
+            {
+                WARNED.call_once(|| {
+                    tracing::warn!(
+                        "cannot connect from {TUNNEL_SOURCE} ({e}); tunnelled requests will \
+                         look like this machine's own to the backend"
+                    )
+                });
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    TcpStream::connect(backend).await
+}
+
 const RECHECK: Duration = Duration::from_secs(5);
 
 /// Load the endpoint's secret key from `path` (hex), creating it (mode 0600) if missing.
@@ -213,6 +248,9 @@ struct PairRequest {
     /// Sync pairing: how home reaches this machine back. Passed to the backend unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     peer: Option<PeerInfo>,
+    /// An opaque signed JSON card, passed to the backend unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    card: Option<serde_json::Value>,
 }
 
 /// What a machine pairing for sync tells home about itself, so home can dial it back: its
@@ -238,6 +276,9 @@ pub struct PairReply {
     /// backend's redeem reply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync: Option<serde_json::Value>,
+    /// An opaque card from home's backend redeem reply, passed through unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -344,7 +385,7 @@ async fn serve_stream(
     recv.read_exact(&mut kind).await?;
     match kind[0] {
         TUNNEL if home.is_paired(&peer) => {
-            let tcp = TcpStream::connect(home.backend)
+            let tcp = connect_backend(home.backend)
                 .await
                 .with_context(|| format!("backend at {} is not reachable", home.backend))?;
             forward(tcp, send, recv).await
@@ -361,6 +402,7 @@ async fn serve_stream(
                     ok: false,
                     token: None,
                     sync: None,
+                    card: None,
                     error: Some(format!("bad request: {e}")),
                 },
             };
@@ -381,6 +423,9 @@ async fn redeem(backend: SocketAddr, req: &PairRequest, peer: &EndpointId) -> Pa
     if let Some(info) = &req.peer {
         body["peer"] = serde_json::json!(info);
     }
+    if let Some(card) = &req.card {
+        body["card"] = card.clone();
+    }
     match post_json(backend, "/api/pairing/redeem", &body).await {
         Ok((200, reply)) => PairReply {
             ok: true,
@@ -389,12 +434,14 @@ async fn redeem(backend: SocketAddr, req: &PairRequest, peer: &EndpointId) -> Pa
                 .and_then(|t| t.as_str())
                 .map(String::from),
             sync: reply.get("sync").filter(|v| !v.is_null()).cloned(),
+            card: reply.get("card").filter(|v| !v.is_null()).cloned(),
             error: None,
         },
         Ok((_, reply)) => PairReply {
             ok: false,
             token: None,
             sync: None,
+            card: None,
             error: Some(
                 reply
                     .get("detail")
@@ -407,6 +454,7 @@ async fn redeem(backend: SocketAddr, req: &PairRequest, peer: &EndpointId) -> Pa
             ok: false,
             token: None,
             sync: None,
+            card: None,
             error: Some(format!("{e:#}")),
         },
     }
@@ -419,7 +467,7 @@ async fn post_json(
     body: &serde_json::Value,
 ) -> Result<(u16, serde_json::Value)> {
     let body = serde_json::to_vec(body)?;
-    let mut tcp = TcpStream::connect(addr)
+    let mut tcp = connect_backend(addr)
         .await
         .context("backend not reachable")?;
     let head = format!(
@@ -521,7 +569,7 @@ impl Remote {
 
     /// Redeem a pairing code: home remembers this device's key and returns its API token.
     pub async fn pair(&self, code: &str, name: &str) -> Result<String> {
-        Ok(self.pair_with_peer(code, name, None).await?.0)
+        Ok(self.pair_with_peer(code, name, None, None).await?.0)
     }
 
     /// [`Remote::pair`] for sync: `peer` tells home how to reach this machine back.
@@ -530,19 +578,21 @@ impl Remote {
         code: &str,
         name: &str,
         peer: Option<PeerInfo>,
-    ) -> Result<(String, Option<serde_json::Value>)> {
+        card: Option<serde_json::Value>,
+    ) -> Result<(String, Option<serde_json::Value>, Option<serde_json::Value>)> {
         let (mut send, mut recv) = self.connection().await?.open_bi().await?;
         send.write_all(&[PAIR]).await?;
         send.write_all(&serde_json::to_vec(&PairRequest {
             code: code.to_string(),
             name: name.to_string(),
             peer,
+            card,
         })?)
         .await?;
         send.finish()?;
         let reply: PairReply = serde_json::from_slice(&recv.read_to_end(64 * 1024).await?)?;
         match (reply.ok, reply.token.clone()) {
-            (true, Some(token)) => Ok((token, reply.sync)),
+            (true, Some(token)) => Ok((token, reply.sync, reply.card)),
             _ => bail!(reply.error.unwrap_or_else(|| "pairing refused".into())),
         }
     }
@@ -603,6 +653,8 @@ enum ControlRequest {
         name: String,
         #[serde(default)]
         peer: Option<PeerInfo>,
+        #[serde(default)]
+        card: Option<serde_json::Value>,
     },
 }
 
@@ -674,15 +726,16 @@ impl Control {
     }
 
     /// Pair with the home in `invite` from this endpoint, as [`Remote::pair_with_peer`].
-    /// Returns the token and home's library sync `{id, name}` (if its backend sent one).
+    /// Returns the token, home's library sync `{id, name}` and the card (if its backend sent them).
     pub async fn pair(
         &self,
         invite: &Invite,
         name: &str,
         peer: Option<PeerInfo>,
-    ) -> Result<(String, Option<serde_json::Value>)> {
+        card: Option<serde_json::Value>,
+    ) -> Result<(String, Option<serde_json::Value>, Option<serde_json::Value>)> {
         let remote = Remote::new(self.endpoint.clone(), invite.ticket.clone());
-        let result = remote.pair_with_peer(&invite.code, name, peer).await;
+        let result = remote.pair_with_peer(&invite.code, name, peer, card).await;
         remote.close().await;
         result
     }
@@ -736,12 +789,18 @@ impl Control {
                 let peer: EndpointId = peer.trim().parse().context("invalid endpoint id")?;
                 serde_json::json!({"peer": peer.to_string(), "closed": self.hangup(&peer).await})
             }
-            ControlRequest::Pair { invite, name, peer } => {
+            ControlRequest::Pair {
+                invite,
+                name,
+                peer,
+                card,
+            } => {
                 let invite: Invite = invite.parse()?;
-                let (token, sync) = self.pair(&invite, &name, peer).await?;
+                let (token, sync, card) = self.pair(&invite, &name, peer, card).await?;
                 serde_json::json!({
                     "token": token,
                     "sync": sync,
+                    "card": card,
                     "ticket": invite.ticket.to_string(),
                     "peer": invite.ticket.endpoint_addr().id.to_string(),
                 })

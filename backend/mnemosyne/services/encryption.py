@@ -164,6 +164,11 @@ def enable(app: AppContext) -> EncryptionEnabled:
     app.settings.encryption_check = key_check(master)
     save_settings(app.settings)
     files, errors = 0, []
+    try:  # the new file is written before the old one goes: a failure leaves the plain key
+        app.person.seal(master)
+    except Exception as e:
+        logger.warning("Could not encrypt the person key", exc_info=True)
+        errors.append(f"person key: {e}")
     for sid in _all_session_ids(app):
         n, errs = _convert_audio(app, sid, app.file_key)
         files, errors = files + n, errors + errs
@@ -189,6 +194,10 @@ def disable(app: AppContext) -> int:
     from .assets import convert_files
 
     files += convert_files(app, None)
+    try:
+        app.person.unseal()  # while the master key is still here to open it
+    except Exception as e:
+        raise RuntimeError(f"Could not decrypt the person key: {e}") from e
     _replace_database(app, None, derive(app.master_key, "db"))
     app.settings.encrypt_at_rest = False
     app.settings.encryption_check = ""

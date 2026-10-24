@@ -12,6 +12,8 @@ The session repository applies this (storage/sqlite.py), so every route and sear
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
@@ -27,6 +29,25 @@ class Principal:
 
 
 current: ContextVar[Principal | None] = ContextVar("mnemosyne_principal", default=None)
+
+
+internal: ContextVar[bool] = ContextVar("mnemosyne_internal", default=False)
+
+
+@contextmanager
+def internally() -> Iterator[None]:
+    """Mark the block as the app's own writer (sync, vault sync, jobs), not a request acting for
+    a person. A later task makes repository writes to meetings shared with you refuse anything
+    that is not internal."""
+    token = internal.set(True)
+    try:
+        yield
+    finally:
+        internal.reset(token)
+
+
+def is_internal() -> bool:
+    return internal.get()
 
 
 class Forbidden(PermissionError):

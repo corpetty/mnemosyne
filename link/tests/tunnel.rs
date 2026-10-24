@@ -6,7 +6,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use mnemosyne_link::{bind_with, serve_home, serve_local, Home, Lan, Relays, Remote};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpSocket, TcpStream},
 };
 
 /// Answers POST /api/pairing/redeem like the backend (code "good" pairs the endpoint id by
@@ -212,6 +212,70 @@ async fn found_on_the_local_network() {
         .expect("home was not found on the local network")
         .unwrap();
     assert_eq!(token, "device-token");
+
+    device_ep.close().await;
+    home_ep.close().await;
+}
+
+#[tokio::test]
+async fn tunnel_reaches_backend_from_tunnel_source() {
+    if TcpSocket::new_v4()
+        .and_then(|s| s.bind("127.0.0.2:0".parse().unwrap()))
+        .is_err()
+    {
+        eprintln!("127.0.0.2 cannot be bound here: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let devices_file = dir.path().join("paired_devices.json");
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend = listener.local_addr().unwrap();
+    let log = seen.clone();
+    tokio::spawn(async move {
+        loop {
+            let (mut tcp, peer) = listener.accept().await.unwrap();
+            log.lock().unwrap().push(peer.ip());
+            tokio::spawn(async move {
+                let mut buf = [0u8; 1024];
+                let _ = tcp.read(&mut buf).await;
+                let _ = tcp
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi",
+                    )
+                    .await;
+                tcp.shutdown().await.ok();
+            });
+        }
+    });
+
+    let home_ep = bind_with(iroh::SecretKey::generate(), &Relays::Off, Lan::Off, |b| b)
+        .await
+        .unwrap();
+    let home_addr = home_ep.addr();
+    let device_ep = bind_with(iroh::SecretKey::generate(), &Relays::Off, Lan::Off, |b| b)
+        .await
+        .unwrap();
+    std::fs::write(
+        &devices_file,
+        serde_json::json!({"devices": [{"endpoint_id": device_ep.id().to_string()}]}).to_string(),
+    )
+    .unwrap();
+    tokio::spawn(serve_home(
+        home_ep.clone(),
+        Home {
+            backend,
+            devices_file,
+        },
+    ));
+    let remote = Arc::new(Remote::new(device_ep.clone(), home_addr));
+    let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local = tcp.local_addr().unwrap();
+    tokio::spawn(serve_local(remote, tcp));
+
+    assert!(get(local).await.ends_with("hi"));
+    let ips = seen.lock().unwrap().clone();
+    assert_eq!(ips, vec!["127.0.0.2".parse::<std::net::IpAddr>().unwrap()]);
 
     device_ep.close().await;
     home_ep.close().await;

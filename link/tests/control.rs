@@ -56,7 +56,11 @@ async fn fake_backend(
                     if body["code"] == "good" {
                         let file = json!({"devices": [{"endpoint_id": body["endpoint_id"]}]});
                         std::fs::write(&devices_file, file.to_string()).unwrap();
-                        ("200 OK", r#"{"token":"device-token","sync":{"id":"b1b2b3b4b5b6","name":"Desk B"}}"#.to_string())
+                        let mut reply = json!({"token":"device-token","sync":{"id":"b1b2b3b4b5b6","name":"Desk B"}});
+                        if body.get("card").is_some() {
+                            reply["card"] = json!({"from": "b", "sig": "bbb"});
+                        }
+                        ("200 OK", reply.to_string())
                     } else {
                         ("403 Forbidden", r#"{"detail":"invalid code"}"#.to_string())
                     }
@@ -180,6 +184,27 @@ async fn pair_with_peer_info() {
     assert!(reply["error"].as_str().unwrap().contains("invalid code"));
     let body = b.redeemed.lock().unwrap().last().cloned().unwrap();
     assert!(body.get("peer").is_none(), "{body}");
+    assert!(body.get("card").is_none(), "{body}");
+
+    // A card goes to the backend's body unchanged and the backend's card comes back.
+    let card = json!({"from": "a", "sig": "aaa", "n": [1, 2]});
+    let line = json!({
+        "id": "p3", "op": "pair", "invite": format!("{}#good", b.ticket()),
+        "name": "A", "card": card,
+    });
+    let reply = control.handle(&line.to_string()).await;
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["card"], json!({"from": "b", "sig": "bbb"}), "{reply}");
+    let body = b.redeemed.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(body["card"], card);
+    assert!(body.get("peer").is_none(), "{body}");
+
+    // Without a card the good reply has none.
+    let line =
+        json!({"id": "p4", "op": "pair", "invite": format!("{}#good", b.ticket()), "name": "A"});
+    let reply = control.handle(&line.to_string()).await;
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert!(reply["card"].is_null(), "{reply}");
 
     a.endpoint.close().await;
     b.endpoint.close().await;
