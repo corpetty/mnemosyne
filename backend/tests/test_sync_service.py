@@ -23,6 +23,7 @@ from mnemosyne.models.session import (
 from mnemosyne.services import summary_doc
 from mnemosyne.services.link import find_binary
 from mnemosyne.services.sync_peers import SyncPeer, now_iso
+from mnemosyne.services.sync_service import TOMBSTONE_CURSOR
 from mnemosyne.storage.crypto import MemoryKeyStore
 from tests import fake_link
 from tests.fakes import FakeProvider
@@ -463,6 +464,93 @@ async def test_an_interrupted_first_sync_resumes_where_it_stopped(nodes):
     st = await pull(b, a)
     assert st.state == "done" and st.received == 3 and transport.asked[0] == resume
     assert all(b.repo.get(i) is not None for i in ids)
+
+
+async def test_a_hello_from_another_id_is_an_error_and_pulls_nothing(nodes):
+    a, b = nodes
+    meeting(b)
+    paired = a.peer(b)  # A's stored id for B stays; B now states another one.
+    b.ctx.sync_peers._self.id = "someone-else"
+    st = await a.sync.sync_round(paired)
+    assert st.state == "error" and st.error == "B is another computer now: pair again"
+    assert a.ctx.sessions.list_sessions() == [] and paired.since == 0
+
+
+async def test_a_provisional_id_is_replaced_by_the_one_the_peer_states(nodes):
+    a, b = nodes
+    sid = meeting(b)
+    token = a.peer(b).token  # the token B trusts for A
+    a.ctx.sync_peers.remove(b.id)
+    stand_in = SyncPeer(
+        id=ENDPOINTS["B"][:12],
+        name="B",
+        endpoint_id=ENDPOINTS["B"],
+        ticket="ticket-B",
+        token=token,
+        created_at=now_iso(),
+        listen="peer",
+        provisional=True,
+    )
+    stand_id = stand_in.id
+    a.ctx.sync_peers.add(stand_in)
+    a.ctx.repo.set_meta(TOMBSTONE_CURSOR + stand_id, "2026-01-01T00:00:00")
+    st = await a.sync.sync_round(a.ctx.sync_peers.get(stand_id))
+    assert st.state == "done" and st.received == 1
+    adopted = a.peer(b)
+    assert adopted is not None and not adopted.provisional and adopted.token == token
+    assert a.ctx.sync_peers.get(stand_id) is None and len(a.ctx.sync_peers.peers()) == 1
+    assert a.ctx.repo.get_meta(TOMBSTONE_CURSOR + stand_id) is None
+    assert a.ctx.repo.get(sid) is not None
+
+
+async def test_an_old_format_stand_in_record_adopts_the_real_id(nodes):
+    import json as _json
+
+    a, b = nodes
+    meeting(b)
+    token = a.peer(b).token
+    stand = ENDPOINTS["B"][:12]
+    path = a.ctx.sync_peers.path
+    raw = _json.loads(path.read_text())
+    raw["peers"] = [
+        {
+            "id": stand,
+            "name": "B",
+            "endpoint_id": ENDPOINTS["B"],
+            "ticket": "ticket-B",
+            "token": token,
+            "created_at": now_iso(),
+            "listen": "peer",
+        }
+    ]
+    path.write_text(_json.dumps(raw))
+    a.ctx.sync_peers._peers.clear()
+    a.ctx.sync_peers._load()
+    assert a.ctx.sync_peers.get(stand).provisional
+    st = await a.sync.sync_round(a.ctx.sync_peers.get(stand))
+    assert st.state == "done" and st.received == 1
+    assert a.ctx.sync_peers.get(stand) is None and not a.peer(b).provisional
+
+
+async def test_a_provisional_peer_claiming_a_held_id_is_refused(nodes):
+    a, b = nodes
+    meeting(b)
+    other = SyncPeer(
+        id="stand-in-1",
+        name="Third",
+        endpoint_id="c" * 64,
+        ticket="t",
+        token=a.peer(b).token,
+        created_at=now_iso(),
+        listen="peer",
+        provisional=True,
+    )
+    held = a.peer(b)
+    a.ctx.sync_peers.add(other)  # B's hello will state B's id, which `held` already has
+    st = await a.sync.sync_round(a.ctx.sync_peers.get("stand-in-1"))
+    assert st.state == "error" and "another computer now" in st.error
+    assert a.ctx.sync_peers.get("stand-in-1").provisional and a.peer(b) is held
+    assert a.ctx.sessions.list_sessions() == []
 
 
 def _hello(protocol: int):

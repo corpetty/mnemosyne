@@ -3568,6 +3568,16 @@ class SessionRepository:
                 (session_id, peer_id, session_id, peer_id, self.SERVED_KEPT),
             )
 
+    def rename_sync_peer(self, old: str, new: str, cursor_key: str) -> None:
+        """A sync peer's id changed: its served states and tombstone cursor follow."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM sync_served WHERE peer_id=?", (new,))
+            self._conn.execute("UPDATE sync_served SET peer_id=? WHERE peer_id=?", (new, old))
+            self._conn.execute("DELETE FROM meta WHERE key=?", (cursor_key + new,))
+            self._conn.execute(
+                "UPDATE meta SET key=? WHERE key=?", (cursor_key + new, cursor_key + old)
+            )
+
     def served_snapshot(self, session_id: str, peer_id: str, rev: int) -> str | None:
         with self._lock:
             row = self._conn.execute(

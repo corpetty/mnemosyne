@@ -40,7 +40,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from ..models.sync_session import SyncSession, SyncTombstone
-from .sync_peers import SyncPeer, ensure_dialed, now_iso
+from .sync_peers import SyncPairingError, SyncPeer, ensure_dialed, now_iso
 
 if TYPE_CHECKING:
     import httpx
@@ -65,6 +65,10 @@ REQUEST_TIMEOUT = 60.0
 
 class SyncSkew(Exception):
     """The peer speaks another sync protocol."""
+
+
+class PeerMismatch(Exception):
+    """The computer behind the peer's endpoint states another sync id than the one paired."""
 
 
 class PeerLocked(Exception):
@@ -317,6 +321,9 @@ class SyncService:
             await self._reconcile_tasks(st)
         except SyncSkew as e:
             st.state, st.error = "skew", str(e)
+        except PeerMismatch as e:
+            st.state, st.error = "error", f"{peer.name} is another computer now: pair again"
+            logger.warning("Sync with %s skipped: %s", peer.name, e)
         except PeerLocked:
             st.state, st.error = "locked", f"{peer.name} is locked: enter its recovery code there"
         except (httpx.TransportError, LinkError) as e:
@@ -378,7 +385,18 @@ class SyncService:
         if hello.protocol < PROTOCOL:
             raise SyncSkew(f"Update Mnemosyne on {peer.name} (it runs {hello.app_version})")
         if hello.id and hello.id != peer.id:
-            logger.warning("Sync peer %s calls itself %s now", peer.id, hello.id)
+            if not peer.provisional:
+                raise PeerMismatch(f"Sync peer {peer.id} calls itself {hello.id} now")
+            old = peer.id
+            try:
+                self.ctx.sync_peers.adopt_id(old, hello.id)
+            except SyncPairingError as e:
+                raise PeerMismatch(f"Sync peer {old} calls itself {hello.id} now: {e}") from e
+            self.ctx.repo.rename_sync_peer(old, hello.id, TOMBSTONE_CURSOR)
+            if old in self.states:
+                self.states[hello.id] = self.states.pop(old)
+            self._locks.pop(old, None)
+            logger.info("Sync peer %s is %s", old, hello.id)
         if peer.since > hello.seq:
             # Its change log is younger than our cursor (restored from a backup): start over.
             # Whatever we have already is ignored or merged as usual.

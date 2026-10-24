@@ -52,6 +52,7 @@ class SyncPeer:
     last_sync_at: str | None = None
     since: int = 0  # the peer's change counter this machine has pulled up to
     listen: str | None = None  # the sidecar's loopback address for it, when dialed
+    provisional: bool = False  # `id` is a stand-in until the peer's hello states its own
 
 
 def now_iso() -> str:
@@ -79,6 +80,8 @@ class SyncPeerStore:
         known = {f.name for f in fields(SyncPeer)}
         for p in raw.get("peers", []):
             peer = SyncPeer(**{k: v for k, v in p.items() if k in known})
+            if "provisional" not in p and peer.id == peer.endpoint_id[:12]:
+                peer.provisional = True  # saved before the flag: a stand-in id (only these)
             self._peers[peer.id] = peer
         if not me.get("id"):
             self.save()
@@ -112,10 +115,36 @@ class SyncPeerStore:
         return next((p for p in self._peers.values() if p.endpoint_id == endpoint_id), None)
 
     def add(self, peer: SyncPeer) -> SyncPeer:
-        """Record a peer, replacing one with the same id or the same endpoint (paired again)."""
+        """Record a peer, replacing one with the same endpoint (paired again). An id already
+        bound to another endpoint, or our own id, is refused: the id is stated by the peer, so
+        it must not take over another peer's record (token included)."""
+        if peer.id == self._self.id:
+            raise SyncPairingError("That computer claims this computer's sync id")
+        held = self._peers.get(peer.id)
+        if held is not None and held.endpoint_id != peer.endpoint_id:
+            raise SyncPairingError(
+                f"Another computer already syncs as {held.name}: remove it first to pair this one"
+            )
         for old in [p for p in self._peers.values() if p.endpoint_id == peer.endpoint_id]:
             del self._peers[old.id]
         self._peers[peer.id] = peer
+        self.save()
+        return peer
+
+    def adopt_id(self, old_id: str, new_id: str) -> SyncPeer:
+        """A provisional peer's real id is known: re-key its record and clear `provisional`.
+        Refuses, as `add` does, our own id and an id held by another endpoint."""
+        peer = self._peers.get(old_id)
+        if peer is None or not peer.provisional:
+            raise SyncPairingError("That peer's id is not provisional")
+        if new_id == self._self.id:
+            raise SyncPairingError("That computer claims this computer's sync id")
+        held = self._peers.get(new_id)
+        if held is not None and held is not peer:
+            raise SyncPairingError(f"Another computer already syncs as {held.name}")
+        del self._peers[old_id]
+        peer.id, peer.provisional = new_id, False
+        self._peers[new_id] = peer
         self.save()
         return peer
 
@@ -268,8 +297,13 @@ async def pair_with_invite(
             logger.warning("Could not ask the new sync peer who it is: %s", e)
     if not peer.id:
         peer.id = endpoint_id[:12]  # a stand-in until its sync id is known
+        peer.provisional = True
+    try:
+        ctx.sync_peers.add(peer)
+    except SyncPairingError:
+        ctx.pairing.revoke(device.id)
+        raise
     ctx.pairing.rename(device.id, peer.name)
-    ctx.sync_peers.add(peer)
     try:
         await dial(ctx.link, ctx.sync_peers, peer)
     except LinkError as e:

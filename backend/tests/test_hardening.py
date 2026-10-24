@@ -175,3 +175,15 @@ def test_a_silent_device_does_not_shift_the_others(tmp_path):
     files = asyncio.run(stop_recording(rec))
     assert files[0] is None and files[1].name == "b.ogg"
     assert subprocess.run(["ffprobe", "-v", "error", str(files[1])]).returncode == 0
+
+
+def test_a_phone_token_cannot_use_the_sync_paths(client, ctx):
+    ctx.settings.api_token = "s3cret"
+    code = client.post(
+        "/api/pairing/codes", json={"kind": "phone"}, headers={"Authorization": "Bearer s3cret"}
+    ).json()["code"]
+    phone = client.post("/api/pairing/redeem", json={"code": code, "name": "Phone"}).json()["token"]
+    h = {"Authorization": f"Bearer {phone}"}
+    assert client.get("/api/sync/hello", headers=h).status_code == 401
+    assert client.get("/api/sync/changes", headers=h).status_code == 401
+    assert client.post("/api/sync/poke", headers=h).status_code == 401

@@ -117,9 +117,13 @@ async def redeem(body: RedeemRequest, ctx: AppContext = Depends(get_ctx)):
         for old in ctx.pairing.desktops_for(body.endpoint_id):  # paired again: one device
             if old.id != device.id:
                 ctx.pairing.revoke(old.id)
-        peer = await sync_peers.record_incoming(
-            ctx, device_name=device.name, endpoint_id=body.endpoint_id, payload=body.peer
-        )
+        try:
+            peer = await sync_peers.record_incoming(
+                ctx, device_name=device.name, endpoint_id=body.endpoint_id, payload=body.peer
+            )
+        except sync_peers.SyncPairingError as e:
+            ctx.pairing.revoke(device.id)  # nothing recorded, nothing trusted
+            raise HTTPException(status_code=409, detail=str(e)) from e
         ctx.pairing.rename(device.id, peer.name)
         me = SyncSelf(**asdict(ctx.sync_peers.self_info()))
     return RedeemResponse(device=_info(device), token=token, sync=me)
