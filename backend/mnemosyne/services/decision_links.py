@@ -80,6 +80,8 @@ class _Meeting:
 def _meetings(repo: SessionRepository) -> list[_Meeting]:
     out = []
     for r in repo.action_item_sources():
+        if r["shared_from"]:  # another person's meeting: never linked, never reconciled
+            continue
         data = r["summary_data"]
         ids = data.decision_ids
         decisions = [

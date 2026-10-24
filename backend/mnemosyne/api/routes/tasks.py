@@ -9,12 +9,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from ... import access
 from ...models.base import ApiModel
 from ...models.comment import Comment, CommentThread
-from ...services import comments, decision_links, history, organizations, summary_doc, task_links
+from ...services import (
+    comments,
+    decision_links,
+    history,
+    item_flags,
+    organizations,
+    summary_doc,
+    task_links,
+)
 from ...services.brief import Brief, build_brief
 from ...services.decision_links import DecisionMention, DecisionObject
 from ...services.task_links import TaskMention, TaskObject, TaskSuggestion
 from ...services.tasks import TaskItem, filter_tasks, mine_matcher
-from ...services.vault_sync import write_tick
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["tasks"])
@@ -104,28 +111,18 @@ async def update_action_item(
         history.log(ctx, session_id, "task_edited", task=data.action_items[idx].text,
                     by=data.edited_by)  # fmt: skip
         items = data.action_items
-    # done and follow belong to the task: a linked item's other mentions follow (task_links).
-    obj = task_links.object_of(ctx.repo, session_id, items[idx].id, ctx.repo.visible_ids())
+    # done and follow belong to the task: a linked item's other mentions follow (item_flags).
     who = access.principal()
-    if "done" in given and request.done is not None and request.done != items[idx].done:
-        items[idx].done = request.done
-        if obj is not None:  # logs a line in each meeting it changes, this one included
-            task_links.set_done(
-                ctx, obj.key, request.done, by=who.name if who else "", acting=session_id
-            )
-        else:
-            ctx.repo.set_action_item_done(session_id, idx, request.done)  # readers may tick too
-            _log_tick(ctx, session, items[idx].text, request.done)
-        # The meeting's note in the vault says the same (that one line), or the next pass
-        # over the vault would take the old state back. Never raises.
-        await asyncio.to_thread(write_tick, ctx, session, idx, request.done)
-    if "follow" in given and request.follow is not None and request.follow != items[idx].follow:
-        items[idx].follow = request.follow
-        if obj is not None:
-            task_links.set_follow(ctx, obj.key, request.follow, acting=session_id)
-        else:
-            ctx.repo.set_action_item_follow(session_id, idx, request.follow)  # readers may too
-    ctx.bus.publish({"type": "session", "session_id": session_id, "status": session.status.value})
+    await asyncio.to_thread(
+        item_flags.set_item_flags,
+        ctx,
+        session,
+        idx,
+        done=request.done if "done" in given else None,
+        follow=request.follow if "follow" in given else None,
+        by=who.name if who else "",
+        item=items[idx],
+    )
     a = items[idx]
     return TaskItem(
         session_id=session.id,
@@ -140,16 +137,6 @@ async def update_action_item(
         follow=a.follow,
         can_edit=access.can_write(session.owner_id),
     )
-
-
-def _log_tick(ctx: AppContext, session, task: str, done: bool) -> None:
-    """Someone other than the owner ticking an item off shows in the meeting's history."""
-    if session.owner_id != access.user_id():
-        who = access.principal()
-        history.log(
-            ctx, session.id, "task_done" if done else "task_reopened",
-            task=task, by=who.name if who else "",
-        )  # fmt: skip
 
 
 # ---- task objects (services/task_links.py) -------------------------------------------------

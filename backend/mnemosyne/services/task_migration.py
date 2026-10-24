@@ -35,6 +35,8 @@ def migrate(app: AppContext) -> dict:
 
         # action_item_sources is newest first; the principal-free read sees every meeting.
         for src in reversed(app.repo.action_item_sources()):
+            if src["shared_from"]:  # another person's meeting
+                continue
             sid = src["id"]
             counts["tasks_linked"] += len(task_links.link_items(app, sid, "exact"))
             counts["decisions_linked"] += len(decision_links.link_items(app, sid))

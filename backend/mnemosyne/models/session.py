@@ -218,6 +218,9 @@ class Session(ApiModel):
     # The machine that recorded the meeting (library sync, services/sync): its sync id;
     # "" = this machine. Audio, and the work that needs it, stays with the origin.
     origin: str = ""
+    # A meeting someone shared WITH this person (phase 8): the sharer's person key (64 hex);
+    # "" for our own meetings. Such a meeting never travels in library sync.
+    shared_from: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -243,3 +246,4 @@ class SessionSummary(ApiModel):
     local_only: bool = False
     owner_id: str = ""
     origin: str = ""  # see Session.origin
+    shared_from: str = ""  # see Session.shared_from

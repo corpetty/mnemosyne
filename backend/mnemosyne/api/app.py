@@ -34,6 +34,7 @@ from .routes.mobile import router as mobile_router
 from .routes.models import router as models_router
 from .routes.organizations import router as organizations_router
 from .routes.pairing import router as pairing_router
+from .routes.peer_shares import router as peer_shares_router
 from .routes.people import router as people_router
 from .routes.publishing import router as publishing_router
 from .routes.record import router as record_router
@@ -42,6 +43,7 @@ from .routes.search import router as search_router
 from .routes.segments import router as segments_router
 from .routes.sessions import router as sessions_router
 from .routes.settings import router as settings_router
+from .routes.share import router as share_router
 from .routes.sharing import router as sharing_router
 from .routes.speakers import router as speakers_router
 from .routes.storage import router as storage_router
@@ -92,6 +94,8 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(team_router)
     app.include_router(local_model_router)
     app.include_router(sharing_router)
+    app.include_router(peer_shares_router)
+    app.include_router(share_router)
     app.include_router(organizations_router)
     app.include_router(supervision_router)
     app.include_router(sessions_router)

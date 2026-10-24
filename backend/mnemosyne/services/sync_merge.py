@@ -20,6 +20,8 @@ item by id, bookmark notes, comment texts) go through the sidecar's one-off thre
 - history events are a union by uid; recordings rows are the origin's;
 - publications are merged by id apart from all this (`merge_publications`): the row with the
   newer `updated_at` wins whole, the version is the larger, one live row per meeting;
+- peer shares (who the meeting is shared with) likewise by person (`merge_peer_shares`): the
+  newer `updated_at` wins, a revoked row beats a live one at a tie;
 - the notes: when both sides have a live notes document and they differ, the documents are
   merged by op-set union (services/sync_notes.py, run by the caller) and `notes` is not merged as
   text here (it is ours until the caller sets the union's render); when only theirs has one the
@@ -39,7 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..export.note_merge import MergeError, merge_many
 from ..models.session import AgendaItem, Chapter, ClientFact, SummaryData
-from ..models.sync_session import SyncSession, merge_publications
+from ..models.sync_session import SyncSession, merge_peer_shares, merge_publications
 from .summary_doc import _AT, _IDS, SECTIONS, merge_topics, place, section, whole_list
 from .tasks import _norm, same_item
 
@@ -525,6 +527,7 @@ def _finish(
     out.id, out.created_at, out.origin = ours.id, ours.created_at, ours.origin
     out.notes_doc = None  # documents are merged apart from the rest (services/sync_notes.py)
     out.publications = merge_publications(ours.publications, theirs.publications)
+    out.peer_shares = merge_peer_shares(ours.peer_shares, theirs.peer_shares)
     out.vv, out.updated_at = vv, now
     seen = {e.uid for e in ours.events}
     out.events = [e.model_copy() for e in ours.events] + [

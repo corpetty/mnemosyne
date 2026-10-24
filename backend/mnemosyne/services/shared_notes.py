@@ -38,6 +38,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from .. import access
+from ..models.shared_meeting import ShareParts
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -233,9 +234,14 @@ def unrestricted():
 
 
 def may_edit(app: AppContext, session_id: str) -> bool:
-    """The caller may change this (readable) meeting's notes (access.can_edit_notes)."""
+    """The caller may change this (readable) meeting's notes (access.can_edit_notes). A
+    contact (phase 8, "p:<16 hex>") counts as shared with when their live share includes the
+    notes."""
     owner = app.repo.owner_of(session_id) or ""
     shared = {s["user_id"] for s in app.repo.shares(session_id)}
+    for share in app.repo.peer_shares(session_id):
+        if ShareParts.from_stored(share["parts"]).notes:
+            shared.add("p:" + share["person"][:16])
     return access.can_edit_notes(owner, shared)
 
 
@@ -472,17 +478,24 @@ def seed_blocking(app: AppContext, session_id: str) -> list[tuple[int, bytes]]:
         return _set_text_blocking(app, session_id, source[0], "", SEED_AUTHOR, False)
 
 
-def prepare_blocking(app: AppContext, session_id: str) -> list[tuple[int, bytes]]:
-    """Before a join: a meeting without a document is seeded, one with text written around
-    its document catches up. Returns the appended frames. Raises NotesDocError."""
+def ensure_doc_blocking(app: AppContext, session_id: str) -> list[tuple[int, bytes]]:
+    """The meeting's live document set up before anyone types into it or it is sent: the one
+    step for a join, frames sent through the hub (`accept_frames`) and a shared meeting
+    (services/shares.py). A meeting with notes but no document is seeded from them (only where
+    it was recorded, `seed_blocking`); one with text written around its document catches up. A
+    meeting waiting for its document from library sync is left alone. The frames this appended
+    go to the meeting's connections, and are returned. Raises NotesDocError (no sidecar, or it
+    failed)."""
     binary = _binary()
     if binary is None:
         raise NotesDocError("mnemosyne-link not found")
+    if needs_doc_from_sync(app, session_id):
+        return []
     with hub(app).lock(session_id):
-        seeded = seed_blocking(app, session_id)
-        if seeded:
-            return seeded
-        return _catch_up_locked(app, session_id, binary)[0]
+        added = seed_blocking(app, session_id) or _catch_up_locked(app, session_id, binary)[0]
+    if added:
+        _on_loop(app, _deliver, app, session_id, added, None)
+    return added
 
 
 def needs_doc_from_sync(app: AppContext, session_id: str) -> bool:
@@ -685,12 +698,10 @@ async def join(
     waiting = await asyncio.to_thread(needs_doc_from_sync, app, session_id)
     if not waiting:
         try:
-            added = await asyncio.to_thread(prepare_blocking, app, session_id)
+            await asyncio.to_thread(ensure_doc_blocking, app, session_id)
         except NotesDocError as e:
             _warn_once(f"prep:{session_id}", "Could not open the notes of %s: %s", session_id, e)
             return None
-        if added:
-            _deliver(app, session_id, added, None)
     # Catch-up and joining the room in one step (no await in between): a frame appended now is
     # either in the backlog or relayed to the member, never neither or both.
     doc, ops = app.repo.notes_catchup(session_id)
@@ -726,28 +737,106 @@ async def join(
     return member
 
 
-def receive_frame(app: AppContext, session_id: str, member: Member, frame: bytes) -> int | None:
-    """A frame from a member: logged and relayed. None, or the close code it is refused with."""
-    if not member.can_edit:
-        return CLOSE_READ_ONLY
-    if not frame or frame[0] not in (DELTA, ARTIFACT):
-        return CLOSE_BAD_FRAME
-    if len(frame) > MAX_FRAME:
-        return CLOSE_TOO_BIG
-    room = hub(app).rooms.get(session_id)
-    if room is None:
-        return CLOSE_BAD_FRAME
-    edit = frame[0] == DELTA
+class FramesRefused(Exception):
+    """Frames not taken: `code` is the close code a connection would get (CLOSE_*), the
+    message says why."""
+
+    def __init__(self, code: int, reason: str) -> None:
+        super().__init__(reason)
+        self.code = code
+
+
+def _check_frames(frames: list[bytes]) -> None:
+    for frame in frames:
+        if not frame or frame[0] not in (DELTA, ARTIFACT):
+            raise FramesRefused(CLOSE_BAD_FRAME, "Not a notes frame")
+        if len(frame) > MAX_FRAME:
+            raise FramesRefused(CLOSE_TOO_BIG, "A notes frame is too big")
+
+
+def accept_frames(
+    app: AppContext,
+    session_id: str,
+    frames: list[bytes],
+    author_id: str,
+    author: str,
+    *,
+    skip: Member | None = None,
+    can_edit: bool | None = None,
+) -> list[int]:
+    """Frames typed by `author`: checked by tag and size, appended to the log, relayed to the
+    meeting's connections (not `skip`, the one that sent them), and a fold scheduled. The one
+    path for every frame from outside: a connection's (`receive_frame`, which decided
+    `can_edit` when it joined) and a contact's sent through the hub (phase 8,
+    services/shares.py; `can_edit` None: decided here, by `may_edit` for the caller, and the
+    meeting's document prepared first as for a join). Callable on the event loop or from a
+    thread. Returns the frames' sequence numbers. Raises FramesRefused, and nothing is
+    logged then."""
+    if not frames:
+        return []
+    _check_frames(frames)
+    if can_edit is None:
+        if not available():
+            raise FramesRefused(CLOSE_GONE, "Live notes are not available on this computer")
+        if needs_doc_from_sync(app, session_id):
+            raise FramesRefused(CLOSE_READ_ONLY, "The notes are not here yet")
+        if not may_edit(app, session_id):
+            raise FramesRefused(CLOSE_READ_ONLY, "You may not edit these notes")
+        try:
+            # As a join does: the frames merge with what is there, never replace it.
+            ensure_doc_blocking(app, session_id)
+        except NotesDocError as e:
+            raise FramesRefused(CLOSE_GONE, "The notes cannot be opened now") from e
+    elif not can_edit:
+        raise FramesRefused(CLOSE_READ_ONLY, "You may not edit these notes")
+    edit = any(f[0] == DELTA for f in frames)
     try:
-        app.repo.append_notes_ops(session_id, [frame], member.id, member.name, last_edit=edit)
+        seqs = app.repo.append_notes_ops(session_id, frames, author_id, author, last_edit=edit)
     except Exception:  # sqlite3's or sqlcipher3's IntegrityError: the meeting was deleted?
         if app.repo.notes_source(session_id) is not None:
             raise
-        return CLOSE_GONE
-    room.broadcast("bytes", frame, skip=member)
-    if edit:
-        _announce_edit(app, session_id, member.name, member)
-    _schedule_fold(app, room)
+        raise FramesRefused(CLOSE_GONE, "The meeting is gone") from None
+    _on_loop(
+        app, _after_frames, app, session_id, list(zip(seqs, frames, strict=True)), author, skip
+    )
+    return seqs
+
+
+def _after_frames(
+    app: AppContext,
+    session_id: str,
+    logged: list[tuple[int, bytes]],
+    author: str,
+    skip: Member | None,
+) -> None:
+    """On the event loop (or, with none known, the calling thread): relay logged frames,
+    announce the edit, schedule the fold."""
+    _deliver(app, session_id, logged, skip)
+    if any(f[0] == DELTA for _, f in logged):
+        _announce_edit(app, session_id, author, skip)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:  # no event loop known to the hub: nobody is connected, fold now
+        fold_blocking(app, session_id)
+        return
+    room = hub(app).rooms.get(session_id)
+    if room is not None:
+        _schedule_fold(app, room)
+    else:
+        _spawn(app, fold_now(app, session_id))
+
+
+def receive_frame(app: AppContext, session_id: str, member: Member, frame: bytes) -> int | None:
+    """A frame from a member: logged and relayed (`accept_frames`). None, or the close code
+    it is refused with."""
+    if not member.can_edit:
+        return CLOSE_READ_ONLY
+    if hub(app).rooms.get(session_id) is None:
+        return CLOSE_BAD_FRAME
+    try:
+        accept_frames(app, session_id, [frame], member.id, member.name, skip=member, can_edit=True)
+    except FramesRefused as e:
+        return e.code
     return None
 
 

@@ -2201,6 +2201,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/peer-shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Peer Shares */
+        get: operations["list_peer_shares_api_sessions__session_id__peer_shares_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/peer-shares/{person}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Peer Share
+         * @description Share the meeting with this contact (or change what they have of it). The recipient's
+         *     next pull gets the new document.
+         */
+        put: operations["put_peer_share_api_sessions__session_id__peer_shares__person__put"];
+        post?: never;
+        /**
+         * Delete Peer Share
+         * @description Stop sharing the meeting with this contact; their next pull tells them to forget it.
+         */
+        delete: operations["delete_peer_share_api_sessions__session_id__peer_shares__person__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/publication": {
         parameters: {
             query?: never;
@@ -2719,6 +2761,115 @@ export interface paths {
         /** Update Settings */
         put: operations["update_settings_api_settings_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/share/card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Card
+         * @description The calling contact's newer card (its machines changed). Taken only when it is signed by
+         *     that contact's own key and newer than the one held; its machines get their CONTACT
+         *     devices. 400 for anything else.
+         */
+        post: operations["card_api_share_card_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/share/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Changes
+         * @description The meetings shared with the calling contact that changed after `since` (this computer's
+         *     change counter), whole and signed, oldest change first; and what it must forget since
+         *     `tombstones_since` (ISO time on this computer's clock): shares withdrawn and shared meetings
+         *     deleted. Only this contact's shares are ever read.
+         */
+        get: operations["changes_api_share_changes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/share/contributions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Contributions
+         * @description What the calling contact did on meetings shared with them: signed records (comments,
+         *     action-item ticks and stars, live notes frames), applied in order as that contact through
+         *     the usual rules. One result per record; a refused record has a reason and the rest still
+         *     go. Records are idempotent by id. 413 over 200 records or 2 MB of frames.
+         */
+        post: operations["contributions_api_share_contributions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/share/hello": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hello
+         * @description Who this is and which sharing protocol it speaks; a recipient asks first in every round.
+         */
+        get: operations["hello_api_share_hello_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/share/poke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Poke
+         * @description The calling contact has news. On the hub it is accepted and ignored: a recipient pulls
+         *     on it (a later task); the owner's side has nothing to fetch.
+         */
+        post: operations["poke_api_share_poke_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4100,6 +4251,26 @@ export interface components {
             /** Node Id */
             node_id: number;
         };
+        /** Card */
+        Card: {
+            /** At */
+            at: string;
+            /** Machines */
+            machines: components["schemas"]["CardMachine"][];
+            /** Name */
+            name: string;
+            /** Person */
+            person: string;
+            /** Sig */
+            sig: string;
+        };
+        /** CardMachine */
+        CardMachine: {
+            /** Name */
+            name: string;
+            /** Ticket */
+            ticket: string;
+        };
         /** Chapter */
         Chapter: {
             /** Start */
@@ -4431,6 +4602,73 @@ export interface components {
             /** Contacts */
             contacts: components["schemas"]["ContactInfo"][];
             me: components["schemas"]["ContactsMe"];
+        };
+        /**
+         * Contribution
+         * @description One signed piece of work by a recipient on a meeting shared with them.
+         *
+         *     `sig` is the author's Ed25519 signature (hex) of `PersonKeys.canonical` of this record's
+         *     JSON without `sig` (`model_dump(mode="json", exclude={"sig"})`: id, kind, session_id,
+         *     payload, author, at). The payload by kind:
+         *
+         *     - comment: `{op: "create"|"edit"|"delete"|"resolve"|"reopen", comment_id, ...}`; create
+         *       adds the CommentCreate fields (target, target_id, parent_id, text, idx, idx_to, seconds,
+         *       exact, prefix, suffix, notes_ids) and `comment_id` is minted by the sender (12 hex);
+         *       edit adds `text`; the others nothing.
+         *     - item_flag: `{item_id, flag: "done"|"follow", value: bool}`.
+         *     - notes_frames: `{frame_hashes: [sha256 hex, ...]}` in order; the frames travel beside the
+         *       records in `ContributionBatch.frames`, so the signature covers them by hash.
+         */
+        Contribution: {
+            /** At */
+            at: string;
+            /** Author */
+            author: string;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "comment" | "item_flag" | "notes_frames";
+            /** Payload */
+            payload?: {
+                [key: string]: unknown;
+            };
+            /** Session Id */
+            session_id: string;
+            /** Sig */
+            sig: string;
+        };
+        /**
+         * ContributionBatch
+         * @description Records in the order they were made (FIFO per meeting), and the notes frames they list:
+         *     sha256 hex of the frame's bytes -> the bytes in base64.
+         */
+        ContributionBatch: {
+            /** Frames */
+            frames?: {
+                [key: string]: string;
+            };
+            /** Records */
+            records?: components["schemas"]["Contribution"][];
+        };
+        /** ContributionResponse */
+        ContributionResponse: {
+            /** Results */
+            results: components["schemas"]["ContributionResult"][];
+        };
+        /** ContributionResult */
+        ContributionResult: {
+            /** Id */
+            id: string;
+            /** Ok */
+            ok: boolean;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
         };
         /** CopilotAskRequest */
         CopilotAskRequest: {
@@ -5552,6 +5790,21 @@ export interface components {
             text: string;
         };
         /**
+         * PeerShareInfo
+         * @description A live share of a meeting with a contact.
+         */
+        PeerShareInfo: {
+            /** At */
+            at: string;
+            /** Name */
+            name: string;
+            parts: components["schemas"]["ShareParts-Output"];
+            /** Person */
+            person: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /**
          * PendingRecording
          * @description Audio recorded but not in the meeting yet: an interrupted recording, or one whose save
          *     failed. Recovering it adds it as a part.
@@ -6366,6 +6619,11 @@ export interface components {
             /** Recordings */
             recordings: components["schemas"]["Recording"][];
             /**
+             * Shared From
+             * @default
+             */
+            shared_from: string;
+            /**
              * Speakers Reviewed
              * @default false
              */
@@ -6485,6 +6743,11 @@ export interface components {
             owner_id: string;
             /** Participant Count */
             participant_count: number;
+            /**
+             * Shared From
+             * @default
+             */
+            shared_from: string;
             status: components["schemas"]["SessionStatus"];
             /**
              * Updated At
@@ -7082,12 +7345,251 @@ export interface components {
             /** Whisper Vad */
             whisper_vad: string;
         };
+        /**
+         * ShareChanges
+         * @description A page of what changed for the calling contact: whole signed meetings, oldest change
+         *     first, and what it must forget. Ask again from `next_since` while `more`;
+         *     `tombstones_next` is the `tombstones_since` for the next round.
+         */
+        ShareChanges: {
+            /** More */
+            more: boolean;
+            /** Next Since */
+            next_since: number;
+            /** Sessions */
+            sessions: components["schemas"]["SharedMeeting"][];
+            /** Tombstones */
+            tombstones: components["schemas"]["ShareTombstone"][];
+            /** Tombstones Next */
+            tombstones_next: string;
+        };
+        /** ShareHello */
+        ShareHello: {
+            /** App Version */
+            app_version: string;
+            /** Name */
+            name: string;
+            /** Person */
+            person: string;
+            /** Protocol */
+            protocol: number;
+        };
+        /**
+         * ShareParts
+         * @description What of a meeting a share includes (the stored `peer_shares.parts`, and the sharing
+         *     dialog's request). The title and date always travel. The transcript is off by default: it
+         *     cannot be taken back once sent. `hide_identifiers` redacts account, card and social security
+         *     numbers, dates of birth, e-mail addresses and phone numbers in the summary and the
+         *     transcript (not in the notes or comments).
+         */
+        "ShareParts-Input": {
+            /**
+             * Action Items
+             * @default true
+             */
+            action_items: boolean;
+            /**
+             * Attendees
+             * @default true
+             */
+            attendees: boolean;
+            /**
+             * Chapters
+             * @default true
+             */
+            chapters: boolean;
+            /**
+             * Decisions
+             * @default true
+             */
+            decisions: boolean;
+            /**
+             * Hide Identifiers
+             * @default false
+             */
+            hide_identifiers: boolean;
+            /**
+             * Notes
+             * @default true
+             */
+            notes: boolean;
+            /**
+             * Questions
+             * @default true
+             */
+            questions: boolean;
+            /**
+             * Summary
+             * @default true
+             */
+            summary: boolean;
+            /**
+             * Topics
+             * @default true
+             */
+            topics: boolean;
+            /**
+             * Transcript
+             * @default false
+             */
+            transcript: boolean;
+        };
+        /**
+         * ShareParts
+         * @description What of a meeting a share includes (the stored `peer_shares.parts`, and the sharing
+         *     dialog's request). The title and date always travel. The transcript is off by default: it
+         *     cannot be taken back once sent. `hide_identifiers` redacts account, card and social security
+         *     numbers, dates of birth, e-mail addresses and phone numbers in the summary and the
+         *     transcript (not in the notes or comments).
+         */
+        "ShareParts-Output": {
+            /**
+             * Action Items
+             * @default true
+             */
+            action_items: boolean;
+            /**
+             * Attendees
+             * @default true
+             */
+            attendees: boolean;
+            /**
+             * Chapters
+             * @default true
+             */
+            chapters: boolean;
+            /**
+             * Decisions
+             * @default true
+             */
+            decisions: boolean;
+            /**
+             * Hide Identifiers
+             * @default false
+             */
+            hide_identifiers: boolean;
+            /**
+             * Notes
+             * @default true
+             */
+            notes: boolean;
+            /**
+             * Questions
+             * @default true
+             */
+            questions: boolean;
+            /**
+             * Summary
+             * @default true
+             */
+            summary: boolean;
+            /**
+             * Topics
+             * @default true
+             */
+            topics: boolean;
+            /**
+             * Transcript
+             * @default false
+             */
+            transcript: boolean;
+        };
         /** SharePerson */
         SharePerson: {
             /** Id */
             id: string;
             /** Name */
             name: string;
+        };
+        /** ShareTombstone */
+        ShareTombstone: {
+            /** At */
+            at: string;
+            /** Reason */
+            reason: string;
+            /** Session Id */
+            session_id: string;
+        };
+        /** SharedMeeting */
+        SharedMeeting: {
+            /** Attendees */
+            attendees: string[];
+            /** Comments */
+            comments: components["schemas"]["SyncComment"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Digest
+             * @default
+             */
+            digest: string;
+            /**
+             * Format
+             * @default 1
+             */
+            format: number;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+            /**
+             * Notes Doc
+             * @default
+             */
+            notes_doc: string;
+            owner: components["schemas"]["SharedOwner"];
+            /** Participants */
+            participants: string[];
+            parts: components["schemas"]["ShareParts-Output"];
+            /** Shared With */
+            shared_with: string[];
+            /**
+             * Sig
+             * @default
+             */
+            sig: string;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            summary_data: components["schemas"]["SummaryData"] | null;
+            /** Transcript */
+            transcript: components["schemas"]["SharedSegment"][];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** SharedOwner */
+        SharedOwner: {
+            /** Name */
+            name: string;
+            /** Person */
+            person: string;
+        };
+        /**
+         * SharedSegment
+         * @description A transcript line on the meeting's joined timeline (no words, no audio references).
+         */
+        SharedSegment: {
+            /** End */
+            end: number;
+            /** Speaker */
+            speaker: string;
+            /** Start */
+            start: number;
+            /** Text */
+            text: string;
         };
         /** Shares */
         Shares: {
@@ -7657,6 +8159,34 @@ export interface components {
              */
             token: string;
         };
+        /**
+         * SyncPeerShare
+         * @description A meeting shared with a contact (a `peer_shares` row): `person` is the contact's key,
+         *     `parts` what was chosen (an opaque dict here). Times stay the stored ISO text. A revoked
+         *     share keeps its row (`revoked_at`), so the revocation travels.
+         */
+        SyncPeerShare: {
+            /** At */
+            at: string;
+            /**
+             * By
+             * @default
+             */
+            by: string;
+            /** Parts */
+            parts: {
+                [key: string]: unknown;
+            };
+            /** Person */
+            person: string;
+            /**
+             * Revoked At
+             * @default
+             */
+            revoked_at: string;
+            /** Updated At */
+            updated_at: string;
+        };
         /** SyncPeerStatus */
         SyncPeerStatus: {
             /** App Version */
@@ -7878,6 +8408,8 @@ export interface components {
             owner_id: string;
             /** Participants */
             participants: string[];
+            /** Peer Shares */
+            peer_shares: components["schemas"]["SyncPeerShare"][];
             /** Publications */
             publications: components["schemas"]["SyncPublication"][];
             /** Recordings */
@@ -12564,6 +13096,103 @@ export interface operations {
             };
         };
     };
+    list_peer_shares_api_sessions__session_id__peer_shares_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PeerShareInfo"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_peer_share_api_sessions__session_id__peer_shares__person__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                person: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShareParts-Input"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PeerShareInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_peer_share_api_sessions__session_id__peer_shares__person__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                person: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_publication_api_sessions__session_id__publication_get: {
         parameters: {
             query?: never;
@@ -13575,6 +14204,141 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    card_api_share_card_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Card"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    changes_api_share_changes_get: {
+        parameters: {
+            query?: {
+                since?: number;
+                tombstones_since?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareChanges"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    contributions_api_share_contributions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionBatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hello_api_share_hello_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareHello"];
+                };
+            };
+        };
+    };
+    poke_api_share_poke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

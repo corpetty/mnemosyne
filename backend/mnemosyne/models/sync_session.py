@@ -7,6 +7,7 @@ versions and seals (local bookkeeping), audio and encryption keys. Publications 
 their link key and token (see `SyncPublication`).
 """
 
+import json
 from datetime import UTC, datetime
 
 from pydantic import Field
@@ -156,6 +157,46 @@ def merge_publications(
     return list(by_id.values())
 
 
+class SyncPeerShare(ApiModel):
+    """A meeting shared with a contact (a `peer_shares` row): `person` is the contact's key,
+    `parts` what was chosen (an opaque dict here). Times stay the stored ISO text. A revoked
+    share keeps its row (`revoked_at`), so the revocation travels."""
+
+    person: str
+    parts: dict = Field(default_factory=dict)
+    by: str = ""
+    at: str
+    updated_at: str
+    revoked_at: str = ""
+
+
+def peer_share_rank(p: SyncPeerShare) -> tuple:
+    """Which of two states of one share is the later: the newer `updated_at`; at equal times a
+    revoked one beats a live one (a revocation must not be undone by a tie). The rest only
+    makes the choice the same on both machines."""
+    return (
+        _when(p.updated_at),
+        bool(p.revoked_at),
+        p.revoked_at,
+        p.by,
+        json.dumps(p.parts, sort_keys=True),
+    )
+
+
+def merge_peer_shares(
+    ours: list[SyncPeerShare], theirs: list[SyncPeerShare]
+) -> list[SyncPeerShare]:
+    """The shares of a meeting after two machines' states meet: by person, the later row wins
+    whole (`peer_share_rank`). A side that does not know the field (an older peer) loses
+    nothing. Ours first, in order; theirs that we lack after."""
+    by_person: dict[str, SyncPeerShare] = {}
+    for p in [*ours, *theirs]:
+        mine = by_person.get(p.person)
+        if mine is None or peer_share_rank(p) > peer_share_rank(mine):
+            by_person[p.person] = p
+    return list(by_person.values())
+
+
 class SyncSession(ApiModel):
     id: str
     created_at: datetime
@@ -187,6 +228,9 @@ class SyncSession(ApiModel):
     # The meeting's publications (services/publishing.py), normally none or one: merged by id
     # (`merge_publications`), never three-way. Absent from older peers.
     publications: list[SyncPublication] = Field(default_factory=list)
+    # Who the meeting is shared with (phase 8): merged by person, newer `updated_at` wins
+    # (`merge_peer_shares`). Absent from older peers, which must not wipe ours.
+    peer_shares: list[SyncPeerShare] = Field(default_factory=list)
     speaker_embeddings: dict[str, list[float]] = Field(default_factory=dict)
     assets: list[SyncAsset] = Field(default_factory=list)
     events: list[SyncEvent] = Field(default_factory=list)

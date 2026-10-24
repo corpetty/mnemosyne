@@ -493,13 +493,32 @@ def _view_one(app: AppContext, session_id: str, comment_id: str) -> Comment:
 # ---- writing -----------------------------------------------------------------------------
 
 
-def create(app: AppContext, session_id: str, req: CommentCreate) -> Comment:
+COMMENT_ID = re.compile(r"[0-9a-f]{12}")
+
+
+def create(app: AppContext, session_id: str, req: CommentCreate, comment_id: str = "") -> Comment:
+    """A new comment or reply by the caller. `comment_id`: one the client minted (a contact's
+    computer, phase 8: it shows the comment before the hub has it); an id already used is
+    refused unless it is this same author's comment in this meeting (sent twice), which is
+    returned as it is."""
     session = _session(app, session_id)
     text = req.text.strip()
     if not text:
         raise BadComment("A comment needs text")
     fields: dict = {}
-    comment_id = uuid4().hex[:12]  # known first: a notes comment's mark carries it
+    if comment_id:
+        if not COMMENT_ID.fullmatch(comment_id):
+            raise BadComment("A comment id is 12 hex characters")
+        try:
+            existing = app.repo.get_comment(comment_id)
+        except access.Hidden:
+            raise BadComment("That comment id is taken") from None
+        if existing is not None:
+            if existing.session_id == session_id and existing.author_id == _author(app)[0]:
+                return _view_one(app, session_id, comment_id)
+            raise BadComment("That comment id is taken")
+    else:
+        comment_id = uuid4().hex[:12]  # known first: a notes comment's mark carries it
     if req.parent_id:
         parent = app.repo.get_comment(req.parent_id)
         if parent is None or parent.session_id != session_id:

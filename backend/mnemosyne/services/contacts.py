@@ -398,6 +398,15 @@ def by_endpoint(app: AppContext, endpoint_id: str) -> dict | None:
     return None
 
 
+def by_pid(app: AppContext, pid: str) -> dict | None:
+    """The live contact whose `p:<16 hex>` id this is (what a CONTACT request runs as)."""
+    _check(app)
+    for row in app.repo.contacts():
+        if pid_of(row["person"]) == pid:
+            return row
+    return None
+
+
 def info(app: AppContext, row: dict) -> ContactInfo:
     _check(app)
     person = row["person"]

@@ -93,6 +93,9 @@ class AppContext:
     http_transport: object | None = None  # tests inject an httpx transport for integrations
     app_watch: Any = None  # api/app_watch.py: the desktop app this backend belongs to
     sync: Any = None  # services/sync_service.py SyncService: library sync with the peers
+    share_announce: Any = (
+        None  # services/share_announce.py: pokes contacts a shared meeting changed
+    )
     person: Any = None  # services/person.py PersonKeys: this person's signing key
 
     def __post_init__(self) -> None:
@@ -219,6 +222,9 @@ class AppContext:
         from ..services.sync_service import SyncService
 
         ctx.sync = SyncService(ctx)  # also names this machine in version vectors
+        from ..services.share_announce import ShareAnnouncer
+
+        ctx.share_announce = ShareAnnouncer(ctx)
 
         # The sidecar's listeners are new each start: dial the sync peers and the contacts'
         # machines again, then pull.
@@ -514,6 +520,7 @@ class AppContext:
         await self._try("Task links", self._reconcile_tasks)
         # Library sync: claim meetings from before it, then pull from the peers and watch.
         await self._try("Library sync", self.sync.start)
+        await self._try("Share announcer", self.share_announce.start)
 
     async def _reconcile_tasks(self) -> None:
         from ..services import task_links, task_migration
@@ -567,6 +574,8 @@ class AppContext:
                 seconds=round(time.time() - recording.started_at, 1),
             )
         await self.sync.stop()
+        if self.share_announce is not None:
+            await self.share_announce.stop()
         await self.link.stop()
         await self.index.stop()
         for task in (

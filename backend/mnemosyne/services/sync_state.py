@@ -24,6 +24,7 @@ from ..models.sync_session import (
     SyncBookmark,
     SyncComment,
     SyncEvent,
+    SyncPeerShare,
     SyncPublication,
     SyncSession,
     event_travels,
@@ -147,6 +148,17 @@ def export_session(repo: SessionRepository, session_id: str, device_id: str) -> 
                 origin=x["origin"] or device_id,
             )
             for x in rows["publications"]
+        ],
+        peer_shares=[
+            SyncPeerShare(
+                person=x["person"],
+                parts=json.loads(x["parts"] or "{}"),
+                by=x["by"],
+                at=x["at"],
+                updated_at=x["updated_at"],
+                revoked_at=x["revoked_at"],
+            )
+            for x in rows["peer_shares"]
         ],
         speaker_embeddings={x["label"]: json.loads(x["embedding"]) for x in rows["embeddings"]},
         assets=[

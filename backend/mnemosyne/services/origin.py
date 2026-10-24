@@ -2,7 +2,8 @@
 
 `Session.origin` is "" for a meeting recorded here, else the id of the computer that has the
 audio. Work that needs the audio (transcribing, clips, deleting, recovery) belongs to that
-computer; these helpers let the others say so.
+computer; these helpers let the others say so. A meeting someone shared with this person
+(`Session.shared_from`, their person key) is foreign too: the audio is with them.
 """
 
 from __future__ import annotations
@@ -19,16 +20,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 FALLBACK_NAME = "another computer"
+SOMEONE = "someone"
 
 
 def is_foreign(session: Any) -> bool:
-    """True when the meeting was recorded on another computer."""
-    return bool(getattr(session, "origin", ""))
+    """True when the meeting was recorded on another computer, or shared by another person."""
+    return bool(getattr(session, "origin", "") or getattr(session, "shared_from", ""))
 
 
 def origin_name(app: AppContext, session: Any) -> str:
-    """The name of the computer that recorded the meeting, from sync_peers.json."""
+    """The name of the computer that recorded the meeting, from sync_peers.json; for a meeting
+    shared by a contact, the contact's name."""
+    person = getattr(session, "shared_from", "")
+    if person:
+        return contact_name(app, person)
     return device_name(app, getattr(session, "origin", "") or "")
+
+
+def contact_name(app: AppContext, person: str) -> str:
+    """What a contact is called here: the name this person gave them, else their own."""
+    contact = app.repo.contact(person)
+    if contact is None:
+        return SOMEONE
+    return str(contact.get("my_name") or contact.get("name") or SOMEONE)
 
 
 def device_name(app: AppContext, device_id: str) -> str:
@@ -45,6 +59,8 @@ def device_name(app: AppContext, device_id: str) -> str:
 
 
 def audio_elsewhere(app: AppContext, session: Any) -> str:
+    if getattr(session, "shared_from", ""):
+        return f"The audio is with {origin_name(app, session)}"
     return f"The audio is on {origin_name(app, session)}"
 
 

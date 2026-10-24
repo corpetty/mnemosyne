@@ -100,6 +100,12 @@ pairing) is adopted once at the first hello, then bound. Tunnelled TCP reached t
 127.0.0.1 like the desktop app, so with no `api_token` auth was off for remote peers and
 `/api/system/attach` counted as local: the sidecar now connects from 127.0.0.2 and auth treats
 that as never local (always a token, no LOCAL_PATHS). CONTACT devices never get DEVICE_PATHS.
+Machines paired for sync before phase 8 converge on one person key in a round (the one without
+contacts adopts; with neither, the higher key adopts the lower). Share changes bump only the sync
+bookkeeping, never `updated_at` (publications would read as behind). The owner's own comments go
+out under its pid and name (an empty author_id means "You" on the recipient). Done/follow has one
+path (services/item_flags.py) for the Tasks route and contributions; the notes document is ensured
+(seeded from `Session.notes`) before a join, accepted frames and a SharedMeeting build.
 
 Risks: the real multi-machine path (cards with several tickets, pokes across the tunnel) is only
 covered by the fake sidecar until a manual two-machine check; hub folds per contact per round

@@ -145,6 +145,7 @@ def _meetings(repo: SessionRepository) -> list[_Meeting]:
             items=r["summary_data"].action_items,
         )
         for r in repo.action_item_sources()
+        if not r["shared_from"]  # another person's meeting: never linked, never reconciled
     ]
 
 
