@@ -670,6 +670,112 @@ Open for Corey: whether shared-with-me meetings join Ask, semantic search, the d
 export by default; the name in the UI ("People", "Contacts" or "Share with a person"); whether to
 ship the hardening items on their own first.
 
+## Phase 9: guest notes (a link for the people in the meeting)
+
+### Phase 9 design (drafted 2026-10-24, for review)
+
+Status: designed, nothing built. Drafted against the code at 0e00520 (0.23.0). Decided by Corey
+(2026-10-24): rooms on the publish host you run and, by default, on a public one we run; guests
+see the notes and the agenda; after the meeting the page turns read-only until the room expires;
+guests may comment on the notes in v1.
+
+Why: most meetings are with people outside one's organization. Phase 8 needs the other person to
+run Mnemosyne and pair; a team server needs an account, a way to reach the host and a team mode
+that turns phase 8 off; publishing is read-only and after the fact. Nothing lets the people you are
+talking to type into the meeting's notes from a browser. Phase 9 does: during a meeting you hand
+out a link, and anyone holding it types into the live notes, with no install, account or pairing.
+
+- **A capability link per meeting**, like publishing's: `https://<host>/n/<room>#<key>`. `room` is
+  16 random hex (never the meeting id); `key` is 32 random bytes that only the fragment carries,
+  so the host never sees it. The link opens the live notes, the comments on them, and read-only:
+  the meeting's title, date, the owner's name and the agenda (Corey: notes and agenda). The
+  agenda is the calendar event's description the copilot follows, with the items it marked
+  covered (`agenda_covered`) ticked as the meeting goes. Never the transcript, summary, audio or
+  comments on anything but the notes. One link per meeting at a time; **New link** makes a new
+  room and key and closes the old one.
+- **End-to-end encrypted frames.** Notes travel as today's hashseq frames (0xDE deltas, 0xAF
+  artifacts, phase 6), each sealed with AES-256-GCM under a key derived from `key` (HKDF
+  "mnemosyne/guest/frames"), AAD `mnemosyne/guest/1|room|kind`. Presence and names are sealed JSON
+  frames. Replays and reordering are harmless: the CRDT is idempotent. This is prerequisite 1's
+  "encrypt ops per document": the relay becomes a store-and-forward mailbox and cannot merge,
+  so all merging happens in the browsers and in the owner's app.
+- **The relay: a room on a host both sides can reach.** The owner's desktop is behind NAT, so
+  guests and owner meet at a relay. That is the publish host, which gains a live channel:
+  `GET /n/{room}` (the guest page), `wss://…/live/{room}` (relay sealed frames to everyone in the
+  room, keep a bounded log), `PUT /live/{room}` (create, with the publisher token as for
+  publications), `PUT /live/{room}/snapshot` and `DELETE /live/{room}`. A guest proves it holds the link
+  with `room_token = HKDF(key, "mnemosyne/guest/room")`. The owner registers it at creation, so the
+  host can refuse strangers without being able to read anything. Caps: frames ≤ 256 KB, log
+  ≤ 8 MB, rooms expire (default 24 h after the last frame, at most 7 days), rate limits as for
+  publications. The host sees room ids, sizes, times and guests' IPs. Which host (Corey: the
+  publish host you run, and ours by default): a `guest_host` setting; blank means our public host
+  once it runs (as for iroh relays, where ours is the fallback), and the publish host when you set
+  one. Ours is the same `publish-host` binary and deploy/publish/ setup, run by us, with its own
+  caps and a published privacy note. Until it runs, guest notes need a configured publish host and
+  the button says so. "This computer" as a relay (Tailscale Funnel, the team listener) is later.
+- **The owner's backend is the bridge.** Its relay (`/ws/notes`) stays the document's home. A
+  bridge task dials the room over an outbound WebSocket (works behind NAT), decrypts guests'
+  frames and feeds them in through `shared_notes.accept_frames` with author
+  `guest:<name>`. It seals every local frame (the owner's typing, the copilot's "Add to notes",
+  phase 8 contributions) and sends it out. It also posts a sealed folded snapshot every few
+  minutes, so a late guest loads one snapshot plus the log since. When the owner's app is offline,
+  guests keep typing together through the relay, and the bridge catches up from the log when it is
+  back. The fold, Obsidian, search and the summary keep reading `Session.notes` as today.
+- **The guest page:** a new Vite entry (`guest/`, Svelte 5, built reproducibly into the backend's
+  static files and the publish host like `viewer/`). Unlike the viewer, it needs the notes wasm and
+  the editor from `src/lib/notes`, so it reuses them as a library: no app stores, no SvelteKit
+  router. On first open: "Your name" (kept in the page's localStorage) and a consent line: "What
+  you type here becomes part of <owner>'s notes of this meeting." After that, the same editor
+  (formatting, tables, paste, undo of one's own edits), names of who is here and who is typing,
+  the agenda beside the notes, and a "Connecting… / Live / Ended" state. It works in Chromium,
+  Firefox and WebKit (Safari).
+- **Guests comment on the notes** (Corey: yes, in v1): select text, **💬 Comment**, as in the app.
+  A comment is a sealed JSON frame `{kind: comment, op, id, parent_id, quote, text, guest}`
+  relayed like the rest; the bridge writes it through the comments service (phase 5, target
+  `notes`) with author `guest:<name>`. The bridge also marks the text (`mark_comment` from
+  `notes_ids`), so the mark belongs to the owner's server, as for web readers in phase 6. It seals
+  every thread on the notes back to the room, the owner's and phase 8 people's included, so
+  everyone sees the same threads. Guests create and reply; edit and delete only their own, known by
+  a random `guest` id kept in the page's localStorage (as weak as the name). Resolving stays with
+  the owner. Comments on the notes do not leave the room otherwise.
+- **After the meeting** (Corey: read-only until expiry): **End guest notes**, or the automatic end
+  after the recording stops, posts a final sealed snapshot with the threads and an `ended` frame.
+  Open pages turn read-only, "Ended: you can still read and copy these notes until <time>". New
+  visitors see the same until the room expires (default 24 h after the end, at most 7 days),
+  then the host deletes the room. **New link** or **Stop sharing the notes** deletes it at once.
+- **Authorship, honestly.** A guest's name is what they typed. The bridge stamps their frames
+  `guest:<name>` in `shared_notes_ops`, which the owner's app shows ("from Ana (guest)"). In
+  v1 frames are not signed per guest; prerequisite 2 (signatures) is for people with keys, phase 8.
+  Holding the link is what lets someone write. The owner can cut everyone off at once with **End
+  guest notes** or **New link**. Text a guest typed stays in the notes' history, as all typing does
+  (phase 6).
+- **The owner's controls:** **Invite to notes** in the meeting header and on the recording
+  screen next to the Copilot (when no host is available: a note on what is missing), then
+  **Copy link** and a QR code. A line shows who is here. **End guest notes** turns the room
+  read-only (above); **Stop sharing the notes** deletes it. A meeting's guest notes also end N hours
+  after its recording stops (setting, default 12). Every start, end and deletion is a history
+  line, and is sealed into the meeting's records like a publish.
+- **Consent and team servers.** `require_consent` also reminds the owner that guests' typing
+  becomes part of the record. On a team server, guest links are off until an admin turns on
+  `allow_guest_notes`; then the owner or an admin may start one.
+- **What it reuses:** notes-core, notes-wasm and the editor (phase 6); the capability-link, sealing
+  and host pattern, caps, expiry, publisher token and records seals (phase 7); `accept_frames` and
+  `guest:` authors next to the `p:` ones (phase 8).
+- **Tests:** the bridge against a fake room in Python (sealed in, plain into the relay, and
+  back); the host's live routes in `cargo test` (auth by room token, caps, expiry, log replay);
+  the guest page's sealing in Vitest against shared test vectors (as `publication_v1.json` does
+  for publishing); the bridge writing guest comments as `guest:<name>` and marking them once; a
+  Playwright spec with two pages, the owner's app and a guest page, against a local publish host
+  started for the test: both type and converge, the guest comments and the owner sees the thread,
+  the agenda shows, End turns the guest page read-only and Stop sharing the notes closes it.
+- **Not in v1:** guests ticking action items or seeing the summary; per-guest revocation (only
+  end-all or a new link); "this computer" as a relay; a mesh without a relay (iroh in the browser
+  goes through relays anyway); keeping a guest's copy after the room expires (they can copy the
+  text while it is read-only).
+- **Before it ships:** our public host running (deploy/publish/ on our side, a privacy note
+  saying what it can see), and guest notes off by default until it does, unless a publish host is
+  set.
+
 ## Later, each behind the prerequisites below
 
 - **Live shared notes** during a meeting: a scratchpad attendees type into (desktop, or the team
