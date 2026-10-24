@@ -72,5 +72,6 @@ class ShareStatus(ApiModel):
     """How this person's work on a meeting shared with them stands (services/share_push.py)."""
 
     owner: ShareOwner
+    parts: ShareParts  # what the owner shared with me: what I may see and do
     waiting: ShareWaiting
     rejected: list[ShareRejected] = Field(default_factory=list)

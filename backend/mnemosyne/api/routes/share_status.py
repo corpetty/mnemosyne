@@ -5,7 +5,8 @@ The desktop or an admin; the contact tokens never reach /api/sessions."""
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...models.share_hub import ShareOwner, ShareRejected, ShareStatus, ShareWaiting
-from ...services import contacts, share_push
+from ...models.shared_meeting import ShareParts
+from ...services import contacts, share_push, shared_with_me
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/sessions/{session_id}", tags=["sharing"])
@@ -24,6 +25,7 @@ async def share_status(session_id: str, ctx: AppContext = Depends(get_ctx)):
     waiting = share_push.waiting_for(ctx, session_id)
     return ShareStatus(
         owner=ShareOwner(person=person, name=name or contacts.pid_of(person)),
+        parts=shared_with_me.parts_of(ctx, session_id, person) or ShareParts(),
         waiting=ShareWaiting(**waiting),
         rejected=[ShareRejected(**r) for r in share_push.rejected_for(ctx, session_id)],
     )

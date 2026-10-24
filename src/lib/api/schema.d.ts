@@ -747,6 +747,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/demo/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Seed Share */
+        post: operations["seed_share_api_demo_share_post"];
+        /** Remove Share */
+        delete: operations["remove_share_api_demo_share_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/devices": {
         parameters: {
             query?: never;
@@ -4880,6 +4898,13 @@ export interface components {
             /** What */
             what: string;
         };
+        /** DemoShare */
+        DemoShare: {
+            /** Person */
+            person: string;
+            /** Session Id */
+            session_id: string;
+        };
         /** DesktopCalendar */
         DesktopCalendar: {
             /** Account */
@@ -7603,6 +7628,7 @@ export interface components {
          */
         ShareStatus: {
             owner: components["schemas"]["ShareOwner"];
+            parts: components["schemas"]["ShareParts-Output"];
             /** Rejected */
             rejected: components["schemas"]["ShareRejected"][];
             waiting: components["schemas"]["ShareWaiting"];
@@ -10463,6 +10489,44 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    seed_share_api_demo_share_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoShare"];
+                };
+            };
+        };
+    };
+    remove_share_api_demo_share_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

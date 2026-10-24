@@ -18,6 +18,7 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import type { PublicationSelection, QuoteSpan } from '$lib/types/index.js';
+	import PartPicker from './PartPicker.svelte';
 	import Meeting from '../../../viewer/src/Meeting.svelte';
 	import type { Manifest } from '../../../viewer/src/format';
 
@@ -36,15 +37,15 @@
 	/** The quote whose clip is being listened to (its key). */
 	let listening = $state<string | null>(null);
 
-	const CONTENT: { key: keyof PublicationSelection; label: string; count?: () => number }[] = [
+	const content = $derived<{ key: keyof PublicationSelection; label: string; count?: number }[]>([
 		{ key: 'summary', label: 'Summary' },
-		{ key: 'decisions', label: 'Decisions', count: () => data?.decisions.length ?? 0 },
-		{ key: 'questions', label: 'Open questions', count: () => data?.open_questions.length ?? 0 },
-		{ key: 'action_items', label: 'Action items', count: () => data?.action_items.length ?? 0 },
+		{ key: 'decisions', label: 'Decisions', count: data?.decisions.length ?? 0 },
+		{ key: 'questions', label: 'Open questions', count: data?.open_questions.length ?? 0 },
+		{ key: 'action_items', label: 'Action items', count: data?.action_items.length ?? 0 },
 		{ key: 'chapters', label: 'Chapters' },
 		{ key: 'topics', label: 'Topics' },
 		{ key: 'notes', label: 'Live notes' }
-	];
+	]);
 	const NAMES = [
 		['as_is', 'Names'],
 		['first', 'First names'],
@@ -148,17 +149,12 @@
 			<div class="grid gap-6 lg:grid-cols-2">
 				<!-- The choices -->
 				<div class="space-y-4 text-sm">
-					<section aria-label="Content">
-						<h4 class={groupHeading}>Content</h4>
-						<div class="grid grid-cols-2 gap-x-4 gap-y-1">
-							{#each CONTENT as c (c.key)}
-								<label class="flex items-center gap-2 text-gray-300">
-									<input type="checkbox" class={check} checked={!!sel[c.key]} onchange={(e) => pub.set({ [c.key]: e.currentTarget.checked })} />
-									<span>{c.label}{#if c.count}<span class="text-gray-500">{` · ${c.count()}`}</span>{/if}</span>
-								</label>
-							{/each}
-						</div>
-					</section>
+					<PartPicker
+						heading="Content"
+						items={content}
+						sel={sel as unknown as Record<string, boolean>}
+						onchange={(key, value) => pub.set({ [key]: value })}
+					/>
 
 					<section aria-label="Quotes">
 						<h4 class={groupHeading}>Quotes</h4>

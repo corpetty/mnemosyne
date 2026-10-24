@@ -103,6 +103,8 @@ async def test_a_comment_reaches_the_owner_as_me_and_comes_back_once(pair):
     mine = await comment(recipient, sid)
     assert mine["author"] == "Recipient" and mine["author_id"] == recipient.ctx.person.pid
     assert (await status(recipient, sid))["waiting"] == {"comments": 1, "ticks": 0, "notes": False}
+    parts = (await status(recipient, sid))["parts"]
+    assert parts["summary"] is True and parts["transcript"] is False
     assert owner_comments(owner, sid) == []
 
     summary = await send(owner, recipient)

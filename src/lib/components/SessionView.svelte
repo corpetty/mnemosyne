@@ -2,7 +2,7 @@
 	import { tick } from 'svelte';
 	import { markMoment, startRecording, stopAndTranscribe } from '$lib/app/controller.svelte.js';
 	import { setLocalOnly } from '$lib/api/backend.js';
-	import { canChange } from '$lib/app/access.js';
+	import { audioReason, canChange } from '$lib/app/access.js';
 	import { syncState } from '$lib/stores/sync.svelte.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
@@ -19,6 +19,8 @@
 	import CopilotPanel from './CopilotPanel.svelte';
 	import MeetingActions from './MeetingActions.svelte';
 	import ShareMenu from './ShareMenu.svelte';
+	import PeopleShareMenu from './PeopleShareMenu.svelte';
+	import { contactsState } from '$lib/stores/contacts.svelte.js';
 	import PublishDialog from './PublishDialog.svelte';
 	import { publishingState } from '$lib/stores/publishing.svelte.js';
 	import { teamState } from '$lib/stores/team.svelte.js';
@@ -40,7 +42,40 @@
 	// Someone else's meeting (a reviewer reading a member's): no controls the server refuses.
 	const mine = $derived(canChange(sessionState.activeSession));
 	// A meeting recorded on another computer: its audio, and recording into it, stay there.
-	const foreign = $derived(!!sessionState.activeSession?.origin);
+	const foreign = $derived(
+		!!(sessionState.activeSession?.origin || sessionState.activeSession?.shared_from)
+	);
+	// A meeting another person shared with me, and how the share and my work on it stand.
+	const sharedFrom = $derived(sessionState.activeSession?.shared_from ?? '');
+	const shareStatus = $derived(
+		sessionState.activeSession ? (contactsState.shareStatus[sessionState.activeSession.id] ?? null) : null
+	);
+	$effect(() => {
+		const id = sessionState.activeSession?.id;
+		if (id && sharedFrom) void contactsState.loadStatus(id);
+	});
+	function plural(n: number, one: string, many = one + 's'): string {
+		return `${n} ${n === 1 ? one : many}`;
+	}
+	function list(parts: string[]): string {
+		return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : (parts[0] ?? '');
+	}
+	const canDoLine = $derived.by(() => {
+		if (!shareStatus) return '';
+		const can = ['comment'];
+		if (shareStatus.parts.action_items) can.push('tick action items');
+		if (shareStatus.parts.notes) can.push('type in the notes');
+		return `${contactsState.name(sharedFrom)} shared this with you: you can ${list(can)}.`;
+	});
+	const waitingLine = $derived.by(() => {
+		const w = shareStatus?.waiting;
+		if (!w) return '';
+		const bits: string[] = [];
+		if (w.comments) bits.push(plural(w.comments, 'comment'));
+		if (w.ticks) bits.push(plural(w.ticks, 'tick'));
+		if (w.notes) bits.push('notes edits');
+		return bits.length ? `Waiting for ${contactsState.name(sharedFrom)}'s computer: ${bits.join(', ')}` : '';
+	});
 	// This meeting is being recorded right now.
 	const recordingHere = $derived(
 		audioState.isRecording && audioState.activeSessionId === sessionState.activeSession?.id
@@ -185,6 +220,7 @@
 				{/if}
 			{/if}
 			<ShareMenu />
+			<PeopleShareMenu />
 			{#if mine}
 				<MeetingTypePicker />
 				<MeetingActions />
@@ -204,13 +240,31 @@
 				{sessionState.activeSession.local_only ? '🔒 Local only' : '🔓 Cloud allowed'}
 			</button>
 			{/if}
+			{#if sharedFrom}
+				<span
+					title="Shared with you from {contactsState.name(sharedFrom)}'s computer"
+					class="rounded border border-violet-800 bg-violet-950/40 px-2 py-0.5 text-xs text-violet-300"
+				>Shared by {contactsState.name(sharedFrom)}</span>
+			{/if}
 			{new Date(sessionState.activeSession.created_at).toLocaleString()}
 		</span>
 	</div>
 	{#if sessionState.activeSession.origin}
 		<p class="-mt-2 mb-2 text-xs text-gray-500">Recorded on {syncState.name(sessionState.activeSession.origin)}</p>
 	{/if}
-	{#if !mine}
+	{#if sharedFrom && shareStatus}
+		<p class="-mt-2 mb-2 text-xs text-gray-500">{canDoLine}</p>
+		{#if waitingLine}<p class="-mt-1 mb-2 text-xs text-gray-500">{waitingLine}</p>{/if}
+		{#if shareStatus.rejected.length}
+			<ul class="-mt-1 mb-2 space-y-0.5 text-xs text-amber-300/80">
+				{#each shareStatus.rejected.slice(0, 3) as rj}
+					<li>Not accepted by {contactsState.name(sharedFrom)}: {rj.excerpt ? `“${rj.excerpt}” — ` : ''}{rj.reason}</li>
+				{/each}
+				{#if shareStatus.rejected.length > 3}<li>and {shareStatus.rejected.length - 3} more</li>{/if}
+			</ul>
+		{/if}
+	{/if}
+	{#if !mine && !sharedFrom}
 		<p class="-mt-2 mb-2 text-xs text-amber-300/80">
 			{teamState.name(sessionState.activeSession.owner_id) || 'Someone else'}'s meeting: you can read, play and export it and tick off its action items, not change it.
 		</p>
@@ -298,7 +352,7 @@
 							<DeviceSelector />
 						{/if}
 						<AudioControls
-							disabledReason={foreign ? syncState.audioOn(sessionState.activeSession.origin) : ''}
+							disabledReason={audioReason(sessionState.activeSession)}
 							onStartOverride={() => startRecording()}
 							onStopOverride={stopAndTranscribe}
 						/>
@@ -310,11 +364,13 @@
 						</p>
 					{/if}
 					<HistoryCard />
-					<RecordsCard />
-					<p class="text-xs text-gray-600">
-						Shortcuts: <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+R</kbd> Record
-						&middot; <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+S</kbd> Stop
-					</p>
+					{#if !sharedFrom}
+						<RecordsCard />
+						<p class="text-xs text-gray-600">
+							Shortcuts: <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+R</kbd> Record
+							&middot; <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+S</kbd> Stop
+						</p>
+					{/if}
 					<LiveTranscript />
 				</div>
 			{/if}
@@ -324,10 +380,20 @@
 		{:else if uiState.activeTab === 'summary'}
 			<SummaryView />
 		{:else if uiState.activeTab === 'notes'}
-			<NotesEditor />
-			<div class="mt-4"><ResourcesCard /></div>
+			{#if sharedFrom && shareStatus && !shareStatus.parts.notes}
+				<p class="text-sm text-gray-500">{contactsState.name(sharedFrom)} didn't share the notes.</p>
+			{:else}
+				<NotesEditor />
+			{/if}
+			{#if !sharedFrom}
+				<div class="mt-4"><ResourcesCard /></div>
+			{/if}
 		{:else if uiState.activeTab === 'export'}
-			<ObsidianExport />
+			{#if sharedFrom}
+				<p class="text-sm text-gray-500">This meeting is {contactsState.name(sharedFrom)}'s: it cannot be exported from here.</p>
+			{:else}
+				<ObsidianExport />
+			{/if}
 		{/if}
 	</div>
 </div>

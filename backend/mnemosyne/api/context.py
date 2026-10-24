@@ -530,15 +530,9 @@ class AppContext:
         await self._try("Task links", self._reconcile_tasks)
         # Library sync: claim meetings from before it, then pull from the peers and watch.
         await self._try("Library sync", self.sync.start)
-        await self._try("Demo share", self._seed_demo_share)
         await self._try("Share announcer", self.share_announce.start)
         await self._try("Share pull", self.share_pull.start)
         await self._try("Share push", self.share_push.start)
-
-    def _seed_demo_share(self) -> None:
-        from ..services.share_demo import seed_demo
-
-        seed_demo(self)
 
     async def _reconcile_tasks(self) -> None:
         from ..services import task_links, task_migration

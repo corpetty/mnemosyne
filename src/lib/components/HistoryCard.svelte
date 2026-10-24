@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getHistory, recoverSession } from '$lib/api/backend.js';
-	import { syncState } from '$lib/stores/sync.svelte.js';
+	import { audioReason } from '$lib/app/access.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -304,8 +304,8 @@
 					{#if history.pending.some((p) => p.state === 'waiting')}
 						<button
 							onclick={recover}
-							disabled={recovering || history.recording_now || !!session.origin}
-							title={session.origin ? syncState.audioOn(session.origin) : history.recording_now ? 'After this recording stops' : 'Add it to the meeting as its next part'}
+							disabled={recovering || history.recording_now || !!audioReason(session)}
+							title={audioReason(session) || history.recording_now ? 'After this recording stops' : 'Add it to the meeting as its next part'}
 							class="rounded bg-amber-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-50"
 						>Save it into the meeting</button>
 					{/if}

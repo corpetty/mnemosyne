@@ -98,6 +98,16 @@ export type RemoteAccess = S['RemoteAccess'];
 export type SyncStatus = S['SyncStatus'];
 export type SyncPeerStatus = S['SyncPeerStatus'];
 export type SyncPeerState = SyncPeerStatus['state'];
+export type ContactInfo = S['ContactInfo'];
+export type ContactsResponse = S['ContactsResponse'];
+export type ContactsMe = S['ContactsMe'];
+export type ContactPullInfo = S['ContactPullInfo'];
+export type ShareParts = S['ShareParts-Output'];
+export type PeerShareInfo = S['PeerShareInfo'];
+export type ShareStatus = S['ShareStatus'];
+export type ShareOwner = S['ShareOwner'];
+export type ShareWaiting = S['ShareWaiting'];
+export type ShareRejected = S['ShareRejected'];
 export type SystemInfo = S['SystemInfo'];
 export type DesktopCalendar = S['DesktopCalendar'];
 export type EncryptionStatus = S['EncryptionStatus'];
@@ -172,6 +182,8 @@ export type BackendEvent =
   | { type: 'notes'; session_id: string } // a meeting's live notes were folded into Session.notes
   | { type: 'history'; session_id: string } // something was added to a meeting's history
   | { type: 'sync'; peer: string; state: SyncPeerState; done: number; total: number } // library sync with a peer
+  | { type: 'share_outbox'; session_id: string; pending: number } // what I did on a meeting shared with me waits to be sent to its owner
+  | { type: 'share_pull'; person: string; state: string; error: string | null } // pulling what a contact shares: ContactPullInfo.state
   | { type: 'shares' } // a meeting was shared or unshared (which one is not said: it may no longer be yours)
   | {
       // A source stopped being captured, or is captured again (backend audio/health.py).

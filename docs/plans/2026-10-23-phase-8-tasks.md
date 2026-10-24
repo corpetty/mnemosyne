@@ -1,6 +1,9 @@
 # Phase 8 tasks: sharing with other people's computers
 
-Status: in progress, 2026-10-23. The design is "Phase 8" in 2026-10-12-hashseq-collaboration.md; this
+Status: built 2026-10-24 (M1 fb12fe3, M2 8113a21, M3 4ad732b, M4 45df2b0, M5 the UI). C17: the
+section lives in Settings → General next to library sync, headed "People you share with" (no tab,
+no clash with the People view). C18: the demo seed is a demo-only route (`POST|DELETE
+/api/demo/share`) the e2e spec calls itself, so no other spec sees it. The design is "Phase 8" in 2026-10-12-hashseq-collaboration.md; this
 file is the build order, drafted against 56e391e and checked against the code. Open questions take
 the design's defaults: shared-with-me meetings stay out of Ask, semantic search, the digest and
 Obsidian (four `shared_in_*` settings, off); hardening ships first.

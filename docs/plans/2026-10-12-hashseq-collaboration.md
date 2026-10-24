@@ -550,7 +550,13 @@ Logos: readers never write, and a curated copy must be able to lose a sentence f
 
 ### Phase 8 design (drafted 2026-10-23, for review)
 
-Status: draft, nothing built. Drafted against the code at 20117be. Decided by Corey (2026-10-23):
+Status: built 2026-10-24, unreleased, as designed below with the corrections in
+docs/plans/2026-10-23-phase-8-tasks.md (contact tokens derived from a per-pair secret, a card
+passthrough in the sidecar, tunnelled TCP from 127.0.0.2, the hub enforcing team mode's own rules
+through a contact Principal). The UI lives in Settings → General ("People you share with"), the
+meeting header's Share menu and the sidebar's "Shared with me". Not yet: a real two-person check
+through the sidecar (tests use in-process apps and the fake sidecar).
+Drafted against the code at 20117be. Decided by Corey (2026-10-23):
 the owner picks what each share contains; recipients get team-share parity (comment, tick and
 follow tasks, edit the live notes); the owner's machines are the hub; one key per person.
 

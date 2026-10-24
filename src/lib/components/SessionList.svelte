@@ -8,6 +8,7 @@
 	import { teamState } from '$lib/stores/team.svelte.js';
 	import JobProgress from './JobProgress.svelte';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
+	import { contactsState } from '$lib/stores/contacts.svelte.js';
 	import { syncState } from '$lib/stores/sync.svelte.js';
 	import { importAudio } from '$lib/api/backend.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -95,7 +96,63 @@
 		dragOver = false;
 		importFiles(e.dataTransfer?.files ?? null);
 	}
+
+	// Shared with me by other people sit in a group of their own at the bottom.
+	const ownSessions = $derived(sessionState.sessions.filter((x) => !x.shared_from));
+	const sharedSessions = $derived(sessionState.sessions.filter((x) => !!x.shared_from));
+	$effect(() => {
+		if (sharedSessions.length && !contactsState.loaded) void contactsState.load();
+	});
 </script>
+
+{#snippet row(session: SessionSummary)}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			onclick={() => handleSelect(session)}
+			onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleSelect(session); }}
+			role="button"
+			tabindex="0"
+			class="w-full text-left px-3 py-2 rounded-lg transition-colors cursor-pointer
+				{sessionState.activeSession?.id === session.id
+				? 'bg-gray-800 border border-gray-600'
+				: 'hover:bg-gray-800/50'}"
+		>
+			<div class="flex items-center justify-between">
+				<span class="text-sm font-medium text-gray-200 truncate">{#if session.local_only}<span title="Local only" class="mr-1">🔒</span>{/if}{session.name}</span>
+				{#if canChange(session)}<button
+					onclick={(e) => handleDelete(e, session)}
+					onkeydown={(e) => e.stopPropagation()}
+					class="shrink-0 text-xs px-1 rounded transition-colors {confirming === session.id
+						? 'bg-red-900/60 text-red-200'
+						: 'text-gray-600 hover:text-red-400'}"
+					title={confirming === session.id ? 'Click again to delete for good' : 'Delete meeting'}
+					aria-label={confirming === session.id ? `Confirm deleting ${session.name}` : `Delete ${session.name}`}
+				>
+					{confirming === session.id ? 'Delete?' : '✕'}
+				</button>{/if}
+			</div>
+			<div class="flex items-center gap-2 mt-1">
+				<span class="text-xs px-1.5 py-0.5 rounded {statusBadge[session.status] ?? statusBadge.created}">
+					{statusLabel[session.status] ?? session.status}
+				</span>
+				<span class="text-xs text-gray-500">{formatDate(session.created_at)}</span>
+				{#if session.origin}
+					<span class="truncate text-xs text-gray-500" title="Recorded on {syncState.name(session.origin)}">{syncState.name(session.origin)}</span>
+				{/if}
+				{#if connectionState.me?.team_mode && session.owner_id && session.owner_id !== connectionState.me.id}
+					<span class="truncate text-xs text-blue-300/70" title="Shared with you">{teamState.name(session.owner_id) || 'shared'}</span>
+				{/if}
+			</div>
+			{#if session.shared_from}
+				<div class="mt-0.5 truncate text-xs text-gray-500">from {contactsState.name(session.shared_from)}</div>
+			{/if}
+			{#if jobsState.active(session.id, 'transcribe')}
+				{@const busy = jobsState.active(session.id, 'transcribe')!}
+				<div class="mt-1.5"><JobProgress job={busy} compact /></div>
+			{/if}
+		</div>
+{/snippet}
+
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
@@ -136,50 +193,15 @@
 	{/if}
 
 	<div class="space-y-1">
-		{#each sessionState.sessions as session}
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div
-				onclick={() => handleSelect(session)}
-				onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleSelect(session); }}
-				role="button"
-				tabindex="0"
-				class="w-full text-left px-3 py-2 rounded-lg transition-colors cursor-pointer
-					{sessionState.activeSession?.id === session.id
-					? 'bg-gray-800 border border-gray-600'
-					: 'hover:bg-gray-800/50'}"
-			>
-				<div class="flex items-center justify-between">
-					<span class="text-sm font-medium text-gray-200 truncate">{#if session.local_only}<span title="Local only" class="mr-1">🔒</span>{/if}{session.name}</span>
-					{#if canChange(session)}<button
-						onclick={(e) => handleDelete(e, session)}
-						onkeydown={(e) => e.stopPropagation()}
-						class="shrink-0 text-xs px-1 rounded transition-colors {confirming === session.id
-							? 'bg-red-900/60 text-red-200'
-							: 'text-gray-600 hover:text-red-400'}"
-						title={confirming === session.id ? 'Click again to delete for good' : 'Delete meeting'}
-						aria-label={confirming === session.id ? `Confirm deleting ${session.name}` : `Delete ${session.name}`}
-					>
-						{confirming === session.id ? 'Delete?' : '✕'}
-					</button>{/if}
-				</div>
-				<div class="flex items-center gap-2 mt-1">
-					<span class="text-xs px-1.5 py-0.5 rounded {statusBadge[session.status] ?? statusBadge.created}">
-						{statusLabel[session.status] ?? session.status}
-					</span>
-					<span class="text-xs text-gray-500">{formatDate(session.created_at)}</span>
-					{#if session.origin}
-						<span class="truncate text-xs text-gray-500" title="Recorded on {syncState.name(session.origin)}">{syncState.name(session.origin)}</span>
-					{/if}
-					{#if connectionState.me?.team_mode && session.owner_id && session.owner_id !== connectionState.me.id}
-						<span class="truncate text-xs text-blue-300/70" title="Shared with you">{teamState.name(session.owner_id) || 'shared'}</span>
-					{/if}
-				</div>
-				{#if jobsState.active(session.id, 'transcribe')}
-					{@const busy = jobsState.active(session.id, 'transcribe')!}
-					<div class="mt-1.5"><JobProgress job={busy} compact /></div>
-				{/if}
-			</div>
+		{#each ownSessions as session (session.id)}
+			{@render row(session)}
 		{/each}
+		{#if sharedSessions.length}
+			<h3 class="px-2 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Shared with me</h3>
+			{#each sharedSessions as session (session.id)}
+				{@render row(session)}
+			{/each}
+		{/if}
 
 		{#if sessionState.sessions.length === 0 && !sessionState.loading}
 			<p class="text-gray-500 text-sm text-center py-4">No meetings yet</p>

@@ -39,6 +39,12 @@ import type {
   Thread,
   PhoneLink,
   PairingCode,
+  ContactInfo,
+  ContactsResponse,
+  ContactPullInfo,
+  ShareParts,
+  PeerShareInfo,
+  ShareStatus,
   PairedDevice,
   RemoteAccess,
   SyncStatus,
@@ -826,8 +832,53 @@ export async function getPhoneLink(): Promise<PhoneLink> {
 
 /** A one-time pairing code: for a phone, the phone page addresses carrying it; for a computer,
  * the invite to paste on it (needs remote access running). */
-export async function createPairingCode(kind: 'phone' | 'desktop' | 'sync' = 'phone'): Promise<PairingCode> {
+export async function createPairingCode(kind: 'phone' | 'desktop' | 'sync' | 'contact' = 'phone'): Promise<PairingCode> {
   return request('/api/pairing/codes', { method: 'POST', body: JSON.stringify({ kind }) });
+}
+
+// ---- Sharing with people (contacts and per-meeting shares) -------------------------------------
+
+export async function getContacts(): Promise<ContactsResponse> {
+  return request('/api/contacts');
+}
+
+/** A one-time contact code; `invite` is what the other person pastes in their app. */
+export async function createContactCode(): Promise<PairingCode> {
+  return request('/api/contacts/codes', { method: 'POST' });
+}
+
+export async function pairContact(invite: string): Promise<ContactInfo> {
+  return request('/api/contacts/pair', { method: 'POST', body: JSON.stringify({ invite }) });
+}
+
+/** An empty name goes back to the one on their card. */
+export async function renameContact(person: string, name: string): Promise<ContactInfo> {
+  return request(`/api/contacts/${person}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+}
+
+export async function removeContact(person: string): Promise<void> {
+  await request(`/api/contacts/${person}`, { method: 'DELETE' });
+}
+
+export async function pullContact(person: string): Promise<ContactPullInfo> {
+  return request(`/api/contacts/${person}/pull`, { method: 'POST' });
+}
+
+export async function getPeerShares(sessionId: string): Promise<PeerShareInfo[]> {
+  return request(`/api/sessions/${sessionId}/peer-shares`);
+}
+
+export async function putPeerShare(sessionId: string, person: string, parts: ShareParts): Promise<PeerShareInfo> {
+  return request(`/api/sessions/${sessionId}/peer-shares/${person}`, { method: 'PUT', body: JSON.stringify(parts) });
+}
+
+export async function removePeerShare(sessionId: string, person: string): Promise<void> {
+  await request(`/api/sessions/${sessionId}/peer-shares/${person}`, { method: 'DELETE' });
+}
+
+/** 404 when the meeting is not shared with this person. */
+export async function getShareStatus(sessionId: string): Promise<ShareStatus> {
+  return request(`/api/sessions/${sessionId}/share-status`);
 }
 
 export async function getRemoteAccess(): Promise<RemoteAccess> {

@@ -5,7 +5,10 @@ Everything is fixed and offline: Ada's key comes from a constant seed (so her pe
 are the same on every run), her card names one machine whose ticket points nowhere, and the
 meeting is signed by her key exactly as services/shares.py signs one. The notes and the
 transcript are not shared, which keeps the seed independent of the notes sidecar. Demo mode
-only, never on a team server, and only once (an existing Ada is left alone).
+only, never on a team server, and idempotent (an existing Ada and meeting are left alone).
+Started and stopped by the demo-only routes in api/routes/demo.py, never at startup, so other
+browser specs
+see an empty library.
 """
 
 from __future__ import annotations
@@ -77,7 +80,9 @@ def seed_demo(app: AppContext) -> bool:
         return False
     try:
         person = ada_person()
-        if app.repo.contact(person) is not None:
+        row = app.repo.contact(person)
+        have_contact = row is not None and not row["removed_at"]
+        if have_contact and app.repo.get(MEETING_ID) is not None:
             return False
         card = Card(
             person=person,
@@ -87,7 +92,8 @@ def seed_demo(app: AppContext) -> bool:
             sig="",
         )
         card.sig = _sign(PersonKeys.canonical(card.model_dump(exclude={"sig"})))
-        contacts.upsert_contact(app, card, ADA_SECRET)
+        if not have_contact:
+            contacts.upsert_contact(app, card, ADA_SECRET)
 
         me = (app.settings.local_speaker_name or "").strip() or "Me"
         data = SummaryData(
@@ -122,3 +128,12 @@ def seed_demo(app: AppContext) -> bool:
     except Exception:
         logger.warning("Could not seed the demo share", exc_info=True)
         return False
+
+
+async def remove_demo(app: AppContext) -> None:
+    """Take the seed away again: the meeting through the normal delete path, then the contact."""
+    from .. import access
+
+    with access.internally():
+        app.sessions.delete_session(MEETING_ID)
+    await contacts.forget_contact(app, ada_person())

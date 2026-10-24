@@ -19,13 +19,13 @@
 	import JobProgress from './JobProgress.svelte';
 	import AudioPlayer from './AudioPlayer.svelte';
 	import SpeakerNamingCard from './SpeakerNamingCard.svelte';
-	import { canChange } from '$lib/app/access.js';
+	import { audioReason, canChange } from '$lib/app/access.js';
 	import BookmarksBar from './BookmarksBar.svelte';
 	import QuoteBar from './QuoteBar.svelte';
-	import { syncState } from '$lib/stores/sync.svelte.js';
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import { commentsState } from '$lib/stores/comments.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
+	import { contactsState } from '$lib/stores/contacts.svelte.js';
 	import CommentThread from './CommentThread.svelte';
 	import CommentComposer from './CommentComposer.svelte';
 
@@ -143,6 +143,12 @@
 
 	// Someone else's meeting (a reviewer reading a member's): read, play and quote only.
 	const mine = $derived(canChange(sessionState.activeSession));
+	const sharedFrom = $derived(sessionState.activeSession?.shared_from ?? '');
+	const transcriptShared = $derived(
+		sessionState.activeSession
+			? !!contactsState.shareStatus[sessionState.activeSession.id]?.parts.transcript
+			: false
+	);
 	const canTranscribe = $derived(
 		mine && !!sessionState.activeSession?.audio_file && !transcriptState.isProcessing
 	);
@@ -334,9 +340,9 @@
 		{#if canTranscribe}
 			<button
 				onclick={handleTranscribe}
-				disabled={!!sessionState.activeSession?.origin}
+				disabled={!!audioReason(sessionState.activeSession)}
 				class="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 transition-colors disabled:opacity-50"
-				title={sessionState.activeSession?.origin ? syncState.audioOn(sessionState.activeSession.origin) : "Transcribe this meeting's audio"}
+				title={audioReason(sessionState.activeSession) || "Transcribe this meeting's audio"}
 			>
 				{transcriptState.segments.length > 0 ? 'Re-transcribe' : 'Transcribe'}
 			</button>
@@ -513,7 +519,11 @@
 
 		{#if transcriptState.segments.length === 0 && !transcriptState.isProcessing}
 			<p class="text-gray-500 text-sm text-center py-8">
-				{#if sessionState.activeSession?.audio_file}
+				{#if sharedFrom && !transcriptShared}
+					{contactsState.name(sharedFrom)} didn't share the transcript.
+				{:else if sharedFrom}
+					No transcript yet.
+				{:else if sessionState.activeSession?.audio_file}
 					No transcript yet. Click Transcribe to process the recorded audio.
 				{:else}
 					No transcript yet. Record audio and it will be transcribed automatically.

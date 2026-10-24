@@ -44,7 +44,7 @@ def _seeded(client):
     return ctx, ctx.repo.contact(share_demo.ada_person())
 
 
-def test_demo_seeds_ada_and_her_shared_meeting(monkeypatch, settings, keystore):
+def test_demo_share_is_seeded_by_the_route_only(monkeypatch, settings, keystore):
     from fastapi.testclient import TestClient
 
     from mnemosyne.api.app import create_app
@@ -52,6 +52,16 @@ def test_demo_seeds_ada_and_her_shared_meeting(monkeypatch, settings, keystore):
 
     monkeypatch.setenv("MNEMOSYNE_DEMO", "1")
     with TestClient(create_app(settings, keystore=keystore)) as client:
+        ctx, row = _seeded(client)
+        assert row is None  # startup seeds nothing
+        assert ctx.sessions.list_sessions() == []
+
+        r = client.post("/api/demo/share")
+        assert r.status_code == 200
+        assert r.json() == {
+            "session_id": share_demo.MEETING_ID,
+            "person": share_demo.ada_person(),
+        }
         ctx, row = _seeded(client)
         assert row is not None and row["name"] == "Ada Lovelace"
         assert row["card"]["machines"][0]["name"] == "Ada's laptop"
@@ -61,12 +71,40 @@ def test_demo_seeds_ada_and_her_shared_meeting(monkeypatch, settings, keystore):
         assert len(s.summary_data.decisions) == 2
         assert len(s.summary_data.action_items) == 2
         assert s.transcript == []
-    # A second start changes nothing (and does not fail).
-    with TestClient(create_app(settings, keystore=keystore)) as client:
-        ctx, row2 = _seeded(client)
+
+        # Idempotent.
+        assert client.post("/api/demo/share").status_code == 200
+        _, row2 = _seeded(client)
         assert row2["created_at"] == row["created_at"]
         assert len(ctx.repo.contacts()) == 1
         assert [x.id for x in ctx.sessions.list_sessions()] == [share_demo.MEETING_ID]
+
+        # Removed again, and it can be seeded afresh.
+        assert client.delete("/api/demo/share").status_code == 204
+        assert ctx.sessions.list_sessions() == []
+        assert ctx.repo.contacts() == []
+        assert client.post("/api/demo/share").status_code == 200
+        assert [x.id for x in ctx.sessions.list_sessions()] == [share_demo.MEETING_ID]
+
+
+def test_demo_share_routes_need_demo_mode(client, ctx):
+    from mnemosyne.services import share_demo
+
+    assert client.post("/api/demo/share").status_code == 404
+    assert client.delete("/api/demo/share").status_code == 404
+    assert ctx.repo.contact(share_demo.ada_person()) is None
+
+
+def test_demo_share_routes_refuse_team_mode(monkeypatch, ctx):
+    from fastapi import HTTPException
+
+    from mnemosyne.api.routes import demo as demo_routes
+
+    monkeypatch.setenv("MNEMOSYNE_DEMO", "1")
+    monkeypatch.setattr(ctx.settings, "team_mode", True)
+    with pytest.raises(HTTPException) as e:
+        demo_routes._check(ctx)
+    assert e.value.status_code == 409
 
 
 def test_demo_share_signature_verifies(monkeypatch, settings, keystore):
@@ -90,6 +128,7 @@ def test_demo_share_signature_verifies(monkeypatch, settings, keystore):
     sm.sig = share_demo._sign(shares._canonical(sm, {"sig"}))
     assert shares.verify_shared_meeting(sm, ada)
     with TestClient(create_app(settings, keystore=keystore)) as client:
+        client.post("/api/demo/share")
         assert client.app.state.ctx.repo.contact(ada) is not None
 
 

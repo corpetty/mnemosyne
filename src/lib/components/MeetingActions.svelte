@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { focusOnMount } from '$lib/app/focus.js';
 	import { combineSessions, getJob, importAudio } from '$lib/api/backend.js';
-	import { syncState } from '$lib/stores/sync.svelte.js';
+	import { audioReason } from '$lib/app/access.js';
 	import { publishingState } from '$lib/stores/publishing.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -17,7 +17,7 @@
 	let busy = $state(false);
 
 	const session = $derived(sessionState.activeSession);
-	const foreignReason = $derived(session?.origin ? syncState.audioOn(session.origin) : '');
+	const foreignReason = $derived(audioReason(session));
 	const recordingHere = $derived(audioState.isRecording && audioState.activeSessionId === session?.id);
 
 	// The other meetings with audio, closest in time first: the other half of a dropped call is

@@ -476,6 +476,20 @@ expiry. Also: a one-file export (services/publication_file.py, `single.html`, op
 from either computer, "this computer" ones only from the one serving them), and records (publish, update, unpublish
 seal a version; `publications.json` in the export, never the key). Team servers: `allow_publishing`, owner or admin.
 Logos storage/delivery is only a written trial (docs/plans/2026-10-23-logos-publishing-trial.md).
+Sharing with people (unreleased, phase 8; design in the hashseq plan, build order and corrections in
+docs/plans/2026-10-23-phase-8-tasks.md): meetings shared between different people's desktops with
+the owner's machines as the hub. A person key (services/person.py, Ed25519, sealed with encryption
+at rest, shared by one person's machines through library-sync pairing). Contacts
+(services/contacts.py): signed cards listing a person's machines, a `contact` invite, CONTACT devices
+whose token is derived from a per-pair secret and opens only `/api/share/*` as that contact's
+Principal. Tunnelled TCP reaches the backend from 127.0.0.2 (link sidecar), so it always needs a
+token and never counts as this machine. Owner: `peer_shares`, a signed `SharedMeeting` per share
+with only the chosen parts (services/shares.py), `/api/share/changes` and signed contributions
+(comments, done/follow, notes frames) checked before the normal write paths. Recipient:
+`sessions.shared_from`, SharePuller (pull + verify + `apply_shared`), the outbox
+(services/share_push.py), local rules in services/shared_with_me.py; such meetings never enter
+library sync, task links, Ask, semantic search, the digest or Obsidian (`shared_in_*`). Demo mode
+seeds Ada Lovelace's shared meeting only through `POST /api/demo/share` (the e2e spec calls it).
 
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).

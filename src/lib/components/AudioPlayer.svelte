@@ -2,7 +2,7 @@
 	import { audioUrl } from '$lib/api/backend.js';
 	import { playerState } from '$lib/stores/player.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
-	import { syncState } from '$lib/stores/sync.svelte.js';
+	import { audioReason } from '$lib/app/access.js';
 	import { commentsState } from '$lib/stores/comments.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import CommentComposer from './CommentComposer.svelte';
@@ -47,7 +47,7 @@
 	// on the computer that recorded it).
 	async function checkError() {
 		playerState.available = false;
-		if (!session?.origin || !src) return;
+		if ((!session?.origin && !session?.shared_from) || !src) return;
 		try {
 			const r = await fetch(src, { headers: { Range: 'bytes=0-0' } });
 			if (r.status === 409) {
@@ -57,7 +57,7 @@
 				} catch {
 					/* no body */
 				}
-				unavailable = detail || syncState.audioOn(session.origin);
+				unavailable = detail || audioReason(session);
 			}
 		} catch {
 			/* offline: stays silent */

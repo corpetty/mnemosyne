@@ -314,6 +314,7 @@
 	import type { DecisionMention, DecisionObject, ProviderModels, SessionLinks, SummaryStyle } from '$lib/types/index.js';
 	import { groupFacts } from '$lib/app/facts.js';
 	import { canChange } from '$lib/app/access.js';
+	import { contactsState } from '$lib/stores/contacts.svelte.js';
 
 	let providers = $state<ProviderModels[]>(cachedProviders ?? []);
 	let styles = $state<SummaryStyle[]>(cachedStyles ?? []);
@@ -517,6 +518,16 @@
 	const factGroups = $derived(groupFacts(data?.client_facts ?? []));
 	// Someone else's meeting (a reviewer reading a member's): no controls the server refuses.
 	const mine = $derived(canChange(sessionState.activeSession));
+	// A meeting another person shared with me: nothing to record or generate here.
+	const sharedFrom = $derived(sessionState.activeSession?.shared_from ?? '');
+	const sharedParts = $derived(
+		sessionState.activeSession ? (contactsState.shareStatus[sessionState.activeSession.id]?.parts ?? null) : null
+	);
+	// On a meeting shared with me, ticking is only there when the share includes action items.
+	const canTick = $derived(
+		!sessionState.activeSession?.shared_from ||
+			!!contactsState.shareStatus[sessionState.activeSession.id]?.parts.action_items
+	);
 	const liveNotes = $derived(sessionState.activeSession?.copilot_notes ?? null);
 	const activeJob = $derived(
 		sessionState.activeSession ? jobsState.active(sessionState.activeSession.id, 'summarize') : null
@@ -670,6 +681,7 @@
 										{/if}
 										<button
 											onclick={() => toggleDone(i, !a.done)}
+											disabled={!canTick}
 											title={a.done ? 'Done · click to reopen' : 'Mark done'}
 											aria-label={a.done ? `Reopen: ${a.text}` : `Mark done: ${a.text}`}
 											class="text-xs mt-0.5 {a.done ? 'text-emerald-400' : 'text-gray-600 hover:text-gray-300'}"
@@ -887,11 +899,15 @@
 		<p class="text-red-400 text-sm">{error || jobError}</p>
 	{/if}
 
-	{#if !sessionState.activeSession?.transcript?.length && !sessionState.activeSession?.external_notes?.length}
+	{#if sharedFrom}
+		{#if sharedParts && !sharedParts.summary && !sessionState.activeSession?.summary}
+			<p class="text-gray-600 text-sm">{contactsState.name(sharedFrom)} didn't share the summary.</p>
+		{/if}
+	{:else if !sessionState.activeSession?.transcript?.length && !sessionState.activeSession?.external_notes?.length}
 		<p class="text-gray-600 text-sm">Record and transcribe audio first to generate a summary, or add notes from another assistant.</p>
 	{/if}
 
-	<ExternalNotesCard />
+	{#if !sharedFrom}<ExternalNotesCard />{/if}
 
 	{#if liveNotes}
 		<details class="bg-gray-900 border border-gray-800 rounded-lg p-3 text-sm" open={!sessionState.activeSession?.summary}>

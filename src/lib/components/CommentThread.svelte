@@ -4,6 +4,8 @@
 	import { commentsState } from '$lib/stores/comments.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import type { Comment, CommentCreate, CommentThread } from '$lib/types/index.js';
+	import { contactsState } from '$lib/stores/contacts.svelte.js';
+	import { sessionState } from '$lib/stores/session.svelte.js';
 	import CommentComposer from './CommentComposer.svelte';
 
 	let {
@@ -37,6 +39,15 @@
 	}
 
 	const root = $derived(thread.root);
+	// The meeting's owner when it was shared with me by someone else: their comments carry no author id.
+	const sharedFrom = $derived(
+		sessionState.activeSession?.id === sessionId ? (sessionState.activeSession.shared_from ?? '') : ''
+	);
+	function who(c: Comment): string {
+		if (contactsState.isMe(c.author_id)) return 'You';
+		if (!c.author_id && sharedFrom) return contactsState.name(sharedFrom);
+		return c.author || 'You';
+	}
 	let expanded = $state(false);
 	let replying = $state(false);
 	let editing = $state<string | null>(null);
@@ -108,7 +119,7 @@
 
 {#snippet header(c: Comment)}
 	<div class="text-xs text-gray-500">
-		<span class="text-gray-300 font-medium">{c.author || 'You'}</span>
+		<span class="text-gray-300 font-medium">{who(c)}</span>
 		· {ago(c.created_at)}{#if edited(c)} · (edited){/if}
 	</div>
 {/snippet}
