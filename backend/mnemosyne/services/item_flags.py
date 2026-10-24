@@ -5,7 +5,8 @@ Read access suffices, as for the repository's setters. done and follow belong to
 linked item's other mentions follow (services/task_links.py, which logs a line in each meeting
 it changes). An unlinked tick by someone other than the meeting's owner is logged in its
 history. A tick is written to the meeting's Obsidian note too, or the next pass over the vault
-would take the old state back.
+would take the old state back. On a meeting someone shared with me, only when the share includes
+its action items (phase 8).
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from .. import access
 from ..models.session import ActionItem, Session
-from . import history, task_links
+from . import history, share_push, shared_with_me, task_links
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -36,8 +37,21 @@ def set_item_flags(
     is returned. `by`: who did it, for history lines. Blocking (the vault note)."""
     from .vault_sync import write_tick  # vault_sync imports services.tasks: not at the top
 
+    if session.shared_from and not access.is_internal():
+        # Someone else's meeting shared with me: only when its action items were shared, as
+        # the owner's hub will check (services/shared_with_me.py).
+        parts = shared_with_me.parts_of(app, session.id, session.shared_from)
+        shared_with_me.require_part(parts, "action_items")
+        if not by:
+            me = shared_with_me.acting(app, session)
+            by = me.name if me else ""
     if item is None:
         item = session.summary_data.action_items[idx]
+    if session.shared_from:  # my tick on their meeting travels back (services/share_push.py)
+        if done is not None and done != item.done:
+            share_push.enqueue_item_flag(app, session.id, item.id, "done", done)
+        if follow is not None and follow != item.follow:
+            share_push.enqueue_item_flag(app, session.id, item.id, "follow", follow)
     obj = task_links.object_of(app.repo, session.id, item.id, app.repo.visible_ids())
     if done is not None and done != item.done:
         item.done = done

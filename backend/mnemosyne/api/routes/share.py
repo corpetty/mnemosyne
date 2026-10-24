@@ -7,6 +7,7 @@ Not on a team server (409).
 """
 
 import asyncio
+import contextlib
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -140,9 +141,23 @@ async def contributions(body: ContributionBatch, ctx: AppContext = Depends(get_c
     return ContributionResponse(results=results)
 
 
+WAIT_SECONDS = 10.0
+
+
 @router.post("/poke", status_code=204)
-async def poke(ctx: AppContext = Depends(get_ctx)):
-    """The calling contact has news. On the hub it is accepted and ignored: a recipient pulls
-    on it (a later task); the owner's side has nothing to fetch."""
-    _contact(ctx)
+async def poke(wait: bool = False, ctx: AppContext = Depends(get_ctx)):
+    """The calling contact has news: what it shares with this person is pulled now, in the
+    background (services/share_pull.py). A contact that shares nothing gives an empty round.
+    `wait`: answer once that round is over (at most WAIT_SECONDS), for a contact that is about
+    to be removed and whose token stops working right after: its tombstones must be pulled
+    first."""
+    row = _contact(ctx)
+    if ctx.share_pull is not None:
+        if wait:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    asyncio.shield(ctx.share_pull.pull(row["person"])), WAIT_SECONDS
+                )
+        else:
+            ctx.share_pull.poke(row["person"])
     return Response(status_code=204)

@@ -11,6 +11,7 @@ from ... import access
 from ...models.contact import (
     ContactInfo,
     ContactPairRequest,
+    ContactPullInfo,
     ContactRename,
     ContactsMe,
     ContactsResponse,
@@ -33,6 +34,14 @@ def _refusal(e: contacts.ContactsRefused) -> HTTPException:
     return HTTPException(status_code=409 if unavailable else 400, detail=str(e))
 
 
+def _info(ctx: AppContext, row: dict) -> ContactInfo:
+    """The contact, with how pulling what they share went (when it ran since this start)."""
+    info = contacts.info(ctx, row)
+    if ctx.share_pull is not None:
+        info.pull = ctx.share_pull.info(row["person"])
+    return info
+
+
 def _live(ctx: AppContext, person: str) -> dict:
     row = ctx.repo.contact(person)
     if row is None or row["removed_at"]:
@@ -53,7 +62,7 @@ async def list_contacts(ctx: AppContext = Depends(get_ctx)):
             name=contacts.display_name(ctx),
             fingerprint=ctx.person.fingerprint,
         ),
-        contacts=[contacts.info(ctx, row) for row in ctx.repo.contacts()],
+        contacts=[_info(ctx, row) for row in ctx.repo.contacts()],
     )
 
 
@@ -69,7 +78,7 @@ async def pair(body: ContactPairRequest, ctx: AppContext = Depends(get_ctx)):
         row = await contacts.pair_with_invite(ctx, body.invite)
     except contacts.ContactsRefused as e:
         raise _refusal(e) from e
-    return contacts.info(ctx, row)
+    return _info(ctx, row)
 
 
 @router.patch("/{person}", response_model=ContactInfo)
@@ -83,7 +92,23 @@ async def rename(person: str, body: ContactRename, ctx: AppContext = Depends(get
         raise _refusal(e) from e
     if row is None:
         raise HTTPException(status_code=404, detail="No such contact")
-    return contacts.info(ctx, row)
+    return _info(ctx, row)
+
+
+@router.post("/{person}/pull", response_model=ContactPullInfo)
+async def pull(person: str, ctx: AppContext = Depends(get_ctx)):
+    """Pull what this contact shares now and say how it went (it waits for the round)."""
+    try:
+        contacts.require_available(ctx)
+        _live(ctx, person)
+    except contacts.ContactsRefused as e:
+        raise _refusal(e) from e
+    if ctx.locked:
+        raise HTTPException(status_code=423, detail="Unlock first")
+    state = await ctx.share_pull.pull(person)
+    if state is None:
+        raise HTTPException(status_code=404, detail="No such contact")
+    return state.info()
 
 
 @router.delete("/{person}")

@@ -52,8 +52,13 @@ outside the database, so they are checked even while encrypted meetings are lock
   `ContactInfo` (the redeeming side; the other side's `POST /api/pairing/redeem` takes
   `card: {card, secret}` for a contact code and answers `{device, token, card}` with its own card);
   `GET /api/contacts` → `{me: {person, pid, name, fingerprint}, contacts: [{person, pid, name,
-  card_name, fingerprint, machines, created_at, updated_at}]}`; `PATCH /api/contacts/{person}`
-  `{name}` (local name; empty = the card's); `DELETE /api/contacts/{person}`.
+  card_name, fingerprint, machines, created_at, updated_at, pull}]}` (`pull`: `{state, at, error}`
+  of the last pull of what they share, state idle|pulling|ok|unreachable|skew|error|gone, or null
+  when not pulled since this start; `gone`: every machine of theirs refused us three rounds in a
+  row, so their meetings were removed here); `PATCH /api/contacts/{person}` `{name}` (local name; empty = the
+  card's); `DELETE /api/contacts/{person}`; `POST /api/contacts/{person}/pull` → `{state, at,
+  error}` after pulling what that contact shares now (services/share_pull.py; `423` while locked).
+  A contact's `POST /api/share/poke` here starts such a pull in the background.
 - `GET /api/pairing/devices` → `[{id, name, kind, created_at, last_seen_at}]`. A phone's token opens
   only the phone page's paths; a computer's opens the whole API.
 - `DELETE /api/pairing/devices/{id}`: the device's token stops working at once.
@@ -1434,6 +1439,42 @@ returned.
 
 Settings: `task_linking` (`off` / `exact` / `related`, default `related`) and `task_linking_llm`
 (default off).
+
+## Sharing with people
+
+Phase 8 (services/contacts.py, shares.py, share_pull.py; docs/plans/2026-10-23-phase-8-tasks.md).
+Personal computers only: a team server answers `409`. Pairing details are in the contacts entry
+under pairing above.
+
+| Method | Path | What, and who |
+|--------|------|---------------|
+| GET | `/api/contacts` | `{me, contacts: [ContactInfo]}`, each with `pull` state. Admin / the desktop |
+| POST | `/api/contacts/codes` | A one-time contact invite `{code, kind: "contact", expires_at, urls, invite}`. Admin; needs an API token and remote access |
+| POST | `/api/contacts/pair` | `{invite}` → `ContactInfo`: redeem the other person's invite. Admin |
+| PATCH | `/api/contacts/{person}` | `{name}`: rename locally (empty = the card's name). Admin |
+| DELETE | `/api/contacts/{person}` | Remove: their CONTACT devices are revoked, their shares end. Admin |
+| POST | `/api/contacts/{person}/pull` | Pull what that contact shares now → `{state, at, error}`. Admin; `423` while locked |
+| GET | `/api/sessions/{id}/peer-shares` | Who has the meeting and which parts (`PeerShareInfo`). Its owner or an admin |
+| PUT | `/api/sessions/{id}/peer-shares/{person}` | `ShareParts` body: share with a contact or change the parts. Owner or admin; `403` on a meeting shared with you |
+| DELETE | `/api/sessions/{id}/peer-shares/{person}` | Stop sharing with that contact. Owner or admin |
+| GET | `/api/sessions/{id}/share-status` | `ShareStatus` for a meeting shared with you: `owner {person, name}`, `waiting {comments, ticks, notes}` (what has not reached the owner's computer yet) and `rejected [{kind: comment\|item_flag\|notes, reason, excerpt (first 80 characters), at}]`. `404` for any other meeting. Admin / the desktop |
+| GET | `/api/share/hello` | Who this is and the sharing protocol version. A contact's CONTACT token |
+| GET | `/api/share/changes?since=&limit=` | Signed `SharedMeeting`s changed for the calling contact, plus tombstones. A contact |
+| POST | `/api/share/card` | The contact's newer signed card (its machines changed). A contact |
+| POST | `/api/share/poke` | The contact has news: pull from it now, in the background. A contact |
+| POST | `/api/share/contributions` | `ContributionBatch`: signed comments, ticks and notes frames, checked at the hub (`413` over 200 records or 2 MB). A contact |
+
+What you do on a meeting shared with you (comments, ticks and stars on action items, notes you type)
+is signed and sent to the owner's computer by the outbox (services/share_push.py, table
+`share_outbox`; typed notes are read off the notes log past `share_pushed_seq:<id>`): a second
+after a local write, and at the start of every pull round. A transport failure leaves it waiting;
+a refusal is final and shows in `share-status`. WebSocket event `{type: "share_outbox",
+session_id, pending}` after each change. Until the owner has accepted them, pending comments and
+ticks are shown again on the pulled copy.
+
+A CONTACT token reaches only `/api/share/`; the admin token is refused there (`403`). In demo
+mode (`MNEMOSYNE_DEMO=1`) a contact "Ada Lovelace" and one meeting she shared, "Shared: Waku
+roadmap", are seeded at start (services/share_demo.py).
 
 ## Library sync
 

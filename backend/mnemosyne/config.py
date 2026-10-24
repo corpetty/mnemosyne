@@ -403,6 +403,13 @@ class Settings(BaseSettings):
     # Every export also rewrites <subfolder>/Decisions.md: the decisions of all meetings, newest
     # first, each under a link to its note (export/topic_notes.py).
     obsidian_decisions_log: bool = False
+    # Meetings other people shared with you (phase 8) stay out of these unless turned on: Ask,
+    # the semantic search index (keyword search always finds them), the weekly digest, and
+    # Obsidian (meeting notes, export-all, the decisions log, person notes, vault ticks).
+    shared_in_ask: bool = False
+    shared_in_search: bool = False
+    shared_in_digest: bool = False
+    shared_in_obsidian: bool = False
 
     @field_validator("publish_default_expiry_days")
     @classmethod

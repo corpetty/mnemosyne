@@ -42,3 +42,35 @@ class PeerShareInfo(ApiModel):
     parts: ShareParts
     at: str  # when it was first shared
     updated_at: str
+
+
+class ShareOwner(ApiModel):
+    """Who shared a meeting with this person."""
+
+    person: str
+    name: str
+
+
+class ShareWaiting(ApiModel):
+    """What this person did on the meeting that its owner's computer has not taken yet."""
+
+    comments: int
+    ticks: int
+    notes: bool
+
+
+class ShareRejected(ApiModel):
+    """Something the owner's computer refused, and why."""
+
+    kind: str  # comment | item_flag | notes
+    reason: str
+    excerpt: str  # the first 80 characters of the comment or the action item ("" for notes)
+    at: str  # when it was refused, ISO 8601 UTC ("" for notes)
+
+
+class ShareStatus(ApiModel):
+    """How this person's work on a meeting shared with them stands (services/share_push.py)."""
+
+    owner: ShareOwner
+    waiting: ShareWaiting
+    rejected: list[ShareRejected] = Field(default_factory=list)

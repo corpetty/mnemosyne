@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 WATCH_INTERVAL = 3.0  # seconds between looks at the change counter
 DEBOUNCE = 3.0  # at most one poke per contact in this many seconds
 POKE_TIMEOUT = 10.0
+REMOVAL_WAIT = 15.0  # most a removal waits for the contact to pull its tombstones
 PAGE = 500
 
 
@@ -119,7 +120,17 @@ class ShareAnnouncer:
             if not more:
                 return people
 
-    async def _poke(self, person: str) -> bool:
+    async def notify_removal(self, person: str) -> bool:
+        """Before a contact is removed (its token stops working right after): have it pull the
+        tombstones of every share just revoked, and wait for that round, for at most
+        REMOVAL_WAIT seconds. Never raises, never blocks the removal for longer."""
+        try:
+            return bool(await asyncio.wait_for(self._poke(person, wait=True), REMOVAL_WAIT))
+        except Exception as e:  # noqa: BLE001 - TimeoutError too: it learns of it by a 401 later
+            logger.info("Could not tell %s they were removed: %s", person[:16], e)
+            return False
+
+    async def _poke(self, person: str, wait: bool = False) -> bool:
         from . import contacts
 
         ctx = self.ctx
@@ -134,18 +145,25 @@ class ShareAnnouncer:
         except Exception as e:  # noqa: BLE001
             logger.debug("Could not reach %s to poke: %s", row.get("name"), e)
             return False
-        ok = False
-        for endpoint, machine in machines.items():
-            listen = machine.get("listen")
-            if not listen:
-                continue
+
+        async def one(endpoint: str, listen: str) -> bool:
             try:
                 async with self.client_for(listen, presented) as client:
-                    await client.post("/api/share/poke", timeout=POKE_TIMEOUT)
-                ok = True
+                    await client.post(
+                        "/api/share/poke",
+                        params={"wait": "true"} if wait else None,
+                        timeout=REMOVAL_WAIT if wait else POKE_TIMEOUT,
+                    )
+                return True
             except Exception as e:  # noqa: BLE001 - its next pull finds the changes
                 logger.debug("Could not poke %s (%s): %s", row.get("name"), endpoint[:8], e)
-        return ok
+                return False
+
+        # Every machine of the person pulls what it is shown on its own, so all are poked.
+        results = await asyncio.gather(
+            *(one(ep, m["listen"]) for ep, m in machines.items() if m.get("listen"))
+        )
+        return any(results)
 
     @staticmethod
     def _client_for(listen: str, token: str) -> httpx.AsyncClient:

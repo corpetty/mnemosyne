@@ -44,6 +44,7 @@ from .routes.segments import router as segments_router
 from .routes.sessions import router as sessions_router
 from .routes.settings import router as settings_router
 from .routes.share import router as share_router
+from .routes.share_status import router as share_status_router
 from .routes.sharing import router as sharing_router
 from .routes.speakers import router as speakers_router
 from .routes.storage import router as storage_router
@@ -96,6 +97,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(sharing_router)
     app.include_router(peer_shares_router)
     app.include_router(share_router)
+    app.include_router(share_status_router)
     app.include_router(organizations_router)
     app.include_router(supervision_router)
     app.include_router(sessions_router)

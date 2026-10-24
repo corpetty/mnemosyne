@@ -79,7 +79,7 @@ def _as(person=ADA, name="Ada", role=access.MEMBER):
 
 
 def test_schema_version_and_a_v13_database_gains_the_new_parts(tmp_path):
-    assert SCHEMA_VERSION == 14
+    assert SCHEMA_VERSION == 16
     path = tmp_path / "db.sqlite"
     r = SessionRepository(path)
     r.close()
@@ -96,7 +96,7 @@ def test_schema_version_and_a_v13_database_gains_the_new_parts(tmp_path):
     r.put_peer_share(sid, ADA, PARTS, "me")
     assert r.add_signature("x", ADA, "sig")
     assert r.get(sid).shared_from == ""
-    assert r.get_meta("schema_version") == "14"
+    assert r.get_meta("schema_version") == "16"
     r.close()
 
 

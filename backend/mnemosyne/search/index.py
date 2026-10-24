@@ -86,6 +86,9 @@ class VectorIndex:
         self.enabled = settings.semantic_search
         self.model = settings.embedding_model
         self._settings = settings
+        # Meetings other people shared with me are indexed only with `shared_in_search`
+        # (keyword search finds them anyway); changed by the settings route (include_shared).
+        self.shared = bool(getattr(settings, "shared_in_search", False))
         self._factory = embedder_factory
         self._embedder = None
         self.error: str | None = None
@@ -133,6 +136,9 @@ class VectorIndex:
         emb = self.embedder()
         if emb is None:
             return 0
+        if not self.shared and self._shared_with_me(session_id):
+            self._forget(session_id)
+            return 0
         # Cheap check first: unchanged since it was last indexed (startup backfill).
         stamp = self.repo.session_stamp(session_id)
         if stamp is None:
@@ -158,6 +164,35 @@ class VectorIndex:
         self.repo.set_meta(f"vecstamp:{session_id}", stamp)
         self._dirty = True
         return len(chunks)
+
+    def _shared_with_me(self, session_id: str) -> bool:
+        getter = getattr(self.repo, "_shared_from", None)
+        if callable(getter):
+            return bool(getter(session_id))
+        session = self.repo.get(session_id)
+        return bool(session is not None and session.shared_from)
+
+    def _forget(self, session_id: str) -> None:
+        """No vectors for this meeting (and no stamp, so it is indexed when it may be again)."""
+        if self.repo.vector_hashes(session_id):
+            self.repo.replace_vectors(session_id, [])
+            self._dirty = True
+        if self.repo.get_meta(f"vecstamp:{session_id}"):
+            self.repo.set_meta(f"vecstamp:{session_id}", "")
+
+    def include_shared(self, on: bool) -> None:
+        """`shared_in_search` changed: index the meetings shared with me, or drop them."""
+        on = bool(on)
+        if on == self.shared:
+            return
+        self.shared = on
+        ids = [s.id for s in self.repo.list_summaries() if s.shared_from]
+        if on:
+            self._pending.update(ids)
+            self._wake.set()
+        else:
+            for sid in ids:
+                self._forget(sid)
 
     def _snapshot(self) -> tuple[list, np.ndarray | None]:
         """A consistent (keys, matrix) pair, reloaded when the index changed. Queries run on

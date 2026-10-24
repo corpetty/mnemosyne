@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 from .. import access
 from ..models.shared_meeting import ShareParts
+from . import shared_with_me
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -225,10 +226,12 @@ def _on_loop(app: AppContext, fn, *args) -> None:
 
 @contextmanager
 def unrestricted():
-    """Internal writes: who may edit was decided when the frame was accepted."""
+    """Internal writes: who may edit was decided when the frame was accepted. Also the app's own
+    writer (`access.internally`), so the fold of a meeting shared with me writes its notes."""
     token = access.current.set(None)
     try:
-        yield
+        with access.internally():
+            yield
     finally:
         access.current.reset(token)
 
@@ -236,7 +239,12 @@ def unrestricted():
 def may_edit(app: AppContext, session_id: str) -> bool:
     """The caller may change this (readable) meeting's notes (access.can_edit_notes). A
     contact (phase 8, "p:<16 hex>") counts as shared with when their live share includes the
-    notes."""
+    notes. A meeting someone shared with me: when they shared its notes (the owner's hub
+    decides the same for what I send, services/shares.py)."""
+    owner_key = shared_with_me.shared_from(app, session_id)
+    if owner_key:
+        parts = shared_with_me.parts_of(app, session_id, owner_key)
+        return parts is not None and parts.notes
     owner = app.repo.owner_of(session_id) or ""
     shared = {s["user_id"] for s in app.repo.shares(session_id)}
     for share in app.repo.peer_shares(session_id):
@@ -799,6 +807,10 @@ def accept_frames(
     _on_loop(
         app, _after_frames, app, session_id, list(zip(seqs, frames, strict=True)), author, skip
     )
+    if author_id.startswith("p:"):  # maybe mine on a meeting shared with me: send it back
+        from . import share_push
+
+        share_push.notes_typed(app, session_id)
     return seqs
 
 

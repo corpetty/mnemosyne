@@ -365,8 +365,11 @@ def _apply_comment(app: AppContext, record: Contribution, parts: ShareParts) -> 
             _require_part(parts, _part_of_target(req.target))
             if req.target == "notes" and not shared_notes.available():
                 raise comments.NotesNotShared("Live notes are not available on this computer")
-        c = comments.create(app, sid, req, comment_id=comment_id)
-        _mark_notes_comment(app, sid, c.id, req)
+        # A notes thread is NOT marked here from `notes_ids`: the mark belongs to the author's own
+        # server, which put it in its copy of the document, and it arrives as a notes_frames
+        # record (the sender pushes comments before the notes chunk of the same round). If that
+        # frame is refused or never comes, the comment shows as detached, with its quote.
+        comments.create(app, sid, req, comment_id=comment_id)
         return
     _require_part(parts, _part_of_target(_comment_target(app, sid, comment_id)))
     if op == "edit":
@@ -380,27 +383,6 @@ def _apply_comment(app: AppContext, record: Contribution, parts: ShareParts) -> 
         comments.resolve(app, sid, comment_id)
     else:
         comments.reopen(app, sid, comment_id)
-
-
-def _mark_notes_comment(app: AppContext, session_id: str, comment_id: str, req) -> None:
-    """A new notes thread with `notes_ids`: the mark put on the range in the document, as the
-    comments route does (`create_marked`), here from a thread. Unmarked, it stays detached."""
-    if req.target != "notes" or req.parent_id:
-        return
-    ids = [i.strip() for i in req.notes_ids]
-    if len(ids) != 2 or not all(ids):
-        return
-    p = access.principal()
-    try:
-        frames = shared_notes.mark_comment_blocking(
-            app, session_id, comment_id, ids[0], ids[1], p.user_id if p else "", p.name if p else ""
-        )
-    except shared_notes.NotesDocError as e:
-        logger.info("Could not mark comment %s in the notes of %s: %s", comment_id, session_id, e)
-        return
-    if frames:
-        shared_notes._on_loop(app, shared_notes._deliver, app, session_id, frames, None)
-        app.bus.publish({"type": "comments", "session_id": session_id, "mentions": []})
 
 
 def _apply_item_flag(app: AppContext, record: Contribution) -> None:

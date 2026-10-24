@@ -648,6 +648,26 @@ export interface paths {
         patch: operations["rename_api_contacts__person__patch"];
         trace?: never;
     };
+    "/api/contacts/{person}/pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pull
+         * @description Pull what this contact shares now and say how it went (it waits for the round).
+         */
+        post: operations["pull_api_contacts__person__pull_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/decisions": {
         parameters: {
             query?: never;
@@ -2493,6 +2513,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/share-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Share Status
+         * @description 404 for a meeting that is not shared with this person.
+         */
+        get: operations["share_status_api_sessions__session_id__share_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/shares": {
         parameters: {
             query?: never;
@@ -2866,8 +2906,11 @@ export interface paths {
         put?: never;
         /**
          * Poke
-         * @description The calling contact has news. On the hub it is accepted and ignored: a recipient pulls
-         *     on it (a later task); the owner's side has nothing to fetch.
+         * @description The calling contact has news: what it shares with this person is pulled now, in the
+         *     background (services/share_pull.py). A contact that shares nothing gives an empty round.
+         *     `wait`: answer once that round is over (at most WAIT_SECONDS), for a contact that is about
+         *     to be removed and whose token stops working right after: its tombstones must be pulled
+         *     first.
          */
         post: operations["poke_api_share_poke_post"];
         delete?: never;
@@ -4570,6 +4613,7 @@ export interface components {
             person: string;
             /** Pid */
             pid: string;
+            pull: components["schemas"]["ContactPullInfo"] | null;
             /** Updated At */
             updated_at: string;
         };
@@ -4577,6 +4621,18 @@ export interface components {
         ContactPairRequest: {
             /** Invite */
             invite: string;
+        };
+        /**
+         * ContactPullInfo
+         * @description How pulling what this contact shares went last (services/share_pull.py).
+         */
+        ContactPullInfo: {
+            /** At */
+            at: string | null;
+            /** Error */
+            error: string | null;
+            /** State */
+            state: string;
         };
         /** ContactRename */
         ContactRename: {
@@ -7017,6 +7073,14 @@ export interface components {
             share_on_network?: boolean | null;
             /** Share With Invitees */
             share_with_invitees?: boolean | null;
+            /** Shared In Ask */
+            shared_in_ask?: boolean | null;
+            /** Shared In Digest */
+            shared_in_digest?: boolean | null;
+            /** Shared In Obsidian */
+            shared_in_obsidian?: boolean | null;
+            /** Shared In Search */
+            shared_in_search?: boolean | null;
             /** Slack Webhook Url */
             slack_webhook_url?: string | null;
             /** Speaker Match Threshold */
@@ -7299,6 +7363,14 @@ export interface components {
             share_on_network: boolean;
             /** Share With Invitees */
             share_with_invitees: boolean;
+            /** Shared In Ask */
+            shared_in_ask: boolean;
+            /** Shared In Digest */
+            shared_in_digest: boolean;
+            /** Shared In Obsidian */
+            shared_in_obsidian: boolean;
+            /** Shared In Search */
+            shared_in_search: boolean;
             /** Slack Webhook Url */
             slack_webhook_url: string;
             /** Speaker Match Threshold */
@@ -7373,6 +7445,16 @@ export interface components {
             person: string;
             /** Protocol */
             protocol: number;
+        };
+        /**
+         * ShareOwner
+         * @description Who shared a meeting with this person.
+         */
+        ShareOwner: {
+            /** Name */
+            name: string;
+            /** Person */
+            person: string;
         };
         /**
          * ShareParts
@@ -7501,6 +7583,30 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * ShareRejected
+         * @description Something the owner's computer refused, and why.
+         */
+        ShareRejected: {
+            /** At */
+            at: string;
+            /** Excerpt */
+            excerpt: string;
+            /** Kind */
+            kind: string;
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * ShareStatus
+         * @description How this person's work on a meeting shared with them stands (services/share_push.py).
+         */
+        ShareStatus: {
+            owner: components["schemas"]["ShareOwner"];
+            /** Rejected */
+            rejected: components["schemas"]["ShareRejected"][];
+            waiting: components["schemas"]["ShareWaiting"];
+        };
         /** ShareTombstone */
         ShareTombstone: {
             /** At */
@@ -7509,6 +7615,18 @@ export interface components {
             reason: string;
             /** Session Id */
             session_id: string;
+        };
+        /**
+         * ShareWaiting
+         * @description What this person did on the meeting that its owner's computer has not taken yet.
+         */
+        ShareWaiting: {
+            /** Comments */
+            comments: number;
+            /** Notes */
+            notes: boolean;
+            /** Ticks */
+            ticks: number;
         };
         /** SharedMeeting */
         SharedMeeting: {
@@ -10141,6 +10259,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContactInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pull_api_contacts__person__pull_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                person: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactPullInfo"];
                 };
             };
             /** @description Validation Error */
@@ -13694,6 +13843,37 @@ export interface operations {
             };
         };
     };
+    share_status_api_sessions__session_id__share_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_shares_api_sessions__session_id__shares_get: {
         parameters: {
             query?: never;
@@ -14326,7 +14506,9 @@ export interface operations {
     };
     poke_api_share_poke_post: {
         parameters: {
-            query?: never;
+            query?: {
+                wait?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -14339,6 +14521,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

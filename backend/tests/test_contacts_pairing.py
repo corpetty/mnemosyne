@@ -444,6 +444,7 @@ async def test_listing_renaming_and_removing(nodes):
             "machines",
             "created_at",
             "updated_at",
+            "pull",
         }
         assert one["person"] == a.person and "secret" not in str(listed)
 

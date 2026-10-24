@@ -12,7 +12,7 @@ from ...models.session import (
     Session,
     SessionSummary,
 )
-from ...services import history, shared_notes, summary_edit
+from ...services import contacts, history, shared_notes, shared_with_me, summary_edit
 from ...services.combine import combine_runner
 from ...services.copilot import copilot_ask_runner
 from ...services.origin import require_local_audio
@@ -141,7 +141,15 @@ async def delete_session(session_id: str, reason: str = "", ctx: AppContext = De
         check_delete(ctx, session, "meeting", reason)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    if not ctx.sessions.delete_session(session_id):
+    # A meeting someone shared with me: this removes only my copy (the repository leaves no
+    # tombstone for it), so it is the app's own write. While the share is live, the next pull
+    # brings it back.
+    if session.shared_from:
+        with access.internally():
+            deleted = ctx.sessions.delete_session(session_id)
+    else:
+        deleted = ctx.sessions.delete_session(session_id)
+    if not deleted:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"message": "Session deleted"}
 
@@ -150,20 +158,35 @@ async def delete_session(session_id: str, reason: str = "", ctx: AppContext = De
 async def update_notes(session_id: str, request: NotesRequest, ctx: AppContext = Depends(get_ctx)):
     # The notes written whole. With live shared notes this goes through the meeting's document
     # (author "api"), broadcast to whoever has it open; without, straight to `Session.notes`.
-    # Who may: as in the live notes (access.can_edit_notes). (A comment, not a docstring: that
-    # would change the generated API types.)
+    # Who may: as in the live notes (access.can_edit_notes). A meeting someone shared with me:
+    # only when its notes were shared, only through the document and as me (its owner's hub
+    # takes the frames, never Session.notes). (A comment, not a docstring: that would change
+    # the generated API types.)
     if not ctx.repo.exists(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
+    shared = shared_with_me.shared_from(ctx, session_id)
     if not shared_notes.may_edit(ctx, session_id):
+        if shared:
+            raise access.Forbidden("This meeting's notes are not shared with you")
         raise access.Forbidden("You can only read these notes")
+    author_id, author = access.user_id(), shared_notes.API_AUTHOR
+    if shared and access.principal() is None:
+        me = contacts.my_principal(ctx)
+        author_id, author = me.user_id, me.name
     try:
         through_doc = await shared_notes.set_markdown(
-            ctx, session_id, request.notes, access.user_id()
+            ctx, session_id, request.notes, author_id, author
         )
     except shared_notes.NotesWriteFailed as e:
         raise HTTPException(
             status_code=503, detail="The notes could not be saved; try again"
         ) from e
+    if not through_doc and shared:
+        raise HTTPException(
+            status_code=409,
+            detail="The notes of a meeting shared with you are written live, which is not"
+            " possible now; try again later",
+        )
     if not through_doc:
         with shared_notes.unrestricted():
             ctx.sessions.update_notes(session_id, request.notes)

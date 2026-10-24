@@ -368,6 +368,25 @@ keeping its quote. Comments travel with library sync (merged by id with the rest
 searchable, show in the meeting's history, and publish `comments` events. Tasks and decisions
 show the threads of all their mentions.
 
+### Sharing with people (phase 8)
+
+Meetings can be shared with other people's computers (docs/plans/2026-10-23-phase-8-tasks.md).
+Each library has one person key (Ed25519, `services/person.py`); two people pair with a contact
+invite and trade signed cards (name and machine tickets) plus one shared random secret. Each
+derives the CONTACT tokens from it (HMAC per direction), stored as CONTACT devices in
+`services/pairing.py`, one per endpoint on the other's card; contacts live in the `contacts`
+table and travel in library sync. The owner's computers are the hub: `peer_shares` says which
+parts of a meeting a contact gets, and `GET /api/share/changes` builds a `SharedMeeting`
+(`services/shares.py`) carrying only those parts, signed with the owner's key. The recipient's
+`SharePuller` pulls these over the iroh tunnel (the link sidecar connects to the backend from
+127.0.0.2, so auth can tell tunnelled calls from local ones), verifies the signature and writes
+the copy with `apply_shared` (`sessions.shared_from`, read-only except comments, ticks and live
+notes). What the recipient does goes back as signed contributions to `/api/share/contributions`
+(`services/share_push.py`: a `share_outbox` row per comment write or tick, typed notes frames read
+off the notes log past a per-meeting cursor; pushed shortly after a write and before each pull
+round, idempotent by record id); the hub checks the signature, the contact's share and its parts before applying anything. Audio
+never travels. Demo mode seeds a contact and a shared meeting (`services/share_demo.py`).
+
 ### Publishing
 
 A curated, encrypted copy of a meeting that anyone with a link can read (phase 7; use in

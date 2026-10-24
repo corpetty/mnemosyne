@@ -15,6 +15,7 @@ from ...services import (
     history,
     item_flags,
     organizations,
+    shared_with_me,
     summary_doc,
     task_links,
 )
@@ -44,7 +45,10 @@ async def list_action_items(
     is_mine = _mine(ctx)
     p = access.principal()
     team = p is not None and bool(p.user_id)
+    shared = shared_with_me.shared_ids(ctx.repo)
     for t in tasks:
+        if t.session_id in shared:  # someone else's meeting shared with me: tick, never edit
+            t.can_edit = False
         # "Me" is the microphone speaker of the meeting: on a team server that is its owner.
         t.mine = is_mine(t.owner, not team or ctx.repo.session_owner(t.session_id) == p.user_id)
     return filter_tasks(tasks, status, owner, due, mine=mine, scope=scope)
@@ -135,7 +139,7 @@ async def update_action_item(
         issue_url=a.issue_url,
         due=a.due,
         follow=a.follow,
-        can_edit=access.can_write(session.owner_id),
+        can_edit=access.can_write(session.owner_id) and not session.shared_from,
     )
 
 
@@ -150,11 +154,12 @@ def _viewer(ctx: AppContext):
 
 def _present(ctx: AppContext, objs: list[TaskObject]) -> list[TaskObject]:
     is_mine, team, p = _viewer(ctx)
+    shared = shared_with_me.shared_ids(ctx.repo)
     for o in objs:
         head = o.mentions[0]
         owner_id = ctx.repo.session_owner(head.session_id)
         o.mine = is_mine(o.owner, not team or owner_id == p.user_id)
-        o.can_edit = access.can_write(owner_id or "")
+        o.can_edit = access.can_write(owner_id or "") and head.session_id not in shared
     return objs
 
 

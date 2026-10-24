@@ -85,13 +85,16 @@ def write_person_notes(
     generic=(),
     redact: bool = False,
     task_scope: str = "all",
+    skip: set[str] | frozenset[str] = frozenset(),
 ) -> list[Path]:
+    """`skip`: meetings left out of the notes (those shared with you, unless
+    `shared_in_obsidian`)."""
     wanted = {sanitize_filename(n): n for n in names if is_person(n, generic)}
     if not wanted:
         return []
     folder = vault / subfolder / "people"
     theirs = set(wanted) & vault_stems(vault, [folder])
-    stems = {s.id: note_stem(s) for s in repo.list_summaries()}
+    stems = {s.id: note_stem(s) for s in repo.list_summaries() if s.id not in skip}
     written = []
     for stem, name in wanted.items():
         if stem in theirs:
@@ -102,6 +105,15 @@ def write_person_notes(
         detail = person_detail(repo, name, generic)
         if detail is None:
             continue
+        if skip:
+            detail = detail.model_copy(
+                update={
+                    "meetings": [m for m in detail.meetings if m.id not in skip],
+                    "open_tasks": [t for t in detail.open_tasks if t.session_id not in skip],
+                    "done_tasks": [t for t in detail.done_tasks if t.session_id not in skip],
+                    "decisions": [d for d in detail.decisions if d.session_id not in skip],
+                }
+            )
         folder.mkdir(parents=True, exist_ok=True)
         path.write_text(render_person(detail, stems, redact, task_scope), encoding="utf-8")
         written.append(path)

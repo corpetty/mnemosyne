@@ -102,11 +102,15 @@ async def answer_question(
     extra_instructions: str = "",
     index=None,
     exclude_local_only: bool = False,
+    exclude_ids: set[str] | None = None,
 ) -> Ask:
+    """`exclude_ids`: meetings left out (those shared with you, unless `shared_in_ask`)."""
     from ..search.hybrid import hybrid_passages
 
     # Embedding (and a first model load) is CPU work: keep it off the event loop.
     passages = await asyncio.to_thread(hybrid_passages, repo, index, question)
+    if exclude_ids:
+        passages = [p for p in passages if p.session_id not in exclude_ids]
     if exclude_local_only or is_cloud(provider_name):
         hidden = repo.local_only_ids()
         passages = [p for p in passages if p.session_id not in hidden]

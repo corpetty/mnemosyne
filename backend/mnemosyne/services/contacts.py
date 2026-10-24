@@ -239,16 +239,55 @@ async def drop_contact_access(app: AppContext, row: dict) -> None:
             except LinkError as e:  # not running: nothing is dialed
                 logger.info("Hang up on contact %s: %s", row["name"], e)
     app.repo.set_contact_runtime(row["person"], machines={})
+    forget_their_meetings(app, row, f"you removed {my_or_card_name(row) or 'this contact'}")
+
+
+def forget_their_meetings(app: AppContext, row: dict, why: str) -> int:
+    """The recipient side of a removal: delete at once every meeting this contact shared with
+    us (through the normal delete path, as this computer's own work; no tombstone is made for
+    the copies) and drop what was waiting in the outbox for them (their meetings are gone, and
+    they would not take it). What we sent them earlier stays with them. Never raises."""
+    deleted = 0
+    try:
+        with access.internally():
+            for sid in app.repo.shared_from_ids(row["person"]):
+                if app.sessions.delete_session(sid):
+                    deleted += 1
+                    logger.info("Shared meeting %s removed: %s", sid, why)
+        app.repo.outbox_drop_person(row["person"])
+    except Exception:  # noqa: BLE001 - the contact is removed all the same
+        logger.warning("Could not delete the meetings of %s", row.get("name"), exc_info=True)
+    return deleted
+
+
+async def revoke_shares_with(app: AppContext, person: str) -> int:
+    """The owner side of a removal: revoke every live share this person has, so each becomes a
+    tombstone, then (once, never failing the removal) ask the person's computers to pull them
+    now: after the removal their token stops working and they could never fetch them. Without
+    that, they learn of it from the 401s (share_pull.GONE_AFTER). Returns the shares revoked."""
+    revoked = 0
+    for share in app.repo.shares_for_person(person):
+        if app.repo.revoke_peer_share(share["session_id"], person):
+            revoked += 1
+    if revoked and app.share_announce is not None:
+        await app.share_announce.notify_removal(person)
+    return revoked
 
 
 async def forget_contact(app: AppContext, person: str) -> bool:
-    """Remove a contact: the row stays (removed_at) so the removal can travel, its devices are
-    revoked and any machine dialed for it is hung up. False when there is no such contact."""
+    """Remove a contact: their shares are revoked and they are asked to pull that, the row stays
+    (removed_at) so the removal can travel, its devices are revoked, any machine dialed for it
+    is hung up and the meetings they shared with us are deleted. False when there is no such
+    contact."""
     _check(app)
     row = app.repo.contact(person)
     if row is None:
         return False
     if not row["removed_at"]:
+        try:
+            await revoke_shares_with(app, person)
+        except Exception:  # noqa: BLE001 - never fails the removal
+            logger.warning("Could not revoke the shares with %s", row.get("name"), exc_info=True)
         app.repo.remove_contact(person, now_iso())
     await drop_contact_access(app, row)
     return True

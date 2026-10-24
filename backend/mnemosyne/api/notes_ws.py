@@ -13,7 +13,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from .. import access
-from ..services import shared_notes
+from ..services import contacts, shared_notes, shared_with_me
 from .context import AppContext, get_ws_ctx
 
 logger = logging.getLogger(__name__)
@@ -21,9 +21,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def identity(ctx: AppContext) -> tuple[str, str]:
-    """Who is typing: the team user, or on the desktop its `local_speaker_name`."""
+def identity(ctx: AppContext, session_id: str = "") -> tuple[str, str]:
+    """Who is typing: the team user, or on the desktop its `local_speaker_name`; on a meeting
+    someone shared with me, me as their hub knows me (`p:` id and name, phase 8)."""
     p = access.principal()
+    if p is None and session_id and shared_with_me.shared_from(ctx, session_id):
+        p = contacts.my_principal(ctx)
     if p is not None:
         return p.user_id, p.name
     return "", (ctx.settings.local_speaker_name or "").strip() or "You"
@@ -36,7 +39,7 @@ async def notes_socket(ws: WebSocket, session_id: str):
     if ctx.locked or not ctx.repo.exists(session_id):  # Hidden and unknown alike
         await ws.close(code=4404)
         return
-    you_id, you_name = identity(ctx)
+    you_id, you_name = identity(ctx, session_id)
     can_edit = shared_notes.may_edit(ctx, session_id)
     member = await shared_notes.join(ctx, session_id, ws, you_id, you_name, can_edit)
     if member is None:

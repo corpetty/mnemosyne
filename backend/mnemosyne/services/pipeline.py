@@ -627,6 +627,7 @@ def ask_question(
     """Build the ask job runner; the saved Ask is the job result."""
 
     async def run(ctx: JobContext) -> dict:
+        from . import shared_with_me
         from .ask_service import answer_question
 
         st = app.settings
@@ -641,6 +642,7 @@ def ask_question(
             extra_instructions=glossary_instructions(parse_glossary(st.glossary)),
             index=app.index,
             exclude_local_only=exclude_local_only,
+            exclude_ids=await asyncio.to_thread(shared_with_me.excluded, app, "shared_in_ask"),
         )
         app.repo.save_ask(ask)
         ctx.update("Answer ready")
@@ -691,6 +693,8 @@ def make_digest(app: AppContext, start, end, provider: str = "", model: str = ""
         sessions = await asyncio.to_thread(app.repo.sessions_between, start, end)
         if is_cloud(prov):
             sessions = [s for s in sessions if not s.local_only]
+        if not st.shared_in_digest:  # meetings shared with you: only when asked for
+            sessions = [s for s in sessions if not s.shared_from]
         if any(s.summary.strip() for s in sessions):
             mdl = await app.summarizer.resolve_model(prov, mdl)
 

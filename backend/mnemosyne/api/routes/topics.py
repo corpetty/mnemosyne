@@ -121,7 +121,14 @@ async def save_topic_note(request: TopicNoteRequest, ctx: AppContext = Depends(g
         raise HTTPException(status_code=400, detail=f"Vault not found: {vault}")
 
     def run() -> Path:
+        from ...services.shared_with_me import excluded
+
         thread = build_thread(ctx.repo, ctx.index, q)
+        skip = excluded(ctx, "shared_in_obsidian")  # meetings shared with me: only when asked
+        if skip:
+            thread = thread.model_copy(
+                update={"meetings": [m for m in thread.meetings if m.id not in skip]}
+            )
         if not thread.meetings:
             raise ValueError(f'No meetings found about "{q}"')
         stems, predicates = {}, {}

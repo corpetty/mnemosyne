@@ -20,6 +20,14 @@ class Card(BaseModel):
     sig: str  # the person's signature of the canonical card without this field
 
 
+class ContactPullInfo(ApiModel):
+    """How pulling what this contact shares went last (services/share_pull.py)."""
+
+    state: str  # idle | pulling | ok | unreachable | skew | error | gone (they removed us)
+    at: str | None = None  # when the last round ended, ISO 8601 UTC
+    error: str | None = None
+
+
 class ContactInfo(ApiModel):
     person: str
     pid: str  # "p:" + the first 16 hex characters of the key
@@ -29,6 +37,7 @@ class ContactInfo(ApiModel):
     machines: list[str]  # names only
     created_at: str
     updated_at: str
+    pull: ContactPullInfo | None = None  # None: not pulled from since this start
 
 
 class ContactsMe(ApiModel):

@@ -331,7 +331,7 @@ def test_a_v12_database_gains_the_contacts_table(tmp_path):
     repo = SessionRepository(path)
     repo.put_contact(_row())
     assert repo.contact("a" * 64)["name"] == "Ada"
-    assert SCHEMA_VERSION == 14
+    assert SCHEMA_VERSION == 16
     repo.close()
 
 

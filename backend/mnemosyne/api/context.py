@@ -96,6 +96,8 @@ class AppContext:
     share_announce: Any = (
         None  # services/share_announce.py: pokes contacts a shared meeting changed
     )
+    share_pull: Any = None  # services/share_pull.py SharePuller: meetings contacts share with us
+    share_push: Any = None  # services/share_push.py SharePusher: what I did on them, sent back
     person: Any = None  # services/person.py PersonKeys: this person's signing key
 
     def __post_init__(self) -> None:
@@ -225,6 +227,12 @@ class AppContext:
         from ..services.share_announce import ShareAnnouncer
 
         ctx.share_announce = ShareAnnouncer(ctx)
+        from ..services.share_pull import SharePuller
+
+        ctx.share_pull = SharePuller(ctx)
+        from ..services.share_push import SharePusher
+
+        ctx.share_push = SharePusher(ctx)
 
         # The sidecar's listeners are new each start: dial the sync peers and the contacts'
         # machines again, then pull.
@@ -234,6 +242,7 @@ class AppContext:
             await dial_all(ctx.link, ctx.sync_peers)
             await dial_contacts(ctx)  # never raises
             ctx.sync.wake()
+            ctx.share_pull.wake()
 
         ctx.link.on_ready.append(redial)
         return ctx
@@ -258,6 +267,7 @@ class AppContext:
             await self.index.stop()
             self.index = VectorIndex(self.repo, settings)
             self.index.start(self.bus)
+        self.index.include_shared(settings.shared_in_search)  # a rebuilt index has it already
         if calendar_source(settings) != self.calendar.source:
             self.calendar = CalendarService(calendar_source(settings))
         await self.models.apply_settings(settings)
@@ -520,7 +530,15 @@ class AppContext:
         await self._try("Task links", self._reconcile_tasks)
         # Library sync: claim meetings from before it, then pull from the peers and watch.
         await self._try("Library sync", self.sync.start)
+        await self._try("Demo share", self._seed_demo_share)
         await self._try("Share announcer", self.share_announce.start)
+        await self._try("Share pull", self.share_pull.start)
+        await self._try("Share push", self.share_push.start)
+
+    def _seed_demo_share(self) -> None:
+        from ..services.share_demo import seed_demo
+
+        seed_demo(self)
 
     async def _reconcile_tasks(self) -> None:
         from ..services import task_links, task_migration
@@ -576,6 +594,10 @@ class AppContext:
         await self.sync.stop()
         if self.share_announce is not None:
             await self.share_announce.stop()
+        if self.share_push is not None:
+            await self.share_push.stop()
+        if self.share_pull is not None:
+            await self.share_pull.stop()
         await self.link.stop()
         await self.index.stop()
         for task in (

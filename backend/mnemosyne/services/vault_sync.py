@@ -1024,8 +1024,8 @@ def sync_vault(ctx: AppContext) -> int:
     }
     changed = 0
     for summary in ctx.repo.list_summaries():
-        if not summary.has_summary or summary.origin:
-            continue  # the computer that recorded a meeting reads its note
+        if not summary.has_summary or summary.origin or summary.shared_from:
+            continue  # the computer that recorded a meeting reads its note (the owner's hub)
         stem = note_stem(summary)  # name and date are all it needs
         for folder in folders:
             path = root / folder / f"{stem}.md"
