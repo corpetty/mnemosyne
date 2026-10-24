@@ -74,7 +74,10 @@ test('a comment on a shared meeting waits for the owner\'s computer', async ({ p
     .getByRole('button', { name: 'Comment', exact: true })
     .click();
 
-  await expect(page.getByText('Does this include the filter protocol?')).toBeVisible();
+  // The thread shows under the decision and again in the Comments card: check the inline one.
+  await expect(
+    page.locator('[data-comment-block]').getByText('Does this include the filter protocol?'),
+  ).toBeVisible();
   await expect(page.getByText('You', { exact: true }).first()).toBeVisible();
   // Ada's computer is unreachable: the comment stays queued.
   await expect(page.getByText(/^Waiting for Ada Lovelace's computer: \d+ comments?/)).toBeVisible();

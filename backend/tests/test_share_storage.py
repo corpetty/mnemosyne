@@ -536,3 +536,35 @@ def test_the_task_migration_skips_shared_from_meetings(ctx, monkeypatch):
     monkeypatch.setattr(decision_links, "link_items", lambda app, sid, *a: seen.append(sid) or [])
     assert task_migration.migrate(ctx)["tasks_linked"] == 0
     assert seen == [mine, mine]
+
+
+def test_aware_times_of_a_shared_meeting_are_stored_as_naive_local_times(repo):
+    from datetime import UTC
+
+    from mnemosyne.models.shared_meeting import SharedMeeting, SharedOwner, ShareParts
+    from mnemosyne.services.brief import build_brief
+
+    local = _save(repo, "Mine")
+    aware = datetime(2026, 10, 20, 14, 0, tzinfo=UTC)
+    sm = SharedMeeting(
+        id="ada000000001",
+        name="Ada's roadmap",
+        created_at=aware,
+        updated_at=aware,
+        owner=SharedOwner(person=ADA, name="Ada"),
+        parts=ShareParts(transcript=False, notes=False),
+        summary="x",
+        summary_data=SummaryData(),
+        attendees=["Ada"],
+    )
+    assert repo.apply_shared(sm, ADA) == "new"
+    row = repo._conn.execute(
+        "SELECT created_at, updated_at FROM sessions WHERE id=?", (sm.id,)
+    ).fetchone()
+    expected = aware.astimezone().replace(tzinfo=None).isoformat()
+    assert row["created_at"] == expected
+    assert row["updated_at"] == expected
+    # A mix of local and shared meetings sorts without comparing naive with aware.
+    with access.internally():
+        brief = build_brief(repo.meeting_meta(), "Roadmap", ["Ada"], exclude=local)
+    assert brief is not None

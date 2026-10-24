@@ -35,6 +35,7 @@ def test_list_sessions_summary_fields_and_order(client):
         "local_only": False,
         "owner_id": "",
         "origin": "",
+        "shared_from": "",
     }
 
 

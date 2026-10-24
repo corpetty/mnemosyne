@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ..models.contact import Card, CardMachine
@@ -37,8 +37,8 @@ ADA_SECRET = "5e" * 32
 CARD_AT = "2026-10-20T09:00:00+00:00"
 MEETING_ID = "ada000000001"
 MEETING_NAME = "Shared: Waku roadmap"
-CREATED = datetime(2026, 10, 20, 14, 0, tzinfo=UTC)
-UPDATED = datetime(2026, 10, 20, 15, 0, tzinfo=UTC)
+CREATED = datetime(2026, 10, 20, 14, 0)
+UPDATED = datetime(2026, 10, 20, 15, 0)
 SUMMARY = (
     "Ada walked through the Waku roadmap for the quarter: the store protocol comes first, "
     "light clients second."

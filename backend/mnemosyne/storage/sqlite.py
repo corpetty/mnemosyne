@@ -646,6 +646,11 @@ def _asset(r) -> Asset:
     )
 
 
+def _local_naive(dt: datetime) -> datetime:
+    """Local meetings store naive local times; a timezone-aware one (shared in) becomes the same."""
+    return dt.astimezone().replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+
 class SessionRepository:
     def __init__(self, db_path: Path, key: bytes | None = None):
         self._lock = threading.RLock()
@@ -3061,8 +3066,8 @@ class SessionRepository:
             ).fetchone()
             common = (
                 sm.name,
-                sm.created_at.isoformat(),
-                sm.updated_at.isoformat(),
+                _local_naive(sm.created_at).isoformat(),
+                _local_naive(sm.updated_at).isoformat(),
                 sm.summary,
                 sm.summary_data.model_dump_json() if sm.summary_data else None,
                 sm.notes,
