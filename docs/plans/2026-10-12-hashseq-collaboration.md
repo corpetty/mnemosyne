@@ -889,7 +889,7 @@ gains a socket per transport behind one interface, so `GuestDoc` and the editor 
 
 ### Phase 11 design (drafted 2026-10-25, for review)
 
-Status: proposal, nothing built. Drafted against main at 9657a04 (phase 10 merged, unreleased).
+Status: built 2026-10-25, unreleased, with the corrections in docs/plans/2026-10-25-phase-11-tasks.md.
 Asked for by Corey (2026-10-25) after comparing our editor with David's kb (hashseq web/kb.js at
 94f5e3c, APP_NOTES 22 "the chrome was in the way"): tools where the work is, live carets and
 selections (also across iroh and the host mirror), and inserts that know the meeting. Decided by

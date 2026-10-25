@@ -36,6 +36,9 @@
 //                                               to the character it crossed, so moving right to the
 //                                               end of a bold word continues bold, moving left to
 //                                               its start does not
+// Hooks for the menus around the editor (phase 11): `onTyped` hears each natively typed
+// character (the `/` menu), `interceptKey` sees keydown first (a menu's arrows, Enter, Escape),
+// and `command` runs any CommandResult as one undo entry (chips, tables, "Turn into").
 // Undo: typed characters group until a space or a pause (undo.ts); every command is its
 // own entry; an input rule is an entry after the typed text, so undo right after a rule
 // reverts the conversion and leaves the typed characters.
@@ -59,6 +62,7 @@ import { CELL_SEP, cpLen, cpSlice, ensureTerminated, lineAt, lines, spansOf, val
 import { idsOf, liveRuns, removeRange, type Inverse } from '../ops.js';
 import type { UndoStack } from '../undo.js';
 import { PASTE_LIMIT, cellPasteText, cleanPaste, parsePaste, selectionHtml, selectionMarkdown } from './clipboard.js';
+import { isChipUrl } from '../chips.js';
 import { extractText, type SelectionOffsets } from './dom.js';
 import { diffAt, domFlagsAt, lineContent, reconcileAffinity } from './native.js';
 import type { EditorView } from './view.js';
@@ -82,6 +86,26 @@ export interface InputOptions {
   /** A paste over `pasteLimit` code points was refused. */
   onPasteTooLarge?: (chars: number) => void;
   pasteLimit?: number;
+  /**
+   * A native insert whose diff was exactly one typed character: the character and the caret
+   * (code points) right after it, before any input rule that character triggers. Not called
+   * during an IME composition nor for the commit that ends one.
+   */
+  onTyped?: (char: string, caret: number) => void;
+  /**
+   * Called first on every keydown (not while the editor is read-only or composing, where a
+   * menu has nothing to pick). true = handled: the event is cancelled and nothing else runs.
+   * Cancelling Enter's keydown also stops its split: `insertParagraph` is a beforeinput the
+   * engine only fires when keydown was not cancelled (UI Events), so `enter()` never runs.
+   */
+  interceptKey?: (e: KeyboardEvent) => boolean;
+}
+
+/** Where `command` leaves the selection (default: the command's own caret). */
+export interface CaretPlace {
+  caret?: number;
+  focus?: number;
+  preferAfter?: boolean;
 }
 
 export type ToggleKind = Exclude<InlineKind, 'link'>;
@@ -101,12 +125,25 @@ export interface EditorInput {
   readonly composing: boolean;
   /** Apply a remote frame: the selection is kept by element id and no undo entry is made. */
   applyRemote(apply: () => void): void;
+  /**
+   * Ask for a link on the selection (what Ctrl+K does): `opts.requestLink` gets the range and its
+   * current URL; nothing on a chip, or on a caret outside a link. No-op when read-only.
+   */
+  requestLink(): void;
   /** Set or clear (null) the link over a range (the answer to `requestLink`). */
   setLink(from: number, to: number, url: string | null): void;
   /** Toggle an inline mark over the selection (the toolbar's buttons). */
   toggleInline(kind: ToggleKind): void;
-  /** Set the kind of the selected lines (null = plain), toggling off when they already have it. */
-  setLineKind(kind: LineKind | null): void;
+  /**
+   * Set the kind of the selected lines (null = plain). By default toggles off when they already
+   * have it; `{ toggle: false }` sets it regardless ("Turn into").
+   */
+  setLineKind(kind: LineKind | null, opts?: { toggle?: boolean }): void;
+  /**
+   * Run a command on the document as one undo entry: beforeChange, undo push, onLocalChange,
+   * update, then the caret (`place`, else the command's own). No-op (null) when read-only.
+   */
+  command(fn: (doc: Doc) => CommandResult, place?: CaretPlace): CommandResult | null;
   undo(): void;
   redo(): void;
 }
@@ -142,7 +179,7 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
   /** Run a command on the current doc, record it, re-render and place the caret. */
   const run = (
     fn: () => CommandResult,
-    place: { caret?: number; focus?: number; preferAfter?: boolean } = {}
+    place: CaretPlace = {}
   ): CommandResult => {
     const before = view.getSelection();
     view.beforeChange();
@@ -278,6 +315,65 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
     }
   };
 
+  /** The chip URL on the character at `pos`, if that character is part of a chip. */
+  const chipAt = (spans: ReturnType<typeof spansOf>, pos: number): string | null => {
+    if (pos < 0) return null;
+    const links = valuesAt(spans, pos, 'link');
+    return links.length === 1 && isChipUrl(links[0]) ? links[0] : null;
+  };
+
+  /**
+   * After `n` characters were inserted at `at`: when both neighbours are the same chip, the
+   * insert landed strictly inside it (a closed link mark does not cover text typed in the
+   * middle, which would split the pill in two). Link the whole chip again, inverse included,
+   * so it stays one chip and, in the caller's undo entry, one step. Typing at a chip's edge
+   * is plain text and untouched.
+   */
+  const healChip = (at: number, n: number): Inverse[] => {
+    if (n <= 0) return [];
+    const spans = spansOf(doc);
+    const end = doc.web.textLen(doc.obj);
+    const url = chipAt(spans, at - 1);
+    if (!url || at + n >= end || chipAt(spans, at + n) !== url) return [];
+    let from = at - 1;
+    let to = at + n + 1;
+    while (from > 0 && chipAt(spans, from - 1) === url) from--;
+    while (to < end && chipAt(spans, to) === url) to++;
+    return setLinkCommand(doc, from, to, url).inverse;
+  };
+
+  /**
+   * A collapsed Backspace right after a chip's last character, or Delete right before its
+   * first, removes the whole chip as one command (one undo entry). False when the caret is
+   * anywhere else (inside the chip is ordinary text editing).
+   */
+  const chipDeleteKey = (e: KeyboardEvent): boolean => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return false;
+    const s = view.getSelection();
+    if (!s || s.anchor !== s.focus) return false;
+    const pos = s.focus;
+    const back = e.key === 'Backspace';
+    const spans = spansOf(doc);
+    const end = doc.web.textLen(doc.obj);
+    const url = back ? chipAt(spans, pos - 1) : pos < end ? chipAt(spans, pos) : null;
+    if (!url) return false;
+    // Only at the chip's edge: the character on the other side is not the same chip.
+    const other = back ? (pos < end ? chipAt(spans, pos) : null) : chipAt(spans, pos - 1);
+    if (other === url) return false;
+    let from = back ? pos - 1 : pos;
+    let to = back ? pos : pos + 1;
+    while (from > 0 && chipAt(spans, from - 1) === url && !isBreak(from - 1)) from--;
+    while (to < end && chipAt(spans, to) === url && !isBreak(to)) to++;
+    run(() => deleteRange(doc, from, to));
+    opts.onTyping?.();
+    return true;
+  };
+  /** A line end or cell separator is never part of a chip, whatever mark it carries. */
+  const isBreak = (i: number): boolean => {
+    const ch = cpSlice(doc.web.text(doc.obj), i, i + 1);
+    return ch === '\n' || ch === CELL_SEP;
+  };
+
   const cellBoundary = (line: Line, pos: number): 'start' | 'end' | null => {
     if (!line.cells) return null;
     const i = pos - line.start;
@@ -315,9 +411,16 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
       const ls = lines(doc);
       const line = lineAt(ls, at);
       const done = (r: CommandResult, caret = r.caret): CommandResult => ({ inverse: [...inv, ...r.inverse], caret });
-      if (line.cells) return done(insertText(doc, at, cellPasteText(text)));
+      if (line.cells) {
+        const cellText = cellPasteText(text);
+        const r = insertText(doc, at, cellText);
+        return done({ inverse: [...r.inverse, ...healChip(at, cpLen(cellText))], caret: r.caret });
+      }
       const plan = parsePaste(text);
-      if (plan.kind === 'inline') return done(insertModel(doc, at, plan.model));
+      if (plan.kind === 'inline') {
+        const r = insertModel(doc, at, plan.model);
+        return done({ inverse: [...r.inverse, ...healChip(at, cpLen(plan.model.text))], caret: r.caret });
+      }
       if (line.start === line.end) {
         // An empty host line is replaced: the pasted lines take its place, its own
         // terminator goes (a raw removal, so the following line keeps its kind).
@@ -366,13 +469,13 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
     run(() => toggleInlineCommand(doc, s[0], s[1], kind), { caret: s[0], focus: s[1] });
   };
 
-  const setKind = (kind: LineKind | null) => {
+  const setKind = (kind: LineKind | null, toggle = true) => {
     const s = selection();
     if (!s) return;
     const ls = lines(doc);
     const first = lineAt(ls, s[0]);
     if (first.cells) return;
-    const same = first.kind === kind || (kind === 'task' && first.kind === 'task_done');
+    const same = toggle && (first.kind === kind || (kind === 'task' && first.kind === 'task_done'));
     run(() => setLineKind(doc, s[0], s[1], same ? null : kind), { caret: s[0], focus: s[1] });
   };
 
@@ -382,6 +485,10 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
     let [from, to] = s;
     const spans = spansOf(doc);
     let url: string | null = valuesAt(spans, from, 'link')[0] ?? null;
+    // A chip is not a link to edit: nothing to ask, inside it or across it.
+    for (let i = from === to ? Math.max(0, from - 1) : from; i <= (from === to ? from : to - 1); i++) {
+      if (chipAt(spans, i)) return;
+    }
     if (from === to) {
       // The link under the caret (the character before it, else after).
       url = valuesAt(spans, Math.max(0, from - 1), 'link')[0] ?? valuesAt(spans, from, 'link')[0] ?? null;
@@ -466,11 +573,15 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
       inv.push(...insertText(doc, at, d.text).inverse);
       caret = at + n;
       if (focus && content.caret === d.p + n) inv.push(...reconcileAffinity(doc, at, n, domFlagsAt(focus.node, ref.el)));
+      inv.push(...healChip(at, n));
     }
     undo.push(inv, {
       caret: selBefore?.focus ?? caret,
       typed: d.kind === 'insert' && typed !== null && d.text === typed ? typed : undefined
     });
+    // One typed character: a composition's commit has `typed = null`, so it never counts.
+    const typedChar = d.kind === 'insert' && typed !== null && d.text === typed && cpLen(typed) === 1 ? typed : null;
+    const typedCaret = caret;
     changed();
     view.update();
     if (d.kind === 'insert' && (d.text === ' ' || d.text === '`')) {
@@ -490,6 +601,7 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
       }
     }
     if (extractText(root) !== doc.web.text(doc.obj)) resync();
+    if (typedChar !== null) opts.onTyped?.(typedChar, typedCaret);
     return caret;
   };
 
@@ -621,6 +733,10 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.defaultPrevented) return;
+    if (!readOnly && !composing && !e.isComposing && opts.interceptKey?.(e)) {
+      e.preventDefault();
+      return;
+    }
     const mod = e.ctrlKey || e.metaKey;
     if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !mod && !e.altKey) {
       if (!readOnly && !composing) arrow(e);
@@ -632,6 +748,10 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
       return;
     }
     if (e.key === 'Backspace' || e.key === 'Delete') {
+      if (chipDeleteKey(e)) {
+        e.preventDefault();
+        return;
+      }
       tableDeleteKey(e);
       return;
     }
@@ -777,11 +897,17 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
       if (readOnly || from >= to) return;
       run(() => setLinkCommand(doc, from, to, url), { caret: from, focus: to });
     },
+    requestLink() {
+      if (!readOnly) requestLink();
+    },
     toggleInline(kind) {
       if (!readOnly) toggleInline(kind);
     },
-    setLineKind(kind) {
-      if (!readOnly) setKind(kind);
+    setLineKind(kind, o) {
+      if (!readOnly) setKind(kind, o?.toggle ?? true);
+    },
+    command(fn, place) {
+      return readOnly ? null : run(() => fn(doc), place);
     },
     undo() {
       if (!readOnly) doUndo();

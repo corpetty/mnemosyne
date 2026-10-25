@@ -16,6 +16,7 @@ declare global {
       view: { setSelection(anchor: number, focus?: number, preferAfter?: boolean): void; lines: { start: number; end: number }[] };
       getSelectionOffsets(root: HTMLElement): { anchor: number; focus: number } | null;
       input: { setLink(from: number, to: number, url: string | null): void; setReadOnly(v: boolean): void };
+      lastChip: { kind: string; part?: number; seconds?: number; name?: string; id?: string } | null;
     };
   }
 }
@@ -273,4 +274,121 @@ test('IME: a composition is committed once, after remote frames that arrived mea
   expect(await caret(page)).toEqual({ anchor: 3, focus: 3 });
   await page.keyboard.press('Control+z');
   expect(await md(page)).toBe('Rab\n');
+});
+
+// ---- toolbars, the `/` menu, pickers and chips (phase 11, tasks 2-5) -------------------------------
+// The harness mounts the real NotesEditor with fake inserts: the time is always 12:34
+// (`mnemosyne:t/0/754`), two people (Ada Lovelace, Bob Smith) and one meeting.
+
+const selectionBar = (page: Page) => page.getByRole('toolbar', { name: 'Format selection' });
+const insertMenu = (page: Page) => page.getByRole('listbox', { name: 'Insert' });
+const text = (page: Page) => page.evaluate(() => window.__notes.text());
+
+test('a selection shows the format toolbar: Bold, Turn into Heading 2, Escape hides it', async ({ page }) => {
+  const editor = await open(page, 'hello world\n');
+  await expect(selectionBar(page)).toHaveCount(0);
+  await select(page, 0, 5); // "hello"
+  const bar = selectionBar(page);
+  await expect(bar).toBeVisible({ timeout: 15_000 });
+  // Not a touch screen: its bar is the touch bar's alone.
+  await expect(page.getByRole('toolbar', { name: 'Format notes (touch)' })).toHaveCount(0);
+
+  await bar.getByRole('button', { name: 'Bold' }).click();
+  await expect(editor.locator('strong')).toHaveText('hello');
+  expect(await md(page)).toBe('**hello** world\n');
+  await expect(bar).toBeVisible();
+
+  // "Turn into" opens a menu of line kinds; the buttons keep the editor's selection.
+  await bar.getByRole('button', { name: 'Turn into' }).click();
+  await bar.getByRole('menuitemradio', { name: 'Heading 2' }).click();
+  await expect(editor.locator('.ne-h2')).toHaveCount(1);
+  expect(await md(page)).toBe('## **hello** world\n');
+
+  await page.keyboard.press('Escape');
+  await expect(bar).toHaveCount(0);
+});
+
+test('/ at a line start opens the menu: Enter makes a heading and removes the typed text, one undo restores it', async ({ page }) => {
+  const editor = await open(page);
+  await page.keyboard.type('/hea');
+  const menu = insertMenu(page);
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('option', { name: 'Heading 1' })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(menu).toHaveCount(0);
+  await expect(editor.locator('.ne-h1')).toHaveCount(1);
+  expect(await text(page)).toBe('\n'); // "/hea" is gone
+  await page.keyboard.press('Control+z');
+  await expect(editor.locator('.ne-h1')).toHaveCount(0);
+  expect(await text(page)).toBe('/hea\n');
+  expect(await md(page)).toBe('/hea\n');
+});
+
+test('@ in the middle of a line picks a person and inserts a chip', async ({ page }) => {
+  const editor = await open(page);
+  await page.keyboard.type('x @ad');
+  const list = page.getByRole('listbox', { name: 'People' });
+  await expect(list.getByRole('option', { name: /Ada Lovelace/ })).toBeVisible();
+  await expect(list.getByRole('option', { name: /Bob Smith/ })).toHaveCount(0);
+  await page.keyboard.press('Enter');
+  await expect(list).toHaveCount(0);
+  await expect(editor.locator('a.ne-chip-person')).toHaveText('@Ada Lovelace');
+  expect(await md(page)).toContain('x [@Ada Lovelace](mnemosyne:person/Ada%20Lovelace)');
+  // Typing goes on after the chip, as plain text.
+  await page.keyboard.type('hi');
+  expect(await md(page)).toContain('(mnemosyne:person/Ada%20Lovelace) hi');
+});
+
+test('Ctrl+/ opens the menu with nothing typed; Escape closes it', async ({ page }) => {
+  await open(page);
+  await page.keyboard.press('Control+/');
+  const menu = insertMenu(page);
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('option', { name: /^Time now/ })).toBeVisible();
+  await expect(menu.getByRole('option', { name: 'Heading 2' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  expect(await text(page)).toBe('\n');
+});
+
+test('a time chip is inserted from the menu and a click on it reaches the host', async ({ page }) => {
+  const editor = await open(page);
+  await page.keyboard.type('/time');
+  await expect(insertMenu(page).getByRole('option', { name: /^Time now/ })).toBeVisible();
+  await page.keyboard.press('Enter');
+  const chip = editor.locator('a.ne-chip-time');
+  await expect(chip).toHaveText('12:34');
+  await expect(chip).toHaveAttribute('data-chip', 'mnemosyne:t/0/754');
+  expect(await md(page)).toContain('[12:34](mnemosyne:t/0/754)');
+  expect(await page.evaluate(() => window.__notes.lastChip)).toBeNull();
+  await chip.click();
+  await expect.poll(() => page.evaluate(() => window.__notes.lastChip)).toEqual({ kind: 'time', part: 0, seconds: 754 });
+});
+
+// A phone: a coarse pointer, so the fixed touch bar takes the place of the selection toolbar.
+// Chromium only: WebKit's emulation does not report `pointer: coarse` the way the page needs.
+test.describe('on a touch screen', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 800 } });
+
+  test('the touch bar shows while the editor has focus', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'pointer: coarse is emulated by Chromium only');
+    await page.goto(`/dev/notes-editor?md=${encodeURIComponent('hello world\n')}`);
+    await expect(page.getByTestId('status')).toHaveText('ready');
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+    const bar = page.getByRole('toolbar', { name: 'Format notes (touch)' });
+    await expect(bar).toHaveCount(0);
+    await page.getByTestId('editor').click();
+    await expect(bar).toBeVisible();
+    await expect(bar.getByRole('button', { name: 'Bold' })).toBeVisible();
+    await expect(bar.getByRole('button', { name: 'Task list' })).toBeVisible();
+    // The selection toolbar stays away on a touch screen.
+    await select(page, 0, 5);
+    await expect(selectionBar(page)).toHaveCount(0);
+    // The bar drives the editor: Task list turns the caret's line into a task.
+    await bar.getByRole('button', { name: 'Task list' }).click();
+    await expect(page.getByTestId('editor').locator('.ne-task')).toHaveCount(1);
+    // Focus leaves: the bar goes.
+    await page.getByTestId('editor').evaluate((el) => (el as HTMLElement).blur());
+    await expect(bar).toHaveCount(0);
+  });
 });

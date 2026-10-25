@@ -4,6 +4,8 @@
 	// through `window.__notes`). Everything editor-related is imported under
 	// `import.meta.env.DEV`, so production builds carry only this stub.
 	import { onMount } from 'svelte';
+	import type { NotesHost } from '$lib/notes/ui/types.js';
+	import type NotesEditorType from '$lib/notes/ui/NotesEditor.svelte';
 
 	const SAMPLE = [
 		'# Notes',
@@ -19,8 +21,19 @@
 		''
 	].join('\n');
 
-	let root: HTMLElement;
 	let status = $state('loading');
+	let readOnly = $state(false);
+	let ready = $state(false);
+	let host = $state.raw<NotesHost | null>(null);
+	let Editor = $state.raw<typeof NotesEditorType | null>(null);
+	let harness: unknown = null;
+
+	// `window.__notes` appears once the editor has mounted on the document.
+	$effect(() => {
+		if (!ready || !harness) return;
+		(window as unknown as { __notes: unknown }).__notes = harness;
+		status = 'ready';
+	});
 
 	onMount(async () => {
 		if (!import.meta.env.DEV) {
@@ -29,14 +42,15 @@
 		}
 		const params = new URLSearchParams(location.search);
 		const md = params.has('md') ? (params.get('md') ?? '') : SAMPLE;
-		const [{ mountHarness }] = await Promise.all([
+		readOnly = params.has('readonly');
+		const [{ mountHarness }, ed] = await Promise.all([
 			import('$lib/notes/editor/harness.js'),
-			import('$lib/notes/editor/editor.css')
+			import('$lib/notes/ui/NotesEditor.svelte')
 		]);
-		const harness = await mountHarness(root, md);
-		(window as unknown as { __notes: unknown }).__notes = harness;
-		if (params.has('readonly')) harness.input.setReadOnly(true);
-		status = 'ready';
+		const h = await mountHarness(md, { get: () => readOnly, set: (v) => (readOnly = v) });
+		harness = h;
+		Editor = ed.default;
+		host = h.host;
 	});
 </script>
 
@@ -46,5 +60,7 @@
 
 <div class="mx-auto max-w-3xl p-6">
 	<p class="mb-3 text-xs text-gray-400" data-testid="status">{status}</p>
-	<div bind:this={root} class="min-h-64 rounded border border-gray-700 p-3" data-testid="editor"></div>
+	{#if Editor && host}
+		<Editor {host} testid="editor" label="Notes" bind:ready />
+	{/if}
 </div>

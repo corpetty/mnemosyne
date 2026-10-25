@@ -192,6 +192,42 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+/* Chips (phase 11): a link whose URL is mnemosyne:... drawn as a pill. Its text is ordinary
+   editable text; there is no href, so nothing navigates. */
+.notes-editor a.ne-chip {
+  display: inline;
+  text-decoration: none;
+  border-radius: 0.5rem;
+  padding: 0.05em 0.45em;
+  font-size: 0.92em;
+  border: 1px solid transparent;
+  cursor: pointer;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.notes-editor a.ne-chip-time {
+  color: rgb(147 197 253);
+  background: rgb(96 165 250 / 0.16);
+  font-variant-numeric: tabular-nums;
+}
+.notes-editor a.ne-chip-time:hover {
+  background: rgb(96 165 250 / 0.28);
+}
+.notes-editor a.ne-chip-person {
+  color: rgb(196 181 253);
+  background: rgb(167 139 250 / 0.16);
+}
+.notes-editor a.ne-chip-person:hover {
+  background: rgb(167 139 250 / 0.28);
+}
+.notes-editor a.ne-chip-meeting {
+  color: rgb(209 213 219);
+  background: rgb(31 41 55);
+  border-color: rgb(75 85 99);
+}
+.notes-editor a.ne-chip-meeting:hover {
+  background: rgb(55 65 81);
+}
 .notes-editor .ne-link-conflict {
   text-decoration: underline dotted;
   text-underline-offset: 2px;

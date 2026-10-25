@@ -228,6 +228,52 @@ describe('render -> extractText', () => {
     expect(extractText(root)).toBe('see here\n');
   });
 
+  it('renders a chip as a pill with no href; its text stays text', () => {
+    const A = docOf('at 1:05 ok');
+    setLink(A.doc, 3, 7, 'mnemosyne:t/0/65');
+    setLink(A.doc, 8, 10, 'mnemosyne:person/Ada%20Lovelace');
+    const root = mount();
+    render(root, lines(A.doc));
+    const chips = Array.from(root.querySelectorAll('a.ne-chip')) as HTMLAnchorElement[];
+    expect(chips.map((c) => c.className)).toEqual(['ne-chip ne-chip-time', 'ne-chip ne-chip-person']);
+    expect(chips.map((c) => c.dataset.chip)).toEqual(['mnemosyne:t/0/65', 'mnemosyne:person/Ada%20Lovelace']);
+    expect(chips.map((c) => c.hasAttribute('href'))).toEqual([false, false]);
+    expect(chips[0].textContent).toBe('1:05');
+    expect(extractText(root)).toBe('at 1:05 ok\n');
+    const meeting = docOf('m');
+    setLink(meeting.doc, 0, 1, 'mnemosyne:meeting/0123456789ab');
+    const r2 = mount();
+    render(r2, lines(meeting.doc));
+    expect(r2.querySelector('a.ne-chip-meeting')?.hasAttribute('href')).toBe(false);
+  });
+
+  it('gives a link an href only for http, https and mailto (C12)', () => {
+    const urls = [
+      'https://x.y/',
+      'HTTP://x.y/',
+      'mailto:a@b.c',
+      'MAILTO:a@b.c',
+      'javascript:alert(1)',
+      ' javascript:alert(1)',
+      'data:text/html,hi',
+      'mnemosyne:nonsense/1',
+      'ftp://x.y/'
+    ];
+    const A = docOf(urls.map((_, i) => `l${i}`).join(' '));
+    let at = 0;
+    urls.forEach((u, i) => {
+      setLink(A.doc, at, at + `l${i}`.length, u);
+      at += `l${i}`.length + 1;
+    });
+    const root = mount();
+    render(root, lines(A.doc));
+    const as = Array.from(root.querySelectorAll('a')) as HTMLAnchorElement[];
+    expect(as).toHaveLength(urls.length);
+    expect(as.map((a) => a.hasAttribute('href'))).toEqual([true, true, true, true, false, false, false, false, false]);
+    expect(as.some((a) => a.classList.contains('ne-chip'))).toBe(false);
+    expect(extractText(root)).toBe(A.text());
+  });
+
   it('shows table alignment and pads ragged rows with empty cells', () => {
     const A = docOf('x');
     insertTable(A.doc, 0, 3, 2);
