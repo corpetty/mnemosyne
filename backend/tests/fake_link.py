@@ -30,9 +30,11 @@ frames by hand. The handle's `doc_requests` are the requests it got; FAKE_NOTES_
 every run fail (stderr, exit 1).
 
 Toy frames: `0xDE` + the UTF-8 JSON `{"id": str, "ops": [op, ...]}` (build one with
-`doc_frame(id, *ops)`), where an op is `["set", text]`, `["ins", pos, text]`, `["del", pos, n]`
-or `["comment", comment_id, start, end]` (end null = detached). `0xAF` + bytes is an artifact
-frame: accepted and kept, nothing more. A frame whose id was seen before is skipped. The text is
+`doc_frame(id, *ops)`), where an op is `["set", text]`, `["ins", pos, text]`, `["del", pos, n]`,
+`["comment", comment_id, start, end]` (end null = detached) or `["kind", line, "task"|
+"task_done"]` (line = index of the text's line; flips its `- [ ] ` / `- [x] ` box).
+`0xAF` + bytes is an artifact frame: accepted and kept, nothing more. A frame whose id was seen
+before is skipped. The text is
 every frame's ops replayed in order; markdown = the text as is, plain = the text with U+001F as
 a tab. A snapshot is the base64 JSON `{"frames": [...], "artifacts": [...]}`; merge is the union
 (the shared prefix of the frame lists, then the rest ordered by frame id, so it converges in either
@@ -41,7 +43,14 @@ per new frame. set_text emits one `set` frame
 (id = sha256 of the old text and the new markdown, 16 hex) or `[]` when the text is equal.
 mark_comment takes `first`/`last` as decimal character positions (the toy's "element ids"; a
 position past the end of the text, or not a number, is "no such character") and emits one
-`["comment", id, first, last + 1]` frame (id `mark-<comment>`)."""
+`["comment", id, first, last + 1]` frame (id `mark-<comment>`).
+Every answer has `tasks` from the markdown's `- [ ] ` / `- [x] ` lines, as notes-core's: `line` is
+the line's index (0-based, among all the text's lines) as 64 hex characters, `text` the line
+after the box with `[label](url)` links reduced to their label, `links` those as `[start, end,
+url]` in code points of `text`, `frame` null. `set_kind` takes that `line` and a `kind` and emits
+one `["kind", line, kind]` frame (id `kind-<line>-<kind>-<8 hex of the old text's sha256>`),
+`[]` when the line already shows it; an index past the last line is "no such character", a line
+that is not a task is "not a task"."""
 
 import base64
 import json
@@ -170,6 +179,14 @@ if sys.argv[1:] == ["notes", "doc"]:
                 seen.add(frame["id"])
                 state["frames"].append(frame)
 
+    import re
+
+    BOX = re.compile(r"^- \[( |x|X)\] ?")
+    LINK = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
+
+    def with_box(line, kind):
+        return BOX.sub("- [x] " if kind == "task_done" else "- [ ] ", line, count=1)
+
     def replay(state):
         text, comments = "", {}
         for frame in state["frames"]:
@@ -182,13 +199,36 @@ if sys.argv[1:] == ["notes", "doc"]:
                     text = text[: op[1]] + text[op[1] + op[2] :]
                 elif op[0] == "comment":
                     comments[op[1]] = None if op[3] is None else [op[2], op[3]]
+                elif op[0] == "kind":
+                    lines = text.split("\n")
+                    if op[1] < len(lines) and BOX.match(lines[op[1]]):
+                        lines[op[1]] = with_box(lines[op[1]], op[2])
+                    text = "\n".join(lines)
         return text, comments
+
+    def tasks_of(text):
+        out = []
+        for i, line in enumerate(text.split("\n")):
+            box = BOX.match(line)
+            if not box:
+                continue
+            body, plain, links = line[box.end():], "", []
+            at = 0
+            for m in LINK.finditer(body):
+                plain += body[at : m.start()]
+                links.append([len(plain), len(plain) + len(m.group(1)), m.group(2)])
+                plain += m.group(1)
+                at = m.end()
+            plain += body[at:]
+            out.append({"line": format(i, "064x"), "done": box.group(1) != " ", "text": plain,
+                        "links": links, "frame": None})
+        return out
 
     def answer(state, **extra):
         text, comments = replay(state)
         snapshot = base64.b64encode(json.dumps(state, sort_keys=True).encode()).decode()
         out = {"snapshot": snapshot, "markdown": text, "plain": text.replace("\x1f", "\t"),
-               "comments": comments}
+               "comments": comments, "tasks": tasks_of(text)}
         out.update(extra)
         print(json.dumps(out))
         sys.exit(0)
@@ -232,6 +272,33 @@ if sys.argv[1:] == ["notes", "doc"]:
         }
         if frame["id"] in {f["id"] for f in state["frames"]}:
             answer(state, frames=[])
+        state["frames"].append(frame)
+        raw = b"\xde" + json.dumps(frame).encode()
+        answer(state, frames=[base64.b64encode(raw).decode()])
+    elif op == "set_kind":
+        state = load(request.get("snapshot"))
+        add(state, request.get("frames", []))
+        text, _ = replay(state)
+        kind = request.get("kind")
+        if kind not in ("task", "task_done"):
+            fail("kind: expected task or task_done")
+        raw = request.get("line")
+        try:
+            if not (isinstance(raw, str) and len(raw) == 64):
+                raise ValueError
+            index = int(raw, 16)
+        except ValueError:
+            fail("line: expected 64 hex characters")
+        lines = text.split("\n")
+        if index >= len(lines):
+            fail("line: no such character (deleted or unknown)")
+        box = BOX.match(lines[index])
+        if not box:
+            fail("line: not a task")
+        if (box.group(1) != " ") == (kind == "task_done"):
+            answer(state, frames=[])
+        fid = hashlib.sha256(text.encode()).hexdigest()[:8]
+        frame = {"id": f"kind-{index}-{kind}-{fid}", "ops": [["kind", index, kind]]}
         state["frames"].append(frame)
         raw = b"\xde" + json.dumps(frame).encode()
         answer(state, frames=[base64.b64encode(raw).decode()])

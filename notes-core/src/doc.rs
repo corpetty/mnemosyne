@@ -36,6 +36,37 @@ pub struct Notes {
 /// character the comment covered is gone (or it was unmarked).
 pub type Comments = BTreeMap<String, Option<(usize, usize)>>;
 
+/// Which request frame delivered a node: the index into the frames given to
+/// [`fold_tracked`] or [`Notes::apply_frame_at`]. Nodes that were already there (a snapshot,
+/// a union) or that the request itself made are not in it.
+pub type Arrivals = BTreeMap<Id, usize>;
+
+/// A line whose kind is `task` or `task_done`, as [`Notes::tasks`] reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskLine {
+    /// The element id of the line's terminating `\n` (what wasm's `seqIdAt` gives).
+    pub line: Id,
+    pub done: bool,
+    /// The line's text without its terminator.
+    pub text: String,
+    /// Live link marks in the line: `[start, end)` in code points of `text`, and the URL.
+    pub links: Vec<(usize, usize, String)>,
+    /// The live `block` marks that show the line's kind (those whose value is `task` or
+    /// `task_done`, whichever won), for [`TaskLine::frame`].
+    pub kind_marks: Vec<Id>,
+}
+
+impl TaskLine {
+    /// The index of the latest request frame that added the line's terminator or the mark
+    /// that gives its kind; `None` when neither came from a request frame.
+    pub fn frame(&self, arrivals: &Arrivals) -> Option<usize> {
+        std::iter::once(&self.line)
+            .chain(&self.kind_marks)
+            .filter_map(|id| arrivals.get(id).copied())
+            .max()
+    }
+}
+
 impl Notes {
     /// An empty store with the notes seq opened (idempotent, like `createSeq`).
     pub fn new(origin: Id) -> Notes {
@@ -86,6 +117,26 @@ impl Notes {
             Some(tag) => Err(Error(format!("unknown frame tag 0x{tag:02X}"))),
             None => Err(Error("empty frame".into())),
         }
+    }
+
+    /// [`Notes::apply_frame`] for frame number `index` of a request, noting in `arrivals` the
+    /// nodes it delivered (the first frame to deliver a node gets it).
+    pub fn apply_frame_at(
+        &mut self,
+        frame: &[u8],
+        index: usize,
+        arrivals: &mut Arrivals,
+    ) -> Result<usize, Error> {
+        let before = self.web.clock();
+        let delivered = self.apply_frame(frame)?;
+        if delivered > 0 {
+            for (_, _, nodes) in self.web.deltas_for(&before) {
+                for node in nodes {
+                    arrivals.entry(node.id()).or_insert(index);
+                }
+            }
+        }
+        Ok(delivered)
     }
 
     /// Union with another replica of the same notes.
@@ -182,9 +233,61 @@ impl Notes {
         comments
     }
 
+    /// Every task line (kind `task` or `task_done`) in document order.
+    pub fn tasks(&self) -> Vec<TaskLine> {
+        let (model, _, marks) = self.read_marks();
+        let mut out = Vec::new();
+        for (li, (start, end, nl)) in model.line_spans().into_iter().enumerate() {
+            let Some(nl) = nl else { continue };
+            let done = match model.lines[li].kind {
+                Some(Block::Task) => false,
+                Some(Block::TaskDone) => true,
+                _ => continue,
+            };
+            let Some(line) = self.seq().id_at(nl) else {
+                continue;
+            };
+            let mut links: Vec<(usize, usize, String)> = Vec::new();
+            let mut run: Option<(usize, Link)> = None;
+            for i in start..=end {
+                let link = if i < end {
+                    model.fmt[i].link
+                } else {
+                    Link::None
+                };
+                if let Some((from, was)) = run {
+                    if was != link {
+                        if let Some(url) = model.url(was) {
+                            links.push((from - start, i - start, url.to_string()));
+                        }
+                        run = None;
+                    }
+                }
+                if run.is_none() && matches!(link, Link::Url(_)) {
+                    run = Some((i, link));
+                }
+            }
+            out.push(TaskLine {
+                line,
+                done,
+                text: model.text[start..end].iter().collect(),
+                links,
+                kind_marks: marks[li].clone(),
+            });
+        }
+        out
+    }
+
     /// Read the seq: per character text and format, per line attributes, comment ranges.
     fn read(&self) -> (Model, Comments) {
+        let (model, comments, _) = self.read_marks();
+        (model, comments)
+    }
+
+    /// [`Notes::read`] and, per line, the ids of the live `block` marks showing a task kind.
+    fn read_marks(&self) -> (Model, Comments, Vec<Vec<Id>>) {
         let seq = self.seq();
+        let mut kind_marks: Vec<Vec<Id>> = Vec::new();
         let mut model = Model::default();
         let mut comments: Comments = BTreeMap::new();
         let mut names: BTreeMap<Id, Option<String>> = BTreeMap::new();
@@ -201,12 +304,23 @@ impl Notes {
             let mut fmt = Fmt::default();
             let mut line = LineAttr::default();
             let mut here: Vec<String> = Vec::new();
+            let mut block_marks: Vec<Id> = Vec::new();
             for (kind, lives) in &set {
                 let Some(kind) = name(kind) else { continue };
                 let values: Vec<Option<String>> = lives.iter().map(|(_, v)| name(v)).collect();
                 let first = values.iter().flatten().next().cloned();
                 match kind.as_str() {
-                    KIND_BLOCK => line.kind = resolve_block(&values),
+                    KIND_BLOCK => {
+                        line.kind = resolve_block(&values);
+                        if matches!(line.kind, Some(Block::Task | Block::TaskDone)) {
+                            block_marks = lives
+                                .iter()
+                                .zip(&values)
+                                .filter(|(_, v)| v.as_deref().and_then(Block::parse) == line.kind)
+                                .map(|((mark, _), _)| *mark)
+                                .collect();
+                        }
+                    }
                     KIND_LANG => line.lang = first,
                     KIND_ALIGN => line.align = first,
                     KIND_BOLD => fmt.set(BOLD, true),
@@ -243,13 +357,15 @@ impl Notes {
                 model.fmt.push(fmt);
                 if c == '\n' {
                     model.lines.push(line.clone());
+                    kind_marks.push(block_marks.clone());
                 }
             }
         }
         if model.text.last().is_some_and(|&c| c != '\n') {
             model.lines.push(LineAttr::default());
+            kind_marks.push(Vec::new());
         }
-        (model, comments)
+        (model, comments, kind_marks)
     }
 
     /// Make the document say `markdown`. Returns the frames for the clients, artifacts
@@ -316,6 +432,40 @@ impl Notes {
         let mut minted = Vec::new();
         let kind = format!("{COMMENT_PREFIX}{comment}");
         self.mark_inline(start, end + 1, &kind, Some(FLAG_VALUE), false, &mut minted);
+        Ok(self.new_frames(&before, &minted))
+    }
+
+    /// Make the task line whose terminator is element `line` (its `seqIdAt`) `task` (open) or
+    /// `task_done`: a new `block` mark over the terminator, which replaces the old ones, so a
+    /// `task` and `task_done` that were both live (concurrent edits) end up as `kind`. The
+    /// line already showing `kind` changes nothing (no frames). An id that is not in the
+    /// document or was deleted, is not a line end, or is a line that is not a task, or a
+    /// `kind` other than `task` / `task_done`, is an error. Returns the frames for the
+    /// clients, as [`Notes::set_text`] does.
+    pub fn set_kind(&mut self, line: &Id, kind: Block) -> Result<Vec<Vec<u8>>, Error> {
+        if !matches!(kind, Block::Task | Block::TaskDone) {
+            return Err(Error("kind: expected task or task_done".into()));
+        }
+        let pos = self
+            .seq()
+            .position_of(line)
+            .ok_or_else(|| Error("line: no such character (deleted or unknown)".into()))?;
+        let model = self.model();
+        if model.text.get(pos) != Some(&'\n') {
+            return Err(Error("line: not the end of a line".into()));
+        }
+        let index = model.text[..pos].iter().filter(|&&c| c == '\n').count();
+        match model.lines[index].kind {
+            Some(now @ (Block::Task | Block::TaskDone)) => {
+                if now == kind {
+                    return Ok(Vec::new());
+                }
+            }
+            _ => return Err(Error("line: not a task".into())),
+        }
+        let before = self.web.clock();
+        let mut minted = Vec::new();
+        self.mark_line(pos, KIND_BLOCK, Some(kind.as_str()), &mut minted);
         Ok(self.new_frames(&before, &minted))
     }
 
@@ -538,6 +688,26 @@ fn only_object(frame: &[u8], origin: Id) -> Result<Vec<u8>, Error> {
 /// Fold: a snapshot (or nothing) plus frames in log order, to a new snapshot. A frame that
 /// does not decode is an error naming its index.
 pub fn fold(origin: Id, snapshot: Option<&[u8]>, frames: &[Vec<u8>]) -> Result<Notes, Error> {
+    fold_inner(origin, snapshot, frames, None)
+}
+
+/// [`fold`], also saying which frame delivered each node ([`Arrivals`]).
+pub fn fold_tracked(
+    origin: Id,
+    snapshot: Option<&[u8]>,
+    frames: &[Vec<u8>],
+) -> Result<(Notes, Arrivals), Error> {
+    let mut arrivals = Arrivals::new();
+    let notes = fold_inner(origin, snapshot, frames, Some(&mut arrivals))?;
+    Ok((notes, arrivals))
+}
+
+fn fold_inner(
+    origin: Id,
+    snapshot: Option<&[u8]>,
+    frames: &[Vec<u8>],
+    mut arrivals: Option<&mut Arrivals>,
+) -> Result<Notes, Error> {
     let mut notes = match snapshot {
         Some(bytes) => {
             Notes::from_snapshot(origin, bytes).map_err(|e| Error(format!("snapshot: {}", e.0)))?
@@ -545,9 +715,11 @@ pub fn fold(origin: Id, snapshot: Option<&[u8]>, frames: &[Vec<u8>]) -> Result<N
         None => Notes::new(origin),
     };
     for (i, frame) in frames.iter().enumerate() {
-        notes
-            .apply_frame(frame)
-            .map_err(|e| Error(format!("frame {i}: {}", e.0)))?;
+        match arrivals.as_deref_mut() {
+            Some(arrivals) => notes.apply_frame_at(frame, i, arrivals),
+            None => notes.apply_frame(frame),
+        }
+        .map_err(|e| Error(format!("frame {i}: {}", e.0)))?;
     }
     Ok(notes)
 }

@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
+from typing import Literal
 
 from ..models.base import ApiModel
 from ..models.session import ActionItem, CopilotNotes, SummaryData
@@ -15,7 +16,11 @@ class TaskItem(ApiModel):
     session_id: str
     session_name: str
     created_at: datetime
-    idx: int  # position in the meeting's summary_data.action_items
+    # Position in the meeting's summary_data.action_items; a notes item (source "notes") is
+    # -(j+1) for the j-th of `Session.notes_items`, which no idx-based writer accepts.
+    idx: int
+    item_id: str = ""  # ActionItem.id / NotesItem.id ("" for an old summary item without one)
+    source: Literal["summary", "notes"] = "summary"  # notes: text and owner change in the notes
     text: str
     owner: str | None
     done: bool

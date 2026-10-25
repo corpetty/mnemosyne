@@ -9,6 +9,7 @@
 		listTasks,
 		unlinkTaskMention,
 		updateActionItem,
+		updateNotesItem,
 		updateTask
 	} from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -60,6 +61,7 @@
 	}
 
 	const head = (t: TaskObject) => t.mentions[0];
+	const fromNotes = (t: TaskObject) => head(t).source === 'notes';
 	const mentionDate = (m: TaskMention) =>
 		new Date(m.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
@@ -105,16 +107,19 @@
 	}
 
 	async function saveEdit(t: TaskObject) {
-		if (saving || !draft.text.trim()) return;
+		if (saving || (!fromNotes(t) && !draft.text.trim())) return;
 		saving = true;
 		try {
 			// Editing a task edits its head mention, the meeting the row shows.
 			const h = head(t);
-			const got = await updateActionItem(h.session_id, h.idx, {
-				text: draft.text,
-				owner: draft.owner.trim() || null,
-				due: draft.due || null
-			});
+			// Notes items: text and owner are edited in the notes, only the due date goes through here.
+			const got = fromNotes(t)
+				? await updateNotesItem(h.session_id, h.item_id, { due: draft.due || null })
+				: await updateActionItem(h.session_id, h.idx, {
+						text: draft.text,
+						owner: draft.owner.trim() || null,
+						due: draft.due || null
+					});
 			Object.assign(t, { text: got.text, owner: got.owner, due: got.due });
 			Object.assign(h, { text: got.text, owner: got.owner, due: got.due });
 			editing = null;
@@ -414,7 +419,7 @@
 			onclick={() => startEdit(t)}
 			class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-xs text-gray-500 hover:text-gray-200 pt-0.5"
 			aria-label="Edit task: {t.text}"
-			title="Edit the text, owner or due date"
+			title={fromNotes(t) ? 'Edit the due date' : 'Edit the text, owner or due date'}
 		>✎</button>
 	{/if}
 {/snippet}
@@ -438,6 +443,7 @@
 			bind:value={draft.text}
 			onkeydown={(e) => editKey(e, t)}
 			autofocus
+			readonly={fromNotes(t)}
 			aria-label="Task text"
 			class="flex-1 min-w-[12rem] bg-gray-950 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200"
 		/>
@@ -445,6 +451,7 @@
 			bind:value={draft.owner}
 			onkeydown={(e) => editKey(e, t)}
 			placeholder="Owner"
+			readonly={fromNotes(t)}
 			aria-label="Task owner"
 			class="w-32 bg-gray-950 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
 		/>
@@ -455,7 +462,8 @@
 			aria-label="Task due date"
 			class="w-36 bg-gray-950 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
 		/>
-		<button onclick={() => saveEdit(t)} disabled={saving || !draft.text.trim()} class="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">Save</button>
+		{#if fromNotes(t)}<span class="text-xs text-gray-500">Edit it in the notes</span>{/if}
+		<button onclick={() => saveEdit(t)} disabled={saving || (!fromNotes(t) && !draft.text.trim())} class="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">Save</button>
 		<button onclick={() => (editing = null)} class="px-2 py-1 text-xs rounded bg-gray-800 border border-gray-700 text-gray-300">Cancel</button>
 	</li>
 {/snippet}
@@ -545,6 +553,7 @@
 						<input type="checkbox" checked={t.done} onchange={() => toggle(t)} aria-label="Done: {t.text}" class="mt-1 rounded border-gray-600 bg-gray-800" />
 						<span class="w-14 shrink-0 text-xs pt-0.5 {dueClass(t)}" title={t.due! < today ? 'Overdue' : 'Due'}>{dueLabel(t.due!)}</span>
 						<span class="text-gray-200">{t.text}</span>
+						{#if fromNotes(t)}<span class="text-xs text-gray-500 pt-0.5 whitespace-nowrap">from the notes</span>{/if}
 						{#if t.owner}<span class="text-xs text-gray-500 pt-0.5 whitespace-nowrap">· {t.owner}</span>{/if}
 						{@render star(t)}
 						{@render pencil(t)}
@@ -580,6 +589,7 @@
 							aria-label="Done: {t.text}"
 							class="mt-1 rounded border-gray-600 bg-gray-800"
 						/>
+						{#if fromNotes(t)}<span class="text-xs text-gray-500 pt-0.5 whitespace-nowrap">from the notes</span>{/if}
 						<span class={t.done ? 'line-through text-gray-500' : 'text-gray-200'}>{t.text}</span>
 						{#if t.owner}<span class="text-xs text-gray-500 pt-0.5 whitespace-nowrap">· {t.owner}</span>{/if}
 						{#if t.due}<span class="text-xs pt-0.5 whitespace-nowrap {dueClass(t)}">· due {dueLabel(t.due)}</span>{/if}

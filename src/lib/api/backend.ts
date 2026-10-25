@@ -961,6 +961,18 @@ export async function updateTask(key: string, changes: { done?: boolean; follow?
   return request(`/api/tasks/${encodeURIComponent(key)}`, { method: 'PATCH', body: JSON.stringify(changes) });
 }
 
+/** Change an action item typed in the notes: done, follow or due (null clears it). Text and owner change in the notes. */
+export async function updateNotesItem(
+  sessionId: string,
+  itemId: string,
+  changes: { done?: boolean; follow?: boolean; due?: string | null }
+): Promise<TaskItem> {
+  return request(`/api/sessions/${sessionId}/notes-items/${encodeURIComponent(itemId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(changes)
+  });
+}
+
 type ItemRef = { session_id: string; item_id: string };
 const itemRef = (m: TaskMention): ItemRef => ({ session_id: m.session_id, item_id: m.item_id });
 

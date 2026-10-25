@@ -581,8 +581,34 @@ needs no second room. In the browser, guest-wasm (iroh compiled to wasm, relay-o
 committed as `guest/pkg`) gives `IrohSocket` behind the page's one socket interface, tried first
 (about 8 s) before the host's wss, with a `since` per transport. Link format 2 is
 `#2.<room>.<key>.<endpoint>.<relay host>`; format 1 links still work. The page is served from GitHub
-Pages and keeps the last sealed snapshot in IndexedDB until the link expires. Presence is not shared
-between the iroh room and a mirror.
+Pages and keeps the last sealed snapshot in IndexedDB until the link expires.
+
+**Phase 11: the notes editor, live** (use in [guest-notes.md](guest-notes.md); build order in
+docs/plans/2026-10-25-phase-11-tasks.md). Presence is one path both ways, none of it stored. A client
+sends `{"type":"presence","typing"?,"sel"?}` over `/ws/notes`; `shared_notes.py` keeps `typing` and `sel`
+(anchor and focus as element ids, not offsets, so remote edits do not move a caret) on the in-memory `Member`
+and sends `presence` (with `members`) and coalesced `caret` messages (one per 100 ms per member, the last
+position always arrives). The bridge is a hidden member with `presence_tap`: it also hears `presence` and `caret`,
+and seals each owner-side member to the room as PRESENCE gid `o:<member key>` beside the `""` owner heartbeat. A
+guest's PRESENCE (`sel`, `gone`) comes back through `Bridge._on_presence` as `guests` (who is there or typing) and
+`guest_caret` (only a selection moved) to the editors, and is forwarded byte for byte into the meeting's other
+rooms, so guests on the iroh room and on a host mirror see each other (the publish host has its own presence
+channel with a cap of 10 per second). The carets are drawn by `src/lib/notes/ui/CaretOverlay.svelte`;
+`src/lib/app/notesPresence.ts` and `guest/src/presence.ts` are the two providers.
+
+Chips are `link` marks, not a new mark kind: `[12:34](mnemosyne:t/<part>/<seconds>)`, `mnemosyne:person/<name>`,
+`mnemosyne:meeting/<id>` (src/lib/notes/chips.ts `parseChip`; services/notes_chips.py is the strict Python twin).
+Everything outside the editor reads text (`plain_notes`, `obsidian_notes`), and combining meetings retargets time
+chips. The recording's place on the timeline is the `clock` (`{part, offset, started_at}`, services/parts.py
+`recording_clock`) on the start and active-recording responses and in the guests' META.
+
+Notes items (services/notes_items.py): a task line with a person chip is an action item. `Session.notes_items`
+is derived at each place a fold result is stored (the sidecar answers with `tasks` for every request), so
+nothing keeps a second copy in step; state that is not in the line (`follow`, `due`, `issue_url`, `task_id`) is
+carried over by line id, or by text and owner when `set_text` gave a line a new id. They are task objects like
+summary items. A tick made outside the editor is written into the document with the sidecar's `set_kind`, which
+produces ordinary frames for the connected editors. The editor UI shared by the app and the guest page
+(`src/lib/notes/ui/`: `NotesEditor`, the `/` menu, toolbars, touch bar) imports only `src/lib/notes`.
 
 ## Backend Lifecycle
 

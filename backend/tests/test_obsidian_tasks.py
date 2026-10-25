@@ -6,7 +6,7 @@ from mnemosyne.api.routes.export import task_predicate
 from mnemosyne.export.daily_note import write_daily_entry
 from mnemosyne.export.people_notes import render_person
 from mnemosyne.export.templates import render_meeting_note
-from mnemosyne.models.session import ActionItem, Session, SummaryData
+from mnemosyne.models.session import ActionItem, NotesItem, Session, SummaryData
 from mnemosyne.services.people import person_detail
 from mnemosyne.services.tasks import mine_matcher
 from tests.conftest import drain_until_job
@@ -199,3 +199,106 @@ def test_scope_all_is_a_setting(client):
     res = client.put("/api/settings", json={"obsidian_task_scope": "all"})
     assert res.json()["values"]["obsidian_task_scope"] == "all"
     assert client.put("/api/settings", json={"obsidian_task_scope": "x"}).status_code == 422
+
+
+# ---- action items typed in the notes (services/notes_items.py) -------------------------------
+
+ADA = "[@Ada Lovelace](mnemosyne:person/Ada%20Lovelace)"
+BOB = "[@Bob](mnemosyne:person/Bob)"
+NOTES = (
+    "# Plan\n\n"
+    f"- [ ] {ADA} send the deck by [12:34](mnemosyne:t/0/754)\n"
+    "- [ ] buy milk\n"
+    f"- [x] {BOB}: book the room\n"
+    f"    - [ ] {ADA} a nested one\n"
+)
+
+
+def _typed(item_id, text, owner, done=False, **kw):
+    return NotesItem(id=item_id * 16, line=item_id * 64, text=text, owner=owner, done=done, **kw)
+
+
+TYPED = [
+    _typed("a", "send the deck by", "Ada Lovelace"),
+    _typed("b", "book the room", "Bob", done=True),
+]
+
+
+def _noted(summary_data=None, notes=NOTES, items=TYPED, **kw) -> str:
+    return render_meeting_note(
+        "Sync",
+        datetime(2026, 10, 1),
+        [],
+        [],
+        "s",
+        notes,
+        summary_data=summary_data,
+        notes_items=items,
+        **kw,
+    )
+
+
+def test_notes_items_are_listed_after_the_summarys_with_block_ids():
+    note = _noted(SummaryData(action_items=[ActionItem(id="1234abcd", text="Write the guide")]))
+    section = note.split("## Action Items\n")[1].split("\n## ")[0]
+    assert [line for line in section.splitlines() if line] == [
+        "- [ ] Write the guide ^m-1234abcd",
+        f"- [ ] send the deck by ([[Ada Lovelace]]) ^m-{'a' * 16}",
+        f"- [x] book the room ([[Bob]]) ^m-{'b' * 16}",
+    ]
+
+
+def test_a_meeting_without_a_summary_still_lists_its_notes_items():
+    note = _noted(None)
+    assert "## Action Items\n" in note and f"^m-{'a' * 16}" in note
+    assert note.index("## Action Items") < note.index("## Notes")
+
+
+def test_notes_items_follow_the_task_scope_and_due_dates():
+    only_bob = lambda item: item.owner == "Bob"  # noqa: E731
+    items = [TYPED[0].model_copy(update={"due": date(2026, 10, 9)}), TYPED[1]]
+    note = _noted(None, items=items, is_mine=only_bob)
+    tasks, others = note.split("## Action Items\n")[1].split("### Others\n")
+    assert f"- [x] book the room ([[Bob]]) ^m-{'b' * 16}" in tasks
+    assert f"- [[Ada Lovelace]]: send the deck by ^m-{'a' * 16}" in others
+    assert "- [ ] send" not in note
+    assert "📅" not in note
+    due = _noted(None, items=items)
+    assert f"- [ ] send the deck by ([[Ada Lovelace]]) 📅 2026-10-09 ^m-{'a' * 16}" in due
+
+
+def test_a_notes_item_continued_later_is_a_bullet_like_a_summary_item():
+    note = _noted(None, continued={"a" * 16: "2026-10-08-Next"})
+    assert (
+        f"- send the deck by ([[Ada Lovelace]]) ↩ continued in [[2026-10-08-Next]] ^m-{'a' * 16}"
+        in note
+    )
+
+
+def test_the_task_line_of_a_notes_item_is_a_plain_bullet_in_the_notes_section():
+    note = _noted(SummaryData(action_items=[]))
+    notes = note.split("## Notes\n")[1]
+    assert "- [[Ada Lovelace]] send the deck by 12:34\n" in notes
+    assert "- [[Bob]]: book the room\n" in notes
+    assert "    - [ ] [[Ada Lovelace]] a nested one" in notes  # a task line that is no item: a box
+    assert "- [ ] buy milk" in notes  # a checklist line stays a task
+    assert "- [ ] [[Ada" not in notes.split("    - [ ]")[0]
+
+
+def test_the_notes_bullet_rule_matches_owner_and_words_one_line_per_item():
+    items = [_typed("a", "send the deck by", "Ada Lovelace")]
+    twice = (
+        f"- [ ] {ADA} send the deck by [12:34](mnemosyne:t/0/754)\n"
+        f"- [ ] {ADA} send the deck by [13:00](mnemosyne:t/0/780)\n"
+        f"- [ ] {BOB} send the deck by\n"
+    )
+    notes = _noted(None, notes=twice, items=items).split("## Notes\n")[1].strip()
+    assert notes.splitlines()[0] == "- [[Ada Lovelace]] send the deck by 12:34"
+    assert notes.splitlines()[1].startswith("- [ ] [[Ada Lovelace]] send the deck by 13:00")
+    assert notes.splitlines()[2].startswith("- [ ] [[Bob]] send the deck by")
+
+
+def test_the_notes_section_is_as_before_without_notes_items():
+    note = _noted(None, items=[])
+    assert "- [ ] [[Ada Lovelace]] send the deck by 12:34" in note
+    assert "## Action Items" not in note

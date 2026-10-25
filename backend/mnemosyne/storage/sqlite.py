@@ -30,6 +30,7 @@ from ..models.session import (
     Bookmark,
     CopilotNotes,
     ExternalNotes,
+    NotesItem,
     Recording,
     Session,
     SessionStatus,
@@ -682,6 +683,22 @@ def _asset(r) -> Asset:
     )
 
 
+def _notes_items(raw: str | None) -> list[NotesItem]:
+    """`sessions.notes_items` read back; an unreadable entry is skipped (they are derived again
+    at the next fold)."""
+    try:
+        data = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    out: list[NotesItem] = []
+    for d in data if isinstance(data, list) else []:
+        try:
+            out.append(NotesItem.model_validate(d))
+        except ValueError:
+            continue
+    return out
+
+
 def _local_naive(dt: datetime) -> datetime:
     """Local meetings store naive local times; a timezone-aware one (shared in) becomes the same."""
     return dt.astimezone().replace(tzinfo=None) if dt.tzinfo is not None else dt
@@ -833,6 +850,12 @@ class SessionRepository:
         if "shared_from" not in cols:
             self._conn.execute(
                 "ALTER TABLE sessions ADD COLUMN shared_from TEXT NOT NULL DEFAULT ''"
+            )
+        # Action items typed in the live notes (phase 11, services/notes_items.py): a JSON list
+        # of NotesItem, derived at each fold of the notes document.
+        if "notes_items" not in cols:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN notes_items TEXT NOT NULL DEFAULT '[]'"
             )
         # Who may read a meeting beyond its owner: team-mode shares and live peer shares, as
         # (session_id, user_id). A contact reads as the Principal "p:" + person[:16].
@@ -1179,6 +1202,7 @@ class SessionRepository:
             legal_hold=row["legal_hold"],
             origin=row["origin"],
             shared_from=row["shared_from"],
+            notes_items=_notes_items(row["notes_items"]),
             assets=[_asset(r) for r in asset_rows],
             external_notes=[
                 ExternalNotes(
@@ -1231,7 +1255,9 @@ class SessionRepository:
 
     def save(self, session: Session) -> Session:
         """Insert or fully replace a session including segments and recordings. A new meeting
-        belongs to whoever creates it (access.py); an existing one keeps its owner."""
+        belongs to whoever creates it (access.py); an existing one keeps its owner. Not
+        `notes_items`: they follow the notes document (services/notes_items.py), and a session
+        loaded before a fold must not put the old ones back."""
         self._check_write(session.id)
         owner = self._owner(session.id)
         session.owner_id = owner if owner is not None else (session.owner_id or access.user_id())
@@ -2439,6 +2465,53 @@ class SessionRepository:
             ).fetchone()
         return None if row is None else (row["notes"] or "")
 
+    def notes_op_authors(self, session_id: str, seqs: list[int]) -> list[str]:
+        """The author (name) of each of these frames of the notes log, in the order given; ""
+        for one that is not there."""
+        if not seqs:
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT seq, author FROM shared_notes_ops"
+                " WHERE session_id=? AND seq BETWEEN ? AND ?",
+                (session_id, min(seqs), max(seqs)),
+            ).fetchall()
+        by_seq = {r["seq"]: r["author"] or "" for r in rows}
+        return [by_seq.get(s, "") for s in seqs]
+
+    # ---- action items from the notes (services/notes_items.py; internal, no access checks) --
+
+    def notes_items(self, session_id: str) -> list[NotesItem] | None:
+        """The meeting's stored notes items, None for an unknown meeting."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT notes_items FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        return None if row is None else _notes_items(row["notes_items"])
+
+    def set_notes_items(self, session_id: str, items: list[NotesItem]) -> bool:
+        """Store the derived notes items. No new version (`_touch`): the notes write beside a
+        derivation counts it. False for an unknown meeting."""
+        raw = json.dumps([i.model_dump(mode="json") for i in items])
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE sessions SET notes_items=? WHERE id=?", (raw, session_id)
+            )
+        return cur.rowcount > 0
+
+    def part_offsets(self, session_id: str) -> dict[int, float]:
+        """part -> where it starts on the meeting's timeline (seconds), from its recordings, as
+        services/parts.py `offsets` gives it ({0: 0.0} without any)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT part, part_offset FROM recordings WHERE session_id=? ORDER BY created_at",
+                (session_id,),
+            ).fetchall()
+        out: dict[int, float] = {}
+        for r in rows:
+            out.setdefault(r["part"], r["part_offset"])
+        return out or {0: 0.0}
+
     def events(self, session_id: str) -> list[dict]:
         if not self._readable(session_id):
             return []
@@ -2877,27 +2950,67 @@ class SessionRepository:
         return self._write_item_by_id(session_id, item_id, fields)
 
     def _write_item_by_id(self, session_id: str, item_id: str, fields: dict) -> bool:
+        """The summary's action item with this id, else the notes item with it (C14 of
+        docs/plans/2026-10-25-phase-11-tasks.md: summary ids are 8 hex, notes ids 16)."""
         if not item_id:
             return False
         with self._lock, self._conn:
             row = self._conn.execute(
                 "SELECT summary_data FROM sessions WHERE id=?", (session_id,)
             ).fetchone()
-            if row is None or not row["summary_data"]:
+            if row is None:
                 return False
-            data = SummaryData.model_validate_json(row["summary_data"])
-            item = next((a for a in data.action_items if a.id == item_id), None)
-            if item is None:
-                return False
-            if all(getattr(item, k) == v for k, v in fields.items()):
-                return True  # already so: no new version
-            for k, v in fields.items():
-                setattr(item, k, v)
-            self._conn.execute(
-                "UPDATE sessions SET summary_data=?, updated_at=? WHERE id=?",
-                (data.model_dump_json(), datetime.now().isoformat(), session_id),
-            )
-            self._touch(session_id)
+            if row["summary_data"]:
+                data = SummaryData.model_validate_json(row["summary_data"])
+                item = next((a for a in data.action_items if a.id == item_id), None)
+                if item is not None:
+                    if all(getattr(item, k) == v for k, v in fields.items()):
+                        return True  # already so: no new version
+                    for k, v in fields.items():
+                        setattr(item, k, v)
+                    self._conn.execute(
+                        "UPDATE sessions SET summary_data=?, updated_at=? WHERE id=?",
+                        (data.model_dump_json(), datetime.now().isoformat(), session_id),
+                    )
+                    self._touch(session_id)
+                    return True
+            return self._write_notes_item_locked(session_id, item_id, fields)
+
+    _NOTES_ITEM_FIELDS = frozenset({"done", "follow", "due", "task_id", "issue_url"})
+
+    def set_notes_item_fields(self, session_id: str, item_id: str, **fields) -> bool:
+        """INTERNAL, for services/notes_items.py `write_fields` (which holds the meeting's notes
+        lock, so a fold cannot write over it, and puts `done` into the document too): the
+        STATE of one notes item, a new version of the meeting (`_touch`, unlike the derived
+        `set_notes_items`). No access check. True when the item exists."""
+        bad = set(fields) - self._NOTES_ITEM_FIELDS
+        if bad:
+            raise ValueError(f"Cannot set notes item fields: {sorted(bad)}")
+        if not item_id:
+            return False
+        with self._lock, self._conn:
+            return self._write_notes_item_locked(session_id, item_id, fields)
+
+    def _write_notes_item_locked(self, session_id: str, item_id: str, fields: dict) -> bool:
+        row = self._conn.execute(
+            "SELECT notes_items FROM sessions WHERE id=?", (session_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        items = _notes_items(row["notes_items"])
+        item = next((a for a in items if a.id == item_id), None)
+        if item is None:
+            return False
+        if all(getattr(item, k) == v for k, v in fields.items()):
+            return True  # already so: no new version
+        for k, v in fields.items():
+            setattr(item, k, v)
+        raw = json.dumps([i.model_dump(mode="json") for i in items])
+        self._conn.execute(
+            "UPDATE sessions SET notes_items=?, updated_at=? WHERE id=?",
+            (raw, datetime.now().isoformat(), session_id),
+        )
+        self._touch(session_id)
         return True
 
     def set_decision_links(self, session_id: str, changes: dict[str, str]) -> bool:
@@ -3567,28 +3680,40 @@ class SessionRepository:
     # ---- action items ----------------------------------------------------
 
     def list_action_items(self):
-        """Every action item of every summarized session, newest meeting first."""
+        """Every action item of every summarized session, newest meeting first: the summary's
+        (idx = position, source "summary"), then those typed in the notes (idx = -(j+1),
+        source "notes"; services/notes_items.py), also of meetings without a summary."""
         from ..services.tasks import TaskItem
 
         visible = self.visible_ids()
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, name, created_at, summary_data, owner_id FROM sessions"
-                " WHERE summary_data IS NOT NULL ORDER BY created_at DESC"
+                "SELECT id, name, created_at, summary_data, notes_items, owner_id FROM sessions"
+                " WHERE summary_data IS NOT NULL OR notes_items NOT IN ('', '[]')"
+                " ORDER BY created_at DESC"
             ).fetchall()
         out = []
         for r in rows:
             if visible is not None and r["id"] not in visible:
                 continue
-            data = SummaryData.model_validate_json(r["summary_data"])
+            data = (
+                SummaryData.model_validate_json(r["summary_data"])
+                if r["summary_data"]
+                else SummaryData()
+            )
             writable = access.can_write(r["owner_id"])
-            for i, a in enumerate(data.action_items):
+            entries = [(i, a, "summary") for i, a in enumerate(data.action_items)] + [
+                (-(j + 1), a, "notes") for j, a in enumerate(_notes_items(r["notes_items"]))
+            ]
+            for i, a, source in entries:
                 out.append(
                     TaskItem(
                         session_id=r["id"],
                         session_name=r["name"],
                         created_at=_dt(r["created_at"]),
                         idx=i,
+                        item_id=a.id,
+                        source=source,
                         text=a.text,
                         owner=a.owner,
                         done=a.done,
@@ -3601,14 +3726,18 @@ class SessionRepository:
         return out
 
     def action_item_sources(self) -> list[dict]:
-        """Every summarized meeting, newest first, as {id, name, created_at, owner_id,
-        attendees, shared_from, summary_data (SummaryData)}, NOT filtered by access: for
-        services/task_links.py, which needs every mention of a task and filters by
-        `visible_ids()` itself. Same cost as `list_action_items`."""
+        """Every meeting with action items (summarized, or with items typed in its notes),
+        newest first, as {id, name, created_at, owner_id, attendees, shared_from, summary_data
+        (SummaryData, an empty one for a meeting without a summary), notes_items
+        (list[NotesItem])}, NOT filtered by access: for services/task_links.py, which needs
+        every mention of a task and filters by `visible_ids()` itself. Same cost as
+        `list_action_items`."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, name, created_at, owner_id, attendees, summary_data, shared_from"
-                " FROM sessions WHERE summary_data IS NOT NULL ORDER BY created_at DESC"
+                "SELECT id, name, created_at, owner_id, attendees, summary_data, notes_items,"
+                " shared_from FROM sessions"
+                " WHERE summary_data IS NOT NULL OR notes_items NOT IN ('', '[]')"
+                " ORDER BY created_at DESC"
             ).fetchall()
         return [
             {
@@ -3618,19 +3747,25 @@ class SessionRepository:
                 "owner_id": r["owner_id"],
                 "attendees": json.loads(r["attendees"] or "[]"),
                 "shared_from": r["shared_from"],
-                "summary_data": SummaryData.model_validate_json(r["summary_data"]),
+                "summary_data": (
+                    SummaryData.model_validate_json(r["summary_data"])
+                    if r["summary_data"]
+                    else SummaryData()
+                ),
+                "notes_items": _notes_items(r["notes_items"]),
             }
             for r in rows
         ]
 
     def meeting_meta(self):
-        """Name, date, attendees and summary of every session, without transcripts."""
+        """Name, date, attendees, summary and notes items of every session, without transcripts."""
         from ..services.brief import MeetingMeta
 
         visible = self.visible_ids()
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, name, created_at, attendees, summary, summary_data FROM sessions"
+                "SELECT id, name, created_at, attendees, summary, summary_data, notes_items"
+                " FROM sessions"
             ).fetchall()
         rows = [r for r in rows if visible is None or r["id"] in visible]
         return [
@@ -3645,6 +3780,7 @@ class SessionRepository:
                     if r["summary_data"]
                     else None
                 ),
+                notes_items=_notes_items(r["notes_items"]),
             )
             for r in rows
         ]

@@ -315,7 +315,11 @@ Input devices are microphones. Output devices are selected to capture system aud
 (48 kHz mono 16-bit WAV), targeting nodes by name. Output devices are captured from their monitor
 ports (`stream.capture.sink=true` on the sink node). Session status becomes `recording`.
 
-**Response:** `{ "session_id": "...", "recording_id": "...", "live_job_id": "..." | null, "message": "..." }`
+**Response:** `{ "session_id": "...", "recording_id": "...", "live_job_id": "..." | null, "message": "...",
+"clock": {part, offset, started_at} | null }`. `clock` is the recording's place on the meeting's timeline
+(services/parts.py `recording_clock`): `part` it records into, `offset` where that part starts on the joined
+timeline (seconds) and `started_at` when its capture started (UTC ISO, milliseconds). The notes editor's time chips
+are `(part, seconds since started_at)`. `restart` answers with it too.
 
 When `live_transcription` is enabled a `live` job starts alongside the recording and streams
 provisional text (see WebSocket `live_*` events). It is cancelled by stop.
@@ -446,8 +450,9 @@ out; empty while `auto_record` is `off`. Changes are published as `meeting_app` 
 
 ### `GET /api/audio/active`
 Recordings in progress, so a UI that (re)connects shows them: `[{session_id, started_at (unix
-time), device_ids, part, live, live_segments: [{source, segment}]}]`. `live_segments` is the live
-transcript so far. `problems` names sources no longer being captured (see below).
+time), device_ids, part, live, live_segments: [{source, segment}], problems, clock}]`. `live_segments` is the live
+transcript so far. `problems` names sources no longer being captured (see below). `clock` is the recording's
+`{part, offset, started_at}` as in `start`.
 
 ### Capture health: `capture_health` events · `POST /api/audio/restart/{session_id}`
 While recording, each source is watched (`audio/health.py`): `stopped` when its recorder exits,
@@ -880,7 +885,12 @@ token to create (`PUT /live/{room}`), snapshot (`PUT …/snapshot`, `X-Room-Sinc
 (`POST …/end`) and delete (`DELETE`); a WebSocket `GET /live/{room}` with the room token for everyone: `join`,
 `welcome`, the snapshot, the log after `since`, then live relay (`0x01 || seq || envelope`), presence (`0x02`), `count`
 and `ended`. Everything in an envelope is sealed (AES-256-GCM, `services/guest_format.py`; the host holds only the
-room token). The exact messages, close codes and limits are in the header of `publish-host/src/live.rs`.
+room token). Two JSON kinds gained fields in phase 11 (older pages ignore them): PRESENCE `{gid, name, typing, sel?,
+gone?}` where `sel` is `{a, f}` (element ids, 64 hex, or null) or null and `gone: true` says the page is closing (gid
+"" is the owner's heartbeat, `o:<member key>` one of the owner-side editors, whose carets and typing the guests see);
+META `clock?: {part, offset, started_at}` is the recording in progress (as in `POST /api/audio/start`) and is absent
+while nothing records, so the guest page can insert time chips. A guest's PRESENCE heard in one of the meeting's rooms
+is forwarded unchanged into the others. The exact messages, close codes and limits are in the header of `publish-host/src/live.rs`.
 
 ### Transcript editing
 
@@ -1065,6 +1075,9 @@ Every action item of every summarized meeting the caller can read, newest meetin
 text, owner, done, issue_url, due, mine}]`. `mine`: the owner is the caller (their full name or
 email, or their first name when no one else on the server has it; on the desktop app,
 `local_speaker_name`); `mine=true` keeps only those. `idx` is the item's position in that session's `summary_data.action_items`.
+Items typed in a meeting's live notes (see "Action items from the notes") are listed too: `source: "notes"`, `idx`
+`-(j+1)` for the j-th of `Session.notes_items`, which no idx-based writer accepts. `item_id` is the item's id (summary
+items: `ActionItem.id`, "" on an old one without; notes items: 16 hex); `source` is `"summary"` or `"notes"`.
 `due` (`YYYY-MM-DD` or null) is a deadline named in the meeting: the summary prompt gives the model
 the meeting's date and weekday so "by Friday" becomes a date; anything that is not an ISO date is
 dropped. Open items with a deadline come first, soonest first; `due=overdue` keeps those past due,
@@ -1665,16 +1678,20 @@ desktop (no team) the user edits, as `local_speaker_name` (or "You").
 {
   "type": "hello",
   "notes": "<64 hex: sha256(\"mnemosyne/notes/\" + session_id), the notes object's origin>",
-  "you": { "id": "<user id, \"\" on the desktop>", "name": "Ann Lee" },
+  "you": { "id": "<user id, \"\" on the desktop>", "name": "Ann Lee", "key": "m3fa91c07" },
   "read_only": false,
   "present": ["Ann Lee", "Bob Stone"],
+  "members": [{ "key": "m3fa91c07", "name": "Ann Lee", "who": "u-ann", "typing": false, "sel": null }],
   "last_edit": { "by": "Bob Stone", "at": "2026-10-22T10:15:00" },
   "snapshot": true,
   "backlog": 3
 }
 ```
 
-`present` is everyone connected, you included (distinct names). `last_edit` is `null` before
+`present` is everyone connected, you included (distinct names). `members` is the same people one per
+connection, you included: `key` (`m` + 8 hex, random at join; `you.key` is yours), `name`, `who` (the user id, else
+the name: what a caret's colour is taken from, so one person's two windows share a colour), `typing` and `sel`
+(below). `last_edit` is `null` before
 anyone typed. `"waiting_for_sync": true` (with `read_only: true`): a meeting recorded on another
 computer that has notes but whose document has not come by library sync yet; editing would make a
 second document with the same text.
@@ -1692,11 +1709,21 @@ closed normally (1000): use `POST /api/sessions/{id}/notes` and the plain text, 
   The server appends it to the log with its author and relays it to the other connections (never
   back to the sender). Refused, and the socket closed: from a read-only client **4403**; another
   first byte **4400**; over 2 MB **1009**.
-- Client JSON: `{"type": "presence", "typing": true|false}` (ignored from read-only clients),
-  `{"type": "ping"}` (answered `{"type": "pong"}`).
-- Server JSON: `{"type": "presence", "present": [names], "typing": [names]}` when someone joins,
-  leaves or starts/stops typing; `{"type": "last_edit", "by": name, "at": iso}` when someone else
+- Client JSON: `{"type": "presence", "typing"?: true|false, "sel"?: {"a", "f"} | null}` (`typing` is
+  ignored from read-only clients, `sel` is taken from everyone), `{"type": "ping"}` (answered
+  `{"type": "pong"}`). `sel` is the selection: `a` (anchor) and `f` (focus) are each null or the element id (64 hex)
+  of the character before that end of the selection; anything else is ignored whole. It is kept in memory on the
+  connection, never stored or logged.
+- Server JSON: `{"type": "presence", "present": [names], "typing": [names], "members": [...]}` when someone joins,
+  leaves or starts/stops typing (`members` as in the hello; a joiner gets the others' `sel` there);
+  `{"type": "caret", "key": member key, "sel": {"a", "f"} | null}` when someone else's selection moved (never
+  back to the mover; at most one per 100 ms for the same member, the newest position waits and goes out when the
+  window ends); `{"type": "last_edit", "by": name, "at": iso}` when someone else
   typed (at most every 15 s for the same person).
+- Guests (see docs/guest-notes.md) reach the editors as `{"type": "guests", "present": [names], "typing": [names],
+  "members": [{"key": "g:<gid>", "name", "typing", "sel"}]}` when one joins, leaves or starts/stops typing (a joiner
+  gets the last non-empty one), and `{"type": "guest_caret", "key": "g:<gid>", "sel": {"a", "f"} | null}` when only
+  a guest's selection moved. A guest is `gone` at once when their page closes, else after 30 s without presence.
 
 The notes route's writes (author `api`) arrive as ordinary frames. When the meeting had notes but
 no document, the first connection (or write) seeds one from them (author `seed`), only on the
@@ -1729,3 +1756,42 @@ text and the document catches up with it (above). Folding is blocked while a mee
 taken in. A union that cannot be made (sidecar missing or failing) leaves that meeting waiting:
 the round goes on to the following pages, but the stored sync cursor stays just before the
 earliest waiting meeting, so it is tried again next round (`waiting` in the peer's status).
+
+### Chips and action items from the notes
+
+**Chips.** A time, person or meeting reference in the notes is an ordinary markdown link whose URL starts with
+`mnemosyne:` (the editor draws it as a pill; the model is a `link` mark, nothing new in the document format):
+
+| Form | Chip |
+|---|---|
+| `[12:34](mnemosyne:t/<part>/<seconds>)` | a time in the recording: part number and whole seconds into that part |
+| `[@Ada Lovelace](mnemosyne:person/Ada%20Lovelace)` | a person (the name is percent-encoded) |
+| `[Planning, Oct 14](mnemosyne:meeting/<id>)` | a meeting (8 to 32 lowercase hex) |
+
+A link that is not exactly one of these is an ordinary link. Everything that reads `Session.notes` outside the editor
+sees text instead (services/notes_chips.py): the summary's hint, MCP and published notes get the chip's
+text (`12:34`, `@Ada Lovelace`, the title), the Obsidian note `[[Name]]` for a person when `obsidian_link_people` is on
+and `[[note|title]]` for a meeting that was exported; time chips are plain text there. The stored markdown keeps the
+URLs (full-text search indexes them like any link). Combining meetings retargets time chips to the combined timeline.
+
+**Action items from the notes** (services/notes_items.py). A task line (`- [ ]` / `- [x]`) with a person chip is an
+action item of the meeting; one without stays a checklist. `Session.notes_items` (`[NotesItem]`, an `ActionItem` plus
+`line`, `by`, `source: "notes"`) is derived again from the document at every fold: `owner` is the first person chip's
+name, `text` the line without person and time chips, `at` the first time chip's position on the meeting's joined
+timeline, `done` the tick in the notes. `id` is 16 hex taken from the line id; `follow`, `due`, `issue_url` and
+`task_id` are kept across folds. They are task objects like summary items (linking, fan-out of done/follow), listed
+in `GET /api/action-items` and `/api/tasks`, and exported to Obsidian as action items.
+
+`PATCH /api/sessions/{session_id}/notes-items/{item_id}`: body any of `{done, follow, due}` (fields left out stay;
+`due` null clears it). Returns the `TaskItem` (`source: "notes"`, `idx` negative). Text and owner change in the notes
+only. `done` and `follow` need read access (`done` is written into the notes as the tick, so editors see it);
+`due` needs write access. `400` for `PATCH …/action-items/{idx}` with a notes item's negative `idx`; `403 "Tick it in
+the notes"` on a meeting shared with you; `404` unknown meeting or item; `409` when the notes could not take the tick.
+Ticks and new items go into the meeting's history (`notes_task_added`, `task_done`, `task_reopened`).
+
+**Sidecar** (`mnemosyne-link notes doc`, notes-core/src/api.rs). Every answer carries `tasks`: the document's task
+lines in order, `[{line, done, text, links: [[start, end, url]], frame}]` (`line` the element id of the line's `\n`,
+`links` the live link marks as code-point ranges of `text`, `frame` the index of the request frame that made the
+line or its kind, else null). The op `set_kind` `{notes, snapshot, frames, line, kind: "task"|"task_done"}` makes
+that task line open or done and answers like `mark_comment` (`frames` to broadcast, `[]` when it already shows
+`kind`; an unknown, deleted or non-task line is an error). The backend uses it for a tick made outside the editor.

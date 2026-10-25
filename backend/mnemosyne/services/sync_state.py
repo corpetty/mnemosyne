@@ -16,6 +16,7 @@ from ..models.session import (
     AgendaItem,
     CopilotNotes,
     ExternalNotes,
+    NotesItem,
     Recording,
     SummaryData,
 )
@@ -60,6 +61,7 @@ def export_session(repo: SessionRepository, session_id: str, device_id: str) -> 
             if notes_doc and notes_doc["snapshot"] is not None
             else None
         ),
+        notes_items=repo.notes_items(session_id) or [],
         participants=json.loads(r["participants"]),
         attendees=json.loads(r["attendees"]),
         local_only=bool(r["local_only"]),
@@ -220,7 +222,30 @@ def write_session(
     if bump and repo.device_id != local_device_id:
         raise ValueError("local_device_id is not this repository's device id")
     origin = "" if s.origin == local_device_id else s.origin
-    return repo.apply_synced(s, origin=origin, vv=vv, bump=bump)
+    sid = repo.apply_synced(s, origin=origin, vv=vv, bump=bump)
+    if s.notes_items is not None:  # an older peer's document has none: ours stay
+        repo.set_notes_items(sid, settle_notes_items(repo.notes_items(sid) or [], s.notes_items))
+    return sid
+
+
+NOTES_ITEM_STATE = ("follow", "due", "issue_url", "task_id")
+
+
+def settle_notes_items(current: list[NotesItem], arrived: list[NotesItem]) -> list[NotesItem]:
+    """The notes items to store once a document arrived: what the notes document says now
+    (`current`, derived by our own fold, possibly after a union that came first) with the state
+    fields (follow, due, issue_url, task_id) of the arriving item of the same id. An arriving
+    item our document has no line for yet is kept as it came: the fold after the document
+    arrives derives it again and carries its state by id."""
+    state = {i.id: i for i in arrived}
+    out = [
+        i.model_copy(update={k: getattr(state[i.id], k) for k in NOTES_ITEM_STATE})
+        if i.id in state
+        else i
+        for i in current
+    ]
+    have = {i.id for i in current}
+    return out + [i.model_copy(deep=True) for i in arrived if i.id not in have]
 
 
 def same_meeting(a_created_at: datetime, b_created_at: datetime) -> bool:

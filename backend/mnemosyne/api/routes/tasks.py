@@ -14,7 +14,9 @@ from ...services import (
     decision_links,
     history,
     item_flags,
+    notes_items,
     organizations,
+    shared_notes,
     shared_with_me,
     summary_doc,
     task_links,
@@ -83,6 +85,11 @@ class ActionItemUpdate(ApiModel):
 async def update_action_item(
     session_id: str, idx: int, request: ActionItemUpdate, ctx: AppContext = Depends(get_ctx)
 ):
+    if idx < 0:  # TaskItem.idx of a notes item: changed by id, through the notes
+        raise HTTPException(
+            status_code=400,
+            detail="An action item from the notes: PATCH /api/sessions/{id}/notes-items/{item_id}",
+        )
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -133,6 +140,8 @@ async def update_action_item(
         session_name=session.name,
         created_at=session.created_at,
         idx=idx,
+        item_id=a.id,
+        source="summary",
         text=a.text,
         owner=a.owner,
         done=a.done,
@@ -140,6 +149,58 @@ async def update_action_item(
         due=a.due,
         follow=a.follow,
         can_edit=access.can_write(session.owner_id) and not session.shared_from,
+    )
+
+
+class NotesItemUpdate(ApiModel):
+    """What to change on an action item typed in the notes; fields left out stay. `done` and
+    `follow` need read access (done is written into the notes, as a tick there), `due` (null
+    clears it) write access. Text and owner change in the notes only."""
+
+    done: bool | None = None
+    follow: bool | None = None
+    due: date | None = None
+
+
+@router.patch("/sessions/{session_id}/notes-items/{item_id}", response_model=TaskItem)
+async def update_notes_item(
+    session_id: str, item_id: str, request: NotesItemUpdate, ctx: AppContext = Depends(get_ctx)
+):
+    """Tick, star or date an action item from the meeting's notes (services/notes_items.py).
+    403 "Tick it in the notes" on a meeting someone shared with me; 409 when the notes could
+    not take the tick."""
+    given = request.model_fields_set
+    who = access.principal()
+    kwargs: dict = {"by": who.name if who else ""}
+    if "done" in given and request.done is not None:
+        kwargs["done"] = request.done
+    if "follow" in given and request.follow is not None:
+        kwargs["follow"] = request.follow
+    if "due" in given:
+        kwargs["due"] = request.due
+    try:
+        j, item = await asyncio.to_thread(notes_items.update, ctx, session_id, item_id, **kwargs)
+    except access.Forbidden as e:
+        raise HTTPException(status_code=403, detail=str(e)) from None
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+    except shared_notes.NotesDocError as e:
+        raise HTTPException(status_code=409, detail=f"The notes could not take it: {e}") from None
+    session = ctx.sessions.get_session(session_id)
+    return TaskItem(
+        session_id=session_id,
+        session_name=session.name if session else "",
+        created_at=session.created_at if session else datetime.now(),
+        idx=-(j + 1),
+        item_id=item.id,
+        source="notes",
+        text=item.text,
+        owner=item.owner,
+        done=item.done,
+        issue_url=item.issue_url,
+        due=item.due,
+        follow=item.follow,
+        can_edit=bool(session) and access.can_write(session.owner_id) and not session.shared_from,
     )
 
 
@@ -190,13 +251,16 @@ async def list_tasks(
             reverse=True,
         ),
     )
-    rows = {(o.mentions[0].session_id, o.mentions[0].idx): o for o in objs}  # the head is one item
+    # The head is one item; idx tells old summary items without an id apart (notes: negative).
+    rows = {(m.session_id, m.item_id, m.idx): o for o in objs for m in o.mentions[:1]}
     items = [
         TaskItem(
             session_id=o.mentions[0].session_id,
             session_name=o.mentions[0].session_name,
             created_at=o.mentions[0].created_at,
             idx=o.mentions[0].idx,
+            item_id=o.mentions[0].item_id,
+            source=o.mentions[0].source,
             text=o.text,
             owner=o.owner,
             done=o.done,
@@ -209,7 +273,7 @@ async def list_tasks(
         for o in objs
     ]
     return [
-        rows[(t.session_id, t.idx)]
+        rows[(t.session_id, t.item_id, t.idx)]
         for t in filter_tasks(items, status, owner, due, mine=mine, scope=scope)
     ]
 
@@ -235,13 +299,17 @@ class LinkRequest(ApiModel):
 async def update_task(key: str, request: TaskUpdate, ctx: AppContext = Depends(get_ctx)):
     _object_or_404(ctx, key)  # 404 when the caller reads no mention of it
     who = access.principal()
-    try:
+    try:  # in a thread: a notes mention's tick runs the notes sidecar (notes_items.write_fields)
         if request.done is not None:
-            task_links.set_done(ctx, key, request.done, by=who.name if who else "")
+            await asyncio.to_thread(
+                task_links.set_done, ctx, key, request.done, by=who.name if who else ""
+            )
         if request.follow is not None:
-            task_links.set_follow(ctx, key, request.follow)
+            await asyncio.to_thread(task_links.set_follow, ctx, key, request.follow)
     except LookupError:
         raise HTTPException(status_code=404, detail="No such task") from None
+    except shared_notes.NotesDocError as e:
+        raise HTTPException(status_code=409, detail=f"The notes could not take it: {e}") from None
     return _object_or_404(ctx, key)
 
 
@@ -318,7 +386,7 @@ class DecisionLinks(ApiModel):
 
 
 class SessionLinks(ApiModel):
-    items: dict[str, ItemLinks]  # by ActionItem.id
+    items: dict[str, ItemLinks]  # by ActionItem.id (notes items' too)
     decisions: dict[str, DecisionLinks]  # by decision id
 
 
@@ -330,7 +398,8 @@ async def session_links(session_id: str, ctx: AppContext = Depends(get_ctx)):
     objs = task_links.index(ctx.repo, ctx.repo.visible_ids())
     here = (session.created_at, session.id)
     out: dict[str, ItemLinks] = {}
-    for i, a in enumerate(session.summary_data.action_items if session.summary_data else []):
+    summary = session.summary_data.action_items if session.summary_data else []
+    for i, a in [*enumerate(summary), *((-(j + 1), n) for j, n in enumerate(session.notes_items))]:
         key = a.task_id or f"{session_id}:{a.id or f'#{i}'}"
         obj = objs.get(key)
         if not a.id or obj is None:

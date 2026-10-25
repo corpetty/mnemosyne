@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Collection, Mapping
 from datetime import datetime
 
-from ..models.session import ActionItem, ClientFact, SummaryData
+from ..models.session import ActionItem, ClientFact, NotesItem, SummaryData
+from ..services.notes_chips import obsidian_notes, task_line_parts
+from ..services.tasks import _norm
 from .links import link_known_notes, link_topic
 
 CONTINUED_MARK = "\u21a9 continued in"  # "↩ continued in [[later note]]"
@@ -22,6 +25,36 @@ def _block(ids: list[str], n: int) -> str:
 
 def _id(ids: list[str], n: int) -> str:
     return ids[n] if n < len(ids) else ""
+
+
+_TASK_LINE = re.compile(r"^(?P<lead>\s*(?:[-*+]|\d+[.)]))\s+\[(?P<box>[ xX])\]\s+(?P<rest>.*)$")
+
+
+def _task_line_key(rest: str) -> tuple[str, str] | None:
+    """(owner, normalized text) of a task line of the notes if it is an action item (it has a
+    person chip, services/notes_items.py): the owner is the first person chip's name, the text
+    what is left without person and time chips (a meeting chip's title stays). None: a
+    checklist line."""
+    owner, text = task_line_parts(rest)
+    return (owner.strip().casefold(), _norm(text)) if owner and _norm(text) else None
+
+
+def _plain_task_lines(notes: str, items: list[NotesItem]) -> str:
+    """The notes with each task line that IS one of `items` (same owner, same words) as a plain
+    bullet, so a vault-wide task query lists the action item once, from the Action Items
+    section. Other task lines (checklists) keep their box. Each item matches one line."""
+    left: list[tuple[str, str]] = [
+        ((i.owner or "").strip().casefold(), _norm(i.text)) for i in items
+    ]
+    out: list[str] = []
+    for line in notes.split("\n"):
+        m = _TASK_LINE.match(line)
+        key = _task_line_key(m["rest"]) if m else None
+        if m and key in left:
+            left.remove(key)
+            line = f"{m['lead']} {m['rest']}"
+        out.append(line)
+    return "\n".join(out)
 
 
 def _is_label(name: str) -> bool:
@@ -75,6 +108,8 @@ def render_meeting_note(
     known_notes: Collection[str] | None = None,  # names of vault notes words may link to
     annex: Mapping[str, list[str]] | None = None,  # lines the user added in Obsidian, see below
     continued: Mapping[str, str] | None = None,  # action item id -> note of its later mention
+    meeting_note: Callable[[str], tuple[str, str] | None] | None = None,  # id -> (stem, title)
+    notes_items: list[NotesItem] | None = None,  # action items typed in the notes
 ) -> str:
     """Render a complete Obsidian-compatible note with YAML frontmatter.
 
@@ -92,6 +127,12 @@ def render_meeting_note(
     mentions the same task (services/task_links.py): such an item is not a checkbox, so a
     vault-wide task query lists the task once, but a plain bullet
     `- text (owner) ↩ continued in [[note]] ^m-<id>`.
+    The notes' chips (services/notes_chips.py) become text: time chips as `12:34`, person chips as
+    [[Name]] with `link_people`, meeting chips as [[stem|title]] when `meeting_note(id)` gives
+    that meeting's exported note, else its title.
+    `notes_items` (Session.notes_items, services/notes_items.py) are listed in Action Items after
+    the summary's, rendered the same way with their ids as block ids; in the Notes section the
+    task line of each is a plain bullet (no box), so a vault task query lists it once.
     """
     tags = tags if tags is not None else ["meeting", "mnemosyne"]
 
@@ -147,50 +188,51 @@ def render_meeting_note(
         sections.append(linker()(summary))
         sections.append("")
 
-    if summary_data:
-        if summary_data.decisions:
-            sections.append("## Decisions\n")
-            sections.extend(head("decisions"))
-            link = linker()
-            for n, d in enumerate(summary_data.decisions):
-                sections.append(f"- {link(d)}{_block(summary_data.decision_ids, n)}")
-                sections.extend(after(_id(summary_data.decision_ids, n)))
-            sections.append("")
-        if summary_data.action_items:
-            sections.append("## Action Items\n")
-            sections.extend(head("action_items"))
-            flags = [is_mine is None or is_mine(i) for i in summary_data.action_items]
-            mine = [i for i, f in zip(summary_data.action_items, flags, strict=True) if f]
-            others = [i for i, f in zip(summary_data.action_items, flags, strict=True) if not f]
-            link = linker()  # one section: Others included
-            for item in mine:
-                owner = f" ({person(item.owner)})" if item.owner else ""
-                later = (continued or {}).get(item.id) if item.id else None
-                if later:
-                    sections.append(
-                        f"- {link(item.text)}{owner} {CONTINUED_MARK} [[{later}]]"
-                        f"{_block([item.id], 0)}"
-                    )
-                    sections.extend(after(item.id))
-                    continue
-                issue = f" [issue]({item.issue_url})" if item.issue_url else ""
-                box = "x" if item.done else " "
-                due = f" 📅 {item.due.isoformat()}" if item.due else ""  # Obsidian Tasks format
+    if summary_data and summary_data.decisions:
+        sections.append("## Decisions\n")
+        sections.extend(head("decisions"))
+        link = linker()
+        for n, d in enumerate(summary_data.decisions):
+            sections.append(f"- {link(d)}{_block(summary_data.decision_ids, n)}")
+            sections.extend(after(_id(summary_data.decision_ids, n)))
+        sections.append("")
+    action_items = [
+        *(summary_data.action_items if summary_data else []),
+        *(notes_items or []),
+    ]
+    if action_items:
+        sections.append("## Action Items\n")
+        sections.extend(head("action_items"))
+        flags = [is_mine is None or is_mine(i) for i in action_items]
+        mine = [i for i, f in zip(action_items, flags, strict=True) if f]
+        others = [i for i, f in zip(action_items, flags, strict=True) if not f]
+        link = linker()  # one section: Others included
+        for item in mine:
+            owner = f" ({person(item.owner)})" if item.owner else ""
+            later = (continued or {}).get(item.id) if item.id else None
+            if later:
                 sections.append(
-                    f"- [{box}] {link(item.text)}{owner}{issue}{due}{_block([item.id], 0)}"
+                    f"- {link(item.text)}{owner} {CONTINUED_MARK} [[{later}]]{_block([item.id], 0)}"
                 )
                 sections.extend(after(item.id))
-            if others:
-                if mine:
-                    sections.append("")
-                sections.append("### Others\n")
-                sections.extend(head("others"))
-                for item in others:
-                    who = f"{person(item.owner)}: " if item.owner else ""
-                    done = " (done)" if item.done else ""
-                    sections.append(f"- {who}{link(item.text)}{done}{_block([item.id], 0)}")
-                    sections.extend(after(item.id))
-            sections.append("")
+                continue
+            issue = f" [issue]({item.issue_url})" if item.issue_url else ""
+            box = "x" if item.done else " "
+            due = f" 📅 {item.due.isoformat()}" if item.due else ""  # Obsidian Tasks format
+            sections.append(f"- [{box}] {link(item.text)}{owner}{issue}{due}{_block([item.id], 0)}")
+            sections.extend(after(item.id))
+        if others:
+            if mine:
+                sections.append("")
+            sections.append("### Others\n")
+            sections.extend(head("others"))
+            for item in others:
+                who = f"{person(item.owner)}: " if item.owner else ""
+                done = " (done)" if item.done else ""
+                sections.append(f"- {who}{link(item.text)}{done}{_block([item.id], 0)}")
+                sections.extend(after(item.id))
+        sections.append("")
+    if summary_data:
         if summary_data.open_questions:
             sections.append("## Open Questions\n")
             sections.extend(head("open_questions"))
@@ -235,7 +277,9 @@ def render_meeting_note(
 
     if notes:
         sections.append("## Notes\n")
-        sections.append(notes)
+        sections.append(
+            obsidian_notes(_plain_task_lines(notes, notes_items or []), link_people, meeting_note)
+        )
         sections.append("")
 
     for source, text in external_notes or []:

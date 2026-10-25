@@ -346,3 +346,45 @@ async def test_deleting_a_meeting_with_a_document_leaves_a_tombstone(nodes, side
     assert b.repo.get(sid) is None and b.repo.has_tombstone(sid)
     assert not b.repo.has_notes_doc(sid) and b.repo.notes_doc(sid) is None
     assert (await pull(b, a)).deleted == 0
+
+
+# ---- action items from the notes (phase 11, services/notes_items.py) --------------------------
+
+ADA = "[@Ada](mnemosyne:person/Ada)"
+BOB = "[@Bob](mnemosyne:person/Bob)"
+
+
+def item_rows(node: Node, sid: str) -> list[tuple[str, str, str]]:
+    return [(i.id, i.owner, i.text) for i in node.repo.notes_items(sid)]
+
+
+def added(node: Node, sid: str) -> list[str]:
+    return [e["detail"]["task"] for e in node.repo.events(sid) if e["kind"] == "notes_task_added"]
+
+
+@pytest.mark.anyio
+async def test_an_adopted_document_derives_its_items_silently(nodes, sidecar):  # noqa: F811
+    a, b = nodes
+    sid = await shared_doc(a, b, notes=f"- [ ] {ADA} sends the deck\n")
+    assert item_rows(a, sid) and item_rows(b, sid) == item_rows(a, sid)  # ids from line ids
+    # A logged it where it was typed; that event came along, B logged nothing itself.
+    assert added(a, sid) == ["sends the deck"]
+    assert added(b, sid) == ["sends the deck"]
+
+
+@pytest.mark.anyio
+async def test_a_union_derives_both_sides_items_without_history(nodes, sidecar):  # noqa: F811
+    a, b = nodes
+    sid = await shared_doc(a, b)
+    write_doc(a, sid, frame("fa", ["ins", 5, f"- [ ] {ADA} from A\n"]))
+    write_doc(b, sid, frame("fb", ["ins", 5, f"- [ ] {BOB} from B\n"]))
+    assert added(b, sid) == ["from B"]
+
+    await pull(b, a)  # concurrent: a union on B
+    assert sorted(t for _, _, t in item_rows(b, sid)) == ["from A", "from B"]
+    # B's own line once, A's event travelled once: the union derived without logging.
+    assert sorted(added(b, sid)) == ["from A", "from B"]
+
+    await pull(a, b)
+    assert sorted(t for _, _, t in item_rows(a, sid)) == ["from A", "from B"]
+    assert sorted(added(a, sid)) == ["from A", "from B"]

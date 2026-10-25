@@ -1,5 +1,6 @@
 """Task objects over HTTP (routes/tasks.py): /api/tasks, links, suggestions, session links."""
 
+import base64
 from datetime import datetime
 
 import pytest
@@ -8,7 +9,9 @@ from fastapi.testclient import TestClient
 from mnemosyne import access
 from mnemosyne.api.app import create_app
 from mnemosyne.models.session import ActionItem, Session, SummaryData
-from mnemosyne.services import sharing
+from mnemosyne.services import item_flags, shared_notes, sharing
+from tests import fake_link
+from tests.fake_link import doc_frame
 
 TID = "aaaaaaaaaaaa"
 LONG = "Write the migration guide for the new storage format"
@@ -262,3 +265,119 @@ def test_linking_into_meetings_you_cannot_see(team):
         ).status_code
         == 404
     )
+
+
+# ---- action items from the notes (phase 11, services/notes_items.py) ------------------------
+
+ADA = "[@Ada Lovelace](mnemosyne:person/Ada%20Lovelace)"
+
+
+@pytest.fixture
+def sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr(shared_notes, "FOLD_DELAY", 1000.0)
+    monkeypatch.setattr(shared_notes, "FOLD_EVERY", 1000.0)
+    return fake_link.install(tmp_path, monkeypatch)
+
+
+def _typed(ctx, sid, fid, *ops, author="Ada"):
+    frame = base64.b64decode(doc_frame(fid, *ops))
+    shared_notes.accept_frames(ctx, sid, [frame], "u-" + author, author, can_edit=True)
+    shared_notes.fold_blocking(ctx, sid)
+
+
+def _notes_meeting(ctx, day=9, text="sends the deck", **kw):
+    s = ctx.repo.save(Session(name="Planning", created_at=datetime(2026, 10, day, 10), **kw))
+    _typed(ctx, s.id, "f1", ["set", f"- [ ] {ADA} {text}\n"])
+    (item,) = ctx.repo.notes_items(s.id)
+    return s, item
+
+
+def test_notes_items_are_listed_with_their_source(client, ctx, sidecar):
+    old, _ = _linked_pair(ctx)
+    s, item = _notes_meeting(ctx)
+    rows = [t for t in client.get("/api/action-items").json() if t["session_id"] == s.id]
+    assert [(t["idx"], t["item_id"], t["source"], t["text"], t["owner"]) for t in rows] == [
+        (-1, item.id, "notes", "sends the deck", "Ada Lovelace")
+    ]
+    summary = [t for t in client.get("/api/action-items").json() if t["session_id"] == old.id]
+    assert [(t["idx"], t["item_id"], t["source"]) for t in summary] == [(0, "a1", "summary")]
+    objs = {o["key"]: o for o in client.get("/api/tasks").json()}
+    obj = objs[f"{s.id}:{item.id}"]
+    assert [(m["idx"], m["source"]) for m in obj["mentions"]] == [(-1, "notes")]
+    assert TID in objs  # the summary's are there as before
+    links = client.get(f"/api/sessions/{s.id}/links").json()["items"]
+    assert links[item.id]["key"] == f"{s.id}:{item.id}"
+
+
+def test_ticking_a_notes_item_in_tasks_ticks_the_line(client, ctx, sidecar):
+    s, item = _notes_meeting(ctx)
+    key = f"{s.id}:{item.id}"
+    r = client.patch(f"/api/tasks/{key}", json={"done": True})
+    assert r.status_code == 200 and r.json()["done"] is True
+    last = ctx.repo.notes_ops(s.id)[-1]
+    assert b'"kind"' in last["frame"] and b"task_done" in last["frame"]
+    assert ctx.repo.get(s.id).notes.startswith("- [x]")
+    _typed(ctx, s.id, "f2", ["ins", 0, "# Plan\n"])  # the next fold derives the same
+    assert ctx.repo.notes_items(s.id)[0].done
+    assert client.get("/api/tasks", params={"status": "done"}).json()[0]["key"] == key
+    r = client.patch(f"/api/tasks/{key}", json={"done": False, "follow": True})
+    assert r.json()["done"] is False and r.json()["follow"] is True
+    assert "- [ ]" in ctx.repo.get(s.id).notes
+
+
+def test_negative_idx_is_refused_by_every_idx_writer(client, ctx, sidecar):
+    s, _ = _notes_meeting(ctx)
+    r = client.patch(f"/api/sessions/{s.id}/action-items/-1", json={"done": True})
+    assert r.status_code == 400 and "notes-items" in r.json()["detail"]
+    with pytest.raises(ValueError):
+        item_flags.set_item_flags(ctx, ctx.repo.get(s.id), -1, done=True)
+    assert not ctx.repo.set_action_item_done(s.id, -1, True)
+    assert not ctx.repo.notes_items(s.id)[0].done
+
+
+def test_the_notes_items_route(client, ctx, sidecar):
+    s, item = _notes_meeting(ctx)
+    url = f"/api/sessions/{s.id}/notes-items/{item.id}"
+    q = ctx.bus.subscribe()
+    r = client.patch(url, json={"done": True, "follow": True, "due": "2026-11-04"})
+    assert r.status_code == 200
+    got = r.json()
+    assert (got["idx"], got["item_id"], got["source"], got["done"], got["follow"]) == (
+        -1,
+        item.id,
+        "notes",
+        True,
+        True,
+    )
+    assert got["due"] == "2026-11-04" and got["can_edit"] is True
+    assert ctx.repo.get(s.id).notes.startswith("- [x]")
+    assert any(e.get("type") == "session" and e["session_id"] == s.id for e in _drain(q))
+    assert _history(ctx, s.id, "task_edited") == [{"task": "sends the deck", "by": ""}]
+    cleared = client.patch(url, json={"due": None}).json()
+    assert cleared["due"] is None and cleared["done"] is True  # left out: kept
+    assert client.patch(f"/api/sessions/{s.id}/notes-items/{'0' * 16}", json={}).status_code == 404
+    assert client.patch(f"/api/sessions/nope/notes-items/{item.id}", json={}).status_code == 404
+    # On a meeting someone shared with me, the notes' items are read-only here.
+    with ctx.repo._lock, ctx.repo._conn:
+        ctx.repo._conn.execute("UPDATE sessions SET shared_from=? WHERE id=?", ("ab" * 32, s.id))
+    r = client.patch(url, json={"done": False})
+    assert r.status_code == 403 and r.json()["detail"] == "Tick it in the notes"
+    assert ctx.repo.notes_items(s.id)[0].done
+
+
+def test_a_reader_may_tick_a_notes_item_but_not_date_it(team, sidecar):
+    client, ctx, people = team
+    (ann, ah), (bob, _) = people["Ann"], people["Bob"]
+    reset = access.current.set(access.Principal(bob.id, bob.name, bob.role))
+    try:
+        s, item = _notes_meeting(ctx)
+    finally:
+        access.current.reset(reset)
+    url = f"/api/sessions/{s.id}/notes-items/{item.id}"
+    assert client.patch(url, json={"done": True}, headers=ah).status_code == 404  # not shared
+    sharing.set_shares(ctx, s.id, {ann.id})
+    r = client.patch(url, json={"done": True}, headers=ah)
+    assert r.status_code == 200 and r.json()["done"] is True and r.json()["can_edit"] is False
+    assert ctx.repo.notes_ops(s.id)[-1]["author"] == "Ann Lee"  # the ticker's frame
+    assert _history(ctx, s.id) == [{"task": "sends the deck", "by": "Ann Lee"}]
+    assert client.patch(url, json={"due": "2026-11-04"}, headers=ah).status_code == 403

@@ -97,7 +97,12 @@ def appendix(summarized: list[Session], unsummarized: list[Session]) -> str:
     if decisions:
         out += ["", "## Decisions"]
         out += [f"- {x} ({link(s)})" for s, x in decisions]
-    items = [(s, a) for s in summarized if s.summary_data for a in s.summary_data.action_items]
+    # The summary's items, then those typed in the meeting's notes (services/notes_items.py).
+    items = [
+        (s, a)
+        for s in summarized
+        for a in [*(s.summary_data.action_items if s.summary_data else []), *s.notes_items]
+    ]
     if items:
         out += ["", "## Action items"]
         for s, a in items:

@@ -13,7 +13,7 @@ from difflib import SequenceMatcher
 from typing import Literal
 
 from ..models.base import ApiModel
-from ..models.session import DEFAULT_SESSION_NAME, ActionItem, SummaryData
+from ..models.session import DEFAULT_SESSION_NAME, ActionItem, NotesItem, SummaryData
 from .organizations import OrganizationBrief
 from .tasks import TaskItem
 
@@ -26,6 +26,15 @@ class MeetingMeta:
     attendees: list[str] = field(default_factory=list)
     summary: str = ""
     summary_data: SummaryData | None = None
+    notes_items: list[NotesItem] = field(default_factory=list)  # typed in the notes
+
+    def entries(self) -> list[tuple[int, ActionItem, Literal["summary", "notes"]]]:
+        """(idx, item, source) of every action item: the summary's, then the notes' (idx is
+        -(j+1) for the j-th, as in TaskItem)."""
+        summary = self.summary_data.action_items if self.summary_data else []
+        return [(i, a, "summary") for i, a in enumerate(summary)] + [
+            (-(j + 1), a, "notes") for j, a in enumerate(self.notes_items)
+        ]
 
 
 class RelatedMeeting(ApiModel):
@@ -108,7 +117,7 @@ def build_brief(
     # and whether it is done; it is listed once, under its newest related meeting.
     heads: dict[str, tuple[tuple[datetime, str, int], ActionItem]] = {}
     for m in meetings:
-        for i, a in enumerate(m.summary_data.action_items if m.summary_data else []):
+        for i, a, _ in m.entries():
             if a.task_id:
                 rank = (m.created_at, m.id, i)
                 if a.task_id not in heads or rank > heads[a.task_id][0]:
@@ -116,7 +125,8 @@ def build_brief(
     items: list[BriefItem] = []
     listed: set[str] = set()
     for m, _ in related:
-        for i, a in enumerate(m.summary_data.action_items if m.summary_data else []):
+        for i, mention, source in m.entries():
+            a = mention
             if a.task_id:
                 if a.task_id in listed:
                     continue
@@ -129,6 +139,8 @@ def build_brief(
                         session_name=m.name,
                         created_at=m.created_at,
                         idx=i,
+                        item_id=mention.id,
+                        source=source,
                         text=a.text,
                         owner=a.owner,
                         done=False,

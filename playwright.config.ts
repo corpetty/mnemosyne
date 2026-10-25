@@ -33,7 +33,7 @@ export default defineConfig({
     // also run in WebKit, the engine of the desktop app's window.
     {
       name: 'webkit',
-      testMatch: ['shared-notes.spec.ts', 'notes-editor.spec.ts', 'publish.spec.ts', 'guest-notes.spec.ts', 'guest-notes-iroh.spec.ts'],
+      testMatch: ['shared-notes.spec.ts', 'notes-editor.spec.ts', 'notes-items.spec.ts', 'publish.spec.ts', 'guest-notes.spec.ts', 'guest-notes-iroh.spec.ts'],
       use: { ...devices['Desktop Safari'] }
     }
   ],

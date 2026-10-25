@@ -22,6 +22,11 @@ item by id, bookmark notes, comment texts) go through the sidecar's one-off thre
   newer `updated_at` wins whole, the version is the larger, one live row per meeting;
 - peer shares (who the meeting is shared with) likewise by person (`merge_peer_shares`): the
   newer `updated_at` wins, a revoked row beats a live one at a tie;
+- the notes' action items (`notes_items`, per id): the state fields (follow, due, issue_url,
+  task_id) three ways like summary action items, everything derived from the notes (text,
+  owner, at, done, line, by) ours, which our own fold derives again; an item only they have is
+  kept (our document may not have its line yet); a side without the field (an older peer)
+  changes nothing;
 - the notes: when both sides have a live notes document and they differ, the documents are
   merged by op-set union (services/sync_notes.py, run by the caller) and `notes` is not merged as
   text here (it is ours until the caller sets the union's render); when only theirs has one the
@@ -40,7 +45,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from ..export.note_merge import MergeError, merge_many
-from ..models.session import AgendaItem, Chapter, ClientFact, SummaryData
+from ..models.session import AgendaItem, Chapter, ClientFact, NotesItem, SummaryData
 from ..models.sync_session import SyncSession, merge_peer_shares, merge_publications
 from .summary_doc import _AT, _IDS, SECTIONS, merge_topics, place, section, whole_list
 from .tasks import _norm, same_item
@@ -72,6 +77,8 @@ SUMMARY_SCALARS = (
     "edited_at",
     "edited_by",
 )
+# The notes items' fields that no fold can derive (services/notes_items.py).
+NOTES_ITEM_STATE = ("follow", "due", "issue_url", "task_id")
 ITEM_SCALARS = ("owner", "due", "at", "live", "done", "follow", "issue_url", "task_id")
 
 
@@ -340,6 +347,15 @@ def _set(container, key, value) -> None:
         setattr(container, key, value)
 
 
+def _newer_scalar(side: str):
+    """A scalar rule for a merge without a base: equal values stand, else the newer side's."""
+
+    def pick(_base, ours, theirs, _label):
+        return ours if side == "ours" or ours == theirs else theirs
+
+    return pick
+
+
 def _newer(ours: SyncSession, theirs: SyncSession) -> str:
     return "theirs" if theirs.updated_at > ours.updated_at else "ours"
 
@@ -379,6 +395,49 @@ def _stable_ids(data: SummaryData | None) -> SummaryData:
     data.decision_ids = fill(data.decision_ids, data.decisions, "d")
     data.question_ids = fill(data.question_ids, data.open_questions, "q")
     return data
+
+
+def merge_notes_items(
+    base: list[NotesItem] | None,
+    ours: list[NotesItem] | None,
+    theirs: list[NotesItem] | None,
+    scalar,
+) -> list[NotesItem] | None:
+    """The notes items after a merge. `scalar(base, ours, theirs, label)` is the three-way for
+    one state field. By id: on both sides, ours with the state fields merged (a field set on
+    one side only, with no base item to say otherwise, is taken); only ours, kept; only theirs,
+    kept unless the base had it and they did not touch it since (we dropped it). Ours first,
+    then theirs' additions. None on their side (an older peer): ours as they are."""
+    if theirs is None:
+        return ours
+    b_items = {i.id: i for i in base or []}
+    t_items = {i.id: i for i in theirs}
+    out: list[NotesItem] = []
+    seen: set[str] = set()
+    for o in ours or []:
+        seen.add(o.id)
+        t, b = t_items.get(o.id), b_items.get(o.id)
+        if t is None:
+            out.append(o)
+            continue
+        merged = o.model_copy(deep=True)
+        for name in NOTES_ITEM_STATE:
+            ov, tv = getattr(o, name), getattr(t, name)
+            if b is None and ov != tv and tv in (None, False, ""):
+                continue
+            if b is None and ov != tv and ov in (None, False, ""):
+                setattr(merged, name, tv)
+                continue
+            bv = getattr(b, name) if b is not None else None
+            setattr(merged, name, scalar(bv, ov, tv, f"notes item {o.id} {name}"))
+        out.append(merged)
+    for t in theirs:
+        if t.id in seen:
+            continue
+        b = b_items.get(t.id)
+        if b is None or t != b:
+            out.append(t.model_copy(deep=True))
+    return out
 
 
 def _set_merge(base: list, ours: list, theirs: list) -> list:
@@ -422,6 +481,9 @@ def merge(
         out = taken.model_copy(deep=True)
         report = _report()
         report.update(replaced=True, taken=side, transcript=side)
+        out.notes_items = merge_notes_items(
+            None, ours.notes_items, theirs.notes_items, _newer_scalar(side)
+        )
         if side == "theirs":
             report["kept"] += 1
         elif theirs.notes_doc is not None and ours.notes_doc is None:
@@ -449,6 +511,9 @@ def merge(
     agenda = m.whole(_agenda(base.agenda), _agenda(ours.agenda), _agenda(theirs.agenda), "agenda")
     out.agenda = _covered(agenda, ours.agenda, theirs.agenda)
     item_texts = _merge_summary(m, out)
+    out.notes_items = merge_notes_items(
+        base.notes_items, ours.notes_items, theirs.notes_items, m.scalar
+    )
 
     # Rows by id.
     out.bookmarks = list(

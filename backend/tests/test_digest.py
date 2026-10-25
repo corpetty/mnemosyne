@@ -151,3 +151,24 @@ def test_schedule_submits_once_per_week(ctx, monkeypatch):
     # A week with no summarized meetings is skipped.
     ctx.maybe_schedule_digest(datetime(2026, 10, 2, 18))
     assert submitted == ["digest"]
+
+
+def test_the_appendix_lists_the_items_typed_in_the_notes(ctx):
+    from mnemosyne.models.session import NotesItem
+    from mnemosyne.services.digest_service import appendix
+
+    a, _, _ = _seed(ctx)
+    ctx.repo.set_notes_items(
+        a.id,
+        [
+            NotesItem(id="a" * 16, line="1" * 64, text="Send the deck", owner="Ada"),
+            NotesItem(id="b" * 16, line="2" * 64, text="Book the room", done=True),
+        ],
+    )
+    s = ctx.repo.get(a.id)
+    md = appendix([s], [])
+    link = "[[2026-09-21-Release sync|Release sync]]"
+    assert f"- [ ] Update the docs (Alice) · {link}" in md
+    assert f"- [ ] Send the deck (Ada) · {link}" in md
+    assert f"- [x] Book the room · {link}" in md
+    assert md.index("Update the docs") < md.index("Send the deck")  # the summary's come first

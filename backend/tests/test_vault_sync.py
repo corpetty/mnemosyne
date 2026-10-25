@@ -455,3 +455,141 @@ def test_a_tick_of_an_unlinked_item_touches_no_other_meeting(ctx, vault):
     _edit(note_path(ctx, b, str(vault)), "- [ ] Update the docs", "- [x] Update the docs")
     assert _tick_in_a_thread(ctx, b, vault) is True
     assert _done(ctx, b) == [True] and _done(ctx, a) == [False]
+
+
+# ---- action items typed in the notes (services/notes_items.py) -------------------------------
+
+ADA = "[@Ada Lovelace](mnemosyne:person/Ada%20Lovelace)"
+
+
+@pytest.fixture
+def sidecar(tmp_path, monkeypatch):
+    from mnemosyne.services import shared_notes
+    from tests import fake_link
+
+    monkeypatch.setattr(shared_notes, "FOLD_DELAY", 1000.0)
+    monkeypatch.setattr(shared_notes, "FOLD_EVERY", 1000.0)
+    return fake_link.install(tmp_path, monkeypatch)
+
+
+def _typed_meeting(ctx, vault, summary_items=()):
+    """A summarized meeting whose notes hold one action item (Ada: sends the deck) and a
+    checklist line; exported to the vault."""
+    import base64
+
+    from mnemosyne.services import shared_notes
+    from tests.fake_link import doc_frame
+
+    ctx.settings.obsidian_task_scope = "all"
+    s = ctx.repo.save(
+        Session(
+            name="Typed",
+            created_at=datetime(2026, 10, 12, 9),
+            summary="s",
+            summary_data=SummaryData(action_items=list(summary_items)),
+        )
+    )
+    notes = f"- [ ] {ADA} sends the deck\n- [ ] buy milk\n"
+    frame = base64.b64decode(doc_frame("f1", ["set", notes]))
+    shared_notes.accept_frames(ctx, s.id, [frame], "u-ada", "Ada", can_edit=True)
+    shared_notes.fold_blocking(ctx, s.id)
+    (item,) = ctx.repo.notes_items(s.id)
+    session = ctx.sessions.get_session(s.id)
+    export_session(ctx, session, str(vault))
+    return session, item
+
+
+def test_a_tick_of_a_notes_item_in_the_vault_goes_through_write_fields(
+    ctx, vault, sidecar, monkeypatch
+):
+    from mnemosyne.services import notes_items
+
+    s, item = _typed_meeting(ctx, vault)
+    path = note_path(ctx, s, str(vault))
+    text = path.read_text(encoding="utf-8")
+    line = f"- [ ] sends the deck ([[Ada Lovelace]]) ^m-{item.id}"
+    assert line in text
+    assert [t.block_id for t in parse_ticks(text)] == [item.id]
+    calls = []
+    real = notes_items.write_fields
+    monkeypatch.setattr(
+        notes_items, "write_fields", lambda *a, **kw: calls.append((a[2], kw)) or real(*a, **kw)
+    )
+    _edit(path, line, line.replace("[ ]", "[x]"))
+    assert apply_vault_ticks(ctx, s, str(vault)) is True
+    assert calls == [(item.id, {"author": ("", "Obsidian"), "done": True})]
+    assert ctx.repo.notes_items(s.id)[0].done is True
+    assert ctx.repo.get(s.id).notes.startswith("- [x]")  # the notes document says so too
+    assert ctx.repo.notes_ops(s.id)[-1]["author"] == "Obsidian"
+    assert _ticks_by(ctx, s) == [("task_done", "sends the deck", "Obsidian")]
+    assert apply_vault_ticks(ctx, s, str(vault)) is False  # the same again: nothing to do
+
+
+def test_an_untick_of_a_notes_item_in_the_vault_reopens_it(ctx, vault, sidecar):
+    from mnemosyne.services import notes_items
+
+    s, item = _typed_meeting(ctx, vault)
+    assert notes_items.write_fields(ctx, s.id, item.id, done=True)
+    path = note_path(ctx, s, str(vault))
+    export_session(ctx, ctx.sessions.get_session(s.id), str(vault))
+    line = f"- [x] sends the deck ([[Ada Lovelace]]) ✅ {date.today().isoformat()} ^m-{item.id}"
+    _edit(path, line.split(" ✅")[0], line.split(" ✅")[0].replace("[x]", "[ ]"))
+    assert apply_vault_ticks(ctx, s, str(vault)) is True
+    assert ctx.repo.notes_items(s.id)[0].done is False
+    assert _ticks_by(ctx, s) == [("task_reopened", "sends the deck", "Obsidian")]
+
+
+def test_a_stale_note_does_not_reopen_a_notes_item(ctx, vault, sidecar):
+    from mnemosyne.services import notes_items
+
+    s, item = _typed_meeting(ctx, vault)
+    path = note_path(ctx, s, str(vault))
+    t = time.time() - 3600
+    os.utime(path, (t, t))
+    ctx.repo.delete_vault_note(s.id)  # no record: the clock decides
+    assert notes_items.write_fields(ctx, s.id, item.id, done=True)
+    assert apply_vault_ticks(ctx, s, str(vault)) is False
+    assert ctx.repo.notes_items(s.id)[0].done is True
+
+
+def test_a_notes_ticks_never_reach_a_similar_summary_item(ctx, vault, sidecar):
+    twin = ActionItem(id="a1b2c3d4", text="sends the deck now", owner="Bo")
+    s, item = _typed_meeting(ctx, vault, [twin])
+    path = note_path(ctx, s, str(vault))
+    line = f"- [ ] sends the deck ([[Ada Lovelace]]) ^m-{item.id}"
+    _edit(path, line, line.replace("[ ]", "[x]"))
+    assert apply_vault_ticks(ctx, s, str(vault)) is True
+    assert [i.done for i in ctx.sessions.get_session(s.id).summary_data.action_items] == [False]
+    assert ctx.repo.notes_items(s.id)[0].done is True
+    # The other way round: a summary item's tick leaves the notes item alone.
+    _edit(path, "- [x] sends the deck (", "- [ ] sends the deck (")
+    _edit(path, "- [ ] sends the deck now", "- [x] sends the deck now")
+    assert apply_vault_ticks(ctx, ctx.sessions.get_session(s.id), str(vault)) is True
+    assert ctx.sessions.get_session(s.id).summary_data.action_items[0].done is True
+
+
+def test_a_notes_item_without_a_sidecar_stays_as_it_is(ctx, vault, sidecar, monkeypatch):
+    from mnemosyne.services import shared_notes
+
+    s, item = _typed_meeting(ctx, vault)
+    path = note_path(ctx, s, str(vault))
+    line = f"- [ ] sends the deck ([[Ada Lovelace]]) ^m-{item.id}"
+    _edit(path, line, line.replace("[ ]", "[x]"))
+    monkeypatch.setattr(shared_notes, "_binary", lambda: None)
+    assert apply_vault_ticks(ctx, s, str(vault)) is False  # logged, never raised
+    assert ctx.repo.notes_items(s.id)[0].done is False
+    assert _ticks_by(ctx, s) == []
+
+
+def test_edits_in_the_vault_never_turn_a_notes_item_into_a_summary_item(ctx, vault, sidecar):
+    from mnemosyne.services.vault_sync import apply_vault_edits
+
+    s, item = _typed_meeting(ctx, vault, [ActionItem(id="a1b2c3d4", text="Order badges")])
+    path = note_path(ctx, s, str(vault))
+    text = path.read_text(encoding="utf-8")
+    assert "- [ ] Order badges ^m-a1b2c3d4" in text
+    _edit(path, "- [ ] Order badges", "- [ ] Order the badges")
+    apply_vault_edits(ctx, s, str(vault))
+    after = ctx.sessions.get_session(s.id)
+    assert [a.text for a in after.summary_data.action_items] == ["Order the badges"]
+    assert [n.id for n in after.notes_items] == [item.id]
