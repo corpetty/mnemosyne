@@ -8,7 +8,8 @@ import { ORIGIN, WasmHashWeb, sameBytes } from '$lib/notes/test-harness.js';
 import { insertText, setLink } from '$lib/notes/commands.js';
 import { ARTIFACT_TAG, DELTA_TAG, drain } from '$lib/notes/sync.js';
 import { MemoryCopyStore, type CopyRec } from './copy';
-import { DEBOUNCE_MS, GuestDoc, PRESENCE_TTL_MS, type GuestDocOptions } from './doc';
+import { DEBOUNCE_MS, GuestDoc, parseMeta, PRESENCE_TTL_MS, SEL_EVERY_MS, cleanSel, type GuestDocOptions } from './doc';
+import { createGuestPresence } from './presence';
 import {
   Kind,
   b64urlEncode,
@@ -93,6 +94,8 @@ class Host {
   deaf = false;
   /** Acks are not sent (the connection dies before they arrive). */
   noAcks = false;
+  /** Every presence envelope a client sent, in order. */
+  presences: Uint8Array[] = [];
   Socket: new (url: string) => HostSocket;
 
   constructor(
@@ -131,6 +134,7 @@ class Host {
       if (this.deaf) return;
       this.append(env, s);
     } else if (data[0] === 0x02) {
+      this.presences.push(env);
       for (const o of this.live) if (o !== s) o.deliver(tagged(0x02, null, env));
     }
   }
@@ -176,6 +180,23 @@ class Host {
   end(): void {
     this.endedAt = 1234;
     for (const o of this.live) o.json({ type: 'ended', ended_at: this.endedAt, expires: 5678 });
+  }
+
+  /** The presence objects a guest sent (by gid), in order. */
+  async presencesFrom(gid: string): Promise<Record<string, unknown>[]> {
+    const out: Record<string, unknown>[] = [];
+    for (const env of this.presences) {
+      const { plaintext } = await unseal(this.keys, this.room, env);
+      const o = JSON.parse(new TextDecoder().decode(plaintext));
+      if (o.gid === gid) out.push(o);
+    }
+    return out;
+  }
+
+  /** Deliver a presence from the owner's side (the bridge) to everyone live. */
+  async fromOwner(obj: Record<string, unknown>): Promise<void> {
+    const env = await sealJson(this.keys, this.room, Kind.PRESENCE, obj);
+    for (const s of this.live) s.deliver(tagged(0x02, null, env));
   }
 
   /** Raw notes frames a guest sent, in order. */
@@ -498,6 +519,147 @@ describe('GuestDoc', () => {
     expect(B.others).toEqual([]);
   });
 
+  it('sends a moved selection at most every 150 ms, the newest one after the wait', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    const B = guest(host, 'Ben');
+    await settle(host, A, B);
+    await tick(SEL_EVERY_MS + 20);
+    const sels = async () => (await host.presencesFrom('g-Ana')).map((p) => p.sel);
+    const base = (await sels()).length;
+    const s1 = { a: 'a'.repeat(64), f: 'b'.repeat(64) };
+    const s2 = { a: 'c'.repeat(64), f: null };
+    const s3 = { a: 'd'.repeat(64), f: 'd'.repeat(64) };
+    A.setSel(s1);
+    A.setSel(s2);
+    A.setSel(s3);
+    await tick(20);
+    // the first goes out at once, the rest wait
+    expect((await sels()).slice(base)).toEqual([s1]);
+    await tick(SEL_EVERY_MS + 60);
+    expect((await sels()).slice(base)).toEqual([s1, s3]); // s2 was overtaken
+    // a repeat sends nothing
+    A.setSel({ ...s3 });
+    await tick(SEL_EVERY_MS + 60);
+    expect((await sels()).slice(base)).toEqual([s1, s3]);
+    // and the others see it, with the name and typing they already had
+    await settle(host, A, B);
+    expect(B.others.find((p) => p.gid === 'g-Ana')?.sel).toEqual(s3);
+    A.setSel(null);
+    await tick(SEL_EVERY_MS + 60);
+    await settle(host, A, B);
+    expect((await sels()).at(-1)).toBe(null);
+    expect(B.others.find((p) => p.gid === 'g-Ana')?.sel).toBe(null);
+  });
+
+  it('sends no selection while not live; the join and the heartbeat carry the current one', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    const B = guest(host, 'Ben');
+    await settle(host, A, B);
+    const sel = { a: '1'.repeat(64), f: '2'.repeat(64) };
+    socketOf(host, A).drop(1006);
+    await tick(5);
+    expect(A.status).toBe('reconnecting');
+    const before = (await host.presencesFrom('g-Ana')).length;
+    A.setSel(sel);
+    await tick(SEL_EVERY_MS + 60);
+    expect((await host.presencesFrom('g-Ana')).length).toBe(before);
+    A.reconnect();
+    await settle(host, A, B);
+    const joined = await host.presencesFrom('g-Ana');
+    expect(joined.at(-1)?.sel).toEqual(sel);
+    expect(B.others.find((p) => p.gid === 'g-Ana')?.sel).toEqual(sel);
+    // the 15 s heartbeat (called directly: it is a plain interval)
+    const n = joined.length;
+    (A as unknown as { presenceTick(): void }).presenceTick();
+    await settle(host, A, B);
+    const beat = await host.presencesFrom('g-Ana');
+    expect(beat.length).toBe(n + 1);
+    expect(beat.at(-1)).toEqual({ gid: 'g-Ana', name: 'Ana', typing: false, sel });
+  });
+
+  it('tells the room when the page goes away, and a gone drops that person at once', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    const B = guest(host, 'Ben');
+    await settle(host, A, B);
+    expect(B.others.map((p) => p.name)).toEqual(['Ana']);
+    A.pageHidden();
+    await settle(host, A, B);
+    expect((await host.presencesFrom('g-Ana')).at(-1)).toEqual({ gid: 'g-Ana', name: 'Ana', gone: true });
+    expect(B.others).toEqual([]);
+    // the owner's side too
+    await host.fromOwner({ gid: 'o:k1', name: 'Olga', typing: false, sel: null });
+    await settle(host, A, B);
+    expect(B.others.map((p) => p.gid)).toEqual(['o:k1']);
+    await host.fromOwner({ gid: 'o:k1', name: 'Olga', gone: true });
+    await settle(host, A, B);
+    expect(B.others).toEqual([]);
+  });
+
+  it("keeps someone's last valid selection and ignores an invalid one", async () => {
+    const host = await Host.create();
+    const B = guest(host, 'Ben');
+    await settle(host, B);
+    const good = { a: 'e'.repeat(64), f: null };
+    const others = () => B.others.find((p) => p.gid === 'o:k1');
+    await host.fromOwner({ gid: 'o:k1', name: 'Olga', typing: false, sel: good });
+    await settle(host, B);
+    expect(others()?.sel).toEqual(good);
+    for (const bad of [{ a: 'xyz', f: null }, { a: 'e'.repeat(64) }, 'nope', [], { a: 5, f: null }, { a: 'e'.repeat(63), f: null }]) {
+      await host.fromOwner({ gid: 'o:k1', name: 'Olga', typing: false, sel: bad });
+      await settle(host, B);
+      expect(others()?.sel).toEqual(good);
+    }
+    // no `sel` at all (an older page, the heartbeat of a host): kept
+    await host.fromOwner({ gid: 'o:k1', name: 'Olga', typing: true });
+    await settle(host, B);
+    expect(others()).toMatchObject({ typing: true, sel: good });
+    // null clears; uppercase hex is lowered
+    await host.fromOwner({ gid: 'o:k1', name: 'Olga', typing: false, sel: { a: 'E'.repeat(64), f: null } });
+    await settle(host, B);
+    expect(others()?.sel).toEqual(good);
+    await host.fromOwner({ gid: 'o:k1', name: 'Olga', typing: false, sel: null });
+    await settle(host, B);
+    expect(others()?.sel).toBe(null);
+  });
+
+  it('cleanSel accepts null and {a, f} of ids or null only', () => {
+    expect(cleanSel(null)).toEqual({ ok: true, sel: null });
+    expect(cleanSel({ a: null, f: null })).toEqual({ ok: true, sel: { a: null, f: null } });
+    expect(cleanSel({ a: 'A'.repeat(64), f: 'b'.repeat(64) })).toEqual({ ok: true, sel: { a: 'a'.repeat(64), f: 'b'.repeat(64) } });
+    expect(cleanSel(undefined).ok).toBe(false);
+    expect(cleanSel({ a: null }).ok).toBe(false);
+    expect(cleanSel({ a: 'zz', f: null }).ok).toBe(false);
+  });
+
+  it("counts owner-side people as typing, once by name, and draws everyone's caret", async () => {
+    const host = await Host.create();
+    const B = guest(host, 'Ben');
+    await settle(host, B);
+    const sel = { a: 'f'.repeat(64), f: 'f'.repeat(64) };
+    await host.fromOwner({ gid: '', name: 'Corey', typing: false });
+    await host.fromOwner({ gid: 'o:k1', name: 'Corey', typing: true, sel });
+    await host.fromOwner({ gid: 'o:k2', name: 'Corey', typing: true });
+    await host.fromOwner({ gid: 'o:k3', name: 'Ana', typing: false, sel: null });
+    await settle(host, B);
+    expect(B.typing).toEqual(['Corey']);
+    const presence = createGuestPresence(B);
+    // An owner-side entry's colour comes from the NAME, so two windows of one person agree.
+    expect(presence.carets()).toEqual([{ key: 'o:k1', name: 'Corey', who: 'Corey', sel }]);
+    // it hears only a change in the carets, not a heartbeat
+    let heard = 0;
+    const off = presence.subscribe(() => heard++);
+    await host.fromOwner({ gid: 'o:k3', name: 'Ana', typing: true });
+    await settle(host, B);
+    expect(heard).toBe(0);
+    await host.fromOwner({ gid: 'o:k3', name: 'Ana', typing: true, sel });
+    await settle(host, B);
+    expect(heard).toBe(1);
+    off();
+  });
+
   it('applies owner frames, threads, and skips envelopes it cannot open', async () => {
     const host = await Host.create();
     const A = guest(host, 'Ana');
@@ -762,5 +924,29 @@ describe('GuestDoc saved copy', () => {
     expect(text(B)).toContain('newer\n');
     expect(B.applyLocal((d) => insertText(d, 0, 'x'))).not.toBeUndefined();
     expect(copies.copies.has(host.room)).toBe(true);
+  });
+});
+
+describe('META clock', () => {
+  const ok = { part: 2, offset: 30.5, started_at: '2026-10-25T10:00:00Z' };
+  it('parses a valid clock', () => {
+    expect(parseMeta({ title: 'T', clock: ok })?.clock).toEqual(ok);
+  });
+  it('treats an invalid clock as absent', () => {
+    for (const bad of [
+      { ...ok, part: -1 },
+      { ...ok, part: 1.5 },
+      { ...ok, offset: -1 },
+      { ...ok, offset: Infinity },
+      { ...ok, started_at: 'nope' },
+      { ...ok, started_at: 5 },
+      'x',
+      null
+    ]) {
+      expect(parseMeta({ title: 'T', clock: bad })?.clock).toBeUndefined();
+    }
+  });
+  it('is absent when not sent', () => {
+    expect(parseMeta({ title: 'T' })).not.toHaveProperty('clock');
   });
 });

@@ -15,9 +15,14 @@
 //!   logged frame after that as `0x01 || seq u64 BE || envelope`.
 //! - Live: other connections' frames `0x01 || seq || envelope`, their presence `0x02 ||
 //!   envelope` (never logged), `{"type":"count","present":n}`, `{"type":"ended","ended_at":..,
-//!   "expires":..}`. A deleted room closes with 4410; a client too slow for the relay with 4409
-//!   ("lagged": rejoin with `since`).
-//! - The client sends `0x01 || envelope` (logged, relayed) and `0x02 || envelope` (relayed).
+//!   "expires":..}`. A deleted room closes with 4410; a client too slow for the relay of frames
+//!   with 4409 ("lagged": rejoin with `since`).
+//! - Presence has its own broadcast channel in the room, apart from frames, counts and the end:
+//!   a connection that falls behind on it just misses some presence messages (the next carets
+//!   replace them) and is not closed, and presence is not ordered against frames.
+//! - The client sends `0x01 || envelope` (logged, relayed) and `0x02 || envelope` (relayed,
+//!   at most `PRESENCE_PER_SEC` a second after a burst of `PRESENCE_BURST`; the rest is dropped
+//!   without an answer, since the next caret supersedes it).
 //!   A frame is acknowledged with `{"type":"ack","seq":n}`, sent in seq order with the frames
 //!   relayed to this connection (a client that saw the ack for n has every frame up to n).
 //!   Refusals: ended room → close 4403; over the frame cap or a full log → `{"type":"error",
@@ -26,7 +31,7 @@
 //! - Text `ping` is answered with `pong`. The host pings every `PING_EVERY`; a connection it has
 //!   heard nothing from for `SILENT_FOR` is closed (1001, "idle").
 
-use std::time::Duration;
+use std::time::{Duration, Instant as StdInstant};
 
 use axum::body::Bytes;
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket};
@@ -45,6 +50,14 @@ pub const PING_EVERY: Duration = Duration::from_secs(30);
 pub const SILENT_FOR: Duration = Duration::from_secs(90);
 /// Room tokens are 43 characters (32 bytes, base64url); anything far longer is not one.
 const MAX_TOKEN: usize = 256;
+
+/// Presence a connection may relay: `PRESENCE_BURST` at once, then `PRESENCE_PER_SEC` a second;
+/// more is dropped silently (no error, no close). Carets are sent several times a second per
+/// person and each one is fanned out to every other guest, so an unbounded sender (a stuck
+/// key repeat, a buggy or hostile page) would flood a room's listeners; a person's real caret
+/// rate stays well under this.
+pub const PRESENCE_PER_SEC: f64 = 10.0;
+pub const PRESENCE_BURST: f64 = 20.0;
 
 pub const KIND_FRAME: u8 = 0x01;
 pub const KIND_PRESENCE: u8 = 0x02;
@@ -90,6 +103,34 @@ struct Join {
     token: String,
     #[serde(default)]
     since: u64,
+}
+
+/// A token bucket for one connection's presence.
+struct PresenceBucket {
+    tokens: f64,
+    last: StdInstant,
+}
+
+impl PresenceBucket {
+    fn new(now: StdInstant) -> PresenceBucket {
+        PresenceBucket {
+            tokens: PRESENCE_BURST,
+            last: now,
+        }
+    }
+
+    /// Takes a token if there is one.
+    fn allow(&mut self, now: StdInstant) -> bool {
+        let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
+        self.last = now;
+        self.tokens = (self.tokens + elapsed * PRESENCE_PER_SEC).min(PRESENCE_BURST);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// How a step of the connection ended, when it did.
@@ -209,6 +250,7 @@ async fn serve(socket: &mut WebSocket, conn: &Connection) -> Step {
         .map_err(|e| join_refused(&e))?;
     let Joined {
         mut rx,
+        mut presence_rx,
         replay: (snapshot, frames),
         meta,
         connections,
@@ -240,6 +282,8 @@ async fn serve(socket: &mut WebSocket, conn: &Connection) -> Step {
     let mut ping = interval_at(Instant::now() + PING_EVERY, PING_EVERY);
     ping.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut heard = Instant::now();
+    let mut presence_open = true;
+    let mut bucket = PresenceBucket::new(StdInstant::now());
     loop {
         tokio::select! {
             event = rx.recv() => match event {
@@ -247,13 +291,21 @@ async fn serve(socket: &mut WebSocket, conn: &Connection) -> Step {
                 Err(RecvError::Lagged(_)) => return Err(Stop::Close(CLOSE_LAGGED, "lagged")),
                 Err(RecvError::Closed) => return Err(Stop::Close(CLOSE_GONE, "gone")),
             },
+            event = presence_rx.recv(), if presence_open => match event {
+                Ok(event) => relay(socket, &event, conn.id).await?,
+                // Carets are disposable: skip what was missed and carry on.
+                Err(RecvError::Lagged(_)) => continue,
+                // Both channels close together; leave the close to the main one, which says
+                // why (`Deleted` comes before its end).
+                Err(RecvError::Closed) => presence_open = false,
+            },
             msg = socket.recv() => {
                 let msg = match msg {
                     None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return Err(Stop::Lost),
                     Some(Ok(msg)) => msg,
                 };
                 heard = Instant::now();
-                incoming(socket, conn, msg).await?;
+                incoming(socket, conn, &mut bucket, msg).await?;
             }
             _ = ping.tick() => {
                 if heard.elapsed() >= SILENT_FOR {
@@ -288,13 +340,19 @@ async fn relay(socket: &mut WebSocket, event: &Event, me: u64) -> Step {
     }
 }
 
-async fn incoming(socket: &mut WebSocket, conn: &Connection, msg: Message) -> Step {
+async fn incoming(
+    socket: &mut WebSocket,
+    conn: &Connection,
+    bucket: &mut PresenceBucket,
+    msg: Message,
+) -> Step {
     let rooms = &conn.app.rooms;
     match msg {
         Message::Text(t) if t.as_str() == "ping" => send(socket, Message::text("pong")).await,
         Message::Binary(b) => {
             let result = match b.split_first() {
                 Some((&KIND_FRAME, env)) => rooms.append(&conn.room, conn.id, env).await.map(drop),
+                Some((&KIND_PRESENCE, _)) if !bucket.allow(StdInstant::now()) => return Ok(()),
                 Some((&KIND_PRESENCE, env)) => rooms.presence(&conn.room, conn.id, env).await,
                 _ => Err(ApiError::bad("bad_frame")),
             };
@@ -305,5 +363,25 @@ async fn incoming(socket: &mut WebSocket, conn: &Connection, msg: Message) -> St
         }
         // Other text (a second join, say) and protocol pings need nothing from us.
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_bucket_allows_a_burst_then_the_rate() {
+        let t0 = StdInstant::now();
+        let mut b = PresenceBucket::new(t0);
+        let burst = PRESENCE_BURST as usize;
+        assert_eq!((0..burst + 10).filter(|_| b.allow(t0)).count(), burst);
+        // A tenth of a second later (at 10/s) exactly one more is allowed.
+        let t1 = t0 + Duration::from_millis(100);
+        assert!(b.allow(t1));
+        assert!(!b.allow(t1));
+        // A long pause refills to the burst and no further.
+        let t2 = t1 + Duration::from_secs(60);
+        assert_eq!((0..burst + 10).filter(|_| b.allow(t2)).count(), burst);
     }
 }

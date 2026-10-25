@@ -18,7 +18,12 @@ backend is the bridge between the two, one asyncio task per live room (`Bridge`)
 - the meeting's title, date, owner and agenda go to the room as a META envelope, again when
   they change (`session` and `copilot_notes` events);
 - a sealed snapshot of everything (`PUT /live/{room}/snapshot`) at start, every 3 minutes while
-  something changed, and at the end, so a late guest loads one snapshot and the log since.
+  something changed, and at the end, so a late guest loads one snapshot and the log since;
+- presence (phase 11): guests' PRESENCE (with `sel`, `gone`) becomes the desktop's `guests` /
+  `guest_caret` messages; the hidden member is a presence tap, and each owner-side member of the
+  notes room goes to the room as PRESENCE gid "o:<member key>" (coalesced to one per 150 ms, a
+  heartbeat every 10 s, `gone` when it leaves) beside the "" owner heartbeat; a guest's PRESENCE
+  heard in one of the meeting's rooms is forwarded byte for byte into the others.
 
 The room protocol (HTTP for the publisher, a WebSocket for everyone) is in the Phase 9 task
 notes (docs/plans/2026-10-24-phase-9-tasks.md, G6) and publish-host/src/rooms.rs.
@@ -89,6 +94,8 @@ ENDED_HOURS = 24  # an ended room stays readable this long (at most until ROOM_D
 SNAPSHOT_EVERY = 180.0  # seconds: a new snapshot at most this often, only when something changed
 PRESENCE_TTL = 30.0  # seconds: a guest without a presence frame for this long has gone
 OWNER_PRESENCE_EVERY = 10.0  # seconds: the owner's presence heartbeat to the room
+# seconds: an owner-side member's PRESENCE (gid "o:<key>") at most this often (the newest wins)
+OWNER_SEL_EVERY = 0.15
 AUTO_END_EVERY = 60.0  # seconds between checks of `auto_end_at`
 TICK = 5.0  # seconds between the bridge's housekeeping passes
 TUNNEL_CHECK = 5.0  # seconds between looks at whether the tunnel's process still runs
@@ -552,14 +559,18 @@ def threads_for_guests(app: AppContext, session_id: str) -> list[dict]:
 
 
 def meta_for_guests(app: AppContext, session_id: str, row: dict | None = None) -> dict:
-    """{title, date, owner, agenda: [{text, covered}], origin, ended, ended_at}. `origin` is the
-    notes document's hashseq origin, which a guest needs to open it."""
+    """{title, date, owner, agenda: [{text, covered}], origin, ended, ended_at, clock?}. `origin`
+    is the notes document's hashseq origin, which a guest needs to open it. `clock` only while
+    the meeting records: {part, offset, started_at} (services/parts.py `recording_clock`), for
+    guests' time chips."""
+    from .parts import recording_clock
+
     with shared_notes.unrestricted():
         session = app.repo.get(session_id)
     if session is None:
         return {}
     created = session.created_at
-    return {
+    meta = {
         "title": session.name,
         "date": created.astimezone().isoformat(timespec="seconds"),
         "owner": owner_name(app, session),
@@ -568,6 +579,9 @@ def meta_for_guests(app: AppContext, session_id: str, row: dict | None = None) -
         "ended": bool(row and row.get("ended_at")),
         "ended_at": (row or {}).get("ended_at", ""),
     }
+    if (clock := recording_clock(app, session_id)) is not None:
+        meta["clock"] = clock
+    return meta
 
 
 def _snapshot_blocking(app: AppContext, session_id: str) -> tuple[str, list[str]]:
@@ -662,11 +676,32 @@ def guests_present(app: AppContext, session_id: str) -> list[str]:
     return _guest_view(app, session_id)[0]
 
 
+def _guest_members(app: AppContext, session_id: str) -> list[dict]:
+    """The guests of all of the meeting's rooms as `guests.members`: [{key: "g:<gid>", name,
+    typing, sel}], one per gid (the primary's when a guest is in both)."""
+    seen: dict[str, dict] = {}
+    for b in bridges_of(app, session_id):
+        for m in b._members():
+            seen.setdefault(m["key"], m)
+    return list(seen.values())
+
+
 def _announce_guests(app: AppContext, session_id: str) -> None:
     present, typing = _guest_view(app, session_id)
     shared_notes.broadcast_json(
-        app, session_id, {"type": "guests", "present": present, "typing": typing}
+        app,
+        session_id,
+        {
+            "type": "guests",
+            "present": present,
+            "typing": typing,
+            "members": _guest_members(app, session_id),
+        },
     )
+
+
+def _without_sel(members: list[dict]) -> list[dict]:
+    return [{k: v for k, v in m.items() if k != "sel"} for m in members]
 
 
 def _spawn(app: AppContext, coro) -> asyncio.Task:
@@ -686,6 +721,19 @@ class _Guest:
     name: str
     typing: bool
     seen: float
+    sel: dict | None = None  # {"a", "f"}: element ids (64 hex) or None; None = no selection
+
+
+@dataclass
+class _Owner:
+    """An owner-side member of the notes room (a desktop or team web app connection) as the
+    bridge seals it for the guests (gid "o:<key>"). From the tap's `presence`/`caret` messages."""
+
+    name: str
+    typing: bool
+    sel: dict | None
+    sent_at: float = float("-inf")  # loop time of its last PRESENCE out
+    timer: asyncio.TimerHandle | None = None  # the trailing flush of a coalesced one
 
 
 class Bridge:
@@ -707,9 +755,12 @@ class Bridge:
         # every room seq <= this is applied here
         self.seq: int = int(row.get(self.target.seq_column) or 0)
         member_id = "guest-bridge" if self.target.kind == PRIMARY else "guest-bridge-mirror"
+        # A presence tap: it hears the room's `presence` and `caret` messages besides the frames,
+        # to seal the owner-side members' carets for the guests (`_owners`).
         self.member = shared_notes.Member(
-            ws=None, id=member_id, name="Guests", can_edit=True, hidden=True
+            ws=None, id=member_id, name="Guests", can_edit=True, hidden=True, presence_tap=True
         )
+        self.owners: dict[str, _Owner] = {}  # owner-side members by key
         self.outq: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue()
         self.unacked: deque[bytes] = deque()  # 0x01 envelopes sent, not acknowledged yet
         self.guests: dict[str, _Guest] = {}
@@ -761,6 +812,10 @@ class Bridge:
         key = (self.session_id, self.target.kind)
         if reg.bridges.get(key) is self:
             del reg.bridges[key]
+        for o in self.owners.values():
+            if o.timer is not None:
+                o.timer.cancel()
+        self.owners.clear()
         if self.guests:
             self.guests.clear()
             self._announce_guests()
@@ -868,6 +923,7 @@ class Bridge:
             finally:
                 self.ws = None
                 self.connected.clear()
+                self._drop_queued_presence()
             expired = (_parse(self.row.get("expires_at", "")) or _now()) < _now()
             if code == CLOSE_DELETED or status == 410 or (status == 404 and expired):
                 await self._host_deleted()
@@ -910,6 +966,17 @@ class Bridge:
             if tag == T_NOTES:
                 self.unacked.append(env)
             await ws.send(bytes([tag]) + env)
+
+    def _drop_queued_presence(self) -> None:
+        """Disconnected: presence still in the queue is stale by the next connection (the
+        heartbeats say it again then); notes envelopes stay, in order."""
+        keep = []
+        while not self.outq.empty():
+            item = self.outq.get_nowait()
+            if item[0] != T_PRESENCE:
+                keep.append(item)
+        for item in keep:
+            self.outq.put_nowait(item)
 
     async def _read(self, ws) -> bool:
         """Until the connection closes. True when the bridge should stop."""
@@ -955,7 +1022,8 @@ class Bridge:
             return
         tag = data[0]
         if tag == T_PRESENCE:
-            self._on_presence(data[1:])
+            if self._on_presence(data[1:]):
+                self._forward_presence(data[1:])
             return
         if tag == T_SNAPSHOT:
             return  # ours: posted by this bridge
@@ -1059,24 +1127,147 @@ class Bridge:
         ) as e:
             logger.info("Guest notes of %s: a guest comment was not taken: %s", sid, e)
 
-    def _on_presence(self, env: bytes) -> None:
+    def _on_presence(self, env: bytes) -> bool:
+        """A PRESENCE envelope from the room: `{gid, name, typing, sel?, gone?}`. True when it
+        is a guest's (to forward to the meeting's other rooms). The desktop hears a `guests`
+        message when who is there or typing changed, a `guest_caret` when only a selection did.
+        A `sel` that is not null or {a, f} of element ids is ignored (the last one stays)."""
         try:
             kind, obj = gf.unseal_json(self.key, self.room, env)
         except gf.GuestFormatError:
-            return
+            return False
         if kind is not gf.Kind.PRESENCE or not isinstance(obj, dict):
-            return
+            return False
         gid = str(obj.get("gid") or "")
         if not _GID.match(gid):
-            return  # "" is the owner's side: us
-        before = self._guest_view()
-        self.guests[gid] = _Guest(
-            _guest_name(str(obj.get("name") or "")), bool(obj.get("typing")), time.monotonic()
-        )
-        if self._guest_view() != before:
+            return False  # "" and "o:<key>" are the owner's side: a bridge's
+        before = _guest_members(self.app, self.session_id)
+        if obj.get("gone") is True:
+            self.guests.pop(gid, None)  # the page closed: gone now, not after PRESENCE_TTL
+        else:
+            old = self.guests.get(gid)
+            sel = old.sel if old is not None else None
+            if "sel" in obj:
+                ok, clean = shared_notes._clean_sel(obj["sel"])
+                if ok:
+                    sel = clean
+            self.guests[gid] = _Guest(
+                _guest_name(str(obj.get("name") or "")),
+                bool(obj.get("typing")),
+                time.monotonic(),
+                sel,
+            )
+        after = _guest_members(self.app, self.session_id)
+        if after == before:
+            return True
+        if _without_sel(after) != _without_sel(before):
             self._announce_guests()
+            return True
+        old_sel = {m["key"]: m["sel"] for m in before}
+        for m in after:
+            if m["sel"] != old_sel.get(m["key"]):
+                shared_notes.broadcast_json(
+                    self.app,
+                    self.session_id,
+                    {"type": "guest_caret", "key": m["key"], "sel": m["sel"]},
+                )
+        return True
+
+    def _forward_presence(self, env: bytes) -> None:
+        """A guest's PRESENCE envelope heard here, byte for byte into the meeting's other rooms
+        (the iroh room and the host mirror share room id and key, so it opens there too): guests
+        on either see each other. Never queued for a bridge that is not connected.
+        No loop: a room never echoes an envelope to its sender, so the other bridge does not hear
+        what it forwarded; and only guest envelopes are forwarded (gid `_GID`), never the
+        owner-side ones a bridge seals itself ("" and "o:<key>")."""
+        for b in bridges_of(self.app, self.session_id):
+            if b is not self and b.connected.is_set():
+                b._queue(T_PRESENCE, env)
+
+    # -- owner-side members, for the guests --
+
+    def _on_room_json(self, msg: Any) -> None:
+        """A `presence` or `caret` message of the notes room (the bridge is a presence tap);
+        anything else is ignored."""
+        if not isinstance(msg, dict):
+            return
+        kind = msg.get("type")
+        if kind == "presence":
+            members = msg.get("members")
+            if isinstance(members, list):
+                self._owners_from(members)
+        elif kind == "caret":
+            o = self.owners.get(str(msg.get("key") or ""))
+            sel = msg.get("sel")
+            if o is not None and o.sel != sel:
+                o.sel = sel
+                self._owner_changed(str(msg["key"]))
+
+    def _owners_from(self, members: list) -> None:
+        seen: set[str] = set()
+        for m in members:
+            if not isinstance(m, dict) or not isinstance(m.get("key"), str) or not m["key"]:
+                continue
+            key = m["key"]
+            seen.add(key)
+            name, typing, sel = str(m.get("name") or ""), bool(m.get("typing")), m.get("sel")
+            o = self.owners.get(key)
+            if o is None:
+                self.owners[key] = _Owner(name, typing, sel)
+            elif (o.name, o.typing, o.sel) != (name, typing, sel):
+                o.name, o.typing, o.sel = name, typing, sel
+            else:
+                continue
+            self._owner_changed(key)
+        for key in [k for k in self.owners if k not in seen]:
+            o = self.owners.pop(key)
+            if o.timer is not None:
+                o.timer.cancel()
+            self._queue_presence({"gid": "o:" + key, "name": o.name, "gone": True})
+
+    def _owner_changed(self, key: str) -> None:
+        """At most one PRESENCE per OWNER_SEL_EVERY for a member: inside the window the newest
+        state waits and goes out when the window ends."""
+        o = self.owners[key]
+        if o.timer is not None:
+            return  # the flush sends the member as it is then
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        wait = o.sent_at + OWNER_SEL_EVERY - now
+        if wait <= 0:
+            self._send_owner(key, now)
+        else:
+            o.timer = loop.call_later(wait, self._flush_owner, key)
+
+    def _flush_owner(self, key: str) -> None:
+        o = self.owners.get(key)
+        if o is None:
+            return
+        o.timer = None
+        self._send_owner(key, asyncio.get_running_loop().time())
+
+    def _send_owner(self, key: str, now: float) -> None:
+        if self._queue_presence(self._owner_presence(key)):
+            self.owners[key].sent_at = now
+
+    def _owner_presence(self, key: str) -> dict:
+        o = self.owners[key]
+        return {"gid": "o:" + key, "name": o.name, "typing": o.typing, "sel": o.sel}
+
+    def _queue_presence(self, obj: dict) -> bool:
+        """Seal and queue a PRESENCE; dropped (False) while the room is not connected."""
+        if not self.connected.is_set():
+            return False
+        self._queue(T_PRESENCE, gf.seal_json(self.key, self.room, gf.Kind.PRESENCE, obj))
+        return True
 
     # -- guests --
+
+    def _members(self) -> list[dict]:
+        return [
+            {"key": "g:" + gid, "name": g.name, "typing": g.typing, "sel": g.sel}
+            for gid, g in self.guests.items()
+        ]
 
     def _guest_view(self) -> tuple[list[str], list[str]]:
         ordered = list(self.guests.values())
@@ -1111,10 +1302,19 @@ class Bridge:
 
     async def _convert(self) -> None:
         """The notes room's frames (from the hidden member) into sealed envelopes. A reload of
-        the room (library sync replaced the document): attach again and post a snapshot."""
+        the room (library sync replaced the document): attach again and post a snapshot. The
+        room's `presence`/`caret` JSON (the member is a presence tap) updates the owner-side
+        members sealed for the guests; other kinds are ignored."""
         while True:
             kind, data = await self.member.out.get()
-            if kind == "bytes":
+            if kind == "json":
+                try:
+                    self._on_room_json(data)
+                except Exception:  # never the end of the frame path
+                    logger.warning(
+                        "Guest notes of %s: presence failed", self.session_id, exc_info=True
+                    )
+            elif kind == "bytes":
                 env = gf.seal_notes(self.key, self.room, "", self._owner, bytes(data))
                 self._queue(T_NOTES, env)
                 self.dirty = True
@@ -1189,18 +1389,15 @@ class Bridge:
 
     async def tick(self, now: float | None = None) -> None:
         """One housekeeping pass (tests call it with `now`): guests gone quiet, the owner's
-        presence, a snapshot when due, the automatic end."""
+        presence (gid "", which 0.24 pages show as the host, then each owner-side member's), a
+        snapshot when due, the automatic end."""
         now = time.monotonic() if now is None else now
         self._expire_guests(now)
         if self.connected.is_set() and now - self._last_owner_presence >= OWNER_PRESENCE_EVERY:
             self._last_owner_presence = now
-            env = gf.seal_json(
-                self.key,
-                self.room,
-                gf.Kind.PRESENCE,
-                {"gid": "", "name": self._owner, "typing": False},
-            )
-            self._queue(T_PRESENCE, env)
+            self._queue_presence({"gid": "", "name": self._owner, "typing": False})
+            for key in self.owners:
+                self._queue_presence(self._owner_presence(key))
         if self.dirty and now - self._last_snapshot >= SNAPSHOT_EVERY:
             await self.snapshot()
         if self.target.kind == PRIMARY and now - self._last_auto_check >= AUTO_END_EVERY:
@@ -1947,8 +2144,20 @@ def _expire_later(app: AppContext, row: dict) -> None:
     reg.expiry[session_id] = _spawn(app, run())
 
 
+def _clock_changed(app: AppContext, session_id: str) -> None:
+    """The META's `clock` changed (a recording or a part started, or it stopped): the meeting's
+    running bridges send META again. Never the end of a start or stop."""
+    for bridge in bridges_of(app, session_id):
+        try:
+            bridge.send_meta()
+        except Exception:
+            logger.warning("Guest notes of %s: META not sent", session_id, exc_info=True)
+
+
 def recording_stopped(app: AppContext, session_id: str) -> None:
-    """The meeting's recording stopped: its live room ends `guest_notes_end_hours` from now."""
+    """The meeting's recording stopped: its live room ends `guest_notes_end_hours` from now,
+    and the guests' META loses its `clock`."""
+    _clock_changed(app, session_id)
     row = app.repo.guest_room(session_id)
     if not _live(row):
         return
@@ -1958,7 +2167,9 @@ def recording_stopped(app: AppContext, session_id: str) -> None:
 
 def recording_started(app: AppContext, session_id: str) -> None:
     """A recording (another part of the meeting) started: the end scheduled when the last one
-    stopped no longer applies; the next stop schedules a new one."""
+    stopped no longer applies; the next stop schedules a new one. The guests' META gets the new
+    part's `clock`."""
+    _clock_changed(app, session_id)
     row = app.repo.guest_room(session_id)
     if _live(row) and row["auto_end_at"]:
         app.repo.set_guest_room(session_id, auto_end_at="")

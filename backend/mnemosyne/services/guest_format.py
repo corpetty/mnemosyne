@@ -27,9 +27,14 @@ Rules, exactly as implemented:
              threads: [...], meta: {...}}
   comment   {op: "create"|"reply"|"edit"|"delete", id, parent_id, text, quote, gid, name,
              notes_ids: [first, last]}
-  meta      {title, date, owner, agenda: [{text, covered}], origin, ended, ended_at}
+  meta      {title, date, owner, agenda: [{text, covered}], origin, ended, ended_at,
+             clock?: {part, offset, started_at}}
             (`origin`: the notes document's hashseq origin, which a guest needs to open it)
-  presence  {gid, name, typing: bool}
+  presence  {gid, name, typing: bool, sel?: {a, f} | null, gone?: true}
+            (`sel`: the selection's anchor and focus, each the element id (64 hex) of the
+            character before it or null; `gone`: the page is closing. gid "" is the owner's
+            heartbeat, "o:<member key>" one of the owner-side editors; older pages ignore the
+            optional fields)
   (this module checks that the JSON parses; the shapes belong to the bridge and the page.)
 """
 

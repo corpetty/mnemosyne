@@ -36,6 +36,11 @@ use crate::store::{secrets_equal, sha256_hex, valid_id, valid_sha, write_atomic,
 const RECORD_HEADER: u64 = 12;
 /// Events a slow listener may fall behind by before it sees `Lagged` (and should rejoin).
 const CHANNEL: usize = 256;
+/// The same for presence (carets, who is typing). It has its own channel because it is the
+/// chatty, disposable traffic: a listener that falls behind on it just skips the missed
+/// messages (the next one replaces them), while one that falls behind on `CHANNEL` has lost
+/// logged frames and must rejoin. Sharing one channel let a stalled phone be closed by carets.
+const PRESENCE_CHANNEL: usize = 256;
 /// While frames arrive, `meta.json` is rewritten once its idle timer (`updated`) is this
 /// far behind, so a crash costs a room at most this much of its idle time.
 const META_FLUSH_SECS: u64 = 60;
@@ -73,7 +78,7 @@ pub enum Event {
         from: u64,
         bytes: Vec<u8>,
     },
-    /// Relayed, never logged.
+    /// Relayed, never logged; travels on the room's presence channel, not the main one.
     Presence {
         from: u64,
         bytes: Vec<u8>,
@@ -94,6 +99,8 @@ pub type Replay = (Option<(u64, Vec<u8>)>, Vec<(u64, Vec<u8>)>);
 /// What `join_with_meta` hands a live connection.
 pub struct Joined {
     pub rx: broadcast::Receiver<Arc<Event>>,
+    /// `Event::Presence` only; its own channel, so lagging on it is not lagging on `rx`.
+    pub presence_rx: broadcast::Receiver<Arc<Event>>,
     pub replay: Replay,
     pub meta: RoomMeta,
     pub connections: usize,
@@ -102,6 +109,8 @@ pub struct Joined {
 pub struct RoomState {
     meta: RoomMeta,
     tx: broadcast::Sender<Arc<Event>>,
+    /// Carries `Event::Presence` and nothing else.
+    presence_tx: broadcast::Sender<Arc<Event>>,
     connections: usize,
     /// Bytes in the log file (whole records only).
     log_bytes: u64,
@@ -117,6 +126,7 @@ impl RoomState {
             saved_updated: meta.updated,
             meta,
             tx: broadcast::channel(CHANNEL).0,
+            presence_tx: broadcast::channel(PRESENCE_CHANNEL).0,
             connections: 0,
             log_bytes,
             dirty: false,
@@ -135,9 +145,17 @@ impl RoomState {
         self.tx.subscribe()
     }
 
+    pub fn subscribe_presence(&self) -> broadcast::Receiver<Arc<Event>> {
+        self.presence_tx.subscribe()
+    }
+
     fn send(&self, event: Event) {
         // No receivers is not an error: nobody is connected.
         let _ = self.tx.send(Arc::new(event));
+    }
+
+    fn send_presence(&self, event: Event) {
+        let _ = self.presence_tx.send(Arc::new(event));
     }
 }
 
@@ -455,7 +473,8 @@ impl RoomStore {
     }
 
     /// Subscribes to the room's events and reads what came before, under one lock: every
-    /// frame is in the replay or arrives on the receiver, exactly once.
+    /// frame is in the replay or arrives on the receiver, exactly once. (The receiver does not
+    /// carry presence: `join_with_meta` returns that one too.)
     pub async fn join(
         &self,
         room: &str,
@@ -472,9 +491,11 @@ impl RoomStore {
         let s = state.lock().await;
         self.check_live(&s.meta)?;
         let rx = s.subscribe();
+        let presence_rx = s.subscribe_presence();
         let replay = self.replay_locked(room, &s.meta, since).await?;
         Ok(Joined {
             rx,
+            presence_rx,
             replay,
             meta: s.meta.clone(),
             connections: s.connections,
@@ -584,7 +605,7 @@ impl RoomStore {
         let state = self.open_room(room).await?;
         let s = state.lock().await;
         self.check_live(&s.meta)?;
-        s.send(Event::Presence {
+        s.send_presence(Event::Presence {
             from,
             bytes: bytes.to_vec(),
         });
@@ -957,7 +978,9 @@ mod tests {
     async fn append_seqs_are_monotonic_and_relayed() {
         let r = rig().await;
         r.create(ROOM).await;
-        let (mut rx, (snap, frames)) = r.rooms.join(ROOM, 0).await.unwrap();
+        let joined = r.rooms.join_with_meta(ROOM, 0).await.unwrap();
+        let (mut rx, mut presence_rx) = (joined.rx, joined.presence_rx);
+        let (snap, frames) = joined.replay;
         assert!(snap.is_none() && frames.is_empty());
         for (i, f) in [b"one".as_slice(), b"two", b"three"].iter().enumerate() {
             assert_eq!(r.rooms.append(ROOM, 7, f).await.unwrap(), i as u64 + 1);
@@ -972,17 +995,20 @@ mod tests {
             }
         );
         r.rooms.presence(ROOM, 7, b"typing").await.unwrap();
-        let mut last = None;
+        // Presence is on its own channel: the main one carries the frames only.
+        let mut rest = Vec::new();
         while let Ok(ev) = rx.try_recv() {
-            last = Some(ev);
+            rest.push(ev);
         }
+        assert!(rest.iter().all(|e| matches!(**e, Event::Frame { .. })));
         assert_eq!(
-            *last.unwrap(),
+            *presence_rx.try_recv().unwrap(),
             Event::Presence {
                 from: 7,
                 bytes: b"typing".to_vec()
             }
         );
+        assert!(presence_rx.try_recv().is_err());
         let e = r.rooms.append(ROOM, 7, b"").await.unwrap_err();
         assert_eq!(code(e), (StatusCode::BAD_REQUEST, "empty_frame"));
         // The log on disk is exactly the three records.

@@ -1,15 +1,19 @@
 // NotesDocState against a fake relay that speaks /ws/notes/{id} over a fake WebSocket class.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ORIGIN, WasmHashWeb, view } from './test-harness.js';
+import { createNotesPresence } from '../app/notesPresence.js';
+import { caretColor } from './ui/carets.js';
 import { insertText, setLink } from './commands.js';
 import { ensureTerminated, lines, openDoc, type Doc } from './model.js';
 import { ARTIFACT_TAG, DELTA_TAG, drain, openFromHello } from './sync.js';
 import {
   DEAD_MS,
+  DEBOUNCE_MS,
   NOTES_CLOSE,
   NotesDocState,
   PING_MS,
   RECONNECT_MS,
+  SEL_MS,
   TYPING_IDLE_MS,
   type NotesSocket
 } from './doc.svelte.js';
@@ -771,6 +775,291 @@ describe('typing', () => {
     server.socket.serverClose(1006);
     s.setTyping(true);
     expect(server.jsonIn).toEqual([]);
+  });
+});
+
+const A = 'a'.repeat(64);
+const B = 'b'.repeat(64);
+const C = 'c'.repeat(64);
+const sel = (a: string | null, f: string | null = a) => ({ a, f });
+
+describe('selection (setSel)', () => {
+  const selMsgs = (server: FakeServer) =>
+    server.jsonIn.filter((m) => m.type === 'presence' && 'sel' in m);
+
+  it('sends the first at once, then at most every 100 ms with the newest pending', () => {
+    const server = new FakeServer();
+    const s = make(server);
+    s.connect('abc');
+    server.accept();
+    s.setSel(sel(A));
+    expect(selMsgs(server)).toEqual([{ type: 'presence', sel: sel(A) }]);
+    vi.advanceTimersByTime(30);
+    s.setSel(sel(B));
+    vi.advanceTimersByTime(30);
+    s.setSel(sel(C));
+    expect(selMsgs(server).length).toBe(1);
+    vi.advanceTimersByTime(SEL_MS - 60 - 1);
+    expect(selMsgs(server).length).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(selMsgs(server)).toEqual([
+      { type: 'presence', sel: sel(A) },
+      { type: 'presence', sel: sel(C) }
+    ]);
+    vi.advanceTimersByTime(1000);
+    expect(selMsgs(server).length).toBe(2);
+  });
+
+  it('sends nothing for a repeat of the last one, and null once on blur', () => {
+    const server = new FakeServer();
+    const s = make(server);
+    s.connect('abc');
+    server.accept();
+    s.setSel(null); // nothing to take back yet
+    s.setSel(sel(A));
+    vi.advanceTimersByTime(SEL_MS);
+    s.setSel(sel(A));
+    s.setSel({ a: A, f: A });
+    vi.advanceTimersByTime(SEL_MS);
+    s.setSel(null);
+    vi.advanceTimersByTime(SEL_MS);
+    s.setSel(null);
+    vi.advanceTimersByTime(1000);
+    expect(selMsgs(server)).toEqual([
+      { type: 'presence', sel: sel(A) },
+      { type: 'presence', sel: null }
+    ]);
+  });
+
+  it('a selection that goes back to the last sent value within the wait sends nothing', () => {
+    const server = new FakeServer();
+    const s = make(server);
+    s.connect('abc');
+    server.accept();
+    s.setSel(sel(A));
+    vi.advanceTimersByTime(10);
+    s.setSel(sel(B));
+    s.setSel(sel(A));
+    vi.advanceTimersByTime(1000);
+    expect(selMsgs(server).length).toBe(1);
+  });
+
+  it('goes out after the frames of the pending drain, not before', () => {
+    const server = new FakeServer();
+    const s = make(server);
+    s.connect('abc');
+    const sock = server.accept();
+    ensureTerminated(s.doc!);
+    insertText(s.doc!, 0, 'hello');
+    s.localChange();
+    s.setSel(sel(A)); // typed, then the caret moved: the anchor is in the frame
+    expect(sock.sent).toEqual([]);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    expect(sock.sent.map((d) => (typeof d === 'string' ? JSON.parse(d).type : 'frame'))).toEqual([
+      'frame',
+      'presence'
+    ]);
+    expect(JSON.parse(sock.sent[1] as string)).toEqual({ type: 'presence', sel: sel(A) });
+  });
+
+  it('drains frames the editor has not announced yet before it sends', () => {
+    const server = new FakeServer();
+    const s = make(server);
+    s.connect('abc');
+    const sock = server.accept();
+    ensureTerminated(s.doc!);
+    insertText(s.doc!, 0, 'hi'); // localChange() will come after setSel
+    s.setSel(sel(A));
+    expect(sock.sent.map((d) => (typeof d === 'string' ? 'json' : 'frame'))).toEqual(['frame', 'json']);
+  });
+
+  it('a throttled selection still waits for a drain that came up meanwhile', () => {
+    const server = new FakeServer();
+    const s = make(server);
+    s.connect('abc');
+    const sock = server.accept();
+    s.setSel(sel(A));
+    vi.advanceTimersByTime(20);
+    ensureTerminated(s.doc!);
+    insertText(s.doc!, 0, 'x');
+    s.localChange();
+    s.setSel(sel(B));
+    vi.advanceTimersByTime(SEL_MS); // the throttle is over, the drain (200 ms) is not
+    expect(sock.sent.length).toBe(1);
+    vi.advanceTimersByTime(200);
+    expect(sock.sent.map((d) => (typeof d === 'string' ? 'json' : 'frame'))).toEqual(['json', 'frame', 'json']);
+  });
+
+  it('sends nothing while disconnected, and the newest once live again', () => {
+    const server = new FakeServer();
+    const s = make(server);
+    s.setSel(sel(A)); // before connect
+    s.connect('abc');
+    expect(selMsgs(server)).toEqual([]);
+    server.accept();
+    expect(selMsgs(server)).toEqual([{ type: 'presence', sel: sel(A) }]);
+
+    server.socket.serverClose(1006);
+    s.setSel(sel(B));
+    vi.advanceTimersByTime(500);
+    expect(selMsgs(server).length).toBe(1);
+    vi.advanceTimersByTime(RECONNECT_MS[0]);
+    server.accept();
+    // The new connection starts without a selection: the newest is announced again.
+    expect(selMsgs(server)).toEqual([
+      { type: 'presence', sel: sel(A) },
+      { type: 'presence', sel: sel(B) }
+    ]);
+  });
+
+  it('sends none while catching up', () => {
+    const server = new FakeServer();
+    const peer = new Peer();
+    server.push(...peer.type(0, 'text'));
+    const s = make(server);
+    s.connect('abc');
+    const sock = server.socket;
+    sock.readyState = 1;
+    sock.json({
+      type: 'hello',
+      notes: ORIGIN,
+      you: { id: '', name: 'Ann Lee', key: 'mme' },
+      read_only: false,
+      present: [],
+      last_edit: null,
+      snapshot: false,
+      backlog: 1
+    });
+    s.setSel(sel(A));
+    expect(selMsgs(server)).toEqual([]);
+    sock.binary(server.log[0]);
+    expect(selMsgs(server)).toEqual([{ type: 'presence', sel: sel(A) }]);
+  });
+
+  it('readers may send theirs', () => {
+    const server = new FakeServer();
+    const s = make(server);
+    s.connect('abc');
+    server.accept({ read_only: true });
+    s.setSel(sel(A));
+    expect(selMsgs(server)).toEqual([{ type: 'presence', sel: sel(A) }]);
+  });
+});
+
+describe('other people\'s carets', () => {
+  const me = { key: 'mme', name: 'Ann Lee', who: 'ann', typing: false, sel: sel(A) };
+  const bob = { key: 'mbob', name: 'Bob', who: 'bob', typing: false, sel: sel(B) };
+  const cy = { key: 'mcy', name: 'Cy', who: 'cy', typing: true, sel: null };
+  const hello = { you: { id: 'ann', name: 'Ann Lee', key: 'mme' }, members: [me, bob] };
+
+  function live() {
+    const server = new FakeServer();
+    const s = make(server);
+    const calls: number[] = [];
+    s.onPresence(() => calls.push(calls.length));
+    s.connect('abc');
+    const sock = server.accept(hello);
+    return { server, s, sock, calls };
+  }
+
+  it('the hello lists the others, not yourself', () => {
+    const { s } = live();
+    expect(s.members).toEqual([bob]);
+    expect(s.sels).toEqual({ mbob: sel(B) });
+    expect(s.guestMembers).toEqual([]);
+  });
+
+  it('presence replaces the members and their selections', () => {
+    const { s, sock, calls } = live();
+    const n = calls.length;
+    sock.json({ type: 'presence', present: ['Ann Lee', 'Bob', 'Cy'], typing: ['Cy'], members: [me, bob, cy] });
+    expect(s.members).toEqual([bob, cy]);
+    expect(s.sels).toEqual({ mbob: sel(B), mcy: null });
+    expect(s.present).toEqual(['Ann Lee', 'Bob', 'Cy']);
+    expect(calls.length).toBe(n + 1);
+    sock.json({ type: 'presence', present: ['Ann Lee', 'Cy'], typing: [], members: [me, cy] });
+    expect(s.members).toEqual([cy]);
+    expect(s.sels).toEqual({ mcy: null });
+  });
+
+  it('presence without members (an older relay) keeps what we have', () => {
+    const { s, sock } = live();
+    sock.json({ type: 'presence', present: ['Ann Lee'], typing: [] });
+    expect(s.members).toEqual([bob]);
+  });
+
+  it('caret updates one selection, and ignores ours', () => {
+    const { s, sock, calls } = live();
+    const n = calls.length;
+    sock.json({ type: 'caret', key: 'mbob', sel: sel(C) });
+    expect(s.sels).toEqual({ mbob: sel(C) });
+    expect(calls.length).toBe(n + 1);
+    sock.json({ type: 'caret', key: 'mbob', sel: sel(C) }); // no change, no notification
+    expect(calls.length).toBe(n + 1);
+    sock.json({ type: 'caret', key: 'mbob', sel: null });
+    expect(s.sels).toEqual({ mbob: null });
+    sock.json({ type: 'caret', key: 'mme', sel: sel(C) });
+    expect(s.sels).toEqual({ mbob: null });
+  });
+
+  it('guests and guest_caret are kept apart from members, and replace only their own', () => {
+    const { s, sock } = live();
+    const g1 = { key: 'g:1', name: 'Gus', typing: false, sel: sel(A) };
+    const g2 = { key: 'g:2', name: 'Gil', typing: true, sel: null };
+    sock.json({ type: 'guests', present: ['Gus', 'Gil'], typing: ['Gil'], members: [g1, g2] });
+    expect(s.guestMembers).toEqual([g1, g2]);
+    expect(s.guests).toEqual(['Gus', 'Gil']);
+    expect(s.members).toEqual([bob]);
+    expect(s.sels).toEqual({ mbob: sel(B), 'g:1': sel(A), 'g:2': null });
+    sock.json({ type: 'guest_caret', key: 'g:2', sel: sel(C) });
+    expect(s.sels['g:2']).toEqual(sel(C));
+    sock.json({ type: 'presence', present: ['Ann Lee'], typing: [], members: [me] });
+    expect(s.sels).toEqual({ 'g:1': sel(A), 'g:2': sel(C) }); // guests untouched
+    sock.json({ type: 'guests', present: ['Gus'], typing: [], members: [g1] });
+    expect(s.guestMembers).toEqual([g1]);
+    expect(s.sels).toEqual({ 'g:1': sel(A) });
+  });
+
+  it('a drop forgets the carets, the next hello brings them again', () => {
+    const { server, s, sock, calls } = live();
+    sock.serverClose(1006);
+    expect(s.members).toEqual([]);
+    expect(s.sels).toEqual({});
+    expect(calls.length).toBeGreaterThan(0);
+    vi.advanceTimersByTime(RECONNECT_MS[0]);
+    server.accept(hello);
+    expect(s.members).toEqual([bob]);
+  });
+
+  it('notesPresence adapts them: others with a selection, colours by who or gid', () => {
+    const { s, sock } = live();
+    const p = createNotesPresence(s);
+    let n = 0;
+    const off = p.subscribe(() => n++);
+    expect(p.carets()).toEqual([{ key: 'mbob', name: 'Bob', who: 'bob', sel: sel(B) }]);
+    sock.json({ type: 'guests', present: ['Gus'], typing: [], members: [{ key: 'g:7', name: 'Gus', typing: false, sel: sel(C) }] });
+    sock.json({ type: 'caret', key: 'mbob', sel: null });
+    expect(n).toBe(2);
+    expect(p.carets()).toEqual([{ key: 'g:7', name: 'Gus', who: '7', sel: sel(C) }]);
+    expect(caretColor('bob')).toBeGreaterThanOrEqual(0);
+    expect(caretColor('bob')).toBeLessThan(8);
+    expect(caretColor('bob')).toBe(caretColor('bob'));
+    p.setSel(sel(A));
+    expect(s.sels).toEqual({ 'g:7': sel(C), mbob: null });
+    off();
+  });
+
+  it('unsubscribe stops the notifications', () => {
+    const server = new FakeServer();
+    const s = make(server);
+    const calls: number[] = [];
+    const off = s.onPresence(() => calls.push(1));
+    s.connect('abc');
+    const sock = server.accept(hello);
+    const n = calls.length;
+    off();
+    sock.json({ type: 'caret', key: 'mbob', sel: sel(C) });
+    expect(calls.length).toBe(n);
   });
 });
 

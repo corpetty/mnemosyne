@@ -23,7 +23,14 @@ import { openDoc, type Doc } from './model.js';
 import { ARTIFACT_TAG, DELTA_TAG, applyRemote, drain, openFromHello } from './sync.js';
 import type { WasmHashWeb } from './wasm.js';
 import { connectionState } from '../stores/connection.svelte.js';
-import type { NotesClientMessage, NotesHello, NotesPerson, NotesServerMessage } from '../types/index.js';
+import type {
+  NotesClientMessage,
+  NotesGuestMember,
+  NotesHello,
+  NotesMember,
+  NotesSel,
+  NotesServerMessage
+} from '../types/index.js';
 
 export type NotesStatus =
   | 'connecting' // first connect, no document yet
@@ -49,6 +56,8 @@ export const DEBOUNCE_MS = 200;
 export const MAX_WAIT_MS = 1000;
 /** `typing: false` is sent after this much idle time (ms). */
 export const TYPING_IDLE_MS = 2000;
+/** A selection goes out at most this often (ms); the newest one pending follows after the wait. */
+export const SEL_MS = 100;
 export const PING_MS = 25_000;
 /** Nothing heard from the relay for this long: the socket is dead (ms). */
 export const DEAD_MS = 60_000;
@@ -91,6 +100,10 @@ interface CatchUp {
   frames: Uint8Array[];
 }
 
+function sameSel(a: NotesSel | null, b: NotesSel | null): boolean {
+  return a === b || (a !== null && b !== null && a.a === b.a && a.f === b.f);
+}
+
 function defaultUrl(sessionId: string): string {
   const base = connectionState.url.replace(/^http/, 'ws') + '/ws/notes/' + encodeURIComponent(sessionId);
   return connectionState.token ? `${base}?token=${encodeURIComponent(connectionState.token)}` : base;
@@ -116,8 +129,14 @@ export class NotesDocState {
   /** Guests on the published notes link: who is in the room and who is typing. */
   guests = $state<string[]>([]);
   guestsTyping = $state<string[]>([]);
+  /** The other people in the room (never yourself), from the hello and `presence`. */
+  members = $state.raw<NotesMember[]>([]);
+  /** The guests on the published link, from `guests`. */
+  guestMembers = $state.raw<NotesGuestMember[]>([]);
+  /** Everyone else's current selection by member key (`m…` / `g:<gid>`); null = none. */
+  sels = $state.raw<Record<string, NotesSel | null>>({});
   lastEdit = $state<{ by: string; at: string } | null>(null);
-  you = $state.raw<NotesPerson | null>(null);
+  you = $state.raw<NotesHello['you'] | null>(null);
   /** The document; null until the first hello, and for ever when unavailable. */
   doc = $state.raw<Doc | null>(null);
   /** Bumped on every change that came from the relay: the editor re-renders on it. */
@@ -145,6 +164,13 @@ export class NotesDocState {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private lastHeard = 0;
   private pongWaiters: (() => void)[] = [];
+  /** Our own selection: the newest given to `setSel`, the one still to send, the last one sent. */
+  private curSel: NotesSel | null = null;
+  private pendingSel: { sel: NotesSel | null } | null = null;
+  private lastSelSent: NotesSel | null = null;
+  private lastSelAt = -Infinity;
+  private selTimer: ReturnType<typeof setTimeout> | null = null;
+  private presenceListeners = new Set<() => void>();
 
   constructor(opts: NotesDocOptions = {}) {
     this.Socket = opts.webSocket ?? (WebSocket as unknown as NotesSocketCtor);
@@ -209,6 +235,7 @@ export class NotesDocState {
     this.error = null;
     this.typing = [];
     this.typingSent = false;
+    this.clearCarets();
     this.status = this.web ? 'reconnecting' : 'connecting';
     this.open();
   }
@@ -259,6 +286,11 @@ export class NotesDocState {
 
   /** Drain and send now (the editor may call it on blur or before leaving). */
   flush(): void {
+    this.drainNow();
+    this.pumpSel(); // a selection waited for these frames: its anchor is in them
+  }
+
+  private drainNow(): void {
     if (this.drainTimer) clearTimeout(this.drainTimer);
     this.drainTimer = null;
     this.dirtySince = null;
@@ -306,6 +338,74 @@ export class NotesDocState {
         this.stopTyping();
       }, TYPING_IDLE_MS);
     } else this.stopTyping();
+  }
+
+  /**
+   * Our selection moved (null: the editor lost focus). Sent as `presence` with `sel` at most
+   * every 100 ms (the newest one pending wins, after the wait), never before the frames of the
+   * drain it belongs to (the peer needs the anchor's op first), not while disconnected (the
+   * newest is sent once the connection is live again), and a repeat of the last one sends nothing.
+   */
+  setSel(sel: NotesSel | null): void {
+    this.curSel = sel;
+    this.pendingSel = { sel };
+    this.pumpSel();
+  }
+
+  /** Called when the other people's carets changed; returns the unsubscribe. */
+  onPresence(fn: () => void): () => void {
+    this.presenceListeners.add(fn);
+    return () => this.presenceListeners.delete(fn);
+  }
+
+  private pumpSel(): void {
+    const p = this.pendingSel;
+    if (!p || !this.web || this.status !== 'live' || !this.isOpen()) return;
+    if (this.dirtySince !== null) return; // the drain is pending: `flush` comes back here
+    if (sameSel(p.sel, this.lastSelSent)) {
+      this.pendingSel = null;
+      return;
+    }
+    const wait = this.lastSelAt + SEL_MS - Date.now();
+    if (wait > 0) {
+      if (!this.selTimer)
+        this.selTimer = setTimeout(() => {
+          this.selTimer = null;
+          this.pumpSel();
+        }, wait);
+      return;
+    }
+    this.drainNow(); // frames made but not announced yet (the editor may not have said so)
+    if (this.sendJson({ type: 'presence', sel: p.sel })) {
+      this.lastSelSent = p.sel;
+      this.lastSelAt = Date.now();
+      this.pendingSel = null;
+    }
+  }
+
+  private notifyPresence(): void {
+    for (const fn of [...this.presenceListeners]) fn();
+  }
+
+  /** Keep other people's entries of one kind (guests: `g:` keys) and replace the rest. */
+  private setMemberSels(guests: boolean, members: { key: string; sel: NotesSel | null }[]): void {
+    const next: Record<string, NotesSel | null> = {};
+    for (const [k, v] of Object.entries(this.sels)) if (k.startsWith('g:') !== guests) next[k] = v;
+    for (const m of members) next[m.key] = m.sel ?? null;
+    this.sels = next;
+  }
+
+  private others<T extends { key: string }>(list: T[] | undefined): T[] {
+    const me = this.you?.key;
+    return (list ?? []).filter((m) => m.key !== me);
+  }
+
+  private clearCarets(): void {
+    if (!this.members.length && !this.guestMembers.length && !Object.keys(this.sels).length) return;
+    this.members = [];
+    this.guestMembers = [];
+    this.sels = {};
+    this.notifyPresence();
   }
 
   // ---- socket --------------------------------------------------------------------------------
@@ -434,10 +534,18 @@ export class NotesDocState {
       case 'presence':
         this.present = msg.present;
         this.typing = msg.typing;
+        if (msg.members) this.setMembers(msg.members);
+        break;
+      case 'caret':
+        if (msg.key !== this.you?.key) this.setSelOf(msg.key, msg.sel);
         break;
       case 'guests':
         this.guests = msg.present;
         this.guestsTyping = msg.typing;
+        if (msg.members) this.setGuestMembers(msg.members);
+        break;
+      case 'guest_caret':
+        this.setSelOf(msg.key, msg.sel);
         break;
       case 'last_edit':
         this.lastEdit = { by: msg.by, at: msg.at };
@@ -451,6 +559,24 @@ export class NotesDocState {
     }
   }
 
+  private setMembers(list: NotesMember[]): void {
+    this.members = this.others(list);
+    this.setMemberSels(false, this.members);
+    this.notifyPresence();
+  }
+
+  private setGuestMembers(list: NotesGuestMember[]): void {
+    this.guestMembers = list;
+    this.setMemberSels(true, list);
+    this.notifyPresence();
+  }
+
+  private setSelOf(key: string, sel: NotesSel | null): void {
+    if (sameSel(this.sels[key] ?? null, sel)) return;
+    this.sels = { ...this.sels, [key]: sel ?? null };
+    this.notifyPresence();
+  }
+
   private beginCatchUp(hello: NotesHello): void {
     const waiting = hello.waiting_for_sync === true;
     this.you = hello.you;
@@ -460,6 +586,11 @@ export class NotesDocState {
     this.typing = [];
     this.guests = [];
     this.guestsTyping = [];
+    this.guestMembers = [];
+    this.members = this.others(hello.members);
+    this.sels = {};
+    this.setMemberSels(false, this.members);
+    this.notifyPresence();
     this.lastEdit = hello.last_edit;
     this.status = 'catching_up';
     this.catchUp = { hello, needSnapshot: hello.snapshot, snapshot: null, frames: [] };
@@ -520,6 +651,11 @@ export class NotesDocState {
       this.sendFrames([...this.artifacts]);
       this.sendFrames(this.track(drain(this.web)));
     }
+    // 5. our selection again: the relay knows this connection by nothing yet
+    this.lastSelSent = null;
+    this.lastSelAt = -Infinity;
+    this.pendingSel = this.curSel ? { sel: this.curSel } : null;
+    this.pumpSel();
     this.changed();
   }
 
@@ -535,6 +671,7 @@ export class NotesDocState {
     this.catchUp = null;
     this.typing = [];
     this.typingSent = false;
+    this.clearCarets();
     if (!this.wanted) return;
     if (code === NOTES_CLOSE.gone) {
       this.wanted = false;
@@ -580,9 +717,9 @@ export class NotesDocState {
   }
 
   private clearTimers(): void {
-    for (const t of [this.reconnectTimer, this.drainTimer, this.typingTimer]) if (t) clearTimeout(t);
+    for (const t of [this.reconnectTimer, this.drainTimer, this.typingTimer, this.selTimer]) if (t) clearTimeout(t);
     if (this.pingTimer) clearInterval(this.pingTimer);
-    this.reconnectTimer = this.drainTimer = this.typingTimer = null;
+    this.reconnectTimer = this.drainTimer = this.typingTimer = this.selTimer = null;
     this.pingTimer = null;
     this.dirtySince = null;
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { connectingLine, savedLine, formatHostTime, formatMeetingDate, ownersNotes, peopleLine, statusPill, typingLine } from './display';
+import { connectingLine, savedLine, formatHostTime, formatMeetingDate, isOwnerSide, ownersNotes, peopleLine, statusPill, typingLine } from './display';
 import type { Person } from './doc';
 
 const person = (gid: string, name: string, typing = false): Person => ({ gid, name, typing, at: 0 });
@@ -34,6 +34,20 @@ describe('lines', () => {
 	it('people, the host marked', () => {
 		expect(peopleLine([person('', 'Corey'), person('a', 'Bob')])).toBe('Corey (host), Bob');
 		expect(peopleLine([])).toBe('');
+	});
+	it("people on the owner's side merge into the host's line or are listed as the team", () => {
+		// the host's own other window: no duplicate
+		expect(peopleLine([person('', 'Corey'), person('o:k1', 'Corey'), person('o:k2', 'Corey'), person('a', 'Bob')])).toBe('Corey (host), Bob');
+		expect(peopleLine([person('', 'Corey'), person('o:k1', 'Ana'), person('a', 'Bob')])).toBe('Corey (host), Ana (team), Bob');
+		// two windows of one team member show once; an unnamed one is still someone
+		expect(peopleLine([person('', 'Corey'), person('o:k1', 'Ana'), person('o:k2', 'Ana'), person('o:k3', '')])).toBe(
+			'Corey (host), Ana (team), Someone (team)'
+		);
+		// no host heartbeat yet
+		expect(peopleLine([person('o:k1', 'Corey'), person('a', 'Bob')])).toBe('Corey (team), Bob');
+		expect(isOwnerSide('o:k1')).toBe(true);
+		expect(isOwnerSide('')).toBe(false);
+		expect(isOwnerSide('g-abc')).toBe(false);
 	});
 	it('typing', () => {
 		expect(typingLine([])).toBe('');
