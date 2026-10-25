@@ -893,6 +893,19 @@ describe('hooks for menus (phase 11)', () => {
     expect(typed).toEqual([['/', 2], ['x', 3]]);
   });
 
+  it('onTyped also hears a character the browser put outside every line (WebKit, a first key in an empty editor)', () => {
+    // NotesEditor terminates an empty doc on the first beforeinput and renders its line under a
+    // caret that was on the root: WebKit then inserts the text before the line element.
+    const typed: [string, number][] = [];
+    const m = mount(docOf(''), { hooks: { onTyped: (c, caret) => typed.push([c, caret]) } });
+    (document.getSelection() as Selection).setBaseAndExtent(m.root, 0, m.root, 0);
+    typeNative(m, '/');
+    expect(m.A.text()).toBe('/\n');
+    expect(m.root.querySelectorAll('.ne-line')).toHaveLength(1);
+    expect(typed).toEqual([['/', 1]]);
+    expect(m.view.getSelection()).toEqual({ anchor: 1, focus: 1 });
+  });
+
   it('onTyped is not called for a deletion, a paste, a command or a multi-character insert', () => {
     const typed: string[] = [];
     const m = mount(docOf('hello'), { hooks: { onTyped: (c) => typed.push(c) } });

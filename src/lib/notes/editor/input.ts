@@ -542,7 +542,7 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
     // An engine that split or merged lines itself (a beforeinput it would not let us cancel:
     // execCommand, some virtual keyboards) cloned or dropped line elements; the line under the
     // caret is no guide then, the whole text is.
-    if (!ref || !line || domLineCount() !== ls.length) return commitWhole();
+    if (!ref || !line || domLineCount() !== ls.length) return commitWhole(typed);
     const content = lineContent(ref.el, focus);
     const snap = base && base.lineId === line.id ? base : null;
     const d = diffAt(snap ? snap.text : line.text, content.text, content.caret);
@@ -561,7 +561,7 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
       }
       const anchor = d.p > 0 ? doc.web.seqPositionOf(doc.obj, snap.ids[d.p - 1]) : undefined;
       const now = lines(doc).find((l) => l.id === line.id);
-      if (!now) return commitWhole();
+      if (!now) return commitWhole(typed);
       at = anchor !== undefined ? anchor + 1 : now.start;
     } else {
       at = line.start + d.p;
@@ -605,11 +605,17 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
     return caret;
   };
 
-  /** The browser edited something we cannot place by line: diff the whole text, then rebuild. */
-  const commitWhole = (): number | null => {
+  /**
+   * The browser edited something we cannot place by line: diff the whole text, then rebuild.
+   * WebKit lands here for the first key typed into an empty editor (NotesEditor renders the
+   * line on that beforeinput under a caret left on the root, and WebKit puts the text before the
+   * line element), so a typed character still reaches `onTyped` there (the `/` menu).
+   */
+  const commitWhole = (typed: string | null = null): number | null => {
     const s = view.getSelection();
     const d = diffAt(doc.web.text(doc.obj), extractText(root), s?.focus ?? null);
     let caret: number | null = null;
+    const isTyped = !!d && d.kind === 'insert' && typed !== null && d.text === typed;
     if (d) {
       view.beforeChange();
       const inv: Inverse[] = [];
@@ -618,11 +624,12 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
         inv.push(...insertText(doc, d.p, d.text).inverse);
         caret = d.p + cpLen(d.text);
       } else caret = d.p;
-      undo.push(inv, { caret: selBefore?.focus ?? caret });
+      undo.push(inv, { caret: selBefore?.focus ?? caret, typed: isTyped ? typed! : undefined });
       changed();
     }
     resync();
     if (caret !== null) view.setSelection(Math.min(caret, lastCaret()));
+    if (isTyped && caret !== null && cpLen(typed!) === 1) opts.onTyped?.(typed!, caret);
     return caret;
   };
 
