@@ -95,7 +95,10 @@ test('an action item typed in the notes shows in Tasks, and ticking it there tic
   expect(folded).toContain('mnemosyne:person/Ada%20Lovelace');
 });
 
-test('a time chip comes from the player position', async ({ page, request }, info) => {
+test('a time chip comes from the player position', async ({ page, request, browserName }, info) => {
+  // CI's WebKit never plays the demo audio (currentTime stays 0), as for meeting.spec's player
+  // test, which runs in Chromium only.
+  test.skip(browserName === 'webkit', 'no audio playback in CI WebKit');
   await openApp(page);
   await importMeeting(page, info.outputDir, NAME);
   const id = await sessionId(request);
