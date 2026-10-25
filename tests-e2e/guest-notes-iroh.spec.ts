@@ -221,7 +221,7 @@ test('carets and typing cross between an iroh guest, a mirror-host guest and the
     // Ina types a line (Bob gets it across the bridge) while Bob's page shows her typing.
     await inaEditor.click();
     const typing = typeSlowly(ina, 'Ina is writing a line of notes');
-    await expect(bob.getByTestId('guest-status')).toContainText('Ina is typing…', { timeout: 30_000 });
+    await expect(bob.getByTestId('guest-presence')).toContainText('Ina is typing…', { timeout: 30_000 });
     await expect(page.getByTestId('notes-status')).toContainText('Ina (guest) is typing…', { timeout: 30_000 });
     await typing;
     await expect(bobEditor).toContainText('Ina is writing a line of notes', { timeout: 30_000 });
@@ -231,7 +231,7 @@ test('carets and typing cross between an iroh guest, a mirror-host guest and the
     await bob.keyboard.press('Control+End');
     await bob.keyboard.press('Enter');
     const typing2 = typeSlowly(bob, 'Bob answers on the host');
-    await expect(ina.getByTestId('guest-status')).toContainText('Bob is typing…', { timeout: 30_000 });
+    await expect(ina.getByTestId('guest-presence')).toContainText('Bob is typing…', { timeout: 30_000 });
     await typing2;
     await expect(inaEditor).toContainText('Bob answers on the host', { timeout: 30_000 });
 
