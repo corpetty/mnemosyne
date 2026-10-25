@@ -165,6 +165,9 @@ meeting's owner or an admin can start them. See [team-server.md](team-server.md#
   ten guests each loading a 1 MB snapshot take about ten seconds in all.
 - Presence (who is here, who is typing) is not shared between the guests who came through your
   computer and those who came through a host.
+- A guest page that cannot reach your computer and is told by the publish host that the room is
+  not there takes the notes as no longer shared and drops its saved copy. If the copy on the host
+  could not be made when you started (only logged), that also happens while your computer is merely off.
 - A Cloudflare quick tunnel gets a new address every time it starts, so after a restart of the
   app the old link's tunnel address is dead; the iroh part of the link keeps working, and the
   panel shows the new link. Funnel addresses are stable.
