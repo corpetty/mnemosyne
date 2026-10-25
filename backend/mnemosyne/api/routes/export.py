@@ -53,18 +53,19 @@ def task_predicate(ctx: AppContext, session) -> Callable[[ActionItem], bool] | N
 
 def continued_notes(ctx: AppContext, session) -> dict[str, str]:
     """Action item id -> the note of the later meeting that mentions the same task (the head
-    of its task object, services/task_links.py), for the items of `session` that another
-    meeting continues. {} when none; never raises."""
+    of its task object, services/task_links.py), for the items of `session` (the summary's and
+    the ones typed in its notes) that another meeting continues. {} when none; never raises."""
     from ...export.obsidian import stem_of
     from ...services import task_links
 
     data = session.summary_data
-    if data is None or not any(a.task_id and a.id for a in data.action_items):
+    items = [*(data.action_items if data is not None else []), *session.notes_items]
+    if not any(a.task_id and a.id for a in items):
         return {}
     try:
         objects = task_links.index(ctx.repo, ctx.repo.visible_ids())
         out: dict[str, str] = {}
-        for item in data.action_items:
+        for item in items:
             obj = objects.get(item.task_id) if item.task_id and item.id else None
             if obj is None or not any(m.session_id == session.id for m in obj.mentions):
                 continue
@@ -82,6 +83,7 @@ def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianEx
     """An exporter with the settings; a session's meeting type may choose the folder."""
     from ...export.vault_index import linkable_notes
     from ...services.meeting_types import available_types, obsidian_folder
+    from ...services.notes_chips import exported_meeting_note
     from ...services.vault_sync import vault_annex
 
     st = ctx.settings
@@ -100,6 +102,7 @@ def build_exporter(ctx: AppContext, vault_path: str, session=None) -> ObsidianEx
         known_notes=(lambda: linkable_notes(root, own)) if links else None,
         annex=vault_annex(ctx, session.id) if session is not None else None,
         continued=continued_notes(ctx, session) if session is not None else None,
+        meeting_note=lambda mid: exported_meeting_note(ctx.repo, mid),
     )
 
 

@@ -148,6 +148,19 @@ def test_the_manifest_follows_the_selection_and_never_holds_the_transcript(ctx):
     # Nobody ticked (the model's default): every name is hidden.
     nobody = publishing.build_manifest(ctx, s, PublicationSelection(notes=True), "0" * 16, 1)[0]
     assert nobody.notes == "Person 2's private scratch notes" and nobody.attendees == []
+    # Chips in the notes are published as their text, never as `mnemosyne:` URLs (and the
+    # names go through the same hiding as the rest).
+    s.notes = (
+        "At [0:05](mnemosyne:t/0/5) [@Bo Chen](mnemosyne:person/Bo%20Chen) agreed;"
+        " see [Kickoff](mnemosyne:meeting/0123456789ab) [site](https://example.com)"
+    )
+    shown = publishing.build_manifest(
+        ctx, s, PublicationSelection(notes=True, attendees=["Bo Chen"]), "0123456789abcdef", 1
+    )[0]
+    assert shown.notes == "At 0:05 @Bo Chen agreed; see Kickoff [site](https://example.com)"
+    hidden = publishing.build_manifest(ctx, s, PublicationSelection(notes=True), "0" * 16, 1)[0]
+    assert "Bo Chen" not in hidden.notes and "mnemosyne:" not in hidden.notes
+    assert hidden.notes.startswith("At 0:05 @Person 2 agreed;")
     # Two speakers, neither dominating: each line keeps its speaker.
     mixed = publishing.build_manifest(
         ctx,

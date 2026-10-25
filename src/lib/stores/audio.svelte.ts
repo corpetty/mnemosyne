@@ -1,4 +1,4 @@
-import type { AudioDevice, BackendEvent, Level } from "$lib/types/index.js";
+import type { ActiveRecording, AudioDevice, BackendEvent, Level } from "$lib/types/index.js";
 import * as api from "$lib/api/backend.js";
 import { wsState } from "./websocket.svelte.js";
 import { SAME_ORIGIN } from "./connection.svelte.js";
@@ -14,6 +14,11 @@ const BROWSER_DEVICES: AudioDevice[] = [
   { id: BROWSER_CALL, name: 'browser-call', description: 'Call audio (shared from this browser)', media_class: 'Audio/Sink', is_input: false, is_output: true, is_monitor: false, is_echo_cancelled: false }
 ];
 const MIC_KEY = 'mnemosyne.browserMic';
+
+/** Where the recording in progress is on its meeting's timeline (backend `PartClock`): the part it
+ * records into, where that part starts on the joined timeline (seconds) and when its capture
+ * started (UTC ISO). The notes' time chips count from it (app/notesInserts.ts). */
+export type PartClock = NonNullable<ActiveRecording['clock']>;
 
 function recordInBrowserFlag(): boolean {
   try {
@@ -50,6 +55,9 @@ class AudioState {
   /** A click on Record / Stop waiting for the backend: shown at once, so the click registers. */
   pending = $state<'starting' | 'stopping' | null>(null);
   activeSessionId = $state<string | null>(null);
+  /** The part clock of the recording in progress; null when none or the backend sent none. A
+   * capture restart is a new part, so restartCapture() takes the new one. */
+  clock = $state<PartClock | null>(null);
   recordingDuration = $state(0);
   error = $state<string | null>(null);
   loading = $state(false);
@@ -96,6 +104,7 @@ class AudioState {
     this.isRecording = false;
     this.stopClock();
     this.activeSessionId = null;
+    this.clock = null;
     this.levels = {};
     this.problems = {};
   }
@@ -231,6 +240,7 @@ class AudioState {
         res = await api.startRecording([...this.selectedDeviceIds], sessionId, consent);
       }
       this.activeSessionId = res.session_id;
+      this.clock = res.clock ?? null;
       this.isRecording = true;
       this.problems = {};
       this.marks = 0;
@@ -245,12 +255,31 @@ class AudioState {
 
   /** Show a recording that was already running when the page connected: the app was
    *  restarted (or crashed) while the backend kept recording. */
-  resume(sessionId: string, startedAt: number, deviceIds: number[], problems: Record<string, string> = {}) {
+  resume(
+    sessionId: string,
+    startedAt: number,
+    deviceIds: number[],
+    problems: Record<string, string> = {},
+    clock?: PartClock | null
+  ) {
     this.activeSessionId = sessionId;
+    this.clock = clock ?? null;
+    // A caller that has the active-recording row passes its clock; otherwise ask for it.
+    if (clock === undefined) void this.refreshClock(sessionId);
     this.isRecording = true;
     this.selectedDeviceIds = new Set(deviceIds);
     this.problems = problems;
     this.startClock(startedAt * 1000);
+  }
+
+  /** Take the part clock from the backend's active-recording list (after a resume). */
+  private async refreshClock(sessionId: string) {
+    try {
+      const active = (await api.getActiveRecordings()).find((a) => a.session_id === sessionId);
+      if (active && this.activeSessionId === sessionId && this.isRecording) this.clock = active.clock ?? null;
+    } catch {
+      /* the chips then wait for the next refresh; nothing else depends on it */
+    }
   }
 
   /** A source failed: save what was recorded and carry on into the same meeting. The timer
@@ -265,6 +294,8 @@ class AudioState {
       this.problems = {};
       const active = (await api.getActiveRecordings()).find((a) => a.session_id === sessionId);
       if (active) this.selectedDeviceIds = new Set(active.device_ids);
+      // The restart is a new part: its clock replaces the old one.
+      this.clock = active?.clock ?? res.clock ?? this.clock;
       return res;
     } catch (e) {
       this.error = e instanceof Error ? e.message : 'Failed to restart the recording';

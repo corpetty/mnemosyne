@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from ..models.session import Recording, Session, SessionStatus
 from ..models.transcript import TranscriptSegment
 from . import shared_notes
+from .notes_chips import retarget_chips
 from .parts import audio_seconds, cut, join, match_speakers, offsets, part_of, shift
 
 if TYPE_CHECKING:
@@ -77,6 +78,44 @@ def pieces(app: AppContext, session: Session, stack: contextlib.ExitStack) -> li
             )
         )
     return out
+
+
+def _part_start(session: Session, part: int) -> datetime:
+    return min(
+        (r.created_at for r in session.recordings if r.part == part), default=session.created_at
+    )
+
+
+def part_order(target: Session, other: Session) -> list[tuple[str, int]]:
+    """(meeting id, old part) of every part of both meetings, in the order they are recorded,
+    which is how the combined meeting numbers them. Known from the sessions alone (no audio is
+    cut), so the notes can be rewritten before anything else changes; `pieces` are put in this
+    order too."""
+    keyed = []
+    for s in (target, other):
+        for part, _ in sorted(offsets(s).items(), key=lambda kv: kv[1]):
+            keyed.append((_part_start(s, part), s.id != target.id, s.id, part))
+    keyed.sort(key=lambda k: k[:2])  # stable: a meeting's own parts stay in their order
+    return [(sid, part) for _, _, sid, part in keyed]
+
+
+def renumber_chips(
+    notes: str, session_id: str, order: list[tuple[str, int]], target_id: str, other_id: str
+) -> str:
+    """The notes of one of the two meetings with their chips following the combine: a time chip
+    `mnemosyne:t/<part>/<seconds>` gets the part's new number (the seconds are into that part, so
+    they stay; a part that is not in `order` is left), a meeting chip for the removed meeting
+    points at the combined one. The chip text stays as typed."""
+    new_part = {key: n for n, key in enumerate(order)}
+
+    def one(kind: str, value: str) -> str | None:
+        if kind == "meeting":
+            return target_id if value == other_id else None
+        part, seconds = value.split("/")
+        n = new_part.get((session_id, int(part)))
+        return None if n is None else f"{n}/{seconds}"
+
+    return retarget_chips(notes, one)
 
 
 def relabel_speakers(
@@ -155,11 +194,23 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
     # document, else a later fold would put the document's older text back.
     shared_notes.fold_blocking(app, other.id)
     shared_notes.fold_blocking(app, target.id)
-    other_notes = (app.repo.notes_source(other.id) or (other.notes or "", ""))[0]
+    # The chips in both notes (phase 11) follow the parts, which are numbered anew by recording
+    # time, so that order is worked out here, before the join.
+    order = part_order(target, other)
+    other_notes = renumber_chips(
+        (app.repo.notes_source(other.id) or (other.notes or "", ""))[0],
+        other.id, order, target.id, other.id,
+    )  # fmt: skip
+    target_source = (app.repo.notes_source(target.id) or (target.notes or "", ""))[0]
+    target_notes = renumber_chips(target_source, target.id, order, target.id, other.id)
+    combined = None
     if other_notes.strip():
-        notes = (app.repo.notes_source(target.id) or (target.notes or "", ""))[0].rstrip()
+        notes = target_notes.rstrip()
         add = f"## From “{other.name}”\n\n{other_notes.strip()}"
         combined = f"{notes}\n\n{add}" if notes else add
+    elif target_notes != target_source:
+        combined = target_notes
+    if combined is not None:
         try:
             through_doc = shared_notes.set_markdown_blocking(app, target.id, combined)
         except shared_notes.NotesWriteFailed as e:
@@ -174,7 +225,8 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
     with contextlib.ExitStack() as stack:
         update("Cutting the meetings into their parts", 0.05)
         all_pieces = pieces(app, target, stack) + pieces(app, other, stack)
-        all_pieces.sort(key=lambda p: (p.at, p.session.id != target.id))
+        rank = {key: n for n, key in enumerate(order)}
+        all_pieces.sort(key=lambda p: rank[(p.session.id, p.part)])
         relabel = relabel_speakers(
             other,
             app.repo.get_session_embeddings(other.id),

@@ -129,6 +129,8 @@ class RecordingSession:
     processes: list[RecordingProcess] = field(default_factory=list)
     is_recording: bool = False
     part: int = 0  # which part of its meeting this recording is (services/parts.py)
+    # (part, offset on the meeting's timeline) for the live clock, set at start (parts.part_start)
+    clock_start: tuple[int, float] | None = None
     started_at: float = field(default_factory=time.time)  # wall clock, for a UI that reconnects
     # Per device id: its PipeWire node name (ids change when a node is recreated, names do
     # not: a restart finds the device again by name) and its description, for messages.

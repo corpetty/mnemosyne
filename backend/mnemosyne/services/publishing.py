@@ -43,6 +43,7 @@ from ..models.publication import (
 from ..models.session import Session
 from . import clips, history
 from . import publication_format as pf
+from .notes_chips import plain_notes
 from .origin import audio_elsewhere, device_name, is_foreign
 
 if TYPE_CHECKING:
@@ -275,7 +276,9 @@ def build_content(
         "action_items": [],
         "chapters": [],
         "topics": [],
-        "notes": text(session.notes) if sel.notes and session.notes.strip() else None,
+        "notes": (
+            text(plain_notes(session.notes)) if sel.notes and session.notes.strip() else None
+        ),
         "attendees": [names.name(p) for p in people if p.casefold() in wanted],
         "quotes": [],
     }

@@ -126,3 +126,38 @@ def test_a_continued_task_is_a_plain_bullet_with_a_link_to_the_later_note():
         *args, summary_data=data, link_people=False, continued={"aaaa0001": "N"}
     )
     assert "- Update the docs (Ann) ↩ continued in [[N]] ^m-aaaa0001\n" in people_off
+
+
+CHIP_NOTES = (
+    "At [12:34](mnemosyne:t/0/754) [@Ada Lovelace](mnemosyne:person/Ada%20Lovelace) agreed;"
+    " see [Planning, Oct 14](mnemosyne:meeting/0123456789ab)."
+)
+
+
+def test_notes_chips_in_the_vault_note():
+    def render(**kw):
+        return render_meeting_note("T", datetime(2026, 1, 1), [], [], "", CHIP_NOTES, **kw)
+
+    def meeting_note(mid: str):
+        return ("2026-10-14-Planning", "Planning, Oct 14") if mid == "0123456789ab" else None
+
+    on = render(link_people=True, meeting_note=meeting_note)
+    assert (
+        "## Notes\n\nAt 12:34 [[Ada Lovelace]] agreed; "
+        "see [[2026-10-14-Planning|Planning, Oct 14]]." in on
+    )
+    off = render(link_people=False, meeting_note=meeting_note)
+    assert "At 12:34 @Ada Lovelace agreed; see [[2026-10-14-Planning|Planning, Oct 14]]." in off
+    # Meeting not in the vault (or no lookup): its title.
+    assert "see Planning, Oct 14." in render(link_people=True)
+    assert "mnemosyne:" not in on + off
+
+
+def test_exporter_passes_the_meeting_lookup_to_the_notes(tmp_path):
+    s = Session(name="Now", created_at=datetime(2026, 10, 20, 9, 0), notes=CHIP_NOTES)
+    exporter = ObsidianExporter(
+        str(tmp_path), meeting_note=lambda _mid: ("2026-10-14-Planning", "Planning")
+    )
+    note = exporter.render(s)
+    assert "[[2026-10-14-Planning|Planning]]" in note and "[[Ada Lovelace]]" in note
+    assert "mnemosyne:" not in ObsidianExporter(str(tmp_path), link_people=False).render(s)
