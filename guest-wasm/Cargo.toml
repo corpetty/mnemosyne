@@ -1,0 +1,43 @@
+[package]
+name = "guest-wasm"
+version = "0.1.0"
+description = "The guest page's iroh client: one connection over a relay to the owner's room endpoint"
+authors = ["corpetty"]
+license = "MIT"
+edition = "2021"
+publish = false
+
+# Built by scripts/build-guest-wasm.sh into guest/pkg/ (wasm-bindgen --target web). CI is the
+# builder of record (ring compiles C for wasm32, which needs clang); the rlib is for native
+# `cargo check` / `cargo test` of everything but the browser runtime.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The same 1.3.x as link/ (link/Cargo.lock: iroh 1.3.0): the guest endpoint there must speak the
+# same QUIC and relay protocol. In a browser iroh is relay-only (its `wasm_browser` cfg).
+iroh = { version = "1.3", default-features = false, features = ["tls-ring"] }
+# Must equal the wasm-bindgen CLI version the build script checks (0.2.129), as in notes-wasm.
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+# mpsc + oneshot for the ordered writer.
+futures = { version = "0.3", default-features = false, features = ["std"] }
+
+# The randomness backend in the browser (crypto.getRandomValues). iroh asks for getrandom 0.4 with
+# `wasm_js` itself; ring 0.17 uses getrandom 0.2, which needs `js` on wasm32-unknown-unknown.
+# The build also passes `--cfg getrandom_backend="wasm_js"` (.cargo/config.toml and the script).
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+
+# Not part of any parent workspace (the repo root has none; keep it that way).
+[workspace]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false

@@ -16,11 +16,17 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+# Only what publish-host already pulls in: `axum::serve` for the loopback host.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 base64 = "0.22"
 getrandom = "0.2"
 hashseq = { git = "https://github.com/davidrusu/hashseq", rev = "94f5e3c" }
 # The notes document (render, parse, set_text) and the text diff, shared with notes-wasm.
 notes-core = { path = "../notes-core" }
+# The publish host runs inside the sidecar to serve guest-notes rooms on loopback.
+mnemosyne-publish-host = { path = "../publish-host" }
+# The client side of the websocket the guest proxy opens to that host.
+tokio-tungstenite = "0.29"
 clap = { version = "4", features = ["derive"] }
 iroh = { version = "1.3", default-features = false, features = ["tls-ring"] }
 iroh-mdns-address-lookup = "0.6"

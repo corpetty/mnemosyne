@@ -44,6 +44,12 @@ def _model(ctx: AppContext, row: dict, session) -> GuestRoom:
         expires_at=row["expires_at"],
         started_by=row["started_by"],
         guests_present=guest_notes.guests_present(ctx, session.id) if owner else [],
+        transport=row.get("transport", "host"),
+        relay=row.get("relay", ""),
+        relay_kind=guest_notes.relay_kind(row.get("relay", "")),
+        public_url=row.get("public_url", ""),
+        mirror_host_url=row.get("mirror_host_url", ""),
+        page_origin=ctx.settings.guest_page_url,
     )
 
 

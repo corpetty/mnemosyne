@@ -125,6 +125,8 @@ sent to a server, so the host cannot read the notes.
 - **Guest page:** the files go in `./guest`, copied from `backend/mnemosyne/api/static/guest` in
   the Mnemosyne repo, the same way the viewer goes in `./viewer`. The folder is mounted read-only
   and needs no restart.
+- **Relays:** the guest page connects to iroh relays; n0's public ones are always allowed in its
+  Content-Security-Policy, and `PUBLISH_RELAY_ORIGINS` (comma separated hosts) adds your own.
 - **WebSockets:** Caddy passes them through without extra configuration.
 
 If you run a public host for other people, tell them in your privacy notice: the host stores

@@ -1,0 +1,5 @@
+# getrandom's browser backend. scripts/build-guest-wasm.sh sets RUSTFLAGS (path remapping), which
+# replaces this list, so the script repeats the flag; this file covers a plain `cargo build/clippy
+# --target wasm32-unknown-unknown` run from this directory.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

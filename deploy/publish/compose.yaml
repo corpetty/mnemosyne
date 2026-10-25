@@ -13,6 +13,9 @@ services:
       PUBLISH_UPLOAD_TOKEN: "${PUBLISH_UPLOAD_TOKEN:-}"
       PUBLISH_QUOTA_BYTES: "${PUBLISH_QUOTA_BYTES:-10737418240}"
       PUBLISH_MAX_DAYS: "${PUBLISH_MAX_DAYS:-365}"
+      # Comma separated iroh relay hosts the guest notes page may connect to (host[:port] or a URL),
+      # for example your own relay. n0's public relays are always allowed. Empty: only those.
+      PUBLISH_RELAY_ORIGINS: "${PUBLISH_RELAY_ORIGINS:-}"
     volumes:
       - data:/data
       # The built viewer (index.html and assets/), from the Mnemosyne repo; see README.md.

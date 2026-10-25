@@ -377,6 +377,10 @@ def guest_notes_record(app: AppContext, session: Session) -> dict | None:
         "ended_at": row["ended_at"] or None,
         "deleted_at": row["deleted_at"] or None,
         "expires_at": row["expires_at"] or None,
+        "transport": row["transport"],
+        "endpoint_id": row["endpoint_id"],
+        "relay": row["relay"],
+        "public_url": row["public_url"],
     }
 
 

@@ -94,3 +94,86 @@ def test_model_defaults():
         GuestRoom(url="u", host_url="h", state="gone", created_at="t")
     required = GuestRoom.model_json_schema(mode="serialization")["required"]
     assert "guests_present" in required and "expires_at" in required
+
+
+def test_transport_columns_default_and_round_trip(repo):
+    sid = _meeting(repo)
+    repo.put_guest_room(_row(sid))
+    got = repo.guest_room(sid)
+    assert got["transport"] == "host" and got["mirror_last_seq"] == 0
+    assert all(got[c] == "" for c in ("endpoint_id", "relay", "public_url", "mirror_host_url"))
+    assert got["mirror_token"] == ""
+    repo.put_guest_room(
+        _row(
+            sid,
+            transport="iroh",
+            endpoint_id="abc",
+            relay="https://euw1-1.relay.n0.iroh.link",
+            public_url="https://t.example",
+            mirror_host_url="https://m.example",
+            mirror_token="mt",
+            mirror_last_seq=3,
+        )
+    )
+    got = repo.guest_room(sid)
+    assert got["transport"] == "iroh" and got["endpoint_id"] == "abc"
+    assert got["mirror_token"] == "mt" and got["mirror_last_seq"] == 3
+    repo.set_guest_room(sid, mirror_last_seq=9, transport="tunnel")
+    got = repo.guest_room(sid)
+    assert got["mirror_last_seq"] == 9 and got["transport"] == "tunnel"
+
+
+def test_old_guest_rooms_table_gains_the_columns(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.sqlite"
+    r = SessionRepository(path)
+    sid = _meeting(r)
+    r.put_guest_room(_row(sid))
+    r.close()
+    raw = sqlite3.connect(path)
+    raw.execute("PRAGMA foreign_keys=OFF")
+    raw.execute("ALTER TABLE guest_rooms RENAME TO new_rooms")
+    raw.execute(
+        "CREATE TABLE guest_rooms (session_id TEXT PRIMARY KEY, room TEXT NOT NULL,"
+        " key BLOB NOT NULL, token TEXT NOT NULL, room_token TEXT NOT NULL,"
+        " host_url TEXT NOT NULL, created_at TEXT NOT NULL, started_by TEXT NOT NULL DEFAULT '',"
+        " ended_at TEXT NOT NULL DEFAULT '', deleted_at TEXT NOT NULL DEFAULT '',"
+        " expires_at TEXT NOT NULL DEFAULT '', auto_end_at TEXT NOT NULL DEFAULT '',"
+        " last_seq INTEGER NOT NULL DEFAULT 0)"
+    )
+    raw.execute(
+        "INSERT INTO guest_rooms SELECT session_id, room, key, token, room_token, host_url,"
+        " created_at, started_by, ended_at, deleted_at, expires_at, auto_end_at, last_seq"
+        " FROM new_rooms"
+    )
+    raw.execute("DROP TABLE new_rooms")
+    raw.commit()
+    raw.close()
+    r = SessionRepository(path)
+    try:
+        got = r.guest_room(sid)
+        assert got["room"] == "room-1" and got["transport"] == "host"
+        assert got["mirror_last_seq"] == 0 and got["relay"] == ""
+    finally:
+        r.close()
+
+
+def test_transport_settings_and_model_fields():
+    s = Settings()
+    assert s.guest_transport == "auto" and s.guest_page_url == ""
+    assert Settings(guest_transport="iroh").guest_transport == "iroh"
+    with pytest.raises(ValidationError):
+        Settings(guest_transport="carrier-pigeon")
+    g = GuestRoom(url="u", host_url="h", state="live", created_at="t")
+    assert g.transport == "host" and g.relay_kind == "none" and g.page_origin == ""
+    required = GuestRoom.model_json_schema(mode="serialization")["required"]
+    assert {"transport", "relay", "relay_kind", "public_url", "mirror_host_url"} <= set(required)
+
+
+def test_relay_kind():
+    from mnemosyne.services import guest_notes as gn
+
+    assert gn.relay_kind("") == "none"
+    assert gn.relay_kind("https://euw1-1.relay.n0.iroh.link") == "n0"
+    assert gn.relay_kind("https://relay.example.org") == "custom"

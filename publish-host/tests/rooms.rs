@@ -27,7 +27,7 @@ const ROOM_TOKEN: &str = "room-token-from-the-link";
 const VIEWER_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src \
 'self'; media-src blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const GUEST_CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src \
-'self'; connect-src 'self'; media-src blob:; img-src data: blob:; base-uri 'none'; form-action \
+'self'; connect-src 'self' https://*.relay.n0.iroh.link wss://*.relay.n0.iroh.link; media-src blob:; img-src data: blob:; base-uri 'none'; form-action \
 'none'; frame-ancestors 'none'";
 const WAIT: Duration = Duration::from_secs(10);
 

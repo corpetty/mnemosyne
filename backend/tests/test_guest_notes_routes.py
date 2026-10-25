@@ -372,7 +372,12 @@ async def test_the_records_export_lists_the_room_never_its_secrets(app, ctx, hos
         "ended_at",
         "deleted_at",
         "expires_at",
+        "transport",
+        "endpoint_id",
+        "relay",
+        "public_url",
     }
+    assert info["transport"] == "host"
     everything = b"".join(z.read(n) for n in z.namelist())
     for secret in (
         gf.key_to_fragment(row["key"]).encode(),
@@ -380,6 +385,7 @@ async def test_the_records_export_lists_the_room_never_its_secrets(app, ctx, hos
         row["token"].encode(),
         row["room_token"].encode(),
         link.encode(),
+        row["mirror_token"].encode() or b"\0never",
     ):
         assert secret not in everything
     assert b"guest_notes.json" in z.read("SHA256SUMS")

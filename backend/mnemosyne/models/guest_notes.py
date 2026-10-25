@@ -16,3 +16,11 @@ class GuestRoom(ApiModel):
     expires_at: str = ""
     started_by: str = ""
     guests_present: list[str] = []
+    # How guests reach the room (services/guest_notes.py) and where: the relay's host, what kind
+    # it is, the public address of a tunnel, the mirror host, the guest page's origin.
+    transport: Literal["iroh", "tunnel", "host"] = "host"
+    relay: str = ""
+    relay_kind: Literal["n0", "ours", "custom", "none"] = "none"
+    public_url: str = ""
+    mirror_host_url: str = ""
+    page_origin: str = ""

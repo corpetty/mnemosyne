@@ -293,6 +293,11 @@ class Settings(BaseSettings):
     guest_host: str = ""
     allow_guest_notes: bool = False
     guest_notes_end_hours: int = 12
+    # How guest notes reach guests: auto = iroh to this computer, else a tunnel, else a publish
+    # host. guest_page_url: where the guest page is served from; blank = the default GitHub
+    # Pages copy.
+    guest_transport: Literal["auto", "iroh", "tunnel", "host"] = "auto"
+    guest_page_url: str = ""
 
     # Calendar: private ICS address (or a local .ics path). Recordings started during
     # a meeting are named after it and remember its attendees.
