@@ -27,9 +27,11 @@
 // transport has welcomed us, a failure moves on to the next one at once (an attempt with a
 // `budgetMs` that has not been welcomed by then counts as failed, while a later one remains);
 // after the last, the usual backoff and a new round from the first that may still answer (a
-// 4410/4401 rules a transport out). Once welcomed, that transport is kept: every reconnect goes
-// to it, under the usual rules. `since` is kept per transport: each is its own log with its own
-// seqs (the owner's room and a host mirror).
+// 4410/4401 rules a transport out). A host's 4410/4401 is final even while iroh only failed: the
+// owner creates and deletes the mirror together with their own room, so a host without the room
+// means the notes are no longer shared, not that the owner's computer is off. Once welcomed, that
+// transport is kept: every reconnect goes to it, under the usual rules. `since` is kept per
+// transport: each is its own log with its own seqs (the owner's room and a host mirror).
 
 export type RoomState = 'connecting' | 'live' | 'reconnecting' | 'ended' | 'gone' | 'full' | 'closed';
 
@@ -380,6 +382,10 @@ export class RoomClient {
     return this.nextAfter(-1);
   }
 
+  private isHost(i: number): boolean {
+    return this.transports[i]?.kind === 'host';
+  }
+
   private moveTo(i: number): void {
     if (i === this.cur) return;
     this.cur = i;
@@ -562,8 +568,9 @@ export class RoomClient {
       }
     }
     if (refused) {
-      // An earlier transport that only failed may still answer in the next round.
-      if (roaming && this.firstLive() !== null) {
+      // An earlier transport that only failed may still answer in the next round, unless a host
+      // refused (see the top of the file).
+      if (roaming && !this.isHost(i) && this.firstLive() !== null) {
         this.retry(code);
         return;
       }
@@ -597,7 +604,7 @@ export class RoomClient {
       if (why === 'gone') {
         if (roaming) {
           this.dead.add(i);
-          if (this.firstLive() !== null) {
+          if (!this.isHost(i) && this.firstLive() !== null) {
             this.retry(code);
             return;
           }

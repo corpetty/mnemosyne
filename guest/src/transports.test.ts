@@ -240,18 +240,27 @@ describe('transport order', () => {
     expect(run.room.state).toBe('gone');
   });
 
-  it('4410 from the host while iroh only timed out: iroh is tried again', async () => {
+  it('4410 from the host while iroh only timed out: gone, iroh is not tried again', async () => {
     const w = fakeWasm();
     w.outcome = 'hang';
     const run = start(transportsFor(link(true), { loader: w.loader, loc: LOC, webSocket: HostSocket }));
     await vi.advanceTimersByTimeAsync(IROH_BUDGET_MS);
     HostSocket.all[0].serverClose(4410);
+    expect(run.room.state).toBe('gone');
+    await vi.advanceTimersByTimeAsync(RECONNECT_MS[RECONNECT_MS.length - 1] + IROH_BUDGET_MS);
+    expect(w.calls).toHaveLength(1);
+    expect(HostSocket.all).toHaveLength(1);
+  });
+
+  it('a 1006 from the host while iroh only timed out: a new round from iroh', async () => {
+    const w = fakeWasm();
+    w.outcome = 'hang';
+    const run = start(transportsFor(link(true), { loader: w.loader, loc: LOC, webSocket: HostSocket }));
+    await vi.advanceTimersByTimeAsync(IROH_BUDGET_MS);
+    HostSocket.all[0].serverClose(1006);
     expect(run.room.state).toBe('connecting');
     await vi.advanceTimersByTimeAsync(RECONNECT_MS[0]);
     expect(w.calls).toHaveLength(2);
-    // The host is out for good: no budget now, iroh is all that is left.
-    await vi.advanceTimersByTimeAsync(IROH_BUDGET_MS * 2);
-    expect(HostSocket.all).toHaveLength(1);
     run.room.close();
   });
 
