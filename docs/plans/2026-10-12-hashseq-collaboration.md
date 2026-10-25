@@ -777,6 +777,113 @@ out a link, and anyone holding it types into the live notes, with no install, ac
   saying what it can see), and guest notes off by default until it does, unless a publish host is
   set.
 
+## Phase 10: guest notes without a host to run
+
+### Phase 10 design (drafted 2026-10-25, for review)
+
+Status: designed, nothing built. Drafted against the code at 996a03d (0.24.0). Decided by Corey
+(2026-10-25): host from this computer (a tunnel) and a hosted relay as in the discussion after 0.24.0,
+and iroh straight to the owner's computer as the default; the guest page on GitHub Pages now; n0's
+relays, labelled as a testing relay, until ours runs; a Cloudflare quick tunnel as the automatic
+fallback (Funnel first when logged in), `cloudflared` downloaded on first use; guests' browsers keep
+a read-only copy until the link expires. The Logos alternative is a written trial only
+(`2026-10-25-logos-guest-notes-trial.md`).
+
+Why: in 0.24.0 guest notes need a publish host somebody runs on the internet. Most people will not
+run one, and ours does not exist yet. This phase makes guest notes work with nothing to set up, and
+keeps the publish host as the option for links that outlive the owner's computer.
+
+Three transports, one wire. Every transport carries the same thing as the phase 9 room: the join
+with the room token, sealed envelopes (`services/guest_format.py`), seq, acks, presence, end and
+the close codes 4401/4403/4409/4410/4413/4429. The guest page's `RoomClient` (guest/src/room.ts)
+gains a socket per transport behind one interface, so `GuestDoc` and the editor do not change.
+
+- **1. iroh to the owner's computer (the default).** The owner's `mnemosyne-link` sidecar becomes
+  the room.
+  * **Feasibility (checked 2026-10-25):** iroh 1.3, the version link/ already uses, builds for
+    `wasm32-unknown-unknown` with `default-features = false, features = ["tls-ring"]` and `getrandom`'s
+    `wasm_js` backend (iroh's `wasm_browser` cfg; its CI runs a wasm connect-and-echo test; n0's
+    browser-echo example is the template). In a browser it is relay-only: the endpoint dials
+    `wss://<relay>/relay`, QUIC runs over the relay, `connect` and bi streams work against a native
+    endpoint. Any iroh-relay 1.x accepts browsers (no Origin check); it needs a TLS certificate from a
+    public CA, which deploy/relay/ already has (Let's Encrypt). No UDP, hole punching, mDNS or DNS
+    lookups in the browser.
+  * **Desktop side:** a **separate guest endpoint** in the sidecar, one random key per room (never
+    link.key, so guests never learn the stable remote-access id), accepting only ALPN
+    `mnemosyne/guest/1`. The `T` (backend tunnel) and `P` (pairing) streams are not reachable from
+    it at all. Each guest connection is one bi stream carrying the phase 9 wire as length-prefixed
+    frames (u32 length, a text/binary tag, the payload); close codes become an app close of the
+    QUIC connection. The room logic is `publish-host/src/rooms.rs` (already a library crate)
+    embedded in the sidecar: the same seq, log, snapshot, end, caps and acks-through-the-relay, kept
+    in memory and on disk under `<data_dir>/guest_rooms/`. The bridge (services/guest_notes.py) talks
+    to it over a loopback WebSocket with the same protocol it already speaks to a publish host, so
+    the backend changes little: a room's `host_url` is `ws://127.0.0.1:<port>` plus an `iroh` flag.
+  * **The guest page:** a new `guest-wasm/` crate (the iroh browser client, a thin
+    `IrohSocket { connect(ticket, alpn), send, recv, close }` over wasm-bindgen), built
+    reproducibly like notes-wasm (`scripts/build-guest-wasm.sh`, pinned rustc, wasm-bindgen and clang:
+    ring compiles C for wasm32) and committed beside the guest page; loaded by dynamic import only on
+    the guest page, so the app does not grow. Size: about 1 MB gzip (n0's example is 2.6 MB raw,
+    1.1 MB gzip), on top of the notes wasm's 0.2 MB.
+  * **The link** carries everything in the fragment, so any static origin can serve the page:
+    `https://<page origin>/n/#2.<room>.<key>.<endpoint id>.<relay host>` (format 2; format 1 links
+    from 0.24.0 keep working). The guest endpoint is pinned to that one relay (the owner's home relay
+    for that room's endpoint), with no address lookup (`presets::Minimal`, never n0's DNS).
+  * **Relay:** ours by default once it runs (deploy/relay/, `remote_relays`), as the remote-access
+    rule already says ("ours by default once they exist"). Until then n0's public relays (Corey):
+    they accept browsers but are documented as for development and testing, rate-limited, without
+    guarantees, so the Invite guests menu says "through a free testing relay" while they are in use.
+  * **Page origin:** the guest page needs an HTTPS origin, which the owner's computer cannot provide
+    to the internet. It is published as a static site (Corey: GitHub Pages now): from this repo by
+    the `pages` workflow, which already deploys `site/`, at a stable path, CSP by meta tag (`connect-src 'self'
+    https://<relay> wss://<relay>`, plus `'wasm-unsafe-eval'`); our own domain later. The page holds
+    no data: everything arrives sealed over the relay.
+  * **Limits:** guests work only while the owner's computer is online and awake (the sleep
+    inhibitor holds while a room is live, as while recording); every guest's traffic goes through
+    the owner's one relay connection (our relay allows 1 MB/s per client: ten guests loading a 1 MB
+    snapshot take about ten seconds); nothing reaches guests while the owner is offline.
+- **2. A tunnel to this computer** (when the owner wants plain HTTPS links or iroh is blocked): the
+  app runs the publish host as a sidecar on a loopback port, serving only `/n/`, `/live/`, `/p/` and
+  `/pub/`, never the backend's `/api/` or `/ws`, and opens a tunnel to that port: **Tailscale Funnel**
+  when Tailscale is logged in (`https://<machine>.<tailnet>.ts.net`), else a **Cloudflare quick tunnel**
+  (`*.trycloudflare.com`, no account; `cloudflared` downloaded on first use with a pinned SHA-256 by
+  services/downloads.py). The tunnel opens when a room starts and closes when it is stopped or
+  expires. Cloudflare terminates TLS but only sees our ciphertext. Same awake rule as iroh.
+- **3. A publish host** (0.24.0's path; ours once it runs, or one the owner runs): the only one that
+  keeps working after the owner's computer sleeps, so it is the choice for links that should outlast
+  the meeting.
+
+- **Choosing a transport.** A new setting `guest_transport`: `auto` (default), `iroh`, `tunnel`,
+  `host`. `auto` = iroh, plus the host mirror when a publish host is configured (below). The Invite
+  guests menu says which one is in use and what follows from it ("Works while this computer is on").
+- **Mirror to a host when one exists.** With `guest_host`/`publish_host` set, the bridge runs the
+  iroh room and the host room side by side (it already seals once and sends to a room; it would send
+  to two) and the link carries both: `https://<host>/n/<room>#2.<room>.<key>.<endpoint>.<relay>`. The
+  page tries iroh first (about 8 seconds), then the host's `wss://…/live/<room>`, keeping a `since`
+  per transport; after the meeting, the host keeps the read-only copy available when the owner's
+  computer is off.
+- **After the meeting without a host:** read-only works while the owner's computer is on, and
+  (Corey: yes) the guest page keeps the last copy in the browser until the link expires, so a guest
+  who already opened it can reread it when the owner's computer is off. Kept sealed, not decrypted:
+  the last snapshot envelope in IndexedDB under the room id, opened with the key from the link each
+  time; deleted at expiry (the `expires` from welcome/ended) or when the page learns the room is gone
+  (4410). The name card's consent line and docs/guest-notes.md say a copy stays in the browser.
+- **Security.** Unchanged from phase 9: the key never leaves the fragment, the relay and the tunnel
+  see only ciphertext, the room token gates joining, caps per room. New: a guest endpoint per room
+  (revoked by dropping it), the tunnel exposes only the publish host's routes, never the backend.
+  The relay sees endpoint ids, timing and sizes, as for remote access.
+- **Tests.** Rust: the guest endpoint in link/ (`cargo test`) with an in-process relay
+  (`iroh-relay` test-utils), a native client speaking the wire, and rooms.rs reused; the bridge
+  against the sidecar's loopback ws (Python, a fake sidecar as today). Browser: wasm-bindgen tests
+  for `IrohSocket` where practical; a Playwright spec with a local iroh relay behind a CA the test
+  browser trusts (Chromium `--ignore-certificate-errors` against a self-signed relay; WebKit is the
+  open risk). Tunnels: unit-tested command lines and parsing only (no network in tests).
+- **Not in v1:** a mailbox while the owner is offline (only the host path); guests' browsers
+  talking to each other directly; Logos Delivery (the trial first).
+
+- **Before it ships:** a Playwright run of the iroh path in WebKit (the open browser risk), the
+  guest page live on GitHub Pages, and the menu's wording for each transport ("works while this
+  computer is on", "through a free testing relay", "through a temporary Cloudflare address").
+
 ## Later, each behind the prerequisites below
 
 - **Live shared notes** during a meeting: a scratchpad attendees type into (desktop, or the team
