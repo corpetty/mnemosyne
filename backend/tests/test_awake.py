@@ -63,3 +63,30 @@ def test_the_reason_follows_recordings_and_sharing(settings):
     assert awake.reason(ctx) == ""  # shared, but only recordings keep it awake by default
     settings.keep_awake_while_sharing = True
     assert awake.reason(ctx) == "Shared with a team"
+
+
+def test_guest_notes_rooms_on_this_computer_keep_it_awake(settings):
+    def bridge(transport, ended_at=""):
+        target = SimpleNamespace(kind="primary", transport=transport)
+        return SimpleNamespace(
+            running=True, target=target, closing=False, row={"ended_at": ended_at}
+        )
+
+    reg = SimpleNamespace(bridges={})
+    ctx = SimpleNamespace(
+        active_recordings={},
+        settings=settings,
+        team_host=SimpleNamespace(running=False),
+        guest_bridges=reg,
+    )
+    assert awake.reason(ctx) == ""
+    reg.bridges = {("s1", "primary"): bridge("host")}  # a publish host's room: nothing here
+    assert awake.reason(ctx) == ""
+    reg.bridges = {("s1", "primary"): bridge("iroh", ended_at="2026-10-25T10:00:00Z")}
+    assert awake.reason(ctx) == ""
+    reg.bridges = {("s1", "primary"): bridge("iroh")}
+    assert awake.reason(ctx) == "Guest notes are open"
+    reg.bridges = {("s1", "primary"): bridge("tunnel")}
+    assert awake.reason(ctx) == "Guest notes are open"
+    ctx.active_recordings["s2"] = SimpleNamespace(is_recording=True)
+    assert awake.reason(ctx) == "Recording a meeting"  # a recording is the first reason

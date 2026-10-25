@@ -79,6 +79,19 @@ def no_tailscale(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_tunnel(monkeypatch):
+    """Never open a public tunnel (Tailscale Funnel, or a downloaded cloudflared) from a test:
+    none can be opened by default; tests stand a fake one in (services/tunnel.py). The tunnel's
+    own tests call the real function they imported."""
+    from mnemosyne.services import tunnel
+
+    async def refuse(app, port):
+        raise tunnel.TunnelError("no tunnel in tests")
+
+    monkeypatch.setattr(tunnel, "open_tunnel", refuse)
+
+
+@pytest.fixture(autouse=True)
 def no_link_sidecar(monkeypatch, tmp_path):
     """Exports never run a real mnemosyne-link (a dev build in link/target, or one on PATH):
     none by default, tests stand one in with MNEMOSYNE_LINK_BIN (services/vault_sync.py)."""

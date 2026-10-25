@@ -11,6 +11,9 @@ import pytest
 from mnemosyne.services import downloads, team_host, tunnel
 from mnemosyne.services.tunnel import Funnel, QuickTunnel, TunnelError
 
+# conftest stubs the module's open_tunnel: these tests call the real one
+from mnemosyne.services.tunnel import open_tunnel as real_open_tunnel
+
 
 def _script(path: Path, body: str) -> Path:
     path.write_text("#!/bin/sh\n" + body)
@@ -132,7 +135,7 @@ def test_funnel_not_possible(bin_dir, monkeypatch):
 @pytest.mark.anyio
 async def test_open_tunnel_prefers_funnel(bin_dir, tmp_path, monkeypatch):
     _fake_tailscale(bin_dir, monkeypatch)
-    t = await tunnel.open_tunnel(SimpleNamespace(settings=SimpleNamespace(data_dir=tmp_path)), 8008)
+    t = await real_open_tunnel(SimpleNamespace(settings=SimpleNamespace(data_dir=tmp_path)), 8008)
     assert t.kind == "funnel" and t.url == "https://box.tail1.ts.net"
     await t.stop()
 
@@ -148,7 +151,7 @@ async def test_open_tunnel_falls_back_to_cloudflare(bin_dir, tmp_path, monkeypat
         return _script(folder / item.name, BANNER)
 
     monkeypatch.setattr(downloads, "fetch", fake_fetch)
-    t = await tunnel.open_tunnel(app, 8008)
+    t = await real_open_tunnel(app, 8008)
     try:
         assert t.kind == "cloudflare" and t.url == "https://quiet-river-1234.trycloudflare.com"
     finally:

@@ -32,6 +32,13 @@ there: a second Bridge on the same meeting (`Link`, one per room), so the host k
 this computer is off. A guest frame one bridge accepts reaches the other through the notes room
 and goes out sealed with gid "", which no bridge accepts back.
 
+A "tunnel" room (task 20, C9/C10) is an iroh room whose loopback host is also exposed to the
+internet by one tunnel (services/tunnel.py: Tailscale Funnel, else a Cloudflare quick tunnel) shared
+by all tunnel rooms; its link names the tunnel's origin, which serves the guest page and the host's
+WebSocket, and still carries the iroh endpoint when the room could be served over iroh too. The
+tunnel is closed with the last tunnel room and reopened at startup; a quick tunnel's address
+changes with every start (`guest_notes_link_changed`).
+
 Never logged: the room key or anything derived from it.
 """
 
@@ -56,6 +63,7 @@ from ..models.comment import Comment, CommentCreate
 from . import comments, history, shared_notes
 from . import guest_format as gf
 from . import publication_format as pf
+from . import tunnel as tunnels
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -72,6 +80,9 @@ OUR_RELAY_HOST = ""  # our own iroh relay's host, once it exists (blank = none)
 GUEST_PAGE_ORIGIN = "https://corpetty.github.io/mnemosyne/n/"
 
 PRIMARY, MIRROR = "primary", "mirror"  # a meeting's rooms (`Link.kind`)
+# Transports whose room lives on the rooms sidecar's loopback host (served over iroh; a "tunnel"
+# room is also behind the public tunnel).
+LOCAL = ("iroh", "tunnel")
 
 ROOM_DAYS = 7  # a room lives at most this long after it was made (the host clamps the same)
 ENDED_HOURS = 24  # an ended room stays readable this long (at most until ROOM_DAYS)
@@ -80,6 +91,8 @@ PRESENCE_TTL = 30.0  # seconds: a guest without a presence frame for this long h
 OWNER_PRESENCE_EVERY = 10.0  # seconds: the owner's presence heartbeat to the room
 AUTO_END_EVERY = 60.0  # seconds between checks of `auto_end_at`
 TICK = 5.0  # seconds between the bridge's housekeeping passes
+TUNNEL_CHECK = 5.0  # seconds between looks at whether the tunnel's process still runs
+TUNNEL_RETRY = 5.0  # seconds before the one reopen of a tunnel that died
 BACKOFF = (1.0, 2.0, 5.0, 10.0, 30.0)  # reconnect delays, the last one repeated
 JOIN_TIMEOUT = 15.0  # seconds to wait for `welcome`
 RETRY_DELAY = 1.0  # before the one retry of an HTTP request to the host
@@ -144,9 +157,10 @@ def page_origin(app: AppContext) -> str:
 @dataclass(frozen=True)
 class Plan:
     """Where a new room goes (`plan`). `transport`: "iroh" (the rooms sidecar's loopback host,
-    reached over iroh) or "host" (a publish host); "tunnel" is task 20's. `host_url`: where the
-    room is made. `mirror_host`: a publish host the room is mirrored on ("" none). `page_origin`:
-    the guest page of a link that names no host (`GUEST_PAGE_ORIGIN` or `guest_page_url`)."""
+    reached over iroh), "tunnel" (the same host, also behind a public tunnel) or "host" (a publish
+    host). `host_url`: where the room is made. `mirror_host`: a publish host the room is mirrored
+    on ("" none). `page_origin`: the guest page of a link that names no host
+    (`GUEST_PAGE_ORIGIN` or `guest_page_url`)."""
 
     transport: str
     host_url: str
@@ -182,26 +196,27 @@ async def plan(app: AppContext) -> Plan:
     - host: the configured publish host (`host_url`), GuestNotesUnavailable when none;
     - iroh: the rooms sidecar (started here), GuestNotesUnavailable with its reason when it
       cannot start;
-    - auto: iroh when the sidecar starts (`start` falls back again when `room_start` fails),
-      else (later: a tunnel, task 20) the configured host, else GuestNotesUnavailable;
-    - tunnel: not built yet (task 20), GuestNotesUnavailable.
-    An iroh room is mirrored on the configured host whenever there is one."""
+    - tunnel: the rooms sidecar too (the tunnel is opened by `start`), GuestNotesUnavailable
+      with its reason when it cannot start;
+    - auto: iroh when the sidecar starts (`start` falls back to a tunnel, then to the host, when
+      the room cannot be served), else the configured host (a tunnel fronts the sidecar's loopback
+      host, so it cannot work without the sidecar either), else GuestNotesUnavailable.
+    An iroh or tunnel room is mirrored on the configured host whenever there is one."""
     mode = app.settings.guest_transport
     origin = page_origin(app)
     if mode == "host":
         return Plan("host", host_url(app), "", origin)
     mirror = configured_host(app)
     if mode == "tunnel":
-        # Task 20: services/tunnel.py `open_tunnel(app, port)` in front of the rooms sidecar's
-        # loopback host; the plan's transport is then "tunnel" and the link format 1 on its URL.
-        raise GuestNotesUnavailable("Guest notes through a tunnel are not available yet")
+        rooms = await _rooms(app)
+        assert rooms.base_url is not None
+        return Plan("tunnel", rooms.base_url, mirror, origin)
     try:
         rooms = await _rooms(app)
     except GuestNotesUnavailable as e:
         if mode == "iroh":
             raise
         logger.info("Guest notes: no iroh room (%s), trying a publish host", e)
-        # Task 20: a tunnel comes before the host here.
         return _host_plan(app, str(e))
     assert rooms.base_url is not None
     return Plan("iroh", rooms.base_url, mirror, origin)
@@ -229,9 +244,13 @@ def relay_host(relay: str) -> str:
 
 
 def served_from(row: dict, default_origin: str = GUEST_PAGE_ORIGIN) -> str:
-    """The origin (and path) the room's guest page is served from: its host's `/n/`, the
-    mirror host's for a mirrored iroh room, else `default_origin` (`page_origin`)."""
-    if (row.get("transport") or "host") != "iroh":
+    """The origin (and path) the room's guest page is served from: its host's `/n/`, a tunnel
+    room's public address, the mirror host's for a mirrored iroh room, else `default_origin`
+    (`page_origin`)."""
+    transport = row.get("transport") or "host"
+    if transport == "tunnel" and row.get("public_url"):
+        return f"{row['public_url']}/n/"
+    if transport not in LOCAL:
         return f"{row['host_url']}/n/"
     if row.get("mirror_host_url"):
         return f"{row['mirror_host_url']}/n/"
@@ -243,9 +262,17 @@ def link(row: dict, default_origin: str = GUEST_PAGE_ORIGIN) -> str:
     - a host room (format 1): `<host>/n/<room>#<key>`;
     - an iroh room (format 2, C7): `<origin>#2.<room>.<key>.<endpoint id>.<relay host[:port]>`,
       where origin is the mirror host's `/n/<room>` (the page falls back to its WebSocket) or,
-      without a mirror, `default_origin` (`page_origin`: no room in the path)."""
+      without a mirror, `default_origin` (`page_origin`: no room in the path);
+    - a tunnel room: the same on the tunnel's `<public_url>/n/<room>` (which has the WebSocket
+      too); format 1 on it when the room could not be served over iroh (no endpoint)."""
     key = gf.key_to_fragment(row["key"])
-    if (row.get("transport") or "host") != "iroh":
+    transport = row.get("transport") or "host"
+    if transport == "tunnel" and row.get("public_url"):
+        origin = f"{row['public_url']}/n/{row['room']}"
+        if not row.get("endpoint_id") or not row.get("relay"):
+            return f"{origin}#{key}"
+        return f"{origin}#2.{row['room']}.{key}.{row['endpoint_id']}.{relay_host(row['relay'])}"
+    if transport not in LOCAL:
         return f"{row['host_url']}/n/{row['room']}#{key}"
     origin = served_from(row, default_origin)
     if row.get("mirror_host_url"):
@@ -260,7 +287,7 @@ class Link:
     row's column for the last seq the bridge applied from it."""
 
     kind: str  # PRIMARY or MIRROR
-    transport: str  # "host", or "iroh": the rooms sidecar's loopback host
+    transport: str  # "host", or "iroh" / "tunnel": the rooms sidecar's loopback host
     stored_host: str  # the row's host_url / mirror_host_url
     token: str  # the publisher token there
     seq_column: str  # "last_seq" / "mirror_last_seq"
@@ -268,7 +295,7 @@ class Link:
     def host(self, app: AppContext) -> str:
         """Where to reach it now. The rooms sidecar listens on a new port after each start, so
         an iroh room's address is the running sidecar's; GuestNotesError when none runs."""
-        if self.transport != "iroh":
+        if self.transport not in LOCAL:
             return self.stored_host
         base = app.rooms_link.base_url
         if not base:
@@ -276,7 +303,7 @@ class Link:
         return base
 
     def upload(self, app: AppContext, host: str) -> str:
-        if self.transport == "iroh":
+        if self.transport in LOCAL:
             return app.rooms_link.upload_token
         return _upload_token(app, host)
 
@@ -592,6 +619,12 @@ class _Registry:
     # The rooms sidecar's life: serving rooms and stopping it when none is left.
     rooms_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     expiry: dict[str, asyncio.Task] = field(default_factory=dict)  # ended iroh rooms
+    # The one public tunnel in front of the sidecar's loopback host, shared by every tunnel room
+    # (lock order: rooms_lock, then tunnel_lock).
+    tunnel: Any = None
+    tunnel_port: int = 0
+    tunnel_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    tunnel_watch: asyncio.Task | None = None
 
     def lock(self, session_id: str) -> asyncio.Lock:
         return self.locks.setdefault(session_id, asyncio.Lock())
@@ -1253,9 +1286,9 @@ def _live(row: dict | None) -> bool:
 
 
 def _served(row: dict) -> bool:
-    """An iroh room the rooms sidecar should serve: not stopped and not expired (an ended room
-    stays readable over iroh until it expires)."""
-    if (row.get("transport") or "host") != "iroh" or row.get("deleted_at"):
+    """An iroh or tunnel room the rooms sidecar should serve: not stopped and not expired (an
+    ended room stays readable until it expires)."""
+    if (row.get("transport") or "host") not in LOCAL or row.get("deleted_at"):
         return False
     expires = _parse(row.get("expires_at", ""))
     return expires is None or expires > _now()
@@ -1294,11 +1327,14 @@ async def _create_room(app: AppContext, target: Link, row: dict, expires: dateti
     _ok(resp, "room")
 
 
-async def _open_iroh(app: AppContext, row: dict, expires: datetime) -> None:
+async def _open_iroh(
+    app: AppContext, row: dict, expires: datetime, *, required: bool = True
+) -> None:
     """Make the room on the rooms sidecar's loopback host, exactly as on a publish host, and
     serve it over iroh: fills the row's host_url, endpoint_id and relay. Under the rooms lock.
     Raises GuestNotesUnavailable (the sidecar cannot start) or GuestNotesError (the room was
-    refused; a half-made one is removed)."""
+    refused; a half-made one is removed). `required` False (a tunnel room): a room that cannot be
+    served over iroh stays on the loopback host with no endpoint, reached through the tunnel."""
     from .link import LinkError
 
     rooms = await _rooms(app)
@@ -1317,10 +1353,25 @@ async def _open_iroh(app: AppContext, row: dict, expires: datetime) -> None:
             await rooms.room_stop(row["room"])
             raise LinkError("the rooms sidecar named no endpoint or relay")
     except LinkError as e:
+        if not required:
+            logger.warning("Guest notes room %s: not served over iroh (%s)", row["room"], e)
+            row["endpoint_id"], row["relay"] = "", ""
+            return
         with contextlib.suppress(GuestNotesError):
             await _delete_on(app, target, row)
         raise GuestNotesError(f"Could not serve the guest room over iroh: {e}") from e
     row["endpoint_id"], row["relay"] = endpoint, relay
+
+
+async def _open_tunnel_room(app: AppContext, row: dict, expires: datetime) -> None:
+    """A tunnel room: the tunnel first (a failure costs nothing to clean up), then the room on
+    the loopback host, served over iroh too when that works. Fills host_url, public_url,
+    endpoint_id and relay. Under the rooms lock. Raises GuestNotesUnavailable (no tunnel, no
+    sidecar) or GuestNotesError (the room was refused)."""
+    rooms = await _rooms(app)
+    tunnel = await _tunnel_up(app, rooms)
+    row["public_url"] = tunnel.url
+    await _open_iroh(app, row, expires, required=False)
 
 
 async def _open_mirror(app: AppContext, row: dict, host: str, expires: datetime) -> None:
@@ -1336,6 +1387,47 @@ async def _open_mirror(app: AppContext, row: dict, host: str, expires: datetime)
         return
     row["mirror_host_url"], row["mirror_token"], row["mirror_last_seq"] = host, token, 0
     app.repo.set_guest_room(row["session_id"], mirror_host_url=host, mirror_token=token)
+
+
+async def _open_local_room(
+    app: AppContext, session_id: str, row: dict, p: Plan, expires: datetime
+) -> None:
+    """Make the new room on the rooms sidecar's loopback host as `p` says and store it. In auto,
+    a room that cannot be made falls back from iroh to a tunnel, then to the configured host
+    (`row["transport"]` is then "host" and the caller makes that room); the reasons are kept for
+    the answer when nothing works. Otherwise the failure is raised."""
+    auto = app.settings.guest_transport == "auto"
+    attempts = ["iroh", "tunnel"] if auto and p.transport == "iroh" else [p.transport]
+    reasons: list[str] = []
+    for transport in attempts:
+        row["transport"] = transport
+        try:
+            async with _registry(app).rooms_lock:
+                if transport == "iroh":
+                    await _open_iroh(app, row, expires)
+                else:
+                    await _open_tunnel_room(app, row, expires)
+                app.repo.put_guest_room(row)
+            return
+        except GuestNotesError as e:
+            row.update(public_url="", endpoint_id="", relay="")
+            if transport == "iroh":
+                # the tunnel's room is made on the same host, where the failed one was deleted
+                # and cannot be made again: it is a new one
+                key = gf.new_key()
+                row.update(room=gf.new_room(), key=key, token=pf.new_token())
+                row["room_token"] = gf.room_token(key)
+            if not auto:
+                await _maybe_stop_rooms(app)
+                raise
+            logger.warning("Guest notes of %s: no %s room (%s)", session_id, transport, e)
+            reasons.append(str(e))
+    try:
+        fallback = _host_plan(app, "; ".join(reasons))
+    except GuestNotesUnavailable:
+        await _maybe_stop_rooms(app)
+        raise
+    row.update(host_url=fallback.host_url, transport="host")
 
 
 async def _start_locked(app: AppContext, session_id: str, by: str) -> dict:
@@ -1373,24 +1465,13 @@ async def _start_locked(app: AppContext, session_id: str, by: str) -> dict:
         "last_seq": 0,
         "transport": p.transport,
     }
-    if p.transport == "iroh":
-        try:
-            async with _registry(app).rooms_lock:
-                await _open_iroh(app, row, expires)
-                app.repo.put_guest_room(row)
-        except GuestNotesError as e:
-            await _maybe_stop_rooms(app)
-            if app.settings.guest_transport != "auto":
-                raise
-            logger.warning("Guest notes of %s: no iroh room (%s)", session_id, e)
-            # Task 20: a tunnel comes before the host here.
-            p = _host_plan(app, str(e))
-            row.update(host_url=p.host_url, transport="host", endpoint_id="", relay="")
+    if p.transport in LOCAL:
+        await _open_local_room(app, session_id, row, p, expires)
     if row["transport"] == "host":
         await _create_room(app, links(row)[0], row, expires)
         app.repo.put_guest_room(row)
         await _maybe_stop_rooms(app)
-    elif p.mirror_host:
+    elif row["transport"] in LOCAL and p.mirror_host:
         await _open_mirror(app, row, p.mirror_host, expires)
     row = app.repo.guest_room(session_id) or row
     history.log(
@@ -1518,7 +1599,7 @@ async def _remove_everywhere(app: AppContext, row: dict) -> None:
     """Best effort: the room off its host (or this computer) and its mirror (an ended room
     replaced by a new one, a deleted meeting)."""
     for target in links(row):
-        if target.transport == "iroh":
+        if target.transport in LOCAL:
             await _remove_iroh(app, row)
             continue
         try:
@@ -1551,13 +1632,13 @@ async def _stop_locked(
     try:
         # The mirror first: a host that refuses leaves everything as it was.
         for target in reversed(targets):
-            if target.transport != "iroh":
+            if target.transport not in LOCAL:
                 await _delete_on(app, target, row)
     except GuestNotesError:
         for bridge in bridges:
             bridge.closing = False
         raise
-    if targets[0].transport == "iroh":
+    if targets[0].transport in LOCAL:
         await _remove_iroh(app, row)
     for bridge in bridges:
         await bridge.stop()
@@ -1635,7 +1716,7 @@ async def _follow_primary(app: AppContext, session_id: str, action: str) -> None
                 logger.warning("Guest notes of %s: the mirror did not follow: %s", session_id, e)
         if bridge is not None:
             await bridge.stop()
-        if action == "delete" and (row.get("transport") or "host") == "iroh":
+        if action == "delete" and (row.get("transport") or "host") in LOCAL:
             await _remove_iroh(app, row)
             await _maybe_stop_rooms(app)
         elif row is not None and _served(row):
@@ -1652,6 +1733,8 @@ async def _serve_now(app: AppContext, rows: list[dict]) -> None:
         async with _registry(app).rooms_lock:
             await _rooms(app)
             await _serve(app, rows)
+            if any(_tunnel_room(r) for r in rows):
+                await _reopen_tunnel(app)
     except GuestNotesUnavailable as e:
         logger.warning("Guest notes: rooms on this computer are not served: %s", e)
 
@@ -1685,17 +1768,151 @@ async def _reserve(app: AppContext) -> None:
         if rows and app.rooms_link.status.running:
             logger.info("Guest notes: serving %d room(s) again after a restart", len(rows))
             await _serve(app, rows)
+        if any(_tunnel_room(r) for r in rows) and app.rooms_link.status.running:
+            await _reopen_tunnel(app)  # the sidecar's loopback port is a new one
 
 
 async def _maybe_stop_rooms(app: AppContext) -> None:
-    """Stop the rooms sidecar when no room needs it any more (stopped or expired)."""
+    """Close the tunnel when no tunnel room needs it any more and stop the rooms sidecar when no
+    room needs it (stopped or expired)."""
     rooms = app.rooms_link
-    if not rooms.active:
+    reg = _registry(app)
+    if not rooms.active and reg.tunnel is None:
         return
-    async with _registry(app).rooms_lock:
-        if rooms.active and not any(_served(r) for r in app.repo.live_guest_rooms()):
+    async with reg.rooms_lock:
+        served = [r for r in app.repo.live_guest_rooms() if _served(r)]
+        if reg.tunnel is not None and not any(_tunnel_room(r) for r in served):
+            logger.info("Guest notes: no tunnel room is left, closing the tunnel")
+            await _close_tunnel(app)
+        if rooms.active and not served:
             logger.info("Guest notes: no room is served over iroh, stopping the rooms sidecar")
             await rooms.stop()
+
+
+# ---- the tunnel ----------------------------------------------------------------------------
+
+
+def _tunnel_room(row: dict) -> bool:
+    return (row.get("transport") or "host") == "tunnel" and _served(row)
+
+
+def _alive(tunnel: Any) -> bool:
+    alive = getattr(tunnel, "alive", None)  # a Funnel has no process to look at
+    return True if alive is None else bool(alive())
+
+
+async def _stop_tunnel(tunnel: Any) -> None:
+    try:
+        await tunnel.stop()
+    except Exception:
+        logger.warning("Guest notes: the tunnel did not stop cleanly", exc_info=True)
+
+
+async def _tunnel_up(app: AppContext, rooms: RoomsLink | None = None) -> Any:
+    """The tunnel in front of the rooms sidecar's loopback host: the one that runs, else a new
+    one (also when the sidecar listens on a new port or the process died). Under the rooms lock.
+    Raises GuestNotesUnavailable with the tunnel's reason."""
+    rooms = rooms or await _rooms(app)
+    port = urlsplit(rooms.base_url or "").port or 0
+    reg = _registry(app)
+    async with reg.tunnel_lock:
+        tunnel = reg.tunnel
+        if tunnel is not None and reg.tunnel_port == port and _alive(tunnel):
+            return tunnel
+        if tunnel is not None:
+            reg.tunnel = None
+            _cancel_tunnel_watch(app)
+            await _stop_tunnel(tunnel)
+        try:
+            tunnel = await tunnels.open_tunnel(app, port)
+        except (tunnels.TunnelError, OSError) as e:
+            raise GuestNotesUnavailable(f"Could not open a public tunnel: {e}") from e
+        reg.tunnel, reg.tunnel_port = tunnel, port
+        logger.info("Guest notes: %s tunnel open", getattr(tunnel, "kind", "a"))
+        reg.tunnel_watch = _spawn(app, _watch_tunnel(app, tunnel))
+        return tunnel
+
+
+async def _close_tunnel(app: AppContext) -> None:
+    """Close the tunnel, if one is open. Never raises."""
+    reg = _registry(app)
+    async with reg.tunnel_lock:
+        tunnel, reg.tunnel = reg.tunnel, None
+        _cancel_tunnel_watch(app)
+        if tunnel is not None:
+            await _stop_tunnel(tunnel)
+
+
+def _cancel_tunnel_watch(app: AppContext) -> None:
+    reg = _registry(app)
+    task, reg.tunnel_watch = reg.tunnel_watch, None
+    if task is not None and task is not asyncio.current_task():
+        task.cancel()
+
+
+async def _reopen_tunnel(app: AppContext) -> bool:
+    """Under the rooms lock: the tunnel for the live tunnel rooms, opened again if it is not
+    there (startup, a sidecar that listens elsewhere, a dead process); their public address and
+    links follow it. A changed address (a quick tunnel's is new each time) is logged in each
+    meeting's history as `guest_notes_link_changed`: the old link's host part is dead, its iroh
+    part works on. No tunnel room left: the tunnel is closed. Never raises; False when it could
+    not be opened."""
+    try:
+        rows = [r for r in app.repo.live_guest_rooms() if _tunnel_room(r)]
+        if not rows:
+            await _close_tunnel(app)
+            return True
+        try:
+            tunnel = await _tunnel_up(app)
+        except GuestNotesError as e:
+            logger.warning("Guest notes: no tunnel: %s", e)
+            for r in rows:
+                history.log(app, r["session_id"], "guest_notes_tunnel_failed", error=str(e))
+            return False
+        for r in rows:
+            if r["public_url"] != tunnel.url:
+                app.repo.set_guest_room(r["session_id"], public_url=tunnel.url)
+                history.log(app, r["session_id"], "guest_notes_link_changed", transport="tunnel")
+        return True
+    except Exception:
+        logger.warning("Guest notes: the tunnel could not be reopened", exc_info=True)
+        return False
+
+
+async def _watch_tunnel(app: AppContext, tunnel: Any) -> None:
+    """Reopen a tunnel whose process died, once after a pause. Never raises into the bridge."""
+    reg = _registry(app)
+    try:
+        while reg.tunnel is tunnel and _alive(tunnel):
+            await asyncio.sleep(TUNNEL_CHECK)
+        if reg.tunnel is not tunnel:
+            return
+        logger.warning("Guest notes: the tunnel stopped, opening it again")
+        await asyncio.sleep(TUNNEL_RETRY)
+        async with reg.rooms_lock:
+            if reg.tunnel is tunnel:
+                await _reopen_tunnel(app)  # replaces it, or leaves none (it logged why)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning("Guest notes: the tunnel watch failed", exc_info=True)
+
+
+def needs_awake(app: AppContext) -> bool:
+    """True while an iroh or tunnel room is live (not ended, not stopped), for services/awake.py:
+    people may be typing into this computer. Reads the bridges in memory, no database."""
+    reg = getattr(app, "guest_bridges", None)
+    if reg is None:
+        return False
+    return any(
+        b.running
+        and b.target.kind == PRIMARY
+        and b.target.transport in LOCAL
+        and not b.closing
+        and not b.row.get("ended_at")
+        and not b.row.get("deleted_at")
+        for b in list(reg.bridges.values())
+    )
 
 
 def _cancel_expiry(app: AppContext, session_id: str) -> None:
@@ -1774,7 +1991,7 @@ async def resume(app: AppContext) -> int:
     for row in rows:
         if row["ended_at"]:
             continue
-        if (row.get("transport") or "host") == "iroh" and not _served(row):
+        if (row.get("transport") or "host") in LOCAL and not _served(row):
             continue  # expired while this computer was off: nothing serves it
         if _start_bridges(app, row):
             started += 1
@@ -1795,6 +2012,7 @@ async def shutdown(app: AppContext) -> None:
     if reg.tasks:
         await asyncio.gather(*list(reg.tasks), return_exceptions=True)
     reg.expiry.clear()
+    await _close_tunnel(app)  # a Funnel outlives the process otherwise
 
 
 def relay_kind(relay: str) -> str:
