@@ -6,6 +6,7 @@
 	// selection toolbar floating over a selection and our selection for live carets. Page-specific behaviour comes in through `host` (ui/types.ts);
 	// nothing here imports outside src/lib/notes, so the guest Vite entry bundles it.
 	import { onMount, tick, untrack, type Snippet } from 'svelte';
+	import { parseChip } from '../chips.js';
 	import { commentRange, commentSelection } from '../comments.js';
 	import { toggleTask } from '../commands.js';
 	import { PASTE_LIMIT } from '../editor/clipboard.js';
@@ -157,12 +158,23 @@
 		};
 		const painter = new MutationObserver(paint);
 		painter.observe(root, { childList: true, subtree: true });
-		// A click on a highlight (not the end of a drag) opens its threads.
+		// A click on a highlight (not the end of a drag) opens its threads; a click on a chip goes
+		// to the host's InsertProvider (also when read-only; a host without onChipClick: nothing).
 		const onClick = (e: MouseEvent) => {
-			const mark = e.target instanceof Element ? e.target.closest<HTMLElement>('mark.ne-comment-open') : null;
-			if (!mark || !root.contains(mark)) return;
+			const target = e.target instanceof Element ? e.target : null;
 			const sel = document.getSelection();
 			if (sel && !sel.isCollapsed) return;
+			const chipEl = target?.closest<HTMLElement>('a.ne-chip[data-chip]');
+			if (chipEl && root.contains(chipEl)) {
+				const chip = parseChip(chipEl.dataset.chip ?? '');
+				if (chip && host.inserts?.onChipClick) {
+					e.preventDefault();
+					host.inserts.onChipClick(chip);
+					return;
+				}
+			}
+			const mark = target?.closest<HTMLElement>('mark.ne-comment-open');
+			if (!mark || !root.contains(mark)) return;
 			const open = host.openComments;
 			const ids = (mark.dataset.comment ?? '').split(' ').filter((id) => open.has(id));
 			if (ids.length) host.onMark(ids);

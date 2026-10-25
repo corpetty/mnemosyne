@@ -87,6 +87,7 @@ export async function mountHarness(markdown: string, control: HarnessControl): P
       for (const back of send) applyRemote(web, back);
     }
   };
+  flush(); // the seed reaches the other replica, so its edits merge in place
 
   let hooks: RemoteHooks | null = null;
   const inRemote = (apply: () => void) => {
