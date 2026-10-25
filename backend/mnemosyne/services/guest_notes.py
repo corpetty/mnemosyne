@@ -55,6 +55,7 @@ logger = logging.getLogger(__name__)
 
 # Our public guest host, once it runs ("" until then: guest notes need a configured host).
 OUR_GUEST_HOST = ""
+OUR_RELAY_HOST = ""  # our own iroh relay's host, once it exists (blank = none)
 
 ROOM_DAYS = 7  # a room lives at most this long after it was made (the host clamps the same)
 ENDED_HOURS = 24  # an ended room stays readable this long (at most until ROOM_DAYS)
@@ -1238,3 +1239,15 @@ async def shutdown(app: AppContext) -> None:
         task.cancel()
     if reg.tasks:
         await asyncio.gather(*list(reg.tasks), return_exceptions=True)
+
+
+def relay_kind(relay: str) -> str:
+    """Whose relay a room's address names: "" none, n0's public ones, ours, or a custom one."""
+    host = (urlsplit(relay).hostname or relay) if relay else ""
+    if not host:
+        return "none"
+    if OUR_RELAY_HOST and host == OUR_RELAY_HOST:
+        return "ours"
+    if host.endswith(".relay.n0.iroh.link"):
+        return "n0"
+    return "custom"

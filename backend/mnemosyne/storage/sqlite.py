@@ -45,6 +45,17 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 17
 
+# guest_rooms columns added after phase 9 (additive migration in `_migrate_columns`).
+_GUEST_ROOM_ADDED = (
+    ("transport", "TEXT NOT NULL DEFAULT 'host'"),
+    ("endpoint_id", "TEXT NOT NULL DEFAULT ''"),
+    ("relay", "TEXT NOT NULL DEFAULT ''"),
+    ("public_url", "TEXT NOT NULL DEFAULT ''"),
+    ("mirror_host_url", "TEXT NOT NULL DEFAULT ''"),
+    ("mirror_token", "TEXT NOT NULL DEFAULT ''"),
+    ("mirror_last_seq", "INTEGER NOT NULL DEFAULT 0"),
+)
+
 # Fields of a meeting that do not travel in library sync: changing only these is no new version.
 # Meta key prefix of the last of my notes frames the owner accepted, per meeting shared with me.
 PUSHED_SEQ_PREFIX = "share_pushed_seq:"
@@ -469,7 +480,14 @@ CREATE TABLE IF NOT EXISTS guest_rooms (
     deleted_at TEXT NOT NULL DEFAULT '',
     expires_at TEXT NOT NULL DEFAULT '',
     auto_end_at TEXT NOT NULL DEFAULT '',
-    last_seq INTEGER NOT NULL DEFAULT 0
+    last_seq INTEGER NOT NULL DEFAULT 0,
+    transport TEXT NOT NULL DEFAULT 'host',
+    endpoint_id TEXT NOT NULL DEFAULT '',
+    relay TEXT NOT NULL DEFAULT '',
+    public_url TEXT NOT NULL DEFAULT '',
+    mirror_host_url TEXT NOT NULL DEFAULT '',
+    mirror_token TEXT NOT NULL DEFAULT '',
+    mirror_last_seq INTEGER NOT NULL DEFAULT 0
 );
 -- Library sync (services/sync): the states served to each peer, the last few per meeting (the
 -- base of a three-way merge), and meetings deleted. No foreign key: a tombstone outlives its
@@ -719,6 +737,11 @@ class SessionRepository:
             )
         if "copilot_notes" not in cols:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN copilot_notes TEXT")
+        # Guest notes without a host (phase 10): how a room reaches guests, and its mirror.
+        room_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(guest_rooms)")}
+        for name, decl in _GUEST_ROOM_ADDED:
+            if name not in room_cols:
+                self._conn.execute(f"ALTER TABLE guest_rooms ADD COLUMN {name} {decl}")
         rec_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(recordings)")}
         if "part" not in rec_cols:
             self._conn.execute("ALTER TABLE recordings ADD COLUMN part INTEGER NOT NULL DEFAULT 0")
@@ -2068,7 +2091,8 @@ class SessionRepository:
 
     _GUEST_COLS = (
         "session_id, room, key, token, room_token, host_url, created_at, started_by, ended_at,"
-        " deleted_at, expires_at, auto_end_at, last_seq"
+        " deleted_at, expires_at, auto_end_at, last_seq, transport, endpoint_id, relay, public_url,"
+        " mirror_host_url, mirror_token, mirror_last_seq"
     )
     _GUEST_FIELDS = frozenset(c.strip() for c in _GUEST_COLS.split(",")) - {"session_id"}
 
@@ -2094,6 +2118,13 @@ class SessionRepository:
             "expires_at": "",
             "auto_end_at": "",
             "last_seq": 0,
+            "transport": "host",
+            "endpoint_id": "",
+            "relay": "",
+            "public_url": "",
+            "mirror_host_url": "",
+            "mirror_token": "",
+            "mirror_last_seq": 0,
         }
         full = {**defaults, **row}
         cols = [c.strip() for c in self._GUEST_COLS.split(",")]

@@ -14,6 +14,7 @@
 //! iroh encrypts end to end between the two endpoint keys; a relay in between only forwards
 //! packets. Every stream starts with one byte naming its kind: [`TUNNEL`] or [`PAIR`].
 
+pub mod host;
 pub mod notes;
 
 use std::{
@@ -35,7 +36,7 @@ use iroh::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
-    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpSocket, TcpStream},
     sync::{mpsc, Mutex},
     task::JoinHandle,
@@ -467,33 +468,19 @@ async fn post_json(
     body: &serde_json::Value,
 ) -> Result<(u16, serde_json::Value)> {
     let body = serde_json::to_vec(body)?;
-    let mut tcp = connect_backend(addr)
+    let tcp = connect_backend(addr)
         .await
         .context("backend not reachable")?;
-    let head = format!(
-        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    tcp.write_all(head.as_bytes()).await?;
-    tcp.write_all(&body).await?;
-    let mut raw = Vec::new();
-    tcp.read_to_end(&mut raw).await?;
-    let split = raw
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .ok_or_else(|| anyhow!("malformed response"))?;
-    let status_line = std::str::from_utf8(&raw[..split])?
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .to_string();
-    let status: u16 = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| anyhow!("malformed status line: {status_line}"))?;
-    let json = serde_json::from_slice(&raw[split + 4..]).unwrap_or(serde_json::Value::Null);
+    let (status, raw) = host::exchange(
+        tcp,
+        addr,
+        "POST",
+        path,
+        &[("Content-Type", "application/json")],
+        &body,
+    )
+    .await?;
+    let json = serde_json::from_slice(&raw).unwrap_or(serde_json::Value::Null);
     Ok((status, json))
 }
 

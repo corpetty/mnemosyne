@@ -86,6 +86,32 @@ pub struct Config {
     /// Live connections one room accepts at once.
     #[arg(long, env = "PUBLISH_ROOM_MAX_CONNECTIONS", default_value_t = 64)]
     pub room_max_connections: usize,
+    /// Extra iroh relay hosts the guest page may connect to (`https://H` and `wss://H` join its
+    /// `connect-src`), comma separated: `host[:port]` or a full URL. n0's public relays are always
+    /// allowed.
+    #[arg(
+        long,
+        env = "PUBLISH_RELAY_ORIGINS",
+        value_delimiter = ',',
+        value_parser = parse_relay_origin
+    )]
+    pub relay_origins: Vec<String>,
+}
+
+/// `https://relay.example.com:443/relay` or `relay.example.com` becomes `relay.example.com[:443]`.
+/// Only characters of a host name or address are accepted, so nothing can break out of the header.
+fn parse_relay_origin(raw: &str) -> Result<String, String> {
+    let s = raw.trim();
+    let s = s.split_once("://").map_or(s, |(_, rest)| rest);
+    let s = s.split(['/', '?', '#']).next().unwrap_or("");
+    let ok = !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']' | '*'));
+    if ok {
+        Ok(s.to_ascii_lowercase())
+    } else {
+        Err(format!("not a relay host or URL: {raw:?}"))
+    }
 }
 
 impl Config {

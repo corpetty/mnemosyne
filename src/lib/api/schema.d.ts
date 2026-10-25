@@ -5204,6 +5204,32 @@ export interface components {
             /** Host Url */
             host_url: string;
             /**
+             * Mirror Host Url
+             * @default
+             */
+            mirror_host_url: string;
+            /**
+             * Page Origin
+             * @default
+             */
+            page_origin: string;
+            /**
+             * Public Url
+             * @default
+             */
+            public_url: string;
+            /**
+             * Relay
+             * @default
+             */
+            relay: string;
+            /**
+             * Relay Kind
+             * @default none
+             * @enum {string}
+             */
+            relay_kind: "n0" | "ours" | "custom" | "none";
+            /**
              * Started By
              * @default
              */
@@ -5213,6 +5239,12 @@ export interface components {
              * @enum {string}
              */
             state: "live" | "ended" | "stopped";
+            /**
+             * Transport
+             * @default host
+             * @enum {string}
+             */
+            transport: "iroh" | "tunnel" | "host";
             /** Url */
             url: string | null;
         };
@@ -7068,6 +7100,10 @@ export interface components {
             guest_host?: string | null;
             /** Guest Notes End Hours */
             guest_notes_end_hours?: number | null;
+            /** Guest Page Url */
+            guest_page_url?: string | null;
+            /** Guest Transport */
+            guest_transport?: ("auto" | "iroh" | "tunnel" | "host") | null;
             /** Hf Token */
             hf_token?: string | null;
             /** Hubspot Auto Push */
@@ -7361,6 +7397,13 @@ export interface components {
             guest_host: string;
             /** Guest Notes End Hours */
             guest_notes_end_hours: number;
+            /** Guest Page Url */
+            guest_page_url: string;
+            /**
+             * Guest Transport
+             * @enum {string}
+             */
+            guest_transport: "auto" | "iroh" | "tunnel" | "host";
             /** Hf Token */
             hf_token: string;
             /** Hubspot Auto Push */

@@ -28,10 +28,26 @@ use crate::store::{secrets_equal, sha256_hex, valid_id, valid_sha, Auth, Store};
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; \
 media-src blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 /// The viewer's policy, plus compiling the notes CRDT's WebAssembly. `connect-src 'self'` covers
-/// the same-origin `wss:` room socket.
+/// the same-origin `wss:` room socket; `guest_csp` adds the iroh relays.
 const GUEST_CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; \
 style-src 'self'; connect-src 'self'; media-src blob:; img-src data: blob:; base-uri 'none'; \
 form-action 'none'; frame-ancestors 'none'";
+/// n0's public relays: guest notes use them until our own relay runs.
+const N0_RELAYS: &str = "*.relay.n0.iroh.link";
+
+/// The guest page's policy: `GUEST_CSP` with n0's relays and each configured relay origin
+/// (`https://H` for the ping, `wss://H` for the relay socket) in `connect-src`.
+pub fn guest_csp(cfg: &Config) -> String {
+    let mut origins = format!("https://{N0_RELAYS} wss://{N0_RELAYS}");
+    for host in &cfg.relay_origins {
+        origins.push_str(&format!(" https://{host} wss://{host}"));
+    }
+    GUEST_CSP.replacen(
+        "connect-src 'self';",
+        &format!("connect-src 'self' {origins};"),
+        1,
+    )
+}
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 const MAX_REFS: usize = 256;
 
@@ -99,6 +115,7 @@ pub fn router(app: Shared) -> Router {
                 .delete(delete_publication),
         )
         .route("/pub/{id}/{sha}", get(get_blob).put(put_blob))
+        .route("/n/", get(guest_page))
         .route("/n/{room}", get(guest_index))
         .route("/n/{dir}/{*rest}", get(guest_asset))
         .route(
@@ -648,7 +665,12 @@ async fn guest_index(
     if !valid_id(&room) {
         return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found"));
     }
-    static_index(&app.cfg.guest_dir, GUEST_CSP, "guest_missing").await
+    static_index(&app.cfg.guest_dir, &guest_csp(&app.cfg), "guest_missing").await
+}
+
+/// `/n/` without a room: the same page; it reads everything from the fragment (link format 2).
+async fn guest_page(State(app): State<Shared>) -> Result<Response, ApiError> {
+    static_index(&app.cfg.guest_dir, &guest_csp(&app.cfg), "guest_missing").await
 }
 
 /// `/n/<dir>/<path>` serves `<guest-dir>/<dir>/<path>` (the build's `assets/`, wasm included).
@@ -656,7 +678,7 @@ async fn guest_asset(
     State(app): State<Shared>,
     UrlPath((dir, rest)): UrlPath<(String, String)>,
 ) -> Result<Response, ApiError> {
-    static_asset(&app.cfg.guest_dir, &dir, &rest, GUEST_CSP).await
+    static_asset(&app.cfg.guest_dir, &dir, &rest, &guest_csp(&app.cfg)).await
 }
 
 #[cfg(test)]

@@ -867,3 +867,35 @@ async fn uploading_an_existing_blob_again_changes_nothing() {
     assert_eq!(h.put_blob(b"clip").await.status, StatusCode::NO_CONTENT);
     assert_eq!(h.app.store.used_bytes().await, 4);
 }
+
+#[tokio::test]
+async fn guest_page_csp_lists_relays() {
+    let tmp = tempfile::tempdir().unwrap();
+    let guest = tmp.path().join("guest");
+    std::fs::create_dir(&guest).unwrap();
+    std::fs::write(
+        guest.join("index.html"),
+        "<!doctype html><title>guest</title>",
+    )
+    .unwrap();
+    let dir = guest.clone();
+    let h = host_with(move |c| {
+        c.guest_dir = dir;
+        c.relay_origins = vec!["relay.example.org:7842".into()];
+    })
+    .await;
+    for uri in [format!("/n/{ID}"), "/n/".to_string()] {
+        let r = h.get(&uri).await;
+        assert_eq!(r.status, StatusCode::OK, "{uri}");
+        let csp = r.header("content-security-policy");
+        assert!(
+            csp.contains("https://*.relay.n0.iroh.link wss://*.relay.n0.iroh.link"),
+            "{csp}"
+        );
+        assert!(
+            csp.contains("https://relay.example.org:7842 wss://relay.example.org:7842"),
+            "{csp}"
+        );
+        assert!(csp.contains("connect-src 'self' "), "{csp}");
+    }
+}
