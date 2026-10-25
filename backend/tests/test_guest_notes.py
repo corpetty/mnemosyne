@@ -1089,7 +1089,8 @@ async def test_iroh_refused_falls_back_to_the_publish_host_in_auto(ctx, iroh, se
         assert row["endpoint_id"] == "" and row["mirror_host_url"] == ""
         assert guest_notes.link(row) == f"{h.url}/n/{row['room']}#{gf.key_to_fragment(row['key'])}"
         assert h.room()[0] == row["room"]
-        assert iroh.rooms[row["room"]].deleted  # the half-made loopback room went again
+        # the half-made loopback room went again
+        assert iroh.rooms and all(r.deleted for r in iroh.rooms.values())
         assert not ctx.rooms_link.active  # nothing to serve
         # iroh asked for explicitly: the refusal is the answer.
         settings.guest_transport = "iroh"
@@ -1123,6 +1124,264 @@ async def test_a_sidecar_that_cannot_start(ctx, iroh, settings, sidecar):
     p = await guest_notes.plan(ctx)
     assert (p.transport, p.host_url, p.mirror_host) == ("host", "https://host.example", "")
     assert p.page_origin == guest_notes.GUEST_PAGE_ORIGIN
+    # A tunnel fronts the sidecar's loopback host: no sidecar, no tunnel room.
     settings.guest_transport = "tunnel"
-    with pytest.raises(guest_notes.GuestNotesUnavailable, match="tunnel"):
+    with pytest.raises(guest_notes.GuestNotesUnavailable, match="Guest rooms cannot run"):
         await guest_notes.plan(ctx)
+    await ctx.rooms_link.stop()
+
+
+# ---- tunnel rooms (phase 10, task 20) ---------------------------------------------------------
+
+
+class FakeTunnel:
+    kind = "cloudflare"
+
+    def __init__(self, url: str, port: int):
+        self.url, self.port = url, port
+        self.up = True
+        self.stopped = False
+
+    def alive(self) -> bool:
+        return self.up and not self.stopped
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
+class Tunnels:
+    """`tunnel.open_tunnel` played: each open is a FakeTunnel on the next address (or fails)."""
+
+    def __init__(self) -> None:
+        self.opened: list[FakeTunnel] = []
+        self.fail = ""
+        self.urls = iter(f"https://quiet-{i}.trycloudflare.com" for i in range(1, 100))
+
+    async def __call__(self, app, port):
+        from mnemosyne.services.tunnel import TunnelError
+
+        if self.fail:
+            raise TunnelError(self.fail)
+        t = FakeTunnel(next(self.urls), port)
+        self.opened.append(t)
+        return t
+
+    @property
+    def open(self) -> list[FakeTunnel]:
+        return [t for t in self.opened if not t.stopped]
+
+
+@pytest.fixture
+def tunnels(monkeypatch, iroh) -> Tunnels:
+    from mnemosyne.services import tunnel
+
+    fake = Tunnels()
+    monkeypatch.setattr(tunnel, "open_tunnel", fake)
+    return fake
+
+
+async def test_a_tunnel_room_is_reached_on_the_tunnel_and_over_iroh(
+    ctx, settings, iroh, tunnels, sidecar
+):
+    settings.guest_transport = "tunnel"
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, iroh, sid)
+    assert row["transport"] == "tunnel" and row["public_url"] == "https://quiet-1.trycloudflare.com"
+    assert row["endpoint_id"] == ENDPOINT and row["relay"] == N0_RELAY
+    assert row["host_url"] == iroh.url == ctx.rooms_link.base_url
+    # One tunnel, to the loopback host's port; the room is made there and served over iroh.
+    assert [t.port for t in tunnels.opened] == [int(iroh.url.rsplit(":", 1)[1])]
+    assert room_ops(sidecar, "room_start") == [{"op": "room_start", "room": row["room"]}]
+    assert iroh.calls[0][:2] == ("PUT", f"/live/{row['room']}")
+    key = gf.key_to_fragment(row["key"])
+    assert guest_notes.link(row) == (
+        f"https://quiet-1.trycloudflare.com/n/{row['room']}"
+        f"#2.{row['room']}.{key}.{ENDPOINT}.use1-1.relay.n0.iroh.link."
+    )
+    assert guest_notes.served_from(row) == "https://quiet-1.trycloudflare.com/n/"
+    assert [e["kind"] for e in ctx.repo.events(sid)].count("guest_notes_started") == 1
+    # Mirrored on a configured publish host as an iroh room is; the link stays on the tunnel.
+    assert guest_notes.bridge_for(ctx, sid, guest_notes.MIRROR) is None
+    assert bridge.target.transport == "tunnel"
+    ana = await guest(iroh, row)
+    await ana.close()
+
+
+async def test_a_tunnel_room_that_cannot_be_served_over_iroh_has_a_format_1_link(
+    ctx, settings, iroh, tunnels, sidecar
+):
+    settings.guest_transport = "tunnel"
+    sidecar.config["fail"] = {"room_start": "no relay reachable"}
+    sidecar.sync()
+    row = await guest_notes.start(ctx, meeting(ctx))
+    assert row["transport"] == "tunnel" and row["endpoint_id"] == "" and row["relay"] == ""
+    assert guest_notes.link(row) == (
+        f"https://quiet-1.trycloudflare.com/n/{row['room']}#{gf.key_to_fragment(row['key'])}"
+    )
+
+
+async def test_one_tunnel_serves_every_tunnel_room_and_closes_with_the_last(
+    ctx, settings, iroh, tunnels, sidecar
+):
+    settings.guest_transport = "tunnel"
+    one, two = meeting(ctx), meeting(ctx)
+    a = await guest_notes.start(ctx, one)
+    b = await guest_notes.start(ctx, two)
+    assert len(tunnels.opened) == 1 and a["public_url"] == b["public_url"]
+    await guest_notes.stop(ctx, one)
+    assert len(tunnels.open) == 1 and ctx.rooms_link.active
+    await guest_notes.stop(ctx, two)
+    assert tunnels.open == [] and not ctx.rooms_link.active
+    # A new room opens a new tunnel.
+    c = await guest_notes.start(ctx, one)
+    assert len(tunnels.opened) == 2 and c["public_url"] == "https://quiet-2.trycloudflare.com"
+
+
+async def test_an_ended_tunnel_room_keeps_the_tunnel_until_it_expires(
+    ctx, settings, iroh, tunnels, sidecar
+):
+    settings.guest_transport = "tunnel"
+    sid = meeting(ctx)
+    await guest_notes.start(ctx, sid)
+    await guest_notes.end(ctx, sid)
+    assert len(tunnels.open) == 1  # readable until it expires
+    # Expired: the tunnel and the sidecar go.
+    ctx.repo.set_guest_room(sid, expires_at=guest_notes._iso(guest_notes._now()))
+    await guest_notes._maybe_stop_rooms(ctx)
+    assert tunnels.open == [] and not ctx.rooms_link.active
+
+
+async def test_auto_tries_the_tunnel_when_iroh_fails_then_the_host(
+    ctx, settings, iroh, tunnels, sidecar
+):
+    sidecar.config["fail"] = {"room_start": "no relay reachable"}
+    sidecar.sync()
+    sid = meeting(ctx)
+    # iroh fails, the tunnel opens: a tunnel room (no endpoint), not a host room.
+    row = await guest_notes.start(ctx, sid)
+    assert row["transport"] == "tunnel" and row["endpoint_id"] == ""
+    await guest_notes.stop(ctx, sid)
+    assert tunnels.open == []
+    # The tunnel fails too: the configured host.
+    h = await FakeRoomHost().start()
+    try:
+        ctx.http_transport = routed(iroh, h)
+        settings.publish_host = h.url
+        tunnels.fail = "cloudflared stopped (code 1)"
+        row = await guest_notes.start(ctx, sid)
+        assert row["transport"] == "host" and row["host_url"] == h.url
+        assert row["public_url"] == "" and not ctx.rooms_link.active
+        await guest_notes.stop(ctx, sid)
+    finally:
+        await h.close()
+    # And with no host: unavailable, with both reasons.
+    settings.publish_host = ""
+    with pytest.raises(guest_notes.GuestNotesUnavailable) as err:
+        await guest_notes.start(ctx, sid)
+    text = str(err.value)
+    assert "no relay reachable" in text and "cloudflared stopped" in text
+    assert "no publish host" in text
+    assert not ctx.rooms_link.active and tunnels.open == []
+    # Asked for explicitly, the tunnel's reason is the answer.
+    settings.guest_transport = "tunnel"
+    with pytest.raises(guest_notes.GuestNotesUnavailable, match="cloudflared stopped"):
+        await guest_notes.start(ctx, sid)
+    assert ctx.repo.guest_room(sid)["deleted_at"]
+
+
+async def test_resume_opens_the_tunnel_again_and_logs_a_changed_link(
+    ctx, settings, iroh, tunnels, sidecar
+):
+    settings.guest_transport = "tunnel"
+    sid = meeting(ctx)
+    row = await guest_notes.start(ctx, sid)
+    assert row["public_url"] == "https://quiet-1.trycloudflare.com"
+    await guest_notes.shutdown(ctx)  # the backend stops: the tunnel goes with it
+    assert tunnels.open == []
+    await ctx.rooms_link.stop()
+    assert await guest_notes.resume(ctx) == 1
+    assert len(tunnels.open) == 1
+    row = ctx.repo.guest_room(sid)
+    assert row["public_url"] == "https://quiet-2.trycloudflare.com"
+    assert [e["kind"] for e in ctx.repo.events(sid)].count("guest_notes_link_changed") == 1
+    assert guest_notes.link(row).startswith("https://quiet-2.trycloudflare.com/n/")
+    # Same address again (a Funnel's): nothing to tell.
+    await guest_notes.shutdown(ctx)
+    await ctx.rooms_link.stop()
+    tunnels.urls = iter(["https://quiet-2.trycloudflare.com"])
+    assert await guest_notes.resume(ctx) == 1
+    assert [e["kind"] for e in ctx.repo.events(sid)].count("guest_notes_link_changed") == 1
+
+
+async def test_a_tunnel_that_cannot_reopen_at_startup_is_logged_not_raised(
+    ctx, settings, iroh, tunnels, sidecar
+):
+    settings.guest_transport = "tunnel"
+    sid = meeting(ctx)
+    await guest_notes.start(ctx, sid)
+    await guest_notes.shutdown(ctx)
+    await ctx.rooms_link.stop()
+    tunnels.fail = "no internet"
+    assert await guest_notes.resume(ctx) == 1  # the bridge runs; guests on iroh still get in
+    assert [
+        e["detail"].get("error")
+        for e in ctx.repo.events(sid)
+        if e["kind"] == "guest_notes_tunnel_failed"
+    ] == ["Could not open a public tunnel: no internet"]
+    assert ctx.repo.guest_room(sid)["public_url"] == "https://quiet-1.trycloudflare.com"
+
+
+async def test_a_tunnel_whose_process_died_is_reopened_once(
+    ctx, settings, iroh, tunnels, sidecar, monkeypatch
+):
+    monkeypatch.setattr(guest_notes, "TUNNEL_CHECK", 0.01)
+    monkeypatch.setattr(guest_notes, "TUNNEL_RETRY", 0.01)
+    settings.guest_transport = "tunnel"
+    sid = meeting(ctx)
+    await guest_notes.start(ctx, sid)
+    tunnels.opened[0].up = False  # cloudflared died
+    await until(lambda: len(tunnels.opened) == 2)
+    await until(
+        lambda: ctx.repo.guest_room(sid)["public_url"] == "https://quiet-2.trycloudflare.com"
+    )
+    assert tunnels.opened[0].stopped and len(tunnels.open) == 1
+    assert [e["kind"] for e in ctx.repo.events(sid)].count("guest_notes_link_changed") == 1
+    # It dies again and cannot be reopened: given up, nothing raised, the row keeps its address.
+    tunnels.fail = "no internet"
+    tunnels.opened[1].up = False
+    await until(lambda: tunnels.open == [])
+    await asyncio.sleep(0.05)
+    assert len(tunnels.opened) == 2
+    assert ctx.repo.guest_room(sid)["public_url"] == "https://quiet-2.trycloudflare.com"
+    # The next start of the room brings the tunnel back.
+    tunnels.fail = ""
+    await guest_notes.start(ctx, sid)
+    assert len(tunnels.open) == 1
+
+
+async def test_the_computer_stays_awake_while_an_iroh_or_tunnel_room_is_live(
+    ctx, settings, iroh, tunnels, sidecar
+):
+    from mnemosyne.services import awake
+
+    assert not guest_notes.needs_awake(ctx) and awake.reason(ctx) == ""
+    for mode in ("auto", "tunnel"):
+        settings.guest_transport = mode
+        sid = meeting(ctx)
+        await guest_notes.start(ctx, sid)
+        assert guest_notes.needs_awake(ctx) and awake.reason(ctx) == "Guest notes are open"
+        await guest_notes.end(ctx, sid)  # ended: readable, but nobody types into it
+        assert not guest_notes.needs_awake(ctx) and awake.reason(ctx) == ""
+    sid = meeting(ctx)
+    await guest_notes.start(ctx, sid)
+    assert awake.reason(ctx) == "Guest notes are open"
+    await guest_notes.stop(ctx, sid)
+    assert awake.reason(ctx) == ""
+
+
+async def test_a_host_room_does_not_keep_the_computer_awake(ctx, host):
+    from mnemosyne.services import awake
+
+    sid = meeting(ctx)
+    await started(ctx, host, sid)
+    assert not guest_notes.needs_awake(ctx) and awake.reason(ctx) == ""

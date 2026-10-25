@@ -1,6 +1,7 @@
 """Keeping the computer awake: a logind sleep inhibitor held while something is recording here (the
 desktop's own recording or a teammate's in their browser), and, when `keep_awake_while_sharing`
-is on, while this computer is shared with a team (services/team_host.py).
+is on, while this computer is shared with a team (services/team_host.py), and while guest notes
+rooms on this computer (iroh or tunnel) are live: guests type straight into it.
 
 It runs `systemd-inhibit --what=sleep --mode=block ... sleep infinity` and stops it to let go.
 Best effort: without systemd-inhibit (the Flatpak) nothing is held, and `available` says so.
@@ -42,6 +43,10 @@ def reason(ctx: AppContext) -> str:
     """Why the computer must stay awake now ("" when it need not)."""
     if any(r.is_recording for r in ctx.active_recordings.values()):
         return "Recording a meeting"
+    from .guest_notes import needs_awake
+
+    if needs_awake(ctx):
+        return "Guest notes are open"
     st = ctx.settings
     if st.share_on_network and st.keep_awake_while_sharing and ctx.team_host.running:
         return "Shared with a team"
