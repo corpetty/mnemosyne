@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { pair, single, view as viewOf, type Client } from '../test-harness.js';
-import { deleteRange, insertText, insertTable, setLineKind, splitLine, toggleInline, type NotesModel } from '../commands.js';
+import { deleteRange, insertText, insertTable, setLineKind, setLink, splitLine, toggleInline, type NotesModel } from '../commands.js';
 import { CELL_SEP, cpLen, ensureTerminated, lines, type LineKind } from '../model.js';
 import { parseMarkdown } from '../pkg/notes_wasm.js';
 import { applyRemote, drain } from '../sync.js';
 import { UndoStack } from '../undo.js';
 import { cellPasteText, parsePaste, selectionMarkdown, selectionModel } from './clipboard.js';
 import { FILLER, extractText, getSelectionOffsets } from './dom.js';
-import { attachInput, type EditorInput, type LinkRequest } from './input.js';
+import { attachInput, type EditorInput, type InputOptions, type LinkRequest } from './input.js';
 import { diffAt, lineContent } from './native.js';
 import { createEditorView, type EditorView } from './view.js';
 
@@ -42,7 +42,7 @@ interface Mounted {
   tooLarge: number[];
 }
 
-function mount(A: Client, opts: { readOnly?: boolean; pasteLimit?: number } = {}): Mounted {
+function mount(A: Client, opts: { readOnly?: boolean; pasteLimit?: number; hooks?: Partial<InputOptions> } = {}): Mounted {
   const root = document.createElement('div');
   root.tabIndex = 0; // jsdom focuses a contenteditable only with a tabindex; real engines do not need it
   document.body.appendChild(root);
@@ -57,7 +57,8 @@ function mount(A: Client, opts: { readOnly?: boolean; pasteLimit?: number } = {}
     onLocalChange: () => m.changes++,
     onTyping: () => m.typing++,
     requestLink: (r) => m.links.push(r),
-    onPasteTooLarge: (n) => m.tooLarge.push(n)
+    onPasteTooLarge: (n) => m.tooLarge.push(n),
+    ...opts.hooks
   });
   view.update();
   root.focus();
@@ -877,5 +878,302 @@ describe('component API', () => {
     m.input.redo();
     expect(m.A.view()).toBe('"ab":- "ab"{i}');
     expect(JSON.parse(parseMarkdown('x')).lines).toHaveLength(1);
+  });
+});
+
+describe('hooks for menus (phase 11)', () => {
+  it('onTyped hears a natively typed character with the caret after it', () => {
+    const typed: [string, number][] = [];
+    const m = mount(docOf('ab'), { hooks: { onTyped: (c, caret) => typed.push([c, caret]) } });
+    m.view.setSelection(1);
+    typeNative(m, '/');
+    expect(m.A.text()).toBe('a/b\n');
+    expect(typed).toEqual([['/', 2]]);
+    typeNative(m, 'x');
+    expect(typed).toEqual([['/', 2], ['x', 3]]);
+  });
+
+  it('onTyped is not called for a deletion, a paste, a command or a multi-character insert', () => {
+    const typed: string[] = [];
+    const m = mount(docOf('hello'), { hooks: { onTyped: (c) => typed.push(c) } });
+    m.view.setSelection(3);
+    backspaceNative(m);
+    clipboard(m.root, 'paste', { 'text/plain': '/' });
+    m.input.command((doc) => insertText(doc, 0, '/'));
+    expect(typed).toEqual([]);
+    // An autocorrect-like insert of two characters is not "one typed character".
+    typeNative(m, 'ab');
+    expect(typed).toEqual([]);
+  });
+
+  it('onTyped is not called during a composition nor for the commit that ends it', () => {
+    const typed: string[] = [];
+    const m = mount(docOf('ab'), { hooks: { onTyped: (c) => typed.push(c) } });
+    m.view.setSelection(1);
+    m.root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    const t = m.root.children[0].firstChild as Text;
+    t.data = 'a/b';
+    (document.getSelection() as Selection).setBaseAndExtent(t, 2, t, 2);
+    m.root.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertCompositionText', data: '/', isComposing: true, bubbles: true, cancelable: true }));
+    m.root.dispatchEvent(new InputEvent('input', { inputType: 'insertCompositionText', data: '/', isComposing: true, bubbles: true }));
+    expect(typed).toEqual([]);
+    m.root.dispatchEvent(new CompositionEvent('compositionend', { data: '/', bubbles: true }));
+    expect(m.A.text()).toBe('a/b\n');
+    expect(typed).toEqual([]);
+    // Typing right after the composition is a plain keystroke again.
+    typeNative(m, 'x');
+    expect(typed).toEqual(['x']);
+  });
+
+  it('interceptKey sees keydown first; true cancels it and Enter does not split', () => {
+    const seen: string[] = [];
+    let take = true;
+    const m = mount(docOf('hello'), {
+      hooks: {
+        interceptKey: (e) => {
+          seen.push(e.key);
+          return take && (e.key === 'Enter' || e.key === 'ArrowDown');
+        }
+      }
+    });
+    m.view.setSelection(2);
+    // What an engine does: beforeinput(insertParagraph) only follows a keydown nobody cancelled.
+    const pressEnter = () => {
+      const e = key(m.root, 'Enter');
+      if (!e.defaultPrevented) beforeInput(m.root, 'insertParagraph');
+      return e;
+    };
+    expect(pressEnter().defaultPrevented).toBe(true);
+    expect(m.A.text()).toBe('hello\n');
+    expect(m.changes).toBe(0);
+    expect(key(m.root, 'ArrowDown').defaultPrevented).toBe(true);
+    // Not intercepted: the editor's own arrow handler runs (and cancels the event itself).
+    expect(key(m.root, 'ArrowRight').defaultPrevented).toBe(true);
+    expect(sel(m)).toEqual({ anchor: 3, focus: 3 });
+    expect(seen).toEqual(['Enter', 'ArrowDown', 'ArrowRight']);
+    take = false;
+    expect(pressEnter().defaultPrevented).toBe(false);
+    expect(m.A.text()).toBe('hel\nlo\n'); // split at the caret ArrowRight moved to
+  });
+
+  it('interceptKey is not asked while read-only or composing', () => {
+    const seen: string[] = [];
+    const hooks = { interceptKey: (e: KeyboardEvent) => (seen.push(e.key), true) };
+    const m = mount(docOf('ab'), { readOnly: true, hooks });
+    key(m.root, 'Enter');
+    expect(seen).toEqual([]);
+    m.input.setReadOnly(false);
+    m.view.setSelection(1);
+    m.root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    key(m.root, 'Enter');
+    expect(seen).toEqual([]);
+  });
+
+  it('command() runs a CommandResult as one undo entry, with the caret placed', () => {
+    const m = mount(docOf('abc'));
+    m.view.setSelection(1);
+    const r = m.input.command((doc) => {
+      const a = insertText(doc, 3, 'xy');
+      const b = setLink(doc, 3, 5, 'https://example.com');
+      return { inverse: [...a.inverse, ...b.inverse], caret: 5 };
+    });
+    expect(r?.caret).toBe(5);
+    expect(m.A.text()).toBe('abcxy\n');
+    expect(m.changes).toBe(1);
+    expect(sel(m)).toEqual({ anchor: 5, focus: 5 });
+    expect(extractText(m.root)).toBe('abcxy\n');
+    m.input.undo();
+    expect(m.A.text()).toBe('abc\n');
+    expect(m.undo.canUndo()).toBe(false);
+    m.input.redo();
+    expect(m.A.text()).toBe('abcxy\n');
+    // An explicit placement wins over the command's caret.
+    m.input.command((doc) => insertText(doc, 0, 'Z'), { caret: 0, focus: 2 });
+    expect(sel(m)).toEqual({ anchor: 0, focus: 2 });
+  });
+
+  it('command() does nothing on a read-only editor', () => {
+    const m = mount(docOf('abc'), { readOnly: true });
+    expect(m.input.command((doc) => insertText(doc, 0, 'x'))).toBeNull();
+    expect(m.A.text()).toBe('abc\n');
+  });
+
+  it('setLineKind toggles off by default and sets with toggle: false', () => {
+    const m = mount(docOf('ab'));
+    m.view.setSelection(0, 2);
+    m.input.setLineKind('h1');
+    expect(m.A.view()).toBe('"ab":h1');
+    m.input.setLineKind('h1');
+    expect(m.A.view()).toBe('"ab":-');
+    m.input.setLineKind('h1');
+    m.input.setLineKind('h1', { toggle: false });
+    expect(m.A.view()).toBe('"ab":h1');
+    m.input.setLineKind('task_done' as never, { toggle: false });
+    m.input.setLineKind('task', { toggle: false });
+    expect(m.A.view()).toBe('"ab":task');
+    m.input.setLineKind(null, { toggle: false });
+    expect(m.A.view()).toBe('"ab":-');
+  });
+});
+
+describe('chips (phase 11)', () => {
+  const CHIP = 'mnemosyne:t/0/65';
+  /** "see 1:05 now": the chip covers [4, 8). */
+  const chipped = (opts: Parameters<typeof mount>[1] = {}) => {
+    const A = docOf('see 1:05 now');
+    setLink(A.doc, 4, 8, CHIP);
+    return mount(A, opts);
+  };
+
+  it('Backspace right after a chip removes the whole chip as one undo entry', () => {
+    const m = chipped();
+    m.view.setSelection(8);
+    const e = key(m.root, 'Backspace');
+    expect(e.defaultPrevented).toBe(true);
+    expect(m.A.text()).toBe('see  now\n');
+    expect(sel(m)).toEqual({ anchor: 4, focus: 4 });
+    m.undo.undo();
+    expect(m.A.text()).toBe('see 1:05 now\n');
+    expect(m.A.view()).toBe('"see 1:05 now":- "1:05"{link=' + CHIP + '}');
+  });
+
+  it('Delete right before a chip removes the whole chip as one undo entry', () => {
+    const m = chipped();
+    m.view.setSelection(4);
+    expect(key(m.root, 'Delete').defaultPrevented).toBe(true);
+    expect(m.A.text()).toBe('see  now\n');
+    expect(sel(m)).toEqual({ anchor: 4, focus: 4 });
+    m.undo.undo();
+    expect(m.A.view()).toBe('"see 1:05 now":- "1:05"{link=' + CHIP + '}');
+  });
+
+  it('inside a chip, or away from its edge, Backspace and Delete are the browser\'s', () => {
+    const m = chipped();
+    m.view.setSelection(6);
+    expect(key(m.root, 'Backspace').defaultPrevented).toBe(false);
+    expect(key(m.root, 'Delete').defaultPrevented).toBe(false);
+    m.view.setSelection(8); // Delete after the chip, Backspace before it
+    expect(key(m.root, 'Delete').defaultPrevented).toBe(false);
+    m.view.setSelection(4);
+    expect(key(m.root, 'Backspace').defaultPrevented).toBe(false);
+    expect(m.A.text()).toBe('see 1:05 now\n');
+    m.view.setSelection(8, 10); // a selection is not a collapsed delete
+    expect(key(m.root, 'Backspace').defaultPrevented).toBe(false);
+  });
+
+  it('removes a chip at the end of its line and leaves the other chip alone', () => {
+    const A = docOf('1:05 Ada');
+    setLink(A.doc, 0, 4, CHIP);
+    setLink(A.doc, 5, 8, 'mnemosyne:person/Ada');
+    const m = mount(A);
+    m.view.setSelection(8);
+    key(m.root, 'Backspace');
+    expect(m.A.text()).toBe('1:05 \n');
+    const linked = (c: Client) => lines(c.doc).flatMap((l) => l.runs.filter((r) => r.link).map((r) => r.text));
+    expect(linked(m.A)).toEqual(['1:05']);
+  });
+
+  it('a read-only editor deletes nothing', () => {
+    const m = chipped({ readOnly: true });
+    m.view.setSelection(8);
+    key(m.root, 'Backspace');
+    expect(m.A.text()).toBe('see 1:05 now\n');
+  });
+
+  it('Ctrl+K on a chip asks for nothing; an ordinary link still does', () => {
+    const m = chipped();
+    m.view.setSelection(6);
+    key(m.root, 'k', { ctrlKey: true });
+    m.view.setSelection(8);
+    key(m.root, 'k', { ctrlKey: true });
+    m.view.setSelection(4, 8);
+    key(m.root, 'k', { ctrlKey: true });
+    m.view.setSelection(0, 6); // a selection reaching into the chip
+    key(m.root, 'k', { ctrlKey: true });
+    expect(m.links).toEqual([]);
+    m.view.setSelection(0, 3);
+    key(m.root, 'k', { ctrlKey: true });
+    expect(m.links).toEqual([{ from: 0, to: 3, url: null }]);
+  });
+
+  it('requestLink() asks for a plain selection and not for a chip', () => {
+    const m = chipped();
+    m.view.setSelection(4, 8);
+    m.input.requestLink();
+    m.view.setSelection(0, 6);
+    m.input.requestLink();
+    expect(m.links).toEqual([]);
+    m.view.setSelection(0, 3);
+    m.input.requestLink();
+    expect(m.links).toEqual([{ from: 0, to: 3, url: null }]);
+    m.input.setReadOnly(true);
+    m.input.requestLink();
+    expect(m.links).toHaveLength(1);
+  });
+
+  it('typing right after a chip is plain text, not part of the chip', () => {
+    const m = chipped();
+    m.view.setSelection(8);
+    typeNative(m, 'x');
+    expect(m.A.text()).toBe('see 1:05x now\n');
+    expect(m.A.view()).toBe('"see 1:05x now":- "1:05"{link=' + CHIP + '}');
+  });
+
+  it('typing inside a chip keeps it one chip, in one undo step with the typing', () => {
+    const m = chipped();
+    m.view.setSelection(6);
+    typeNative(m, 'x');
+    expect(m.A.text()).toBe('see 1:x05 now\n');
+    const runs = () => lines(m.A.doc)[0].runs.map((r) => [r.text, r.link]);
+    expect(runs()).toEqual([['see ', null], ['1:x05', CHIP], [' now', null]]);
+    expect(m.root.querySelectorAll('a.ne-chip')).toHaveLength(1);
+    expect(m.root.querySelector('a.ne-chip')?.textContent).toBe('1:x05');
+    m.undo.undo();
+    expect(m.A.text()).toBe('see 1:05 now\n');
+    expect(runs()).toEqual([['see ', null], ['1:05', CHIP], [' now', null]]);
+  });
+
+  it('a paste inside a chip keeps it one chip; one at its edge does not extend it', () => {
+    const m = chipped();
+    m.view.setSelection(6);
+    clipboard(m.root, 'paste', { 'text/plain': 'zz' });
+    expect(m.A.text()).toBe('see 1:zz05 now\n');
+    expect(lines(m.A.doc)[0].runs.map((r) => [r.text, r.link])).toEqual([['see ', null], ['1:zz05', CHIP], [' now', null]]);
+    m.view.setSelection(10); // right after the chip
+    clipboard(m.root, 'paste', { 'text/plain': 'q' });
+    expect(lines(m.A.doc)[0].runs.map((r) => [r.text, r.link])).toEqual([['see ', null], ['1:zz05', CHIP], ['q now', null]]);
+  });
+
+  it('replacing the middle of a chip keeps it one chip', () => {
+    const m = chipped();
+    m.view.setSelection(5, 7); // ":0"
+    clipboard(m.root, 'paste', { 'text/plain': 'x' });
+    expect(m.A.text()).toBe('see 1x5 now\n');
+    expect(lines(m.A.doc)[0].runs.map((r) => [r.text, r.link])).toEqual([['see ', null], ['1x5', CHIP], [' now', null]]);
+  });
+
+  it('two adjacent chips with different URLs delete one at a time', () => {
+    const A = docOf('AdaBob');
+    setLink(A.doc, 0, 3, 'mnemosyne:person/Ada');
+    setLink(A.doc, 3, 6, 'mnemosyne:person/Bob');
+    const m = mount(A);
+    m.view.setSelection(3);
+    key(m.root, 'Backspace');
+    expect(m.A.text()).toBe('Bob\n');
+    m.undo.undo();
+    m.view.setSelection(3);
+    key(m.root, 'Delete');
+    expect(m.A.text()).toBe('Ada\n');
+    // typing between them is plain text and joins neither
+    key(m.root, 'z', { ctrlKey: true }); // through the editor, so the DOM is redrawn
+    expect(m.A.text()).toBe('AdaBob\n');
+    m.view.setSelection(3);
+    typeNative(m, 'x');
+    expect(m.A.text()).toBe('AdaxBob\n');
+    expect(lines(m.A.doc)[0].runs.map((r) => [r.text, r.link])).toEqual([
+      ['Ada', 'mnemosyne:person/Ada'],
+      ['x', null],
+      ['Bob', 'mnemosyne:person/Bob']
+    ]);
   });
 });

@@ -37,6 +37,7 @@
 // Cells are joined by U+001F on extraction (the model's CELL_SEP); every line contributes its
 // "\n" (except an unterminated tail, `data-tail`); chrome (`data-chrome`, never editable)
 // contributes nothing.
+import { parseChip } from '../chips.js';
 import { CELL_SEP, TABLE_KINDS, type Align, type Line, type Run } from '../model.js';
 import { FILLER, TAIL_KEY, isChrome } from './points.js';
 
@@ -309,6 +310,8 @@ function renderInline(doc: Document, container: HTMLElement, runs: readonly Run[
   if (first && first.nodeType === Node.ELEMENT_NODE) first.before(doc.createTextNode(FILLER));
 }
 
+const SAFE_HREF = /^(?:https?|mailto):/i;
+
 function buildRun(doc: Document, run: Run): Node {
   let node: Node = doc.createTextNode(run.text);
   const wrap = (tag: string): HTMLElement => {
@@ -328,8 +331,17 @@ function buildRun(doc: Document, run: Run): Node {
   }
   if (run.link !== null) {
     const a = wrap('a') as HTMLAnchorElement;
-    a.href = run.link;
-    a.title = run.link;
+    const chip = parseChip(run.link);
+    if (chip) {
+      // A chip (phase 11): a pill, never a hyperlink. The text stays ordinary editable text.
+      a.className = `ne-chip ne-chip-${chip.kind}`;
+      a.dataset.chip = run.link;
+    } else {
+      // A peer wrote this URL (C12): only these schemes may be followed, also in a read-only
+      // editor, where a `javascript:` link would otherwise run on click.
+      if (SAFE_HREF.test(run.link)) a.href = run.link;
+      a.title = run.link;
+    }
   } else if (run.linkConflict) {
     const span = wrap('span');
     span.className = 'ne-link-conflict';

@@ -19,6 +19,10 @@ class FakeGuest {
 	localChange = vi.fn();
 	flush = vi.fn();
 	setTyping = vi.fn();
+	// What the caret overlay reads through createGuestPresence: nobody else is here.
+	others: unknown[] = [];
+	setSel = vi.fn();
+	subscribe = vi.fn(() => () => {});
 	constructor() {
 		this.doc = openDoc(new WasmHashWeb(), ORIGIN);
 	}
@@ -56,22 +60,7 @@ describe('Notes', () => {
 		expect(editor().getAttribute('aria-readonly')).toBe('false');
 		expect(editor().getAttribute('role')).toBe('textbox');
 		const names = [...target.querySelectorAll('[role="toolbar"] button')].map((b) => b.getAttribute('aria-label'));
-		expect(names).toEqual([
-			'Bold',
-			'Italic',
-			'Strikethrough',
-			'Inline code',
-			'Link',
-			'Heading 1',
-			'Heading 2',
-			'Heading 3',
-			'Bulleted list',
-			'Numbered list',
-			'Task list',
-			'Insert table',
-			'Undo',
-			'Redo'
-		]);
+		expect(names).toEqual(['Turn into', 'Bold', 'Italic', 'Task list', 'Insert', 'Undo', 'Redo']);
 		expect(g.wrapRemote).toBeTypeOf('function');
 	});
 
