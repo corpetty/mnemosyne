@@ -5,12 +5,13 @@ headers as a publish host (publish-host/src/app.rs)."""
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.background import BackgroundTask
 
 from ...jobs import Job
@@ -22,6 +23,7 @@ from ...models.publication import (
     PublicationSelection,
 )
 from ...services import publication_file, publishing
+from ...services.link import parse_relays
 from ..context import AppContext, get_ctx
 
 router = APIRouter(tags=["publishing"])
@@ -35,6 +37,7 @@ CSP = (
 GUEST_DIR = Path(__file__).resolve().parent.parent / "static" / "guest"
 # The guest notes page (guest/): the viewer's policy, plus WebAssembly for the notes document.
 GUEST_CSP = CSP.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'")
+N0_RELAYS = "*.relay.n0.iroh.link"
 IMMUTABLE = "public, max-age=31536000, immutable"
 SECURITY = {"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"}
 PLACEHOLDER = """<!doctype html>
@@ -43,6 +46,34 @@ PLACEHOLDER = """<!doctype html>
 <body><p>The viewer for published meetings is not built into this Mnemosyne.</p></body></html>
 """
 GUEST_PLACEHOLDER = PLACEHOLDER.replace("published meetings", "guest notes")
+
+
+def relay_host(url: str) -> tuple[str, str] | None:
+    """(scheme, host[:port]) of a relay URL or bare host; None when it is not a plain host."""
+    scheme, sep, rest = url.strip().partition("://")
+    if not sep:
+        scheme, rest = "https", url.strip()
+    host = re.split(r"[/?#]", rest, maxsplit=1)[0].lower()
+    if not host or not re.fullmatch(r"[a-z0-9.\-:\[\]*]+", host):
+        return None
+    return scheme.lower(), host
+
+
+def guest_csp(settings: Any) -> str:
+    """GUEST_CSP with the iroh relays in connect-src: n0's and those of `remote_relays`
+    (https/wss each; http/ws for a plain-http relay, as the e2e tests use on loopback)."""
+    origins = [f"https://{N0_RELAYS}", f"wss://{N0_RELAYS}"]
+    for url in parse_relays(getattr(settings, "remote_relays", "") or ""):
+        parsed = relay_host(url)
+        if parsed is None:
+            continue
+        scheme, host = parsed
+        pairs = [("http", "ws")] if scheme == "http" else [("https", "wss")]
+        for http, ws in pairs:
+            for origin in (f"{http}://{host}", f"{ws}://{host}"):
+                if origin not in origins:
+                    origins.append(origin)
+    return GUEST_CSP.replace("connect-src 'self';", f"connect-src 'self' {' '.join(origins)};")
 
 
 def _session(ctx: AppContext, session_id: str):
@@ -328,18 +359,29 @@ async def viewer_asset(folder: str, rest: str):
 # ---- the guest notes page (services/guest_notes.py; publish-host/src/app.rs serves the same) ---
 
 
+@router.get("/n", include_in_schema=False)
+async def guest_page_slash():
+    """/n → /n/: the page's asset URLs are relative, so they need the trailing slash."""
+    return RedirectResponse("/n/", status_code=308)
+
+
+@router.get("/n/", include_in_schema=False)
 @router.get("/n/{room}", include_in_schema=False)
-async def guest_page(room: str):
+async def guest_page(room: str = "", ctx: AppContext = Depends(get_ctx)):
     """Any /n/<room> is the guests' page: it reads the room and key from its own address and
     says "not found" itself, so this never tells which rooms exist."""
     index = GUEST_DIR / "index.html"
-    headers = {**SECURITY, "Content-Security-Policy": GUEST_CSP, "Cache-Control": "no-store"}
+    headers = {
+        **SECURITY,
+        "Content-Security-Policy": guest_csp(ctx.settings),
+        "Cache-Control": "no-store",
+    }
     if not index.is_file():
         return HTMLResponse(GUEST_PLACEHOLDER, status_code=503, headers=headers)
     return FileResponse(index, media_type="text/html", headers=headers)
 
 
 @router.get("/n/{folder}/{rest:path}", include_in_schema=False)
-async def guest_asset(folder: str, rest: str):
+async def guest_asset(folder: str, rest: str, ctx: AppContext = Depends(get_ctx)):
     """/n/<dir>/<path>: the guest page build's files (its assets/ folder, the wasm)."""
-    return _static(GUEST_DIR, folder, rest, GUEST_CSP)
+    return _static(GUEST_DIR, folder, rest, guest_csp(ctx.settings))

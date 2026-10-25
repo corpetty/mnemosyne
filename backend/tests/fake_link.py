@@ -17,6 +17,13 @@ a `pair` keeps its `peer` and `card`). What it answers is set on the handle:
 default a token, the invite's ticket and a `sync` identity;
 put a `card` there to answer one), and `fail` (op -> error message).
 
+Run as `rooms` (`mnemosyne-link rooms ...`, the guest notes sidecar) it prints
+`{"listen": cfg["listen"], "relay_kind": cfg.get("relay_kind", "n0")}` and answers `room_start`
+(`endpoint_id` and `relay` from the config; a request's `relay` wins), `room_stop` (`closed` is
+whether the room was served) and `room_list`. Each run appends its argv, the PUBLISH_* names in
+its environment and its upload token file (content, octal mode) to the handle's `rooms_starts`;
+its requests go to `ops` as for `home`. `fail` works too.
+
 Run as `notes doc` it stands in for the shared notes document (notes-core), same requests and
 answers (`fold`, `set_text`, `merge`; see link/src/main.rs), over a toy CRDT so tests can build
 frames by hand. The handle's `doc_requests` are the requests it got; FAKE_NOTES_DOC_FAIL makes
@@ -68,6 +75,52 @@ if sys.argv[1:2] == ["home"]:
             peer = cfg.get("peers", {}).get(ticket, ticket)
             reply.update(ok=True, token="token-from-peer", ticket=ticket, peer=peer)
             reply.update(cfg.get("pair_reply", {"sync": {"id": "peerpeerpeer", "name": "Desk"}}))
+        else:
+            reply.update(ok=False, error="unknown op")
+        print(json.dumps(reply), flush=True)
+    sys.exit(0)
+"""
+
+ROOMS = r"""
+if sys.argv[1:2] == ["rooms"]:
+    cfg = json.loads(os.environ.get("FAKE_LINK_CONFIG", "{}"))
+    log = os.environ.get("FAKE_LINK_LOG")
+    starts = os.environ.get("FAKE_ROOMS_STARTS")
+    if starts:
+        tf = None
+        if "--upload-token-file" in sys.argv:
+            tf = sys.argv[sys.argv.index("--upload-token-file") + 1]
+        token = mode = None
+        if tf and os.path.exists(tf):
+            token = open(tf).read().strip()
+            mode = oct(os.stat(tf).st_mode & 0o777)
+        with open(starts, "a") as f:
+            f.write(json.dumps({
+                "argv": sys.argv[1:],
+                "publish_env": sorted(k for k in os.environ if k.startswith("PUBLISH_")),
+                "token": token,
+                "token_mode": mode,
+            }) + "\n")
+    ready = {"listen": cfg["listen"], "relay_kind": cfg.get("relay_kind", "n0")}
+    print(json.dumps(ready), flush=True)
+    rooms = {}
+    for line in sys.stdin:
+        req = json.loads(line)
+        if log:
+            with open(log, "a") as f:
+                f.write(json.dumps({k: v for k, v in req.items() if k != "id"}) + "\n")
+        reply = {"id": req["id"], "op": req["op"]}
+        if req["op"] in cfg.get("fail", {}):
+            reply.update(ok=False, error=cfg["fail"][req["op"]])
+        elif req["op"] == "room_start":
+            relay = req.get("relay") or cfg.get("relay", "https://relay.example/")
+            fresh = {"endpoint_id": cfg["endpoint_id"], "relay": relay}
+            room = rooms.setdefault(req["room"], fresh)
+            reply.update(ok=True, endpoint_id=room["endpoint_id"], relay=room["relay"])
+        elif req["op"] == "room_stop":
+            reply.update(ok=True, closed=rooms.pop(req["room"], None) is not None)
+        elif req["op"] == "room_list":
+            reply.update(ok=True, rooms=[{"room": r, **v} for r, v in rooms.items()])
         else:
             reply.update(ok=False, error="unknown op")
         print(json.dumps(reply), flush=True)
@@ -322,6 +375,8 @@ class Sidecar:
             "ticket": "endpoint-stand-in",
             "fail": {},
             "peers": {},  # ticket -> endpoint id, for dial and pair replies
+            "listen": "127.0.0.1:41999",  # `rooms`
+            "relay": "https://relay.example/",
         }
         self._monkeypatch = monkeypatch
         self.sync()
@@ -337,6 +392,15 @@ class Sidecar:
         if self.ops_log is None or not self.ops_log.exists():
             return []
         return [json.loads(x) for x in self.ops_log.read_text().splitlines()]
+
+    @property
+    def rooms_starts(self) -> list[dict]:
+        """One entry per start of `rooms`: argv, publish_env (PUBLISH_* names seen), token and
+        token_mode (the upload token file as the sidecar found it)."""
+        log = self.log.parent / "rooms-starts.log"
+        if not log.exists():
+            return []
+        return [json.loads(x) for x in log.read_text().splitlines()]
 
     @property
     def doc_requests(self) -> list[dict]:
@@ -358,7 +422,7 @@ def install(tmp_path, monkeypatch) -> Sidecar:
     """Put the stand-in on MNEMOSYNE_LINK_BIN; its requests are logged."""
     script = tmp_path / "mnemosyne-link"
     first, rest = FAKE.format(python=sys.executable).split("\n", 1)
-    script.write_text(first + "\n" + HOME_PRELUDE + HOME + DOC + rest)
+    script.write_text(first + "\n" + HOME_PRELUDE + HOME + ROOMS + DOC + rest)
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     log = tmp_path / "merge.log"
     monkeypatch.setenv("MNEMOSYNE_LINK_BIN", str(script))
@@ -366,4 +430,5 @@ def install(tmp_path, monkeypatch) -> Sidecar:
     monkeypatch.setenv("FAKE_NOTES_DOC_LOG", str(tmp_path / "notes-doc.log"))
     ops_log = tmp_path / "link-ops.log"
     monkeypatch.setenv("FAKE_LINK_LOG", str(ops_log))
+    monkeypatch.setenv("FAKE_ROOMS_STARTS", str(tmp_path / "rooms-starts.log"))
     return Sidecar(script, log, ops_log, monkeypatch)

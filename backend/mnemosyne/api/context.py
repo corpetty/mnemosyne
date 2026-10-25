@@ -21,7 +21,7 @@ from ..jobs import JobManager
 from ..search.index import VectorIndex
 from ..services.awake import KeepAwake
 from ..services.calendar_service import CalendarService, calendar_source
-from ..services.link import LinkService
+from ..services.link import LinkService, RoomsLink, parse_relays
 from ..services.meeting_types import available_types
 from ..services.model_service import ModelService
 from ..services.pairing import PairingService
@@ -53,6 +53,7 @@ class AppContext:
     pairing: PairingService
     users: UserService
     link: LinkService
+    rooms_link: RoomsLink
     sync_peers: SyncPeerStore
     active_recordings: dict[str, RecordingSession] = field(default_factory=dict)
     startup_problems: list[str] = field(default_factory=list)  # shown by the app
@@ -216,6 +217,7 @@ class AppContext:
             pairing=PairingService(settings.data_dir / "paired_devices.json"),
             users=UserService(settings.data_dir / "users.json"),
             link=LinkService(settings.data_dir, int(os.environ.get("MNEMOSYNE_BIND_PORT", "8008"))),
+            rooms_link=_rooms_link(settings),
             sync_peers=SyncPeerStore(settings.data_dir / "sync_peers.json"),
             jobs=JobManager(
                 bus,
@@ -306,12 +308,23 @@ class AppContext:
         return self.jobs.submit("supervision_scan", run)
 
     async def apply_remote_access(self) -> None:
-        relays = [u.strip() for u in self.settings.remote_relays.split(",") if u.strip()]
+        relays = parse_relays(self.settings.remote_relays)
         if self.link.active and (not self.settings.remote_access or relays != self.link.relays):
             await self.link.stop()
         self.link.relays = relays
         if self.settings.remote_access and not self.link.active:
             self.link.start()
+
+    async def ensure_rooms(self) -> RoomsLink:
+        """Start the guest rooms sidecar if it is not running and wait for its ready line.
+        Idempotent. Raises LinkError (services/link.py) when it cannot start. A running sidecar
+        keeps the relays it started with."""
+        link = self.rooms_link
+        if not link.active or link._task.done():
+            link.relays = parse_relays(self.settings.remote_relays)
+            link.start()
+        await link.wait_ready()
+        return link
 
     def busy_sessions(self) -> set[str]:
         """Sessions whose audio must not be touched right now."""
@@ -615,6 +628,7 @@ class AppContext:
         if self.share_pull is not None:
             await self.share_pull.stop()
         await self.link.stop()
+        await self.rooms_link.stop()
         await self.index.stop()
         for task in (
             self._retention_task,
@@ -664,6 +678,19 @@ def _pw_dump() -> list:
 
     out = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5, check=True)
     return json.loads(out.stdout)
+
+
+def _rooms_link(settings: Settings) -> RoomsLink:
+    """The guest rooms sidecar (not started): it serves the same guest page and viewer builds
+    the backend serves on /n/ and /p/."""
+    from .routes.publishing import GUEST_DIR, VIEWER_DIR  # routes import this module
+
+    return RoomsLink(settings.data_dir, GUEST_DIR, VIEWER_DIR)
+
+
+async def ensure_rooms(ctx: AppContext) -> RoomsLink:
+    """Start the guest rooms sidecar on demand (AppContext.ensure_rooms)."""
+    return await ctx.ensure_rooms()
 
 
 def get_ctx(request: Request) -> AppContext:

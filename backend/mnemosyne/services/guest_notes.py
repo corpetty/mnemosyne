@@ -23,12 +23,22 @@ backend is the bridge between the two, one asyncio task per live room (`Bridge`)
 The room protocol (HTTP for the publisher, a WebSocket for everyone) is in the Phase 9 task
 notes (docs/plans/2026-10-24-phase-9-tasks.md, G6) and publish-host/src/rooms.rs.
 
+Phase 10 (docs/plans/2026-10-25-phase-10-tasks.md, C7-C9, C11, C17): where the room is depends
+on `guest_transport` (`plan`). "iroh": the room is on this computer, on the publish host that the
+rooms sidecar (`mnemosyne-link rooms`, services/link.py RoomsLink) embeds on a loopback port, and
+guests reach it over iroh through one relay; the link is format 2 (`link`). "host": as in phase 9.
+With an iroh room and a configured publish host, the same room (id, key, room token) is mirrored
+there: a second Bridge on the same meeting (`Link`, one per room), so the host keeps a copy when
+this computer is off. A guest frame one bridge accepts reaches the other through the notes room
+and goes out sealed with gid "", which no bridge accepts back.
+
 Never logged: the room key or anything derived from it.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import ipaddress
 import json
@@ -50,12 +60,18 @@ from . import publication_format as pf
 if TYPE_CHECKING:
     from ..api.context import AppContext
     from ..models.session import Session
+    from .link import RoomsLink
 
 logger = logging.getLogger(__name__)
 
 # Our public guest host, once it runs ("" until then: guest notes need a configured host).
 OUR_GUEST_HOST = ""
 OUR_RELAY_HOST = ""  # our own iroh relay's host, once it exists (blank = none)
+# Where the guest page of an iroh link is served from when no host mirrors the room
+# (`guest_page_url` overrides it): GitHub Pages, from this repo.
+GUEST_PAGE_ORIGIN = "https://corpetty.github.io/mnemosyne/n/"
+
+PRIMARY, MIRROR = "primary", "mirror"  # a meeting's rooms (`Link.kind`)
 
 ROOM_DAYS = 7  # a room lives at most this long after it was made (the host clamps the same)
 ENDED_HOURS = 24  # an ended room stays readable this long (at most until ROOM_DAYS)
@@ -97,18 +113,98 @@ class GuestNotesUnavailable(GuestNotesError):
 # ---- where and who -----------------------------------------------------------------------
 
 
-def host_url(app: AppContext) -> str:
-    """The host rooms are made on: `guest_host`, else `publish_host`, else ours. http(s) only
-    (http for a host on this machine in tests and e2e)."""
+def configured_host(app: AppContext) -> str:
+    """The publish host rooms are made (or mirrored) on: `guest_host`, else `publish_host`,
+    else ours; "" when there is none. http(s) only (http for a host on this machine in tests
+    and e2e)."""
     st = app.settings
     url = (st.guest_host or "").strip() or (st.publish_host or "").strip() or OUR_GUEST_HOST
     url = url.rstrip("/")
     if not url:
-        raise GuestNotesUnavailable("No host for guest notes: set a publish host in Settings")
+        return ""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise GuestNotesUnavailable(f"The guest notes host is not an http(s) address: {url}")
     return url
+
+
+def host_url(app: AppContext) -> str:
+    """`configured_host`, or GuestNotesUnavailable when there is none."""
+    url = configured_host(app)
+    if not url:
+        raise GuestNotesUnavailable("No host for guest notes: set a publish host in Settings")
+    return url
+
+
+def page_origin(app: AppContext) -> str:
+    """Where the guest page of an iroh link without a mirror is served from (C11)."""
+    return (app.settings.guest_page_url or "").strip() or GUEST_PAGE_ORIGIN
+
+
+@dataclass(frozen=True)
+class Plan:
+    """Where a new room goes (`plan`). `transport`: "iroh" (the rooms sidecar's loopback host,
+    reached over iroh) or "host" (a publish host); "tunnel" is task 20's. `host_url`: where the
+    room is made. `mirror_host`: a publish host the room is mirrored on ("" none). `page_origin`:
+    the guest page of a link that names no host (`GUEST_PAGE_ORIGIN` or `guest_page_url`)."""
+
+    transport: str
+    host_url: str
+    mirror_host: str
+    page_origin: str
+
+
+async def _rooms(app: AppContext) -> RoomsLink:
+    """The rooms sidecar, started if need be; GuestNotesUnavailable when it cannot start."""
+    from .link import LinkError
+
+    try:
+        rooms = await app.ensure_rooms()
+    except LinkError as e:
+        raise GuestNotesUnavailable(f"Guest rooms cannot run on this computer: {e}") from e
+    if rooms.base_url is None:  # pragma: no cover - ready means listening
+        raise GuestNotesUnavailable("Guest rooms cannot run on this computer: no loopback host")
+    return rooms
+
+
+def _host_plan(app: AppContext, why: str = "") -> Plan:
+    """The fallback to a publish host (auto): GuestNotesUnavailable when none is set."""
+    host = configured_host(app)
+    if not host:
+        if why:
+            raise GuestNotesUnavailable(f"{why}; no publish host is set for guest notes either")
+        raise GuestNotesUnavailable("No host for guest notes: set a publish host in Settings")
+    return Plan("host", host, "", page_origin(app))
+
+
+async def plan(app: AppContext) -> Plan:
+    """Where a new room goes (C9). `guest_transport`:
+    - host: the configured publish host (`host_url`), GuestNotesUnavailable when none;
+    - iroh: the rooms sidecar (started here), GuestNotesUnavailable with its reason when it
+      cannot start;
+    - auto: iroh when the sidecar starts (`start` falls back again when `room_start` fails),
+      else (later: a tunnel, task 20) the configured host, else GuestNotesUnavailable;
+    - tunnel: not built yet (task 20), GuestNotesUnavailable.
+    An iroh room is mirrored on the configured host whenever there is one."""
+    mode = app.settings.guest_transport
+    origin = page_origin(app)
+    if mode == "host":
+        return Plan("host", host_url(app), "", origin)
+    mirror = configured_host(app)
+    if mode == "tunnel":
+        # Task 20: services/tunnel.py `open_tunnel(app, port)` in front of the rooms sidecar's
+        # loopback host; the plan's transport is then "tunnel" and the link format 1 on its URL.
+        raise GuestNotesUnavailable("Guest notes through a tunnel are not available yet")
+    try:
+        rooms = await _rooms(app)
+    except GuestNotesUnavailable as e:
+        if mode == "iroh":
+            raise
+        logger.info("Guest notes: no iroh room (%s), trying a publish host", e)
+        # Task 20: a tunnel comes before the host here.
+        return _host_plan(app, str(e))
+    assert rooms.base_url is not None
+    return Plan("iroh", rooms.base_url, mirror, origin)
 
 
 def _upload_token(app: AppContext, host: str) -> str:
@@ -124,9 +220,75 @@ def ws_url(host: str, room: str) -> str:
     return f"{scheme}:{host.split(':', 1)[1]}/live/{gf.check_room(room)}"
 
 
-def link(row: dict) -> str:
-    """The guest link: `<host>/n/<room>#<key>`. Only the fragment carries the key."""
-    return f"{row['host_url']}/n/{row['room']}#{gf.key_to_fragment(row['key'])}"
+def relay_host(relay: str) -> str:
+    """A relay URL as the link carries it: `host[:port]` exactly as stored (an IPv6 host keeps
+    its brackets; a loopback http relay is the e2e dev relay)."""
+    parts = urlsplit(relay.strip())
+    netloc = parts.netloc.rsplit("@", 1)[-1]
+    return netloc or relay.strip().rstrip("/")
+
+
+def served_from(row: dict, default_origin: str = GUEST_PAGE_ORIGIN) -> str:
+    """The origin (and path) the room's guest page is served from: its host's `/n/`, the
+    mirror host's for a mirrored iroh room, else `default_origin` (`page_origin`)."""
+    if (row.get("transport") or "host") != "iroh":
+        return f"{row['host_url']}/n/"
+    if row.get("mirror_host_url"):
+        return f"{row['mirror_host_url']}/n/"
+    return default_origin
+
+
+def link(row: dict, default_origin: str = GUEST_PAGE_ORIGIN) -> str:
+    """The guest link. Only the fragment carries the key.
+    - a host room (format 1): `<host>/n/<room>#<key>`;
+    - an iroh room (format 2, C7): `<origin>#2.<room>.<key>.<endpoint id>.<relay host[:port]>`,
+      where origin is the mirror host's `/n/<room>` (the page falls back to its WebSocket) or,
+      without a mirror, `default_origin` (`page_origin`: no room in the path)."""
+    key = gf.key_to_fragment(row["key"])
+    if (row.get("transport") or "host") != "iroh":
+        return f"{row['host_url']}/n/{row['room']}#{key}"
+    origin = served_from(row, default_origin)
+    if row.get("mirror_host_url"):
+        origin += row["room"]
+    return f"{origin}#2.{row['room']}.{key}.{row['endpoint_id']}.{relay_host(row['relay'])}"
+
+
+@dataclass(frozen=True)
+class Link:
+    """One room of a meeting's guest notes as its bridge and the owner's actions reach it: the
+    primary (the row's `transport`) or the mirror on a publish host (C8). `seq_column` is the
+    row's column for the last seq the bridge applied from it."""
+
+    kind: str  # PRIMARY or MIRROR
+    transport: str  # "host", or "iroh": the rooms sidecar's loopback host
+    stored_host: str  # the row's host_url / mirror_host_url
+    token: str  # the publisher token there
+    seq_column: str  # "last_seq" / "mirror_last_seq"
+
+    def host(self, app: AppContext) -> str:
+        """Where to reach it now. The rooms sidecar listens on a new port after each start, so
+        an iroh room's address is the running sidecar's; GuestNotesError when none runs."""
+        if self.transport != "iroh":
+            return self.stored_host
+        base = app.rooms_link.base_url
+        if not base:
+            raise GuestNotesError("Guest rooms on this computer are not running")
+        return base
+
+    def upload(self, app: AppContext, host: str) -> str:
+        if self.transport == "iroh":
+            return app.rooms_link.upload_token
+        return _upload_token(app, host)
+
+
+def links(row: dict) -> list[Link]:
+    """The meeting's rooms: the primary, then the mirror when there is one."""
+    out = [Link(PRIMARY, row.get("transport") or "host", row["host_url"], row["token"], "last_seq")]
+    if row.get("mirror_host_url"):
+        out.append(
+            Link(MIRROR, "host", row["mirror_host_url"], row["mirror_token"], "mirror_last_seq")
+        )
+    return out
 
 
 def state(row: dict) -> str:
@@ -170,7 +332,10 @@ def check_may_start(app: AppContext, session: Session) -> None:
         )
     if shared_notes.needs_doc_from_sync(app, session.id):
         raise GuestNotesUnavailable("The notes of this meeting have not arrived from sync yet")
-    host_url(app)
+    if st.guest_transport == "host":
+        host_url(app)
+    else:  # the rest is `plan`'s (it may start the rooms sidecar)
+        configured_host(app)
 
 
 # ---- time ---------------------------------------------------------------------------------
@@ -259,20 +424,28 @@ async def _request(
     *,
     content: bytes | None = None,
     headers: dict[str, str] | None = None,
+    upload: str | None = None,
 ):
     """One request to the room host, retried once on a network error or a 5xx (not 507).
-    Raises GuestNotesError when it cannot be reached."""
+    `upload`: the X-Upload-Token to send (None: the publish host's, `_upload_token`). A host on
+    this machine is asked without proxies (C17). Raises GuestNotesError when it cannot be
+    reached."""
     import httpx
 
     hdrs = {"Authorization": f"Bearer {token}", **(headers or {})}
-    if upload := _upload_token(app, host):
+    if upload is None:
+        upload = _upload_token(app, host)
+    if upload:
         hdrs["X-Upload-Token"] = upload
     if content is not None:
         hdrs["Content-Type"] = "application/octet-stream"
+    trust_env = not _is_loopback(urlsplit(host).hostname or "")
     resp = None
     for attempt in (0, 1):
         try:
-            async with httpx.AsyncClient(timeout=60, transport=app.http_transport) as client:
+            async with httpx.AsyncClient(
+                timeout=60, transport=app.http_transport, trust_env=trust_env
+            ) as client:
                 resp = await client.request(method, host + path, content=content, headers=hdrs)
         except httpx.HTTPError as e:
             if attempt:
@@ -284,6 +457,29 @@ async def _request(
             continue
         return resp
     return resp  # pragma: no cover
+
+
+async def _call(
+    app: AppContext,
+    target: Link,
+    method: str,
+    path: str,
+    *,
+    content: bytes | None = None,
+    headers: dict[str, str] | None = None,
+):
+    """`_request` to one of the meeting's rooms (where it is now, with its tokens)."""
+    host = target.host(app)
+    return await _request(
+        app,
+        method,
+        host,
+        path,
+        target.token,
+        content=content,
+        headers=headers,
+        upload=target.upload(app, host),
+    )
 
 
 def _ok(resp, what: str, *, gone_ok: bool = False) -> None:
@@ -358,9 +554,12 @@ def _snapshot_blocking(app: AppContext, session_id: str) -> tuple[str, list[str]
     )
 
 
-async def post_snapshot(app: AppContext, session_id: str, row: dict, since: int) -> None:
-    """Seal and post the room's snapshot; the host drops its log up to `since`. Raises
-    GuestNotesError."""
+async def post_snapshot(
+    app: AppContext, session_id: str, row: dict, since: int, target: Link | None = None
+) -> None:
+    """Seal and post the room's snapshot (to `target`, default the primary room); the host
+    drops its log up to `since`. Raises GuestNotesError."""
+    target = target or links(row)[0]
     notes, frames = await asyncio.to_thread(_snapshot_blocking, app, session_id)
     obj = {
         "format": gf.FORMAT,
@@ -371,12 +570,11 @@ async def post_snapshot(app: AppContext, session_id: str, row: dict, since: int)
         "meta": await asyncio.to_thread(meta_for_guests, app, session_id, row),
     }
     env = gf.seal_json(row["key"], row["room"], gf.Kind.SNAPSHOT, obj)
-    resp = await _request(
+    resp = await _call(
         app,
+        target,
         "PUT",
-        row["host_url"],
         f"/live/{row['room']}/snapshot",
-        row["token"],
         content=env,
         headers={"X-Room-Since": str(max(0, int(since)))},
     )
@@ -388,9 +586,12 @@ async def post_snapshot(app: AppContext, session_id: str, row: dict, since: int)
 
 @dataclass
 class _Registry:
-    bridges: dict[str, Bridge] = field(default_factory=dict)
+    bridges: dict[tuple[str, str], Bridge] = field(default_factory=dict)  # (session, kind)
     locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     tasks: set[asyncio.Task] = field(default_factory=set)
+    # The rooms sidecar's life: serving rooms and stopping it when none is left.
+    rooms_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    expiry: dict[str, asyncio.Task] = field(default_factory=dict)  # ended iroh rooms
 
     def lock(self, session_id: str) -> asyncio.Lock:
         return self.locks.setdefault(session_id, asyncio.Lock())
@@ -399,17 +600,40 @@ class _Registry:
 def _registry(app: AppContext) -> _Registry:
     if app.guest_bridges is None:
         app.guest_bridges = _Registry()
+        app.rooms_link.on_restart.append(lambda: _reserve(app))
     return app.guest_bridges
 
 
-def bridge_for(app: AppContext, session_id: str) -> Bridge | None:
-    b = _registry(app).bridges.get(session_id)
+def bridge_for(app: AppContext, session_id: str, kind: str = PRIMARY) -> Bridge | None:
+    b = _registry(app).bridges.get((session_id, kind))
     return b if b is not None and b.running else None
 
 
+def bridges_of(app: AppContext, session_id: str) -> list[Bridge]:
+    """The meeting's running bridges, the primary first."""
+    return [b for k in (PRIMARY, MIRROR) if (b := bridge_for(app, session_id, k)) is not None]
+
+
+def _guest_view(app: AppContext, session_id: str) -> tuple[list[str], list[str]]:
+    """Who is in any of the meeting's rooms, and who of them is typing."""
+    present: dict[str, None] = {}
+    typing: dict[str, None] = {}
+    for b in bridges_of(app, session_id):
+        p, t = b._guest_view()
+        present.update(dict.fromkeys(p))
+        typing.update(dict.fromkeys(t))
+    return list(present), list(typing)
+
+
 def guests_present(app: AppContext, session_id: str) -> list[str]:
-    b = bridge_for(app, session_id)
-    return b.present() if b is not None else []
+    return _guest_view(app, session_id)[0]
+
+
+def _announce_guests(app: AppContext, session_id: str) -> None:
+    present, typing = _guest_view(app, session_id)
+    shared_notes.broadcast_json(
+        app, session_id, {"type": "guests", "present": present, "typing": typing}
+    )
 
 
 def _spawn(app: AppContext, coro) -> asyncio.Task:
@@ -434,17 +658,24 @@ class _Guest:
 class Bridge:
     """One live room joined to one meeting's notes. `start()` runs it as a task; `stop()` ends
     it (detaches from the notes, closes the socket). It stops itself when the host says the
-    room ended (4403, `ended`) or is gone (4410), marking the row so."""
+    room ended (4403, `ended`) or is gone (4410), marking the row so (the primary room; the
+    mirror's going only stops its own bridge). `target` is which of the meeting's rooms it
+    joins (default the primary)."""
 
-    def __init__(self, app: AppContext, session_id: str, row: dict) -> None:
+    def __init__(
+        self, app: AppContext, session_id: str, row: dict, target: Link | None = None
+    ) -> None:
         self.app = app
         self.session_id = session_id
         self.row = dict(row)
+        self.target = target or links(row)[0]
         self.room: str = row["room"]
         self.key: bytes = row["key"]
-        self.seq: int = int(row.get("last_seq") or 0)  # every room seq <= this is applied here
+        # every room seq <= this is applied here
+        self.seq: int = int(row.get(self.target.seq_column) or 0)
+        member_id = "guest-bridge" if self.target.kind == PRIMARY else "guest-bridge-mirror"
         self.member = shared_notes.Member(
-            ws=None, id="guest-bridge", name="Guests", can_edit=True, hidden=True
+            ws=None, id=member_id, name="Guests", can_edit=True, hidden=True
         )
         self.outq: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue()
         self.unacked: deque[bytes] = deque()  # 0x01 envelopes sent, not acknowledged yet
@@ -475,7 +706,7 @@ class Bridge:
         self.running = True
         shared_notes.attach(self.app, self.session_id, self.member)
         self._sub = self.app.bus.subscribe()
-        _registry(self.app).bridges[self.session_id] = self
+        _registry(self.app).bridges[(self.session_id, self.target.kind)] = self
         self.task = _spawn(self.app, self._run(initial_snapshot))
 
     async def stop(self) -> None:
@@ -494,8 +725,9 @@ class Bridge:
             self._sub = None
         shared_notes.detach(self.app, self.session_id, self.member)
         reg = _registry(self.app)
-        if reg.bridges.get(self.session_id) is self:
-            del reg.bridges[self.session_id]
+        key = (self.session_id, self.target.kind)
+        if reg.bridges.get(key) is self:
+            del reg.bridges[key]
         if self.guests:
             self.guests.clear()
             self._announce_guests()
@@ -540,14 +772,15 @@ class Bridge:
             InvalidURI,
         )
 
-        url = ws_url(self.row["host_url"], self.room)
-        host = urlsplit(url).hostname or ""
         attempt = 0
         while True:
             code: int | None = None
             status: int | None = None  # refused before the upgrade
             self._last_error = ""
             try:
+                # Again each time: the rooms sidecar's port changes when it restarts.
+                url = ws_url(self.target.host(self.app), self.room)
+                host = urlsplit(url).hostname or ""
                 async with connect(
                     url,
                     max_size=MAX_MESSAGE,
@@ -590,7 +823,14 @@ class Bridge:
             except InvalidStatus as e:
                 status = e.response.status_code
                 logger.info("Guest notes of %s: the host answered %s", self.session_id, status)
-            except (OSError, InvalidHandshake, InvalidURI, TimeoutError, ValueError) as e:
+            except (
+                OSError,
+                InvalidHandshake,
+                InvalidURI,
+                TimeoutError,
+                ValueError,
+                GuestNotesError,
+            ) as e:
                 logger.info("Guest notes of %s: cannot reach the room: %s", self.session_id, e)
             finally:
                 self.ws = None
@@ -699,8 +939,9 @@ class Bridge:
     def _advance(self, seq: Any) -> None:
         if isinstance(seq, int) and not isinstance(seq, bool) and seq > self.seq:
             self.seq = seq
-            self.row["last_seq"] = seq
-            self.app.repo.set_guest_room(self.session_id, last_seq=seq)
+            column = self.target.seq_column
+            self.row[column] = seq
+            self.app.repo.set_guest_room(self.session_id, **{column: seq})
 
     async def _on_envelope(self, env: bytes) -> None:
         try:
@@ -815,10 +1056,7 @@ class Bridge:
         return self._guest_view()[0]
 
     def _announce_guests(self) -> None:
-        present, typing = self._guest_view()
-        shared_notes.broadcast_json(
-            self.app, self.session_id, {"type": "guests", "present": present, "typing": typing}
-        )
+        _announce_guests(self.app, self.session_id)  # every room of the meeting together
 
     def _expire_guests(self, now: float) -> None:
         gone = [gid for gid, g in self.guests.items() if now - g.seen > PRESENCE_TTL]
@@ -894,7 +1132,7 @@ class Bridge:
             since = self.seq
             self.dirty = False
             try:
-                await post_snapshot(self.app, self.session_id, self.row, since)
+                await post_snapshot(self.app, self.session_id, self.row, since, self.target)
             except GuestNotesError as e:
                 self.dirty = True
                 logger.warning("Guest notes of %s: snapshot not posted: %s", self.session_id, e)
@@ -932,7 +1170,7 @@ class Bridge:
             self._queue(T_PRESENCE, env)
         if self.dirty and now - self._last_snapshot >= SNAPSHOT_EVERY:
             await self.snapshot()
-        if now - self._last_auto_check >= AUTO_END_EVERY:
+        if self.target.kind == PRIMARY and now - self._last_auto_check >= AUTO_END_EVERY:
             self._last_auto_check = now
             row = self.app.repo.guest_room(self.session_id)
             due = _parse(row["auto_end_at"]) if row else None
@@ -944,6 +1182,9 @@ class Bridge:
     async def _host_ended(self, expires: Any, ended_at: Any = None) -> None:
         if self.closing:
             return
+        if self.target.kind == MIRROR:
+            self._mirror_gone("ended")
+            return
         row = self.app.repo.guest_room(self.session_id)
         if row is None or row["deleted_at"] or row["ended_at"]:
             return
@@ -954,9 +1195,13 @@ class Bridge:
         self.app.repo.set_guest_room(self.session_id, **fields)
         history.log(self.app, self.session_id, "guest_notes_ended", by="", reason="host")
         _seal(self.app, self.session_id, SEAL_ENDED)
+        _spawn(self.app, _follow_primary(self.app, self.session_id, "end"))
 
     async def _host_deleted(self) -> None:
         if self.closing:
+            return
+        if self.target.kind == MIRROR:
+            self._mirror_gone("deleted")
             return
         row = self.app.repo.guest_room(self.session_id)
         if row is None or row["deleted_at"]:
@@ -964,6 +1209,20 @@ class Bridge:
         self.app.repo.set_guest_room(self.session_id, deleted_at=_iso(_now()))
         history.log(self.app, self.session_id, "guest_notes_stopped", by="", reason="host")
         _seal(self.app, self.session_id, SEAL_STOPPED)
+        _spawn(self.app, _follow_primary(self.app, self.session_id, "delete"))
+
+    def _mirror_gone(self, how: str) -> None:
+        """The mirror host ended or deleted its copy: only this bridge stops; the primary room
+        and its link go on (the page falls back to iroh)."""
+        logger.warning("Guest notes of %s: the mirror host %s the room", self.session_id, how)
+        history.log(
+            self.app,
+            self.session_id,
+            "guest_notes_mirror_gone",
+            by="",
+            how=how,
+            host=self.target.stored_host,
+        )
 
 
 def _guest_name(name: str) -> str:
@@ -993,13 +1252,90 @@ def _live(row: dict | None) -> bool:
     return row is not None and not row["deleted_at"] and not row["ended_at"]
 
 
+def _served(row: dict) -> bool:
+    """An iroh room the rooms sidecar should serve: not stopped and not expired (an ended room
+    stays readable over iroh until it expires)."""
+    if (row.get("transport") or "host") != "iroh" or row.get("deleted_at"):
+        return False
+    expires = _parse(row.get("expires_at", ""))
+    return expires is None or expires > _now()
+
+
 async def start(app: AppContext, session_id: str, by: str = "") -> dict:
     """The meeting's live room: the one there is, or a new one (an ended one is deleted from
-    its host first: one room per meeting). Raises access.Hidden, Forbidden,
-    GuestNotesUnavailable, GuestNotesError."""
+    its host first: one room per meeting) where `plan` puts it. Raises access.Hidden,
+    Forbidden, GuestNotesUnavailable, GuestNotesError."""
     reg = _registry(app)
     async with reg.lock(session_id):
         return await _start_locked(app, session_id, by)
+
+
+def _start_bridges(app: AppContext, row: dict, *, initial_snapshot: bool = True) -> bool:
+    """A bridge for each of the meeting's rooms that has none. True when one started."""
+    started = False
+    for target in links(row):
+        if bridge_for(app, row["session_id"], target.kind) is None:
+            Bridge(app, row["session_id"], row, target).start(initial_snapshot=initial_snapshot)
+            started = True
+    return started
+
+
+async def _create_room(app: AppContext, target: Link, row: dict, expires: datetime) -> None:
+    resp = await _call(
+        app,
+        target,
+        "PUT",
+        f"/live/{row['room']}",
+        headers={
+            "X-Room-Token": row["room_token"],
+            "X-Room-Expires": _expires_header(expires),
+        },
+    )
+    _ok(resp, "room")
+
+
+async def _open_iroh(app: AppContext, row: dict, expires: datetime) -> None:
+    """Make the room on the rooms sidecar's loopback host, exactly as on a publish host, and
+    serve it over iroh: fills the row's host_url, endpoint_id and relay. Under the rooms lock.
+    Raises GuestNotesUnavailable (the sidecar cannot start) or GuestNotesError (the room was
+    refused; a half-made one is removed)."""
+    from .link import LinkError
+
+    rooms = await _rooms(app)
+    row["host_url"] = rooms.base_url
+    target = links(row)[0]
+    try:
+        await _create_room(app, target, row, expires)
+    except GuestNotesUnavailable:
+        raise
+    except GuestNotesError as e:
+        raise GuestNotesError(f"Guest rooms on this computer did not take the room: {e}") from e
+    try:
+        served = await rooms.room_start(row["room"])
+        endpoint, relay = str(served.get("endpoint_id") or ""), str(served.get("relay") or "")
+        if not endpoint or not relay:
+            await rooms.room_stop(row["room"])
+            raise LinkError("the rooms sidecar named no endpoint or relay")
+    except LinkError as e:
+        with contextlib.suppress(GuestNotesError):
+            await _delete_on(app, target, row)
+        raise GuestNotesError(f"Could not serve the guest room over iroh: {e}") from e
+    row["endpoint_id"], row["relay"] = endpoint, relay
+
+
+async def _open_mirror(app: AppContext, row: dict, host: str, expires: datetime) -> None:
+    """The same room (id, key, room token) on a publish host, with its own publisher token.
+    Without it the iroh room still works: a refusal is logged, not raised."""
+    token = pf.new_token()
+    target = Link(MIRROR, "host", host, token, "mirror_last_seq")
+    try:
+        await _create_room(app, target, row, expires)
+    except GuestNotesError as e:
+        logger.warning("Guest notes of %s: no mirror on %s: %s", row["session_id"], host, e)
+        history.log(app, row["session_id"], "guest_notes_mirror_failed", host=host, error=str(e))
+        return
+    row["mirror_host_url"], row["mirror_token"], row["mirror_last_seq"] = host, token, 0
+    app.repo.set_guest_room(row["session_id"], mirror_host_url=host, mirror_token=token)
 
 
 async def _start_locked(app: AppContext, session_id: str, by: str) -> dict:
@@ -1010,59 +1346,86 @@ async def _start_locked(app: AppContext, session_id: str, by: str) -> dict:
     row = app.repo.guest_room(session_id)
     if _live(row):
         assert row is not None
-        if bridge_for(app, session_id) is None:
-            Bridge(app, session_id, row).start()
+        if _served(row):
+            await _serve_now(app, [row])
+        _start_bridges(app, row)
         return row
-    if row is not None and not row["deleted_at"]:
-        try:  # ended: its link goes with it
-            await _delete_on_host(app, row)
-        except GuestNotesError as e:
-            logger.info("Guest notes of %s: the ended room stays on its host: %s", session_id, e)
-    host = host_url(app)
+    if row is not None and not row["deleted_at"]:  # ended: its link goes with it
+        await _remove_everywhere(app, row)
+    p = await plan(app)
     try:
         await asyncio.to_thread(shared_notes.ensure_doc_blocking, app, session_id)
     except shared_notes.NotesDocError as e:
         raise GuestNotesUnavailable("The notes cannot be opened now") from e
     key = gf.new_key()
     now = _now()
+    expires = now + timedelta(days=ROOM_DAYS)
     row = {
         "session_id": session_id,
         "room": gf.new_room(),
         "key": key,
         "token": pf.new_token(),
         "room_token": gf.room_token(key),
-        "host_url": host,
+        "host_url": p.host_url,
         "created_at": _iso(now),
         "started_by": by,
-        "expires_at": _iso(now + timedelta(days=ROOM_DAYS)),
+        "expires_at": _iso(expires),
         "last_seq": 0,
+        "transport": p.transport,
     }
-    resp = await _request(
-        app,
-        "PUT",
-        host,
-        f"/live/{row['room']}",
-        row["token"],
-        headers={
-            "X-Room-Token": row["room_token"],
-            "X-Room-Expires": _expires_header(now + timedelta(days=ROOM_DAYS)),
-        },
-    )
-    _ok(resp, "room")
-    app.repo.put_guest_room(row)
+    if p.transport == "iroh":
+        try:
+            async with _registry(app).rooms_lock:
+                await _open_iroh(app, row, expires)
+                app.repo.put_guest_room(row)
+        except GuestNotesError as e:
+            await _maybe_stop_rooms(app)
+            if app.settings.guest_transport != "auto":
+                raise
+            logger.warning("Guest notes of %s: no iroh room (%s)", session_id, e)
+            # Task 20: a tunnel comes before the host here.
+            p = _host_plan(app, str(e))
+            row.update(host_url=p.host_url, transport="host", endpoint_id="", relay="")
+    if row["transport"] == "host":
+        await _create_room(app, links(row)[0], row, expires)
+        app.repo.put_guest_room(row)
+        await _maybe_stop_rooms(app)
+    elif p.mirror_host:
+        await _open_mirror(app, row, p.mirror_host, expires)
     row = app.repo.guest_room(session_id) or row
-    history.log(app, session_id, "guest_notes_started", host=host, by=by)
+    history.log(
+        app,
+        session_id,
+        "guest_notes_started",
+        host=row["host_url"] if row["transport"] == "host" else row["mirror_host_url"],
+        transport=row["transport"],
+        by=by,
+    )
     _seal(app, session_id, SEAL_STARTED)
-    bridge = Bridge(app, session_id, row)
-    # The first snapshot before the link is handed out: an early guest sees the notes at once.
-    await bridge.snapshot()
-    bridge.start(initial_snapshot=False)
+    for target in links(row):
+        bridge = Bridge(app, session_id, row, target)
+        # The first snapshot before the link is handed out: an early guest sees the notes at once.
+        await bridge.snapshot()
+        bridge.start(initial_snapshot=False)
     return row
 
 
+async def _end_on(app: AppContext, target: Link, row: dict, expires: datetime) -> None:
+    resp = await _call(
+        app,
+        target,
+        "POST",
+        f"/live/{row['room']}/end",
+        headers={"X-Room-Expires": _expires_header(expires)},
+    )
+    _ok(resp, "end", gone_ok=True)
+
+
 async def end(app: AppContext, session_id: str, by: str = "") -> dict | None:
-    """End the live room: a final snapshot, then read-only on the host until it expires (24 h,
-    at most the room's 7 days). None when there is no live room. Raises GuestNotesError."""
+    """End the live room (and its mirror): a final snapshot, then read-only until it expires
+    (24 h, at most the room's 7 days; an iroh room is served until then). None when there is
+    no live room. Raises GuestNotesError when the primary room's host refuses (a mirror's
+    refusal is logged)."""
     reg = _registry(app)
     async with reg.lock(session_id):
         row = app.repo.guest_room(session_id)
@@ -1075,34 +1438,39 @@ async def end(app: AppContext, session_id: str, by: str = "") -> dict | None:
         cap = _parse(row["expires_at"]) or now + timedelta(days=ROOM_DAYS)
         expires = min(expires, cap)
         final = {**row, "ended_at": ended_at, "expires_at": _iso(expires)}
-        bridge = bridge_for(app, session_id)
-        if bridge is not None:
-            bridge.closing = True
-            bridge.row.update(ended_at=ended_at, expires_at=final["expires_at"])
-            if not await bridge.snapshot():
-                logger.warning("Guest notes of %s: ended without a final snapshot", session_id)
-        else:
-            try:
-                await post_snapshot(app, session_id, final, row["last_seq"])
-            except GuestNotesError as e:
-                logger.warning("Guest notes of %s: no final snapshot: %s", session_id, e)
+        targets = links(row)
+        bridges = [bridge_for(app, session_id, t.kind) for t in targets]
+        for target, bridge in zip(targets, bridges, strict=True):
+            if bridge is not None:
+                bridge.closing = True
+                bridge.row.update(ended_at=ended_at, expires_at=final["expires_at"])
+                if not await bridge.snapshot():
+                    logger.warning(
+                        "Guest notes of %s: ended without a final %s snapshot",
+                        session_id,
+                        target.kind,
+                    )
+            else:
+                try:
+                    await post_snapshot(app, session_id, final, row[target.seq_column], target)
+                except GuestNotesError as e:
+                    logger.warning("Guest notes of %s: no final snapshot: %s", session_id, e)
         try:
-            resp = await _request(
-                app,
-                "POST",
-                row["host_url"],
-                f"/live/{row['room']}/end",
-                row["token"],
-                headers={"X-Room-Expires": _expires_header(expires)},
-            )
-            _ok(resp, "end", gone_ok=True)
+            await _end_on(app, targets[0], row, expires)
         except GuestNotesError:
-            if bridge is not None:  # still live: guests keep typing, the owner may try again
-                bridge.closing = False
-                bridge.row.update(ended_at="", expires_at=row["expires_at"])
+            for bridge in bridges:  # still live: guests keep typing, the owner may try again
+                if bridge is not None:
+                    bridge.closing = False
+                    bridge.row.update(ended_at="", expires_at=row["expires_at"])
             raise
-        if bridge is not None:
-            await bridge.stop()
+        for target in targets[1:]:
+            try:
+                await _end_on(app, target, row, expires)
+            except GuestNotesError as e:
+                logger.warning("Guest notes of %s: the mirror did not end: %s", session_id, e)
+        for bridge in bridges:
+            if bridge is not None:
+                await bridge.stop()
         app.repo.set_guest_room(session_id, ended_at=ended_at, expires_at=final["expires_at"])
         history.log(
             app,
@@ -1113,39 +1481,92 @@ async def end(app: AppContext, session_id: str, by: str = "") -> dict | None:
             auto=not by,
         )
         _seal(app, session_id, SEAL_ENDED)
-        return app.repo.guest_room(session_id)
+        row = app.repo.guest_room(session_id)
+        if row is not None and _served(row):
+            _expire_later(app, row)
+        return row
 
 
-async def _delete_on_host(app: AppContext, row: dict) -> None:
-    resp = await _request(app, "DELETE", row["host_url"], f"/live/{row['room']}", row["token"])
+async def _delete_on(app: AppContext, target: Link, row: dict) -> None:
+    resp = await _call(app, target, "DELETE", f"/live/{row['room']}")
     _ok(resp, "delete", gone_ok=True)
 
 
+async def _remove_iroh(app: AppContext, row: dict) -> None:
+    """An iroh room gone from this computer: deleted from the loopback host and no longer
+    served (its key deleted, so the link's endpoint is dead). Best effort, never raises: a
+    sidecar that cannot start serves nothing."""
+    from .link import LinkError
+
+    async with _registry(app).rooms_lock:
+        try:
+            rooms = await _rooms(app)
+        except GuestNotesUnavailable as e:
+            logger.warning("Guest notes room %s not removed here: %s", row["room"], e)
+            return
+        try:
+            await _delete_on(app, links(row)[0], row)
+        except GuestNotesError as e:
+            logger.warning("Guest notes room %s stays on this computer: %s", row["room"], e)
+        try:
+            await rooms.room_stop(row["room"])
+        except LinkError as e:
+            logger.warning("Guest notes room %s is still served: %s", row["room"], e)
+
+
+async def _remove_everywhere(app: AppContext, row: dict) -> None:
+    """Best effort: the room off its host (or this computer) and its mirror (an ended room
+    replaced by a new one, a deleted meeting)."""
+    for target in links(row):
+        if target.transport == "iroh":
+            await _remove_iroh(app, row)
+            continue
+        try:
+            await _delete_on(app, target, row)
+        except GuestNotesError as e:
+            logger.info(
+                "Guest notes of %s: the old room stays on its host: %s", row["session_id"], e
+            )
+    _cancel_expiry(app, row["session_id"])
+
+
 async def stop(app: AppContext, session_id: str, by: str = "") -> dict | None:
-    """Delete the room from its host at once (live or ended). None when there is none."""
+    """Delete the room (and its mirror) at once, live or ended. None when there is none."""
     reg = _registry(app)
     async with reg.lock(session_id):
         return await _stop_locked(app, session_id, by)
 
 
-async def _stop_locked(app: AppContext, session_id: str, by: str) -> dict | None:
+async def _stop_locked(
+    app: AppContext, session_id: str, by: str, *, idle_check: bool = True
+) -> dict | None:
     row = app.repo.guest_room(session_id)
     if row is None or row["deleted_at"]:
         return None
-    bridge = _registry(app).bridges.get(session_id)
-    if bridge is not None:
+    reg = _registry(app)
+    targets = links(row)
+    bridges = [b for t in targets if (b := reg.bridges.get((session_id, t.kind))) is not None]
+    for bridge in bridges:
         bridge.closing = True
     try:
-        await _delete_on_host(app, row)
+        # The mirror first: a host that refuses leaves everything as it was.
+        for target in reversed(targets):
+            if target.transport != "iroh":
+                await _delete_on(app, target, row)
     except GuestNotesError:
-        if bridge is not None:
+        for bridge in bridges:
             bridge.closing = False
         raise
-    if bridge is not None:
+    if targets[0].transport == "iroh":
+        await _remove_iroh(app, row)
+    for bridge in bridges:
         await bridge.stop()
+    _cancel_expiry(app, session_id)
     app.repo.set_guest_room(session_id, deleted_at=_iso(_now()))
     history.log(app, session_id, "guest_notes_stopped", by=by)
     _seal(app, session_id, SEAL_STOPPED)
+    if idle_check:
+        await _maybe_stop_rooms(app)
     return app.repo.guest_room(session_id)
 
 
@@ -1153,7 +1574,7 @@ async def new_link(app: AppContext, session_id: str, by: str = "") -> dict:
     """A new room and key; the old link stops working."""
     reg = _registry(app)
     async with reg.lock(session_id):
-        await _stop_locked(app, session_id, by)
+        await _stop_locked(app, session_id, by, idle_check=False)
         return await _start_locked(app, session_id, by)
 
 
@@ -1176,17 +1597,137 @@ def forget_session(app: AppContext, session_id: str):
 
 
 async def _forget(app: AppContext, session_id: str, row: dict) -> None:
-    bridge = _registry(app).bridges.get(session_id)
-    if bridge is not None:
+    reg = _registry(app)
+    for kind in (PRIMARY, MIRROR):
+        bridge = reg.bridges.get((session_id, kind))
+        if bridge is None:
+            continue
         bridge.closing = True
         try:
             await bridge.stop()
         except Exception:
             logger.warning("Guest notes bridge of %s did not stop cleanly", session_id)
     try:
-        await _delete_on_host(app, row)
+        await _remove_everywhere(app, row)
+        await _maybe_stop_rooms(app)
     except Exception:
         logger.warning("Could not delete guest notes room %s from %s", row["room"], row["host_url"])
+
+
+async def _follow_primary(app: AppContext, session_id: str, action: str) -> None:
+    """The primary room's host ended ("end") or deleted ("delete") it: the mirror does the same
+    and its bridge leaves; a deleted iroh room is no longer served."""
+    async with _registry(app).lock(session_id):
+        row = app.repo.guest_room(session_id)
+        if row is None:
+            return
+        bridge = bridge_for(app, session_id, MIRROR)
+        if bridge is not None:
+            bridge.closing = True
+        for target in links(row)[1:]:
+            try:
+                if action == "end":
+                    expires = _parse(row["expires_at"]) or _now()
+                    await _end_on(app, target, row, expires)
+                else:
+                    await _delete_on(app, target, row)
+            except GuestNotesError as e:
+                logger.warning("Guest notes of %s: the mirror did not follow: %s", session_id, e)
+        if bridge is not None:
+            await bridge.stop()
+        if action == "delete" and (row.get("transport") or "host") == "iroh":
+            await _remove_iroh(app, row)
+            await _maybe_stop_rooms(app)
+        elif row is not None and _served(row):
+            _expire_later(app, row)
+
+
+# ---- the rooms sidecar's rooms --------------------------------------------------------------
+
+
+async def _serve_now(app: AppContext, rows: list[dict]) -> None:
+    """Serve iroh rooms again (after a start of the sidecar), with the relay their links name.
+    Best effort: a room that cannot be served is logged (its bridge keeps retrying)."""
+    try:
+        async with _registry(app).rooms_lock:
+            await _rooms(app)
+            await _serve(app, rows)
+    except GuestNotesUnavailable as e:
+        logger.warning("Guest notes: rooms on this computer are not served: %s", e)
+
+
+async def _serve(app: AppContext, rows: list[dict]) -> None:
+    """`room_start` for each row (under the rooms lock, the sidecar running). The endpoint id
+    stays (the sidecar keeps each room's key); if it ever changes, the row follows."""
+    from .link import LinkError
+
+    for row in rows:
+        try:
+            served = await app.rooms_link.room_start(row["room"], relay=row["relay"] or None)
+        except LinkError as e:
+            logger.warning("Guest notes room of %s is not served: %s", row["session_id"], e)
+            continue
+        endpoint = str(served.get("endpoint_id") or "")
+        relay = str(served.get("relay") or "")
+        if endpoint and relay and (endpoint, relay) != (row["endpoint_id"], row["relay"]):
+            logger.warning(
+                "Guest notes room of %s: a new endpoint, the link changed", row["session_id"]
+            )
+            app.repo.set_guest_room(row["session_id"], endpoint_id=endpoint, relay=relay)
+
+
+async def _reserve(app: AppContext) -> None:
+    """The rooms sidecar is up again after a crash: it serves nothing until told (RoomsLink
+    `on_restart`). Every room it should serve is started again; the bridges reconnect to its
+    new port by themselves."""
+    async with _registry(app).rooms_lock:
+        rows = [r for r in app.repo.live_guest_rooms() if _served(r)]
+        if rows and app.rooms_link.status.running:
+            logger.info("Guest notes: serving %d room(s) again after a restart", len(rows))
+            await _serve(app, rows)
+
+
+async def _maybe_stop_rooms(app: AppContext) -> None:
+    """Stop the rooms sidecar when no room needs it any more (stopped or expired)."""
+    rooms = app.rooms_link
+    if not rooms.active:
+        return
+    async with _registry(app).rooms_lock:
+        if rooms.active and not any(_served(r) for r in app.repo.live_guest_rooms()):
+            logger.info("Guest notes: no room is served over iroh, stopping the rooms sidecar")
+            await rooms.stop()
+
+
+def _cancel_expiry(app: AppContext, session_id: str) -> None:
+    task = _registry(app).expiry.pop(session_id, None)
+    if task is not None and task is not asyncio.current_task():
+        task.cancel()
+
+
+def _expire_later(app: AppContext, row: dict) -> None:
+    """An ended iroh room is served until it expires, then no longer (its key goes)."""
+    from .link import LinkError
+
+    reg = _registry(app)
+    session_id = row["session_id"]
+    _cancel_expiry(app, session_id)
+    expires = _parse(row["expires_at"])
+    if expires is None:
+        return
+
+    async def run() -> None:
+        await asyncio.sleep(max(0.0, (expires - _now()).total_seconds()))
+        if reg.expiry.get(session_id) is asyncio.current_task():
+            del reg.expiry[session_id]
+        async with reg.rooms_lock:
+            if app.rooms_link.status.running:
+                try:
+                    await app.rooms_link.room_stop(row["room"])
+                except LinkError as e:
+                    logger.info("Guest notes room of %s: %s", session_id, e)
+        await _maybe_stop_rooms(app)
+
+    reg.expiry[session_id] = _spawn(app, run())
 
 
 def recording_stopped(app: AppContext, session_id: str) -> None:
@@ -1212,24 +1753,38 @@ def _recording(app: AppContext, session_id: str) -> bool:
 
 
 async def resume(app: AppContext) -> int:
-    """At startup: a bridge for every live room (each posts a snapshot, then joins with the
-    last seq it applied). Returns how many started."""
+    """At startup: the iroh rooms served again (`room_start` with the relay their links name:
+    the endpoint ids stay), ended ones until they expire; then bridges for every live room and
+    its mirror (each posts a snapshot, then joins with the last seq it applied). Returns how
+    many meetings got a bridge."""
     if not await asyncio.to_thread(shared_notes.available):
         return 0
+    rows = [
+        r
+        for r in app.repo.live_guest_rooms()
+        if app.repo.session_owner(r["session_id"]) is not None
+    ]
+    served = [r for r in rows if _served(r)]
+    if served:
+        await _serve_now(app, served)
+        for row in served:
+            if row["ended_at"]:
+                _expire_later(app, row)
     started = 0
-    for row in app.repo.live_guest_rooms():
-        if row["ended_at"] or bridge_for(app, row["session_id"]) is not None:
+    for row in rows:
+        if row["ended_at"]:
             continue
-        if app.repo.session_owner(row["session_id"]) is None:
-            continue
-        Bridge(app, row["session_id"], row).start(initial_snapshot=True)
-        started += 1
+        if (row.get("transport") or "host") == "iroh" and not _served(row):
+            continue  # expired while this computer was off: nothing serves it
+        if _start_bridges(app, row):
+            started += 1
     return started
 
 
 async def shutdown(app: AppContext) -> None:
     """The backend stops: every bridge leaves (the rooms stay live on their hosts; guests keep
-    typing together and the next start catches up from the log)."""
+    typing together and the next start catches up from the log). The rooms sidecar is the
+    AppContext's to stop."""
     reg = app.guest_bridges
     if reg is None:
         return
@@ -1239,11 +1794,13 @@ async def shutdown(app: AppContext) -> None:
         task.cancel()
     if reg.tasks:
         await asyncio.gather(*list(reg.tasks), return_exceptions=True)
+    reg.expiry.clear()
 
 
 def relay_kind(relay: str) -> str:
     """Whose relay a room's address names: "" none, n0's public ones, ours, or a custom one."""
     host = (urlsplit(relay).hostname or relay) if relay else ""
+    host = host.rstrip(".")  # n0 relay URLs end in a dot (fully qualified hosts)
     if not host:
         return "none"
     if OUR_RELAY_HOST and host == OUR_RELAY_HOST:
