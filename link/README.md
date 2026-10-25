@@ -51,3 +51,40 @@ Everything runs on home's own endpoint (`link.key`), so a peer sees the same end
   `card`, when given, is an opaque signed JSON object forwarded as the top-level `card` field of that
   body (absent otherwise); a `card` in the backend's redeem reply comes back as `card` in the reply
   (null when none). The `pair` command prints it too when present.
+
+## Guest rooms (`rooms`)
+
+`mnemosyne-link rooms --data-dir D --guest-dir G --viewer-dir V --upload-token-file F [--relay URL]...`
+serves guest-notes rooms over iroh without remote access being on (`src/guest.rs`). It starts the
+embedded publish host on `127.0.0.1:<port>` (`src/host.rs`, data under `D/guest_rooms/host`); only
+the token in `F` creates rooms there (`X-Upload-Token`). `F` must exist, be non-empty and not be
+world-readable, or the command exits with an error. The ready line is
+`{"listen": "127.0.0.1:<port>", "relay_kind": "n0"|"custom"}` ("custom" when `--relay` is given),
+then stdin takes the commands below with the same reply rules as `home` (`id`, `op`, `ok`,
+`error`). Closing stdin stops nothing; SIGTERM closes every room endpoint and keeps their keys.
+
+| Request | Reply on success |
+| --- | --- |
+| `{"id", "op": "room_start", "room": <16 hex>, "relay"?: <relay URL>}` | `{"endpoint_id": <room endpoint id>, "relay": <relay URL>}` |
+| `{"id", "op": "room_stop", "room"}` | `{"closed": <whether it was served>}` |
+| `{"id", "op": "room_list"}` | `{"rooms": [{"room", "endpoint_id", "relay"}]}` |
+
+- Each room has its own endpoint and key, `D/guest_rooms/keys/<room>.key` (0600), so a restart
+  serves the same endpoint id and the guest link stays valid. `room_stop` deletes the key: a later
+  `room_start` is a new endpoint id. Starting a room that is served returns it unchanged.
+- `relay` absent: one relay is picked per process, the only `--relay` given, or (several, or n0's
+  when none is given) the home relay a throwaway endpoint connects to within 10 s; no relay
+  reachable is an error. Pass the `relay` from an earlier reply to keep the link's relay. A room
+  endpoint uses that one relay only, speaks only `mnemosyne/guest/1` (never the `T`/`P` streams of
+  `mnemosyne/link/1`) and is not announced by mDNS.
+- A guest opens one bi stream of frames `u32 BE len || tag (0 text, 1 binary) || payload` (`len`
+  counts the tag; payload at most 2 MiB + 64 KiB), proxied to `ws://127.0.0.1:<port>/live/<room>`:
+  text frames are WebSocket text messages, binary frames binary ones, both ways. The host's close
+  `(code, reason)` (4401, 4403, 4409, 4410, 4413, 4429, 1001, ...) becomes the connection's
+  application close, after the stream is finished so every frame before it arrives. The guest
+  finishing its stream closes the WebSocket with 1000 and the connection with the host's answer
+  (1000). The proxy's own closes: 4413 `frame_too_large` (after `{"type":"error","code":
+  "frame_too_large"}`) for a frame over the cap either way, 1002 for a bad tag or a truncated
+  frame, 1007 for text that is not UTF-8, 1011 when the host is not reachable or lost, 4401
+  `join_timeout` when no stream is opened within 15 s.
+- `home` answers these ops with an error, and `rooms` answers `dial`, `hangup` and `pair` with one.

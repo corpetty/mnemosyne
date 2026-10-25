@@ -7,6 +7,8 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use iroh_tickets::endpoint::EndpointTicket;
+use mnemosyne_link::guest::{GuestOptions, GuestRooms};
+use mnemosyne_link::host::{start_loopback_host, HostOptions};
 use mnemosyne_link::{
     bind, bind_with, load_or_create_key, serve_control, serve_home, serve_local, Control, Home,
     Invite, Lan, Relays, Remote,
@@ -41,6 +43,30 @@ enum Command {
         #[arg(long)]
         no_relay: bool,
     },
+    /// Serve guest-notes rooms over iroh, proxied to an embedded host on loopback.
+    ///
+    /// Prints one ready line `{"listen": "127.0.0.1:<port>", "relay_kind": "n0"|"custom"}` (the
+    /// loopback host), then stdin takes control commands (JSON lines: room_start, room_stop,
+    /// room_list; see the README), each answered by one JSON line on stdout. Closing stdin keeps
+    /// serving.
+    Rooms {
+        /// The backend's data directory: the host stores under guest_rooms/host, room keys go
+        /// in guest_rooms/keys.
+        #[arg(long)]
+        data_dir: PathBuf,
+        /// The built guest page.
+        #[arg(long)]
+        guest_dir: PathBuf,
+        /// The built publication viewer.
+        #[arg(long)]
+        viewer_dir: PathBuf,
+        /// A file holding the token that creates rooms on the host (not world-readable).
+        #[arg(long)]
+        upload_token_file: PathBuf,
+        /// A relay to use instead of n0's public ones (repeat for several: one is picked).
+        #[arg(long = "relay")]
+        relays: Vec<String>,
+    },
     /// Pair this machine with a home backend using an invite from its Settings.
     Pair {
         invite: String,
@@ -65,6 +91,12 @@ enum Command {
         listen: SocketAddr,
         #[arg(long)]
         no_relay: bool,
+    },
+    /// Dev only: a plain-HTTP iroh relay for the browser tests (feature `dev-relay`).
+    #[cfg(feature = "dev-relay")]
+    DevRelay {
+        #[arg(long, default_value = "127.0.0.1:8038")]
+        listen: SocketAddr,
     },
 }
 
@@ -236,6 +268,56 @@ async fn main() -> Result<()> {
             control.close_all().await;
             endpoint.close().await;
         }
+        Command::Rooms {
+            data_dir,
+            guest_dir,
+            viewer_dir,
+            upload_token_file,
+            relays,
+        } => {
+            let upload_token = read_secret(&upload_token_file)?;
+            let relays = Relays::from_urls(&relays)?;
+            let relay_origins = match &relays {
+                Relays::Custom(urls) => urls.iter().filter_map(relay_origin).collect(),
+                _ => Vec::new(),
+            };
+            let (listen, _host) = start_loopback_host(HostOptions {
+                data_dir: data_dir.clone(),
+                guest_dir,
+                viewer_dir,
+                upload_token,
+                relay_origins,
+            })
+            .await?;
+            let relay_kind = if relays == Relays::N0 { "n0" } else { "custom" };
+            print_json(serde_json::json!({
+                "listen": listen.to_string(),
+                "relay_kind": relay_kind,
+            }));
+            let rooms = Arc::new(GuestRooms::new(GuestOptions {
+                data_dir,
+                host: listen,
+                relays,
+            }));
+            tokio::spawn(serve_control(
+                rooms.clone(),
+                stdin_lines(),
+                tokio::io::stdout(),
+            ));
+            shutdown().await;
+            rooms.close_all().await;
+        }
+        #[cfg(feature = "dev-relay")]
+        Command::DevRelay { listen } => {
+            use iroh_relay::server::{RelayConfig, Server, ServerConfig};
+            let mut config = ServerConfig::default();
+            config.relay = Some(RelayConfig::new(listen));
+            let server = Server::spawn(config).await?;
+            let addr = server.http_addr().unwrap_or(listen);
+            print_json(serde_json::json!({"relay": format!("http://{addr}")}));
+            shutdown().await;
+            server.shutdown().await?;
+        }
         Command::Pair {
             invite,
             key_file,
@@ -283,6 +365,42 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// A secret from a file only its owner can read (trimmed; refused when empty).
+fn read_secret(path: &std::path::Path) -> Result<String> {
+    use anyhow::Context;
+    let meta = std::fs::metadata(path)
+        .with_context(|| format!("upload token file {} is missing", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o004 != 0 {
+            anyhow::bail!(
+                "upload token file {} is world-readable: chmod 600 it",
+                path.display()
+            );
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = meta;
+    let token = std::fs::read_to_string(path)
+        .with_context(|| format!("reading {}", path.display()))?
+        .trim()
+        .to_string();
+    if token.is_empty() {
+        anyhow::bail!("upload token file {} is empty", path.display());
+    }
+    Ok(token)
+}
+
+/// `host[:port]` of a relay, for the guest page's CSP.
+fn relay_origin(url: &iroh::RelayUrl) -> Option<String> {
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    })
 }
 
 /// Lines from stdin, read on a plain thread: tokio's stdin cannot cancel a blocked read, which

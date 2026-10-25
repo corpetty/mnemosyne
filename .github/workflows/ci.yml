@@ -121,7 +121,7 @@ jobs:
             link
             publish-host
       - name: Build the link sidecar (debug is fast enough for the tests)
-        run: cargo build --locked --manifest-path link/Cargo.toml
+        run: cargo build --locked --features dev-relay --manifest-path link/Cargo.toml
       # The guest-notes specs meet on a real publish host (tests-e2e/start-publish-host.sh).
       - name: Build the publish host
         run: cargo build --locked --manifest-path publish-host/Cargo.toml

@@ -173,7 +173,7 @@ fn set(obj: &Object, key: &str, value: &JsValue) {
 impl GuestConn {
     /// Queues one frame (`tag` 0 = text, 1 = binary) and resolves once it is written to the
     /// stream (not when the peer has read it). Frames go out in call order. Rejects for a bad
-    /// tag, a payload over 2 MiB + 64 KiB, or a closed connection.
+    /// tag, a payload over 8 MiB + 64 KiB (`frame::MAX_PAYLOAD`), or a closed connection.
     pub fn send(&self, tag: u8, bytes: &[u8]) -> Promise {
         let frame = match frame::encode(tag, bytes) {
             Ok(frame) => frame,
