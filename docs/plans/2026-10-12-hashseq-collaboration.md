@@ -885,6 +885,142 @@ gains a socket per transport behind one interface, so `GuestDoc` and the editor 
   guest page live on GitHub Pages, and the menu's wording for each transport ("works while this
   computer is on", "through a free testing relay", "through a temporary Cloudflare address").
 
+## Phase 11: the notes editor, live
+
+### Phase 11 design (drafted 2026-10-25, for review)
+
+Status: proposal, nothing built. Drafted against main at 9657a04 (phase 10 merged, unreleased).
+Asked for by Corey (2026-10-25) after comparing our editor with David's kb (hashseq web/kb.js at
+94f5e3c, APP_NOTES 22 "the chrome was in the way"): tools where the work is, live carets and
+selections (also across iroh and the host mirror), and inserts that know the meeting. Decided by
+Corey (2026-10-25): a slim fixed toolbar stays beside the new tools; only task lines with a person
+become action items; guests' ones count, named as theirs; guests may insert time chips.
+
+Why: the notes are now edited live by the owner, the team and guests, but they show only "Ina is
+typing", formatting means a trip to a fixed bar, and nothing in the notes knows it belongs to a
+meeting: a moment, a person or an earlier meeting is plain text, and a to-do typed during the
+meeting reaches Tasks only if the summary happens to pick it up.
+
+No change to the document model. Everything stays phase 6's flat seq (line kinds as closed `block`
+marks, inline marks); the inserts are `link` marks with `mnemosyne:` URLs. The wire changes only in
+presence, with optional fields, so pages and apps from 0.24 and later keep working together.
+
+**1. Tools where the work is** (one implementation in src/lib/notes/ui/, used by SharedNotes on the
+desktop and the team web app, and by the guest page)
+
+- **Selection toolbar.** A selection that is not collapsed opens a small toolbar above it (below
+  when there is no room), following scroll; it hides on collapse, Escape and typing. Buttons:
+  Bold, Italic, Strike, Code, Link, Comment, and "Turn into" (Text, Heading 1-3, Bulleted,
+  Numbered, Task, Quote, Code block) for the selected lines. Read-only readers get Comment only, as
+  today. It sits outside the contenteditable (text extraction never sees it), is placed from the
+  range's client rects, is a `role="toolbar"`, and Alt+F10 focuses it (Escape gives the editor its
+  focus and selection back). Its buttons call the existing `EditorInput` (`toggleInline`,
+  `setLineKind`, the link request, the comment flow): no new commands.
+- **`/` menu.** Typing `/` at a line start or after a space (not inside code, inline code or a
+  link) opens a menu at the caret; what follows filters it (names and aliases); ↑/↓, Enter or Tab
+  picks; Escape, or a space when nothing matches, closes it and leaves the text. Picking removes the
+  `/query` and applies, as one undo entry. Ctrl+/ opens it anywhere. Groups: "This meeting" (Time
+  now, Action item, Person, Earlier meeting, each only where it can work) first, then "Blocks"
+  (Text, Heading 1-3, Bulleted, Numbered, Task, Quote, Code block, Table). The editor keeps focus
+  (a listbox through `aria-activedescendant`). `@` opens the person picker and `[[` the meeting
+  picker directly, under the same rules.
+- **A slim fixed toolbar stays** (Corey): one row instead of today's four groups: "Turn into" (the
+  line kinds), Bold, Italic, Task, Insert (opens the `/` menu at the caret, for those who never type
+  `/`) and Comment; the rest lives in the selection toolbar and the `/` menu. A quiet hint under the
+  editor ("Type / for blocks and inserts, @ for a person, [[ for a meeting"); the status line
+  stays; every shortcut stays.
+- **Touch** (`pointer: coarse`, mostly guests on phones): the native selection menu is left alone; a
+  compact bar sits above the on-screen keyboard (`visualViewport`) with Bold, Italic, list, task, `/`
+  and Comment.
+
+**2. Live carets and selections**
+
+- **What travels:** your selection as two anchors, each the element id of the character before the
+  position (null = the start), the anchoring the editor already uses to keep its own caret through
+  remote edits (`seqIdAt`/`seqPositionOf`, APP_NOTES 20). Only while the editor has focus; blur
+  sends none. An id not known yet (its frame still on the way) hides that caret until it arrives.
+- **Desktop and team web app:** the notes WebSocket's presence JSON gains `sel`
+  (`{"type":"presence","typing":b,"sel":{"a":id|null,"f":id|null}|null}`). Clients send it at most
+  every 100 ms; the hub drops faster ones, relays it with a stable member key, and never stores or
+  logs it. Readers send it too (they select to comment).
+- **Guests:** the PRESENCE envelope gains an optional `sel` (older pages ignore it), sent on change
+  at most every 150 ms plus the existing heartbeat. Hosts relay it as they relay presence today,
+  never logged.
+- **The bridge** turns guests' presence into the desktop's `guests` JSON with carets, and the
+  owner-side members' presence into sealed PRESENCE envelopes for the room (gid `o:<member key>`),
+  one per visible member instead of today's single owner heartbeat.
+- **Across the mirror:** the bridge forwards each guest PRESENCE envelope it hears in one of the
+  meeting's rooms, byte for byte, into the others (the iroh room and the host mirror). Guests on
+  iroh and guests on the host see each other, typing included, which closes phase 10's open limit.
+  No loop: a room never echoes to its sender, and the bridge forwards only what it did not send.
+- **Rendering:** an overlay beside the editor root (`pointer-events: none`, `aria-hidden`): a 2 px
+  caret in the person's colour with a name flag (shown when it moves, fading to the bar after 3 s),
+  selections as translucent rects; recomputed in one animation frame after a remote frame, a local
+  render, scroll or resize. Colours: 8, index = a hash of the member key; the present list shows
+  each person's dot, yours included.
+- **Cost:** a presence update is about 200 bytes sealed; ten people moving their carets at the
+  limit is about 13 KB/s, within n0's relays and ours.
+
+**3. Inserts that know the meeting** (chips)
+
+- All three are `link` marks with a `mnemosyne:` URL over ordinary text, so notes-core, markdown
+  render and parse, sync, the fold and comments need no change. A link whose URL starts with
+  `mnemosyne:` renders as a chip: the link prompt does not open on it, Backspace at its end removes
+  it whole, and concurrent different URLs fall back to plain text as links already do.
+  * **Time:** text `12:34` (the joined timeline when inserted), URL `mnemosyne:t/<part>/<seconds>`
+    (part + seconds, like bookmarks and comment anchors). The value is the live clock while
+    recording, else the player's position, else Time is not offered. A click seeks the player
+    (desktop, team web app). Guests can insert it when META carries `clock: {part, started_at}`
+    (new, sent while recording; the page counts from when it received it); on the guest page chips
+    are plain text, as guests have no audio. Combine (services/combine.py) rewrites the other
+    meeting's part numbers in these URLs, as it renumbers its parts.
+  * **Person:** text `@Ada Lovelace`, URL `mnemosyne:person/<name>` (people are by name,
+    services/people.py). Picker: this meeting's speakers and attendees first, then People (on a
+    team server only people from meetings the caller can see); on the guest page only the names
+    present in the room, else free text: the guest page never receives People. A click opens the
+    person.
+  * **Earlier meeting:** text = its title and date, URL `mnemosyne:meeting/<id>`. Picker: the
+    meeting search the caller can already run, never on the guest page. A click opens it when
+    visible, else says it is not shared with you; guests see the text only.
+- **Elsewhere:** `Session.notes` keeps the markdown links. Obsidian export renders time chips as
+  `12:34`, person chips as `[[Ada Lovelace]]` when people links are on (else the name), meeting chips
+  as a link to that meeting's note when it is exported (export/links.py), else the title. The
+  summary, search, Ask and MCP see plain text (`@Ada Lovelace`, `12:34`, the title), never
+  `mnemosyne:` URLs (one `plain_notes` helper). Publishing never includes notes (unchanged).
+
+**Action items from the notes**
+
+- A task line with a person chip is an action item of the meeting (Corey); a task line without one
+  stays a checklist in the notes.
+  Owner = the line's first person chip, text = the line without chips, `at` = its first time chip,
+  done = `task_done`. "/Action item" makes the line a task and opens the person picker.
+- They are derived at each fold (the sidecar's fold reply lists task lines with their line ids, as
+  it lists comment ranges) into `sessions.notes_items`, keyed by the line's terminator id, so they
+  need no summary: Tasks, the brief, the digest and Obsidian list them within seconds of typing
+  (`TaskItem.source = "notes"`). Phase 4 linking treats them as mentions (key
+  `<session>:n:<line id>`). Done goes both ways: ticking in Tasks writes `task_done` into the doc
+  through a new sidecar op `set_kind` (broadcast like `mark_comment`); ticking in the notes reaches
+  the task object at the next fold.
+- The summary is told they are already action items, and `same_item` drops LLM items that repeat
+  them. Their text and owner change in the notes only; done, follow, due and the issue link
+  anywhere.
+- Guests' task lines count too (Corey), as ordinary items; the history line names the guest. Library sync carries
+  the doc and each machine derives the items; phase 8 recipients see them read-only.
+
+**Tests.** Vitest: toolbar placement, `/` triggers and filtering, caret anchors through remote
+edits, chips and their plain text, throttles. cargo test: notes-core's `set_kind` and the fold's
+task list. pytest: the hub's `sel` relay and rate limit, the bridge's presence conversion and
+mirror forwarding, `notes_items`, fan-out into the doc, combine's rewrite, export. Playwright
+(Chromium and WebKit): two desktop pages see each other's caret; an iroh guest and a mirror guest
+see each other's caret and typing; the `/` menu and the toolbar; a time chip seeks; an action item
+typed in the notes shows in Tasks, and ticking it there ticks the line.
+
+**Order:** part 1 first (2 and 3 render inside it); then 2 and 3, which are independent.
+
+**Not in v1:** images in notes; dragging lines (our flat seq makes a move a delete plus an insert,
+so typing inside a moved line would stay behind: needs a look at hashseq's Move first); per-author
+colours on text; `mnemosyne:` links opened from Obsidian or a browser (a URL scheme handler); math.
+
 ## Later, each behind the prerequisites below
 
 - **Live shared notes** during a meeting: a scratchpad attendees type into (desktop, or the team
