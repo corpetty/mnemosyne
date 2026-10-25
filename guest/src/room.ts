@@ -10,14 +10,17 @@
 //   each of our frames in seq order. `since` is the highest seq seen (frames, snapshot, acks):
 //   a reconnect asks only for what came after it.
 // - reconnects with backoff (RECONNECT_MS) on any close but 4401/4410 (gone) and 4403 or an
-//   ended room (ended: nothing more can change). A text `ping` every PING_MS; nothing heard for
+//   ended room (ended: nothing more can change). 4429 (room full) is retried with the same
+//   backoff, in state 'full'. A text `ping` every PING_MS; nothing heard for
 //   DEAD_MS and the socket counts as dead.
 // - sends while not joined are queued and go out after the next welcome (only the latest
 //   presence is kept); `queue: false` drops them instead (GuestDoc's notes frames: it works out
 //   after a reconnect what the room lacks and sends exactly that).
 //
-// A refusal before the upgrade (404/410 gone, 503 full) is invisible to a browser WebSocket: it
-// is a close (1006) without an open. `probe`, when given, is asked after such a failure.
+// The host never refuses /live/<room> with an HTTP status (a browser WebSocket cannot see one): an
+// unknown, deleted or expired room is upgraded and closed at once with 4410, a full one with 4429.
+// A plain failure before the socket opened (1006, e.g. an older host or the network) is still
+// opaque; `probe`, when given, is asked after such a failure.
 
 export type RoomState = 'connecting' | 'live' | 'reconnecting' | 'ended' | 'gone' | 'full' | 'closed';
 
@@ -30,7 +33,8 @@ export const ROOM_CLOSE = {
   ended: 4403,
   lagged: 4409,
   gone: 4410,
-  tooLarge: 4413
+  tooLarge: 4413,
+  full: 4429
 } as const;
 
 /** Wait before reconnect attempt 1, 2, 3, 4, 5+ (ms). */
@@ -437,8 +441,8 @@ export class RoomClient {
       return;
     }
     if (code === ROOM_CLOSE.tooLarge) this.keepBackoff = true;
-    let full = false;
-    if (!opened && this.probe) {
+    let full = code === ROOM_CLOSE.full;
+    if (!opened && !full && this.probe) {
       let why: 'gone' | 'full' | null = null;
       try {
         why = await this.probe();

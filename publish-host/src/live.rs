@@ -5,6 +5,10 @@
 //! - The client's first text message, within `JOIN_TIMEOUT`, is
 //!   `{"type":"join","token":"<room token>","since":N}` (`since`: the last seq it has, 0 for
 //!   none). Anything else, or a wrong token, closes with 4401; a deleted or expired room 4410.
+//! - A room that cannot be joined is refused after the upgrade, never as an HTTP status (a browser
+//!   WebSocket cannot read one): an unknown, deleted or expired room closes at once with 4410
+//!   ("gone"), a room at its connection cap with 4429 ("room_full": try again later). Only a
+//!   malformed room id is an HTTP 400 before the upgrade.
 //! - The host answers `{"type":"welcome","seq":<last seq>,"snapshot_seq":<seq or null>,
 //!   "ended":bool,"ended_at":<secs or null>,"expires":<secs>,"present":n}`, then binary
 //!   `0x03 || snapshot_seq u64 BE || snapshot` when the client is behind the snapshot, then every
@@ -53,6 +57,7 @@ pub const CLOSE_ENDED: u16 = 4403;
 pub const CLOSE_LAGGED: u16 = 4409;
 pub const CLOSE_GONE: u16 = 4410;
 pub const CLOSE_TOO_LARGE: u16 = 4413;
+pub const CLOSE_FULL: u16 = 4429;
 
 /// A connection counted into its room; counted out when dropped, however the socket ends (or
 /// if the upgrade never happens).
@@ -160,24 +165,34 @@ async fn await_join(socket: &mut WebSocket) -> Result<Join, Stop> {
     }
 }
 
+/// Sends a close frame and waits briefly for the peer's answer, so it sees a clean handshake.
+async fn close_with(socket: &mut WebSocket, code: u16, reason: &'static str) {
+    let frame = CloseFrame {
+        code,
+        reason: Utf8Bytes::from_static(reason),
+    };
+    if socket.send(Message::Close(Some(frame))).await.is_ok() {
+        let _ = timeout(Duration::from_secs(2), async {
+            while let Some(Ok(m)) = socket.recv().await {
+                if matches!(m, Message::Close(_)) {
+                    break;
+                }
+            }
+        })
+        .await;
+    }
+}
+
+/// A connection the room refused (gone, full): the upgrade completes and the close follows at
+/// once, because a browser cannot see the HTTP status of a refused upgrade.
+pub async fn refuse(mut socket: WebSocket, code: u16, reason: &'static str) {
+    close_with(&mut socket, code, reason).await;
+}
+
 /// Runs the connection to its end; the close (if any) is sent here.
 pub async fn run(mut socket: WebSocket, conn: Connection) {
     if let Err(Stop::Close(code, reason)) = serve(&mut socket, &conn).await {
-        let frame = CloseFrame {
-            code,
-            reason: Utf8Bytes::from_static(reason),
-        };
-        if socket.send(Message::Close(Some(frame))).await.is_ok() {
-            // Let the peer answer the close, so it sees a clean close handshake.
-            let _ = timeout(Duration::from_secs(2), async {
-                while let Some(Ok(m)) = socket.recv().await {
-                    if matches!(m, Message::Close(_)) {
-                        break;
-                    }
-                }
-            })
-            .await;
-        }
+        close_with(&mut socket, code, reason).await;
     }
     drop(conn);
 }

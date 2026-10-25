@@ -511,11 +511,10 @@ async fn join_needs_the_room_token() {
     );
     nothing_more(&mut ws).await;
 
-    // Unknown and malformed rooms are refused before the upgrade.
-    assert_eq!(
-        h.try_open("fedcba9876543210").await.err(),
-        Some(StatusCode::NOT_FOUND)
-    );
+    // An unknown room is upgraded and closed at once (a browser cannot read an HTTP status);
+    // a malformed id is refused before the upgrade.
+    let mut unknown = h.open("fedcba9876543210").await;
+    assert_eq!(next(&mut unknown).await, Got::Closed(4410, "gone".into()));
     assert_eq!(
         h.try_open("nope").await.err(),
         Some(StatusCode::BAD_REQUEST)
@@ -809,7 +808,8 @@ async fn deleting_the_room_closes_its_sockets() {
     send_join(&mut pending, ROOM_TOKEN, 0).await;
     assert_eq!(next(&mut pending).await, Got::Closed(4410, "gone".into()));
 
-    assert_eq!(h.try_open(ROOM).await.err(), Some(StatusCode::GONE));
+    let mut late = h.open(ROOM).await;
+    assert_eq!(next(&mut late).await, Got::Closed(4410, "gone".into()));
     let r = h.owner("DELETE", &format!("/live/{ROOM}"), &[], b"").await;
     assert_eq!((r.status, r.code().as_str()), (StatusCode::GONE, "gone"));
     // The tombstone keeps the id from being created again.
@@ -843,9 +843,10 @@ async fn an_expired_room_refuses_the_socket() {
         )
         .await;
     assert_eq!(r.json()["expires"], T0 + 1);
-    // Expired, not yet swept: refused as gone.
+    // Expired, not yet swept: closed as gone.
     h.clock.advance(1);
-    assert_eq!(h.try_open(ROOM).await.err(), Some(StatusCode::GONE));
+    let mut late = h.open(ROOM).await;
+    assert_eq!(next(&mut late).await, Got::Closed(4410, "gone".into()));
 }
 
 #[tokio::test]
@@ -902,10 +903,10 @@ async fn connections_are_capped() {
     h.create(ROOM).await;
     let a = h.open(ROOM).await;
     let (_b, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
-    assert_eq!(
-        h.try_open(ROOM).await.err(),
-        Some(StatusCode::SERVICE_UNAVAILABLE)
-    );
+    // Over the cap: upgraded, then closed at once with 4429.
+    let mut over = h.open(ROOM).await;
+    assert_eq!(next(&mut over).await, Got::Closed(4429, "room_full".into()));
+    drop(over);
     // A socket that goes away (joined or not) is counted out.
     drop(a);
     h.await_connections(ROOM, 1).await;

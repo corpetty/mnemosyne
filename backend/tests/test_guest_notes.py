@@ -428,7 +428,22 @@ async def test_the_recording_stopping_schedules_the_end(ctx, host, settings):
     await until(lambda: not bridge.running)
 
 
-async def test_a_room_deleted_while_away_is_refused_before_the_upgrade(ctx, host):
+async def test_a_full_room_is_retried_not_given_up(ctx, host):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    room = host.rooms[row["room"]]
+    room.full = True
+    for ws in list(room.clients):
+        await ws.close(1012)  # the connection drops; every retry is then told 4429
+    await until(lambda: len(host.joins) >= 1 and not bridge.connected.is_set())
+    await asyncio.sleep(0.15)  # several backoffs (0.01 s)
+    assert bridge.running
+    assert guest_notes.state(ctx.repo.guest_room(sid)) != "stopped"
+    room.full = False
+    await until(lambda: bridge.connected.is_set())
+
+
+async def test_a_room_deleted_while_away_is_closed_gone_at_the_upgrade(ctx, host):
     sid = meeting(ctx)
     row, bridge = await started(ctx, host, sid)
     await guest_notes.shutdown(ctx)

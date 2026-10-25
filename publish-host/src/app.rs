@@ -538,20 +538,35 @@ async fn delete_room(
 }
 
 /// `GET /live/<room>`: the room's WebSocket (see `live` for the protocol). The connection is
-/// counted before the upgrade, so a full room (503) or a gone one (404/410) is refused as HTTP.
+/// counted before the upgrade. A full room, or an unknown, deleted or expired one, still gets
+/// the upgrade and is closed at once (4429 / 4410), since a browser WebSocket cannot read an HTTP
+/// status; only a malformed room id is refused as HTTP 400.
 async fn live_socket(
     State(app): State<Shared>,
     UrlPath(room): UrlPath<String>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
     check_id(&room)?;
-    let (id, _) = app.rooms.connect(&room).await?;
-    let conn = Connection::new(app.clone(), room, id);
-    // Frames a little over the cap still reach the store, which answers `frame_too_large`;
-    // the socket itself only refuses what is far beyond it.
     let max = usize::try_from(app.cfg.room_frame_max_bytes)
         .unwrap_or(usize::MAX)
         .saturating_add(64 * 1024);
+    let (id, _) = match app.rooms.connect(&room).await {
+        Ok(joined) => joined,
+        Err(e) => {
+            let (code, reason) = match e.status {
+                StatusCode::NOT_FOUND | StatusCode::GONE => (live::CLOSE_GONE, "gone"),
+                StatusCode::SERVICE_UNAVAILABLE => (live::CLOSE_FULL, "room_full"),
+                _ => return Err(e),
+            };
+            return Ok(ws
+                .max_message_size(max)
+                .max_frame_size(max)
+                .on_upgrade(move |socket| live::refuse(socket, code, reason)));
+        }
+    };
+    let conn = Connection::new(app.clone(), room, id);
+    // Frames a little over the cap still reach the store, which answers `frame_too_large`;
+    // the socket itself only refuses what is far beyond it.
     Ok(ws
         .max_message_size(max)
         .max_frame_size(max)

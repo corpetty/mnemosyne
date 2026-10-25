@@ -15,8 +15,9 @@ ended/deleted) shared by two faces:
   message, `welcome`, the snapshot (0x03) when `since` is older, the log after `since` (0x01),
   then live: a client's 0x01 is given the next seq, logged, relayed to the OTHER clients and
   acknowledged to the sender; 0x02 (presence) is relayed, not logged; "ping" gets "pong". Close
-  codes 4401 (bad token), 4403 (frames to an ended room), 4410 (no such room or deleted).
-  An unknown room is refused before the upgrade with 404, a deleted one with 410; an empty or
+  codes 4401 (bad token), 4403 (frames to an ended room), 4410 (no such room or deleted),
+  4429 (`room.full`: at its connection cap). Like the real host, an unknown, deleted or full room
+  is upgraded and then closed at once (a browser cannot see an HTTP status); an empty or
   unknown frame gets `{"type":"error","code":"bad_frame"}`. `joins` lists (room, since).
 
 `GuestClient` is a guest page's socket for tests: it records everything it receives.
@@ -48,6 +49,7 @@ class FakeRoom:
     ended: bool = False
     ended_at: str | None = None
     deleted: bool = False
+    full: bool = False  # refused with 4429, as a room at its connection cap is
     clients: set = field(default_factory=set)
 
 
@@ -69,7 +71,6 @@ class FakeRoomHost:
             0,
             compression=None,
             max_size=None,
-            process_request=self._before_upgrade,
         )
         port = next(iter(self._server.sockets)).getsockname()[1]
         self.url = f"http://127.0.0.1:{port}"
@@ -156,24 +157,18 @@ class FakeRoomHost:
 
     # ---- WebSocket --------------------------------------------------------------------------
 
-    def _before_upgrade(self, connection, request):
-        """Refused before the upgrade, as the host does: 404 unknown, 410 deleted."""
-        room = self.rooms.get(request.path.rstrip("/").rsplit("/", 1)[-1])
-        if room is None:
-            return connection.respond(404, "not_found\n")
-        if room.deleted:
-            return connection.respond(410, "gone\n")
-        return None
-
     async def _ws(self, ws) -> None:
         room_id = ws.request.path.rstrip("/").rsplit("/", 1)[-1]
+        room = self.rooms.get(room_id)
+        if room is None or room.deleted:
+            await ws.close(4410, "gone")
+            return
+        if room.full:
+            await ws.close(4429, "room_full")
+            return
         try:
             hello = json.loads(await ws.recv())
         except (ConnectionClosed, ValueError):
-            return
-        room = self.rooms.get(room_id)
-        if room is None or room.deleted:
-            await ws.close(4410)
             return
         if not isinstance(hello, dict) or hello.get("token") != room.room_token:
             await ws.close(4401)

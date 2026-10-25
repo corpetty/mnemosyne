@@ -252,6 +252,38 @@ describe('RoomClient', () => {
     }
   });
 
+  it('4410 straight after the upgrade (never joined) is gone: no reconnect', async () => {
+    const { room } = make();
+    room.connect('ws://h/live/r', 'tok');
+    last().accept();
+    last().serverClose(ROOM_CLOSE.gone);
+    expect(room.state).toBe('gone');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeSocket.all.length).toBe(1);
+  });
+
+  it('4429 is full: retried with the normal backoff, then joins when there is room', async () => {
+    const { room } = make();
+    room.connect('ws://h/live/r', 'tok');
+    last().accept();
+    last().serverClose(ROOM_CLOSE.full);
+    expect(room.state).toBe('full');
+    await vi.advanceTimersByTimeAsync(RECONNECT_MS[0] - 1);
+    expect(FakeSocket.all.length).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeSocket.all.length).toBe(2);
+    last().accept();
+    last().serverClose(ROOM_CLOSE.full);
+    expect(room.state).toBe('full');
+    await vi.advanceTimersByTimeAsync(RECONNECT_MS[1] - 1);
+    expect(FakeSocket.all.length).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeSocket.all.length).toBe(3);
+    last().accept();
+    last().json(welcome());
+    expect(room.state).toBe('live');
+  });
+
   it('4403 is ended: read-only, no reconnect', async () => {
     const { room, log } = make();
     room.connect('ws://h/live/r', 'tok');

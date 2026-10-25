@@ -71,6 +71,7 @@ MAX_ENVELOPE = 2 * 1024 * 1024 + 1024  # what the host takes in one frame (G6)
 
 T_NOTES, T_PRESENCE, T_SNAPSHOT = 0x01, 0x02, 0x03
 CLOSE_BAD_TOKEN, CLOSE_ENDED, CLOSE_DELETED, CLOSE_TOO_LARGE = 4401, 4403, 4410, 4413
+CLOSE_FULL = 4429  # the room is at its connection cap: try again later (never "gone")
 CLOSE_LAGGED = 4409  # the relay dropped us for falling behind: rejoin at once with `since`
 
 # Why a record version is sealed (services/records.py EVENT_SEALS), as the records list shows it.
@@ -616,6 +617,8 @@ class Bridge:
             if code == CLOSE_LAGGED:
                 attempt = 0
                 continue
+            if code == CLOSE_FULL:
+                logger.info("Guest notes of %s: the room is full, trying again", self.session_id)
             if code == CLOSE_BAD_TOKEN:
                 logger.warning(
                     "Guest notes of %s: the host refused the room token", self.session_id
