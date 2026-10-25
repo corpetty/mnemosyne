@@ -237,6 +237,12 @@
 				return `Guest notes ended${d.auto ? ' automatically' : ''}${d.by ? ` by ${d.by}` : ''}`;
 			case 'guest_notes_stopped':
 				return `Guest notes stopped${d.by ? ` by ${d.by}` : ''}`;
+			case 'guest_notes_mirror_failed':
+				return `Guest notes: the publish host could not be used${d.error ? ` (${d.error})` : ''}`;
+			case 'guest_notes_mirror_gone':
+				return "Guest notes: the publish host's copy was removed";
+			case 'guest_notes_link_changed':
+				return 'Guest notes link changed (new tunnel address)';
 			case 'published':
 			case 'publication_updated': {
 				// where: "this computer" or "publish host" (backend services/publishing.py _log).

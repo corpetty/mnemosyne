@@ -12,6 +12,7 @@ export PUBLISH_LISTEN=127.0.0.1:8028
 export PUBLISH_DATA_DIR="$data"
 export PUBLISH_VIEWER_DIR="$root/backend/mnemosyne/api/static/viewer"
 export PUBLISH_GUEST_DIR="$root/backend/mnemosyne/api/static/guest"
+export PUBLISH_RELAY_ORIGINS=http://127.0.0.1:8038
 unset PUBLISH_UPLOAD_TOKEN
 export PUBLISH_WRITE_BURST=100000 PUBLISH_WRITE_PER_MINUTE=100000
 export PUBLISH_READ_BURST=100000 PUBLISH_READ_PER_MINUTE=100000

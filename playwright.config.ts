@@ -33,11 +33,19 @@ export default defineConfig({
     // also run in WebKit, the engine of the desktop app's window.
     {
       name: 'webkit',
-      testMatch: ['shared-notes.spec.ts', 'notes-editor.spec.ts', 'publish.spec.ts', 'guest-notes.spec.ts'],
+      testMatch: ['shared-notes.spec.ts', 'notes-editor.spec.ts', 'publish.spec.ts', 'guest-notes.spec.ts', 'guest-notes-iroh.spec.ts'],
       use: { ...devices['Desktop Safari'] }
     }
   ],
   webServer: [
+    {
+      // The plain-HTTP iroh relay of the guest-notes specs (the backend's `remote_relays`); the
+      // relay answers GET / with HTML. Started first so the backend finds it when a room starts.
+      command: 'bash tests-e2e/start-relay.sh',
+      url: 'http://127.0.0.1:8038/',
+      reuseExistingServer: false,
+      timeout: 120_000
+    },
     {
       command: 'bash tests-e2e/start-backend.sh',
       url: `${BACKEND}/health`,

@@ -16,6 +16,12 @@ setup_complete = ${E2E_SETUP_COMPLETE:-true}
 obsidian_vault_path = "$data/vault"
 backup_dir = "$data/backups"
 guest_host = "http://127.0.0.1:8028"
+# Phase 10: guest rooms over iroh through the plain-HTTP dev relay (start-relay.sh). The phase 9
+# spec keeps the host transport; the iroh spec switches it per test through the settings API.
+# guest_page_url: the page a non-mirrored iroh link opens (that host has no such room).
+remote_relays = "http://127.0.0.1:8038"
+guest_transport = "${E2E_GUEST_TRANSPORT:-host}"
+guest_page_url = "http://127.0.0.1:8028/n/"
 TOML
 export MNEMOSYNE_DEMO=1 MNEMOSYNE_DATA_DIR="$data/db" MNEMOSYNE_CONFIG_FILE="$data/config.toml"
 cd "$root/backend"

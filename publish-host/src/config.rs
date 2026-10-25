@@ -98,17 +98,26 @@ pub struct Config {
     pub relay_origins: Vec<String>,
 }
 
-/// `https://relay.example.com:443/relay` or `relay.example.com` becomes `relay.example.com[:443]`.
+/// `https://relay.example.com:443/relay` or `relay.example.com` becomes `relay.example.com[:443]`;
+/// an `http://` origin (a loopback dev relay) keeps its scheme: `http://127.0.0.1:8038`.
 /// Only characters of a host name or address are accepted, so nothing can break out of the header.
 fn parse_relay_origin(raw: &str) -> Result<String, String> {
     let s = raw.trim();
-    let s = s.split_once("://").map_or(s, |(_, rest)| rest);
+    let (plain, s) = match s.split_once("://") {
+        Some((scheme, rest)) => (scheme.eq_ignore_ascii_case("http"), rest),
+        None => (false, s),
+    };
     let s = s.split(['/', '?', '#']).next().unwrap_or("");
     let ok = !s.is_empty()
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']' | '*'));
     if ok {
-        Ok(s.to_ascii_lowercase())
+        let host = s.to_ascii_lowercase();
+        Ok(if plain {
+            format!("http://{host}")
+        } else {
+            host
+        })
     } else {
         Err(format!("not a relay host or URL: {raw:?}"))
     }

@@ -33,6 +33,20 @@ jobs:
           test -f site/CNAME && cp site/CNAME _site/ || true
           mkdir _site/n
           cp -r backend/mnemosyne/api/static/guest/. _site/n/
+          # The static copy has no headers, so the guest page's policy goes in as a meta tag (our
+          # servers send it as a header instead; a meta tag cannot carry frame-ancestors). Keep in
+          # step with GUEST_CSP in publish-host/src/app.rs.
+          python3 -I - <<'PY'
+          p = "_site/n/index.html"
+          s = open(p, encoding="utf-8").read()
+          csp = ("default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
+                 "connect-src 'self' https://*.relay.n0.iroh.link wss://*.relay.n0.iroh.link; "
+                 "media-src blob:; img-src data: blob:; base-uri 'none'; form-action 'none'")
+          meta = '<meta http-equiv="Content-Security-Policy" content="' + csp + '">'
+          assert s.count("<head>") == 1
+          open(p, "w", encoding="utf-8").write(s.replace("<head>", "<head>" + meta, 1))
+          PY
+          grep -c Content-Security-Policy _site/n/index.html
           ls -la _site _site/assets _site/n _site/n/assets
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
