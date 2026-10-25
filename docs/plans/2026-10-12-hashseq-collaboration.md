@@ -781,7 +781,8 @@ out a link, and anyone holding it types into the live notes, with no install, ac
 
 ### Phase 10 design (drafted 2026-10-25, for review)
 
-Status: designed, nothing built. Drafted against the code at 996a03d (0.24.0). Decided by Corey
+Status: built 2026-10-25, unreleased, with the corrections in docs/plans/2026-10-25-phase-10-tasks.md.
+Drafted against the code at 996a03d (0.24.0). Decided by Corey
 (2026-10-25): host from this computer (a tunnel) and a hosted relay as in the discussion after 0.24.0,
 and iroh straight to the owner's computer as the default; the guest page on GitHub Pages now; n0's
 relays, labelled as a testing relay, until ours runs; a Cloudflare quick tunnel as the automatic

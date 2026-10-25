@@ -89,6 +89,11 @@ in [deploy/relay/](../deploy/relay/README.md)), put its address in **Relays** un
 the home machine, and pair your computers again. Computers follow the home machine's relays; they
 have no relay setting of their own. With your own relays, n0 is not involved at all.
 
+The relays in `remote_relays` also carry [guest notes](guest-notes.md): guests' browsers reach this
+computer through them. A browser only connects to a relay with a certificate from a public
+authority, so a self-hosted relay used for guest notes needs one (Let's Encrypt, as in
+[deploy/relay/](../deploy/relay/README.md)).
+
 ### From a terminal
 
 `mnemosyne-link` (the `link/` crate, bundled with the app) also pairs and connects without the app:

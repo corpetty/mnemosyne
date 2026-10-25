@@ -566,6 +566,24 @@ https://<host>/n/<room>#<key>                                      /live/{room} 
   else `publish_host`, else `OUR_GUEST_HOST` (empty until our host runs); none gives 409. Team
   servers need `allow_guest_notes`.
 
+**Phase 10: no host to run.** Guest notes work without a publish host (use and limits in
+[guest-notes.md](guest-notes.md)). The rooms sidecar (`mnemosyne-link rooms`, run on demand by
+`RoomsLink` in services/link.py, independent of remote access) embeds the publish host on a loopback
+port and opens one guest iroh endpoint per room (own key in `<data_dir>/guest_rooms/keys`, never the
+remote-access id; ALPN `mnemosyne/guest/1`). Each guest is one framed bidirectional stream
+(`u32 length || tag || payload`, up to a full snapshot, 8 MiB + 64 KiB) proxied to the loopback
+`/live/{room}` WebSocket, close codes becoming QUIC application closes. The Bridge is unchanged
+against it: it speaks to the loopback host as to any publish host. With a configured publish host a
+second Bridge mirrors the same room (same id and key) there. `guest_transport` (`plan` in
+services/guest_notes.py) picks auto = iroh, else tunnel, else host. A tunnel (services/tunnel.py:
+Tailscale Funnel, else a `cloudflared` quick tunnel) sits in front of the same loopback host, so it
+needs no second room. In the browser, guest-wasm (iroh compiled to wasm, relay-only, built by CI and
+committed as `guest/pkg`) gives `IrohSocket` behind the page's one socket interface, tried first
+(about 8 s) before the host's wss, with a `since` per transport. Link format 2 is
+`#2.<room>.<key>.<endpoint>.<relay host>`; format 1 links still work. The page is served from GitHub
+Pages and keeps the last sealed snapshot in IndexedDB until the link expires. Presence is not shared
+between the iroh room and a mirror.
+
 ## Backend Lifecycle
 
 The Tauri Rust shell (`src-tauri/src/lib.rs`) supervises the Python backend from a worker thread and

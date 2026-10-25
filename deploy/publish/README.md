@@ -126,7 +126,9 @@ sent to a server, so the host cannot read the notes.
   the Mnemosyne repo, the same way the viewer goes in `./viewer`. The folder is mounted read-only
   and needs no restart.
 - **Relays:** the guest page connects to iroh relays; n0's public ones are always allowed in its
-  Content-Security-Policy, and `PUBLISH_RELAY_ORIGINS` (comma separated hosts) adds your own.
+  Content-Security-Policy, and `PUBLISH_RELAY_ORIGINS` (comma separated hosts) adds your own. An entry
+  starting with `http://` is kept as written (for a loopback dev relay, as in the e2e tests); a bare
+  host becomes `https://` and `wss://`.
 - **WebSockets:** Caddy passes them through without extra configuration.
 
 If you run a public host for other people, tell them in your privacy notice: the host stores
