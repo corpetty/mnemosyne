@@ -881,7 +881,10 @@ async fn guest_page_csp_lists_relays() {
     let dir = guest.clone();
     let h = host_with(move |c| {
         c.guest_dir = dir;
-        c.relay_origins = vec!["relay.example.org:7842".into()];
+        c.relay_origins = vec![
+            "relay.example.org:7842".into(),
+            "http://127.0.0.1:8038".into(),
+        ];
     })
     .await;
     for uri in [format!("/n/{ID}"), "/n/".to_string()] {
@@ -896,6 +899,25 @@ async fn guest_page_csp_lists_relays() {
             csp.contains("https://relay.example.org:7842 wss://relay.example.org:7842"),
             "{csp}"
         );
+        assert!(
+            csp.contains("http://127.0.0.1:8038 ws://127.0.0.1:8038"),
+            "{csp}"
+        );
+        assert!(!csp.contains("https://127.0.0.1:8038"), "{csp}");
         assert!(csp.contains("connect-src 'self' "), "{csp}");
     }
+}
+
+#[test]
+fn relay_origin_keeps_http_scheme() {
+    use clap::Parser;
+    let c = Config::parse_from([
+        "x",
+        "--relay-origins",
+        "http://127.0.0.1:8038,https://Relay.Example.org/relay,plain.host",
+    ]);
+    assert_eq!(
+        c.relay_origins,
+        ["http://127.0.0.1:8038", "relay.example.org", "plain.host"]
+    );
 }

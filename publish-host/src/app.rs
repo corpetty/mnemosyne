@@ -36,11 +36,15 @@ form-action 'none'; frame-ancestors 'none'";
 const N0_RELAYS: &str = "*.relay.n0.iroh.link";
 
 /// The guest page's policy: `GUEST_CSP` with n0's relays and each configured relay origin
-/// (`https://H` for the ping, `wss://H` for the relay socket) in `connect-src`.
+/// (`https://H` for the ping, `wss://H` for the relay socket; `http://H` and `ws://H` for a
+/// loopback dev relay kept as `http://H`) in `connect-src`.
 pub fn guest_csp(cfg: &Config) -> String {
     let mut origins = format!("https://{N0_RELAYS} wss://{N0_RELAYS}");
     for host in &cfg.relay_origins {
-        origins.push_str(&format!(" https://{host} wss://{host}"));
+        match host.strip_prefix("http://") {
+            Some(h) => origins.push_str(&format!(" http://{h} ws://{h}")),
+            None => origins.push_str(&format!(" https://{host} wss://{host}")),
+        }
     }
     GUEST_CSP.replacen(
         "connect-src 'self';",

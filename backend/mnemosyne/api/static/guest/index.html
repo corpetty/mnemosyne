@@ -3,12 +3,7 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<!-- For the static copy (GitHub Pages); our servers also send this policy as a header (a meta
-			tag cannot carry frame-ancestors). Add our own relay's origins to connect-src once it exists. -->
-		<meta
-			http-equiv="Content-Security-Policy"
-			content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' https://*.relay.n0.iroh.link wss://*.relay.n0.iroh.link; media-src blob:; img-src data: blob:; base-uri 'none'; form-action 'none'"
-		/>
+		<!-- No CSP here: our servers send it as a header; the GitHub Pages copy gets a meta tag (pages.yml). -->
 		<meta name="referrer" content="no-referrer" />
 		<meta name="robots" content="noindex, nofollow" />
 		<title>Mnemosyne</title>
