@@ -133,6 +133,7 @@ export type HubSpotState = S['HubSpotState'];
 export type HubSpotMatches = S['HubSpotMatches'];
 export type HubSpotPushResult = S['HubSpotPushResult'];
 export type Publication = S['Publication'];
+export type GuestRoom = S['GuestRoom'];
 export type PublicationSelection = S['PublicationSelection-Output'];
 export type PublicationDefaults = S['PublicationDefaults'];
 export type PublicationListItem = S['PublicationListItem'];
@@ -231,6 +232,8 @@ export type NotesServerMessage =
   | NotesUnavailable
   | { type: 'presence'; present: string[]; typing: string[] }
   | { type: 'last_edit'; by: string; at: string }
+  /** Guests (people on the published notes link) who are in the room or typing. */
+  | { type: 'guests'; present: string[]; typing: string[] }
   /** The stored document was replaced (library sync): rejoin to receive it. The close follows. */
   | { type: 'reload' }
   | { type: 'pong' };

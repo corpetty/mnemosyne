@@ -219,6 +219,15 @@ or by a publish host (`publish_host`, with `publish_host_token` when the host is
 links expire after `publish_default_expiry_days` (90 by default, at most 365). Unpublishing
 deletes the copy; copies readers already opened cannot be taken back.
 
+## Guest notes
+
+A link that lets people outside the team type into a live meeting's notes (see
+[guest-notes.md](guest-notes.md)) is off until an admin turns on `allow_guest_notes`. Then a
+meeting's owner or an admin can start, end and stop it. The room lives on the host in
+`guest_host` or `publish_host`, not on this server; guests' typing and comments become part of
+the meeting, and `require_consent` reminds the owner. Meetings shared from another person's
+computer cannot be opened to guests.
+
 ## Backups
 
 Settings → General → Backups: a folder on a second disk or a network share, every day, keeping at

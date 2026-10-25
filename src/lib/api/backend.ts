@@ -55,6 +55,7 @@ import type {
   HubSpotMatches,
   HubSpotPushResult,
   Publication,
+  GuestRoom,
   PublicationDefaults,
   PublicationListItem,
   PublicationSelection,
@@ -1237,6 +1238,29 @@ export async function postTaskComment(key: string, text: string, parentId = ''):
     method: 'POST',
     body: JSON.stringify({ text, parent_id: parentId })
   });
+}
+
+// Guest notes: a room on the publish host where people with a link edit the meeting's notes.
+const guestPath = (sessionId: string) => `/api/sessions/${encodeURIComponent(sessionId)}/guest-notes`;
+
+export async function getGuestNotes(sessionId: string): Promise<GuestRoom | null> {
+  return request(guestPath(sessionId));
+}
+
+export async function startGuestNotes(sessionId: string): Promise<GuestRoom> {
+  return request(guestPath(sessionId), { method: 'PUT' });
+}
+
+export async function endGuestNotes(sessionId: string): Promise<GuestRoom> {
+  return request(`${guestPath(sessionId)}/end`, { method: 'POST' });
+}
+
+export async function newGuestLink(sessionId: string): Promise<GuestRoom> {
+  return request(`${guestPath(sessionId)}/new-link`, { method: 'POST' });
+}
+
+export async function stopGuestNotes(sessionId: string): Promise<GuestRoom | null> {
+  return request(guestPath(sessionId), { method: 'DELETE' });
 }
 
 // Publishing a meeting (backend routes/publishing.py): a curated, encrypted copy readers open

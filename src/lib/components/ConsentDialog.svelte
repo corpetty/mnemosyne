@@ -3,6 +3,8 @@
 	import { getSettings } from '$lib/api/backend.js';
 	import { focusOnMount } from '$lib/app/focus.js';
 	import { startRecording, type Consent } from '$lib/app/controller.svelte.js';
+	import { guestNotesState } from '$lib/stores/guestNotes.svelte.js';
+	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
 
 	// Before a recording, when the server asks for it (require_consent, team mode): how did the
@@ -22,6 +24,10 @@
 			/* the choice still works without the script */
 		}
 	});
+
+	const guestsLive = $derived(
+		guestNotesState.rooms[sessionState.activeSession?.id ?? '']?.state === 'live'
+	);
 
 	const cancel = () => (uiState.consentAsk = null);
 
@@ -47,6 +53,9 @@
 	>
 		<h3 class="text-lg font-semibold text-gray-100">Before recording</h3>
 		<p class="text-sm text-gray-400">How did the people in this meeting agree to be recorded?</p>
+		{#if guestsLive}
+			<p class="text-xs text-gray-400">Guests with the notes link can also type in this meeting's notes.</p>
+		{/if}
 		{#if script}
 			<blockquote class="rounded border border-gray-800 bg-gray-950 px-3 py-2 text-sm text-gray-300">
 				<span class="block text-xs text-gray-500 mb-1">You can read this out:</span>

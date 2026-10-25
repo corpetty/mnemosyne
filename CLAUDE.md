@@ -134,6 +134,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   backend/mnemosyne/api/static/viewer/ (the `viewer` CI job fails on a stale build). The Python and TS formats must
   agree: backend/tests/vectors/publication_v1.json is checked by both; regenerate it with
   backend/scripts/make_publication_vectors.py only on purpose (a format change breaks old links: bump `FORMAT`).
+- Guest notes: after changing `guest/` or `guest_format.py`, run `pnpm build:guest` and commit
+  backend/mnemosyne/api/static/guest/ (the `viewer` CI job fails on a stale build). The Python and TS formats must
+  agree via backend/tests/vectors/guest_v1.json; regenerate it with backend/scripts/make_guest_vectors.py only on purpose.
 - Publish host "version already exists" (409 with `current` = ours) counts as success only when `GET /pub/<id>`
   returns an ETag equal to the SHA-256 of our manifest; else another computer published that version (`_host_upload`).
 - A "this computer" publication link only reaches others through the team listener (or `phone_url`): `local_reach`.
@@ -491,6 +494,22 @@ with only the chosen parts (services/shares.py), `/api/share/changes` and signed
 library sync, task links, Ask, semantic search, the digest or Obsidian (`shared_in_*`). Demo mode
 seeds Ada Lovelace's shared meeting only through `POST /api/demo/share` (the e2e spec calls it).
 
+
+Guest notes (unreleased, phase 9; design in the hashseq plan, build order and corrections in
+docs/plans/2026-10-24-phase-9-tasks.md, use in docs/guest-notes.md): a link `https://<host>/n/<room>#<key>` for the
+people in a meeting to type into the live notes, comment on them and see the agenda; nothing else goes out. Sealed
+frames (services/guest_format.py, AES-GCM under HKDF keys from the fragment key, AAD `mnemosyne/guest/1|room|kind`)
+relayed by a room on a publish host (publish-host/src/rooms.rs + live.rs: WebSocket relay, log, snapshot, caps).
+services/guest_notes.py is the bridge (hidden `shared_notes` member seals local frames out; guests come in through
+`accept_frames` as `guest:<gid>`; comments via `comments.create` with an explicit actor, marked by the owner's server;
+sealed snapshots and META with the agenda); api/routes/guest_notes.py is start/end/new link/stop. The page is `guest/`
+(Vite entry reusing src/lib/notes and the wasm), built with `pnpm build:guest` into backend/mnemosyne/api/static/guest
+and diffed by the CI viewer job; vectors backend/tests/vectors/guest_v1.json are shared by Python and TS; the e2e job
+runs a local publish host on 8028 (tests-e2e/start-publish-host.sh). Settings: `guest_host` (else `publish_host`, else
+ours, which does not run yet: 409 "No host for guest notes"), `guest_notes_end_hours` (12 after the recording stops),
+`allow_guest_notes` (team servers, owner or admin). Rules: the host never sees the key; owner-side frames (typing,
+copilot, phase 8) reach guests as the owner's; guest comments are ordinary comments (searchable, synced, in records);
+one room per meeting; a deleted meeting's room is deleted; refused for shared_from meetings and without the sidecar.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

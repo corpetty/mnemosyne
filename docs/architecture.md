@@ -507,6 +507,65 @@ two link URLs render as plain text with "(link conflict)". Mark strings over 14 
 0xAF artifact frames. The markdown renderer is canonical and the parser covers what it renders
 (HTML and images stay literal), shared by the fold and the client's paste.
 
+### Guest notes (phase 9)
+
+A link that lets the people in a meeting type into its live notes from a browser (use in
+[guest-notes.md](guest-notes.md)). The notes keep their home in the backend's relay; a room on a
+publish host is only the meeting point.
+
+```
+guest page (guest/, WebCrypto, notes wasm)  <-- sealed frames -->  room on the host  <-->  Bridge (services/guest_notes.py)  <-->  /ws/notes relay
+https://<host>/n/<room>#<key>                                      /live/{room} (WebSocket)                                       shared_notes.py
+```
+
+- **The bridge** (`Bridge`, one asyncio task per live room, outbound WebSocket so NAT is no
+  problem). It is a hidden member of the notes room (`shared_notes.attach`); `_deliver` is where
+  every local frame ends (owner typing, copilot, phase 8 contributions, the server's comment
+  marks), so the bridge seals each one and sends it out with an empty gid and the owner's name.
+  Frames coming in are opened and fed to `shared_notes.accept_frames(..., skip=member)` as author
+  `guest:<gid>` / "<name> (guest)": logged, folded, relayed to editors, never echoed back. Frames
+  carry no author on the way out, so guests see the owner's side as the owner's.
+- **Comments.** The page mints a comment id and `notes_ids`; the bridge calls `comments.create`
+  with an explicit actor `("guest:<gid>", "<name> (guest)")` (guests edit and delete only their
+  own) and marks the text with `mark_comment`, so the mark belongs to the owner's server. After
+  each `comments` event the notes' threads are sealed back to the room.
+- **Snapshots and META.** The bridge folds the document (`fold_blocking` + `notes_catchup`) and
+  seals canonical JSON `{format, notes, frames, threads, meta}` with `PUT /live/{room}/snapshot`
+  and `X-Room-Since`, which prunes the host's log: at start, every 3 minutes while something
+  changed, and at the end. A META envelope `{title, date, owner, agenda:[{text, covered}], ended,
+  origin}` follows the `session` and `copilot_notes` events (`AgendaItem.covered`). The notes
+  document's origin travels in SNAPSHOT and META because a browser cannot list a seq's objects.
+- **The room** (`publish-host/src/rooms.rs`, routes and WebSocket in `live.rs`). The publisher
+  token (plus the upload token on a closed host) creates, snapshots, ends and deletes a room over
+  HTTP. A guest joins over WebSocket with `room_token`; the host stores only its hash and compares
+  in constant time. After `welcome` it replays the snapshot and the log since `since`, then relays
+  `0x01 || seq || envelope`, presence (`0x02`), snapshots (`0x03`), a connection `count` and
+  `ended`. Caps: frame 2 MiB + 1 KiB, log 8 MiB, snapshot 8 MiB, 64 connections, rooms at most 7
+  days, an ended room readable 24 h. The log is `seq u64 || len u32 || bytes` on disk. Acks come
+  back through the relay, so the owner's `since` never skips a frame.
+- **Format** (`services/guest_format.py`, mirrored by `guest/src/format.ts`). `frames_key =
+  HKDF(key, "mnemosyne/guest/frames")`; `room_token = b64url(HKDF(key, "mnemosyne/guest/room"))`.
+  Envelope `kind(1) || nonce(12) || AES-GCM(pad(plaintext))`, AAD `mnemosyne/guest/1|<room>|<kind>`;
+  kinds notes=1, snapshot=2, comment=3, meta=4, presence=5. A notes plaintext is `u8 len gid ||
+  gid || u8 len name || name || raw frame`. `backend/tests/vectors/guest_v1.json` is checked by
+  Python, TypeScript and (the room token) Rust; a format change means bumping the version byte in
+  the AAD.
+- **The guest page** is its own Vite entry (`guest/`, Svelte 5, base `/n/`) built into
+  `backend/mnemosyne/api/static/guest`, committed and diffed by CI like the viewer. Unlike the
+  viewer it needs the notes wasm (committed bytes, emitted as an asset) and reuses
+  `src/lib/notes` (`createEditorView`, `attachInput`, `UndoStack`, comments) with its own
+  `guest/src/doc.ts` on `sync.ts` instead of the app's stores. The page connects before asking
+  for a name so the consent line can name the owner, and keeps a mirror of what the room logged
+  to resume after a reconnect. CSP: `script-src 'self' 'wasm-unsafe-eval'`, `connect-src 'self'`.
+  Served at `/n/{room}` by the host (`PUBLISH_GUEST_DIR`) and the backend (`/n/` is an open
+  path), both with `wasm -> application/wasm`.
+- **Lifecycle** (`api/routes/guest_notes.py`, rows in `guest_rooms`). One room per meeting; start,
+  end, New link and stop write history lines and seal records (`EVENT_SEALS`). Auto-end runs
+  `guest_notes_end_hours` after `recording_stopped`, is cleared when a new part starts and never
+  fires while recording. Deleting a meeting deletes its room. The host comes from `guest_host`,
+  else `publish_host`, else `OUR_GUEST_HOST` (empty until our host runs); none gives 409. Team
+  servers need `allow_guest_notes`.
+
 ## Backend Lifecycle
 
 The Tauri Rust shell (`src-tauri/src/lib.rs`) supervises the Python backend from a worker thread and

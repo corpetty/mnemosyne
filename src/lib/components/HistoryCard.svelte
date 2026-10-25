@@ -231,6 +231,12 @@
 				return `Flagged lines reviewed${d.by ? ` by ${d.by}` : ''}${d.note ? `: ${d.note}` : ''}`;
 			case 'consent':
 				return `${CONSENT[d.consent as string] ?? 'Consent recorded'}${d.by ? ` (${d.by})` : ''}`;
+			case 'guest_notes_started':
+				return `Guest notes started${d.by ? ` by ${d.by}` : ''}`;
+			case 'guest_notes_ended':
+				return `Guest notes ended${d.auto ? ' automatically' : ''}${d.by ? ` by ${d.by}` : ''}`;
+			case 'guest_notes_stopped':
+				return `Guest notes stopped${d.by ? ` by ${d.by}` : ''}`;
 			case 'published':
 			case 'publication_updated': {
 				// where: "this computer" or "publish host" (backend services/publishing.py _log).

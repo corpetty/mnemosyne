@@ -23,6 +23,7 @@ import { autoRecordState, type AutoMode } from '$lib/stores/autorecord.svelte.js
 import { commentsState } from '$lib/stores/comments.svelte.js';
 import { calendarState } from '$lib/stores/calendar.svelte.js';
 import { connectionState, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
+import { guestNotesState } from '$lib/stores/guestNotes.svelte.js';
 import { jobsState } from '$lib/stores/jobs.svelte.js';
 import { sessionState } from '$lib/stores/session.svelte.js';
 import { toastState } from '$lib/stores/toast.svelte.js';
@@ -718,7 +719,13 @@ function onConnected(): () => void {
       sessionState.loadSessions();
       return;
     }
+    if (msg.type === 'history') {
+      // The history event has no kind: reload the room only for a meeting whose room is shown.
+      if (guestNotesState.watching(msg.session_id)) void guestNotesState.load(msg.session_id);
+      return;
+    }
     if (msg.type !== 'session') return;
+    if (guestNotesState.watching(msg.session_id)) void guestNotesState.load(msg.session_id);
     sessionState.loadSessions();
     // Keep the open session's status (footer, badges) in step without a refetch.
     const active = sessionState.activeSession;

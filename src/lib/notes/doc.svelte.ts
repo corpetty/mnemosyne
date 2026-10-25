@@ -113,6 +113,9 @@ export class NotesDocState {
   waitingForSync = $state(false);
   present = $state<string[]>([]);
   typing = $state<string[]>([]);
+  /** Guests on the published notes link: who is in the room and who is typing. */
+  guests = $state<string[]>([]);
+  guestsTyping = $state<string[]>([]);
   lastEdit = $state<{ by: string; at: string } | null>(null);
   you = $state.raw<NotesPerson | null>(null);
   /** The document; null until the first hello, and for ever when unavailable. */
@@ -432,6 +435,10 @@ export class NotesDocState {
         this.present = msg.present;
         this.typing = msg.typing;
         break;
+      case 'guests':
+        this.guests = msg.present;
+        this.guestsTyping = msg.typing;
+        break;
       case 'last_edit':
         this.lastEdit = { by: msg.by, at: msg.at };
         break;
@@ -451,6 +458,8 @@ export class NotesDocState {
     this.waitingForSync = waiting;
     this.present = hello.present;
     this.typing = [];
+    this.guests = [];
+    this.guestsTyping = [];
     this.lastEdit = hello.last_edit;
     this.status = 'catching_up';
     this.catchUp = { hello, needSnapshot: hello.snapshot, snapshot: null, frames: [] };

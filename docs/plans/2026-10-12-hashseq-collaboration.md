@@ -674,7 +674,8 @@ ship the hardening items on their own first.
 
 ### Phase 9 design (drafted 2026-10-24, for review)
 
-Status: designed, nothing built. Drafted against the code at 0e00520 (0.23.0). Decided by Corey
+Status: built 2026-10-24, unreleased, as designed with the corrections in
+docs/plans/2026-10-24-phase-9-tasks.md. Drafted against the code at 0e00520 (0.23.0). Decided by Corey
 (2026-10-24): rooms on the publish host you run and, by default, on a public one we run; guests
 see the notes and the agenda; after the meeting the page turns read-only until the room expires;
 guests may comment on the notes in v1.

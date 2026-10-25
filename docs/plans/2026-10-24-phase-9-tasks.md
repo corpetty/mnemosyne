@@ -1,6 +1,6 @@
 # Phase 9 tasks: guest notes
 
-Status: in progress, 2026-10-24. The design is "Phase 9" in 2026-10-12-hashseq-collaboration.md;
+Status: built 2026-10-24, unreleased. The design is "Phase 9" in 2026-10-12-hashseq-collaboration.md;
 this file is the build order, drafted against cd2e681 and checked against the code.
 
 Decided while planning (Corey away, defaults taken): frames from the owner's side (the owner's
@@ -51,6 +51,14 @@ page's CSP keeps `connect-src 'self'` (Safari < 15.4 cannot connect).
   in the records zip (never key or token).
 - **G14 Team mode**: `allow_guest_notes` (off), owner or admin; refused for shared_from meetings
   and without the sidecar.
+
+## Found while building
+
+- The notes origin travels in SNAPSHOT and META, because a browser cannot list a seq's objects.
+- Acks come back through the relay, so the owner's `since` never skips a frame.
+- The guest page keeps a mirror of what the room logged, to resume after a reconnect.
+- Auto-end is cleared when a new recording part starts and never fires while recording.
+- The guest page connects before asking a name, so the consent line names the owner.
 
 ## Tasks (tier, deps)
 

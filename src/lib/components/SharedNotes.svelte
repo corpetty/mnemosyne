@@ -428,6 +428,8 @@
 	// ---- the status line ---------------------------------------------------------------------------
 	let now = $state(Date.now());
 	const others = $derived((docState?.present ?? []).filter((n) => n !== docState?.you?.name));
+	const guestNames = $derived(docState?.guests ?? []);
+	const guestTypers = $derived(docState?.guestsTyping ?? []);
 	const typers = $derived((docState?.typing ?? []).filter((n) => n !== docState?.you?.name));
 	const lastBy = $derived.by(() => {
 		const e = docState?.lastEdit;
@@ -559,6 +561,13 @@
 				{docState.present.join(', ')} here{typers.length
 					? ` · ${typers.join(', ')} ${typers.length === 1 ? 'is' : 'are'} typing…`
 					: ''}{lastBy ? ` · ${lastBy}` : ''}
+			{/if}
+			{#if guestNames.length}
+				<span class="text-gray-500">
+					· Guests here: {guestNames.join(', ')}{guestTypers.length
+						? ` · ${guestTypers.join(', ')} ${guestTypers.length === 1 ? 'is' : 'are'} typing…`
+						: ''}
+				</span>
 			{/if}
 		</span>
 	</div>

@@ -157,6 +157,9 @@
 				publish_host: v.publish_host,
 				publish_default_expiry_days: v.publish_default_expiry_days,
 				allow_publishing: v.allow_publishing,
+				allow_guest_notes: v.allow_guest_notes,
+				guest_host: v.guest_host,
+				guest_notes_end_hours: v.guest_notes_end_hours,
 				whisper_batch_size: v.whisper_batch_size,
 				parakeet_model: v.parakeet_model,
 				parakeet_quantization: v.parakeet_quantization,
@@ -1364,6 +1367,21 @@
 							{/each}
 						</select>
 					</label>
+					<label class="col-span-2">
+						<span class={labelClass}>Guest notes host</span>
+						<input type="url" bind:value={form.guest_host} disabled={locked('guest_host')} placeholder="Blank: the publish host above" class={inputClass} />
+						<span class="mt-1 block text-xs text-gray-500">Where guests' notes are relayed, encrypted. Blank uses the publish host.</span>
+					</label>
+					<label>
+						<span class={labelClass}>End guest notes after a recording stops (hours)</span>
+						<input type="number" min="1" step="1" bind:value={form.guest_notes_end_hours} disabled={locked('guest_notes_end_hours')} class={inputClass} />
+					</label>
+					{#if teamAdmin}
+						<label class="flex items-center gap-2 self-end pb-1.5">
+							<input type="checkbox" bind:checked={form.allow_guest_notes} disabled={locked('allow_guest_notes')} class="rounded border-gray-600 bg-gray-800" />
+							<span class="text-sm text-gray-300">Allow guest notes</span>
+						</label>
+					{/if}
 					{#if teamAdmin}
 						<label class="flex items-center gap-2 self-end pb-1.5">
 							<input type="checkbox" bind:checked={form.allow_publishing} disabled={locked('allow_publishing')} class="rounded border-gray-600 bg-gray-800" />
