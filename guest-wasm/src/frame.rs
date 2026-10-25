@@ -9,9 +9,10 @@ use std::fmt;
 pub const TAG_TEXT: u8 = 0;
 /// A WebSocket binary message (a sealed envelope).
 pub const TAG_BINARY: u8 = 1;
-/// The largest payload: the publish host's room frame cap (2 MiB) plus the 64 KiB of slack its
-/// WebSocket allows (publish-host/src/app.rs `live_socket`).
-pub const MAX_PAYLOAD: usize = 2 * 1024 * 1024 + 64 * 1024;
+/// The largest payload: a full room snapshot, which the publish host allows up to 8 MiB
+/// (`room_snapshot_max_bytes` in its config), plus the 0x03||seq header in front of it. The
+/// 64 KiB is that header and slack. A smaller cap closes guests with 4413 on a big snapshot.
+pub const MAX_PAYLOAD: usize = 8 * 1024 * 1024 + 64 * 1024;
 /// The length prefix.
 pub const HEADER_LEN: usize = 4;
 

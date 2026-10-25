@@ -14,7 +14,14 @@ name = "mnemosyne_link"
 name = "mnemosyne-link"
 path = "src/main.rs"
 
+[features]
+# A plain-HTTP iroh relay for the browser e2e (`mnemosyne-link dev-relay`). Never on by default
+# and never in release builds.
+dev-relay = ["dep:iroh-relay"]
+
 [dependencies]
+# Only for the dev-relay feature (the same version the tests use).
+iroh-relay = { version = "1.3", optional = true, default-features = false, features = ["server"] }
 anyhow = "1"
 # Only what publish-host already pulls in: `axum::serve` for the loopback host.
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
@@ -27,6 +34,8 @@ notes-core = { path = "../notes-core" }
 mnemosyne-publish-host = { path = "../publish-host" }
 # The client side of the websocket the guest proxy opens to that host.
 tokio-tungstenite = "0.29"
+# Sink/Stream for that websocket (already in the tree through tokio-tungstenite).
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 clap = { version = "4", features = ["derive"] }
 iroh = { version = "1.3", default-features = false, features = ["tls-ring"] }
 iroh-mdns-address-lookup = "0.6"

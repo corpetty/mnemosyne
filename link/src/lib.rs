@@ -14,6 +14,7 @@
 //! iroh encrypts end to end between the two endpoint keys; a relay in between only forwards
 //! packets. Every stream starts with one byte naming its kind: [`TUNNEL`] or [`PAIR`].
 
+pub mod guest;
 pub mod host;
 pub mod notes;
 
@@ -626,9 +627,11 @@ struct Dial {
     task: JoinHandle<()>,
 }
 
+/// One control line, by its `op` (see the README). `home` serves dial, hangup and pair;
+/// `rooms` serves room_start, room_stop and room_list; each answers the others with an error.
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
-enum ControlRequest {
+pub enum ControlRequest {
     Dial {
         ticket: String,
     },
@@ -643,6 +646,71 @@ enum ControlRequest {
         #[serde(default)]
         card: Option<serde_json::Value>,
     },
+    /// Serve a guest-notes room over iroh (`relay`: the one stored from an earlier start).
+    #[serde(rename = "room_start")]
+    RoomStart {
+        room: String,
+        #[serde(default)]
+        relay: Option<String>,
+    },
+    #[serde(rename = "room_stop")]
+    RoomStop {
+        room: String,
+    },
+    #[serde(rename = "room_list")]
+    RoomList,
+}
+
+/// What [`serve_control`] answers lines with: [`Control`] for `home`,
+/// [`guest::GuestRooms`] for `rooms`.
+pub trait ControlHandler: Send + Sync + 'static {
+    /// One JSON reply for one line; never fails (errors are `{"ok": false, "error"}`).
+    fn answer(&self, line: &str) -> impl std::future::Future<Output = serde_json::Value> + Send;
+}
+
+impl ControlHandler for Control {
+    async fn answer(&self, line: &str) -> serde_json::Value {
+        self.handle(line).await
+    }
+}
+
+/// Parse `line`, run it with `run` and build the reply: it echoes the request's `id` and `op`
+/// (null when the line has none), with `ok: true` and the fields, or `ok: false` and `error`.
+pub(crate) async fn handle_with<F, Fut>(line: &str, run: F) -> serde_json::Value
+where
+    F: FnOnce(ControlRequest) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Map<String, serde_json::Value>>>,
+{
+    let (id, op, result) = match serde_json::from_str::<serde_json::Value>(line) {
+        Err(e) => (
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+            Err(anyhow!("invalid JSON: {e}")),
+        ),
+        Ok(request) => {
+            let id = request.get("id").cloned().unwrap_or_default();
+            let op = request.get("op").cloned().unwrap_or_default();
+            let result = match serde_json::from_value::<ControlRequest>(request) {
+                Ok(request) => run(request).await,
+                Err(e) => Err(anyhow!("bad request: {e}")),
+            };
+            (id, op, result)
+        }
+    };
+    let mut reply = serde_json::Map::new();
+    reply.insert("id".into(), id);
+    reply.insert("op".into(), op);
+    match result {
+        Ok(fields) => {
+            reply.insert("ok".into(), true.into());
+            reply.extend(fields);
+        }
+        Err(e) => {
+            reply.insert("ok".into(), false.into());
+            reply.insert("error".into(), format!("{e:#}").into());
+        }
+    }
+    serde_json::Value::Object(reply)
 }
 
 impl Control {
@@ -730,36 +798,7 @@ impl Control {
     /// Answer one control line. Never fails: errors become `{"ok": false, "error": ...}`. The
     /// reply echoes the request's `id` and `op` (null when the line has none).
     pub async fn handle(&self, line: &str) -> serde_json::Value {
-        let (id, op, result) = match serde_json::from_str::<serde_json::Value>(line) {
-            Err(e) => (
-                serde_json::Value::Null,
-                serde_json::Value::Null,
-                Err(anyhow!("invalid JSON: {e}")),
-            ),
-            Ok(request) => {
-                let id = request.get("id").cloned().unwrap_or_default();
-                let op = request.get("op").cloned().unwrap_or_default();
-                let result = match serde_json::from_value::<ControlRequest>(request) {
-                    Ok(request) => self.run(request).await,
-                    Err(e) => Err(anyhow!("bad request: {e}")),
-                };
-                (id, op, result)
-            }
-        };
-        let mut reply = serde_json::Map::new();
-        reply.insert("id".into(), id);
-        reply.insert("op".into(), op);
-        match result {
-            Ok(fields) => {
-                reply.insert("ok".into(), true.into());
-                reply.extend(fields);
-            }
-            Err(e) => {
-                reply.insert("ok".into(), false.into());
-                reply.insert("error".into(), format!("{e:#}").into());
-            }
-        }
-        serde_json::Value::Object(reply)
+        handle_with(line, |request| self.run(request)).await
     }
 
     async fn run(
@@ -792,6 +831,11 @@ impl Control {
                     "peer": invite.ticket.endpoint_addr().id.to_string(),
                 })
             }
+            ControlRequest::RoomStart { .. }
+            | ControlRequest::RoomStop { .. }
+            | ControlRequest::RoomList => {
+                bail!("not supported by `mnemosyne-link home` (guest rooms are `rooms`)")
+            }
         };
         match reply {
             serde_json::Value::Object(map) => Ok(map),
@@ -803,8 +847,9 @@ impl Control {
 /// Answer every line from `lines` on `out`, one JSON line each. Requests run concurrently (a
 /// slow pairing does not hold up a dial), so replies may come out of order: match them by
 /// `id`. Returns once `lines` ends and every reply is written; what was dialed keeps running.
-pub async fn serve_control<W>(control: Arc<Control>, mut lines: mpsc::Receiver<String>, mut out: W)
+pub async fn serve_control<H, W>(control: Arc<H>, mut lines: mpsc::Receiver<String>, mut out: W)
 where
+    H: ControlHandler,
     W: AsyncWrite + Unpin + Send + 'static,
 {
     let (tx, mut rx) = mpsc::unbounded_channel::<serde_json::Value>();
@@ -823,7 +868,7 @@ where
         }
         let (control, tx) = (control.clone(), tx.clone());
         tokio::spawn(async move {
-            tx.send(control.handle(&line).await).ok();
+            tx.send(control.answer(&line).await).ok();
         });
     }
     drop(tx);
