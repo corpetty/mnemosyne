@@ -2,6 +2,7 @@
 into Session.notes, access, the notes route through the document, seeding. The sidecar is the
 `notes doc` stand-in of tests/fake_link.py (toy frames, see its docstring)."""
 
+import asyncio
 import base64
 import json
 import time
@@ -515,3 +516,188 @@ def test_combining_fails_rather_than_writing_around_the_document(client, ctx, si
     assert ctx.repo.get(earlier).notes == "Before"
     assert [r.part for r in ctx.repo.get(later).recordings] == [0]
     assert [x.text for x in ctx.repo.get(later).transcript] == ["hi"]
+
+
+# ---- hidden members (the guest bridge's tap on the room, phase 9) -----------------------------
+
+
+class FakeWs:
+    """A WebSocket that only records what the member's sender writes."""
+
+    def __init__(self) -> None:
+        self.sent: list = []
+
+    async def send_json(self, data) -> None:
+        self.sent.append(data)
+
+    async def send_bytes(self, data) -> None:
+        self.sent.append(bytes(data))
+
+    async def close(self, code=1000) -> None:
+        self.sent.append(("close", code))
+
+
+def tap(name: str = "Bridge") -> shared_notes.Member:
+    return shared_notes.Member(ws=None, id="bridge", name=name, can_edit=False)
+
+
+def drain(member: shared_notes.Member) -> list:
+    out = []
+    while not member.out.empty():
+        out.append(member.out.get_nowait())
+    return out
+
+
+async def pending(ctx) -> None:
+    """Folds and other tasks the hub started have finished."""
+    while ctx.notes_hub.tasks:
+        await asyncio.gather(*list(ctx.notes_hub.tasks))
+
+
+@pytest.mark.anyio
+async def test_a_hidden_member_is_not_present_and_gets_every_frame(client, ctx, sidecar):
+    sid = meeting(ctx)
+    ws = FakeWs()
+    ann = await shared_notes.join(ctx, sid, ws, "u1", "Ann", True)
+    assert ann is not None
+    bridge = tap()
+    shared_notes.attach(ctx, sid, bridge)
+    room = ctx.notes_hub.rooms[sid]
+    assert bridge.hidden and bridge in room.members
+    bridge.typing = True
+    assert shared_notes._presence(room) == {"type": "presence", "present": ["Ann"], "typing": []}
+    assert drain(bridge) == []  # no hello, no presence, no sender
+    assert bridge.sender is None
+
+    # Typed by Ann: relayed to the tap, not echoed to her; the tap hears no JSON.
+    f1 = frame("f1", ["ins", 0, "hi\n"])
+    assert shared_notes.receive_frame(ctx, sid, ann, f1) is None
+    assert drain(bridge) == [("bytes", f1)]
+    await asyncio.sleep(0.05)
+    assert f1 not in ws.sent  # never echoed to the one who typed it
+
+    # A visible member's presence changes do not reach the tap either.
+    shared_notes.receive_text(ctx, sid, ann, json.dumps({"type": "presence", "typing": True}))
+    assert drain(bridge) == []
+    other = await shared_notes.join(ctx, sid, FakeWs(), "u2", "Bob", True)
+    assert other is not None and drain(bridge) == []
+
+    # Every path ends in _deliver: set_markdown goes through the sidecar and the loop.
+    assert await shared_notes.set_markdown(ctx, sid, "hi\nthere\n")
+    await asyncio.sleep(0.05)
+    frames = [d for k, d in drain(bridge) if k == "bytes"]
+    assert frames, "set_markdown reached the tap"
+    assert frames[0] in ws.sent  # and the visible members alike
+    for m in (ann, other):
+        await shared_notes.leave(ctx, sid, m)
+    shared_notes.detach(ctx, sid, bridge)
+
+
+@pytest.mark.anyio
+async def test_frames_injected_by_the_tap_are_not_delivered_back(client, ctx, sidecar):
+    sid = meeting(ctx)
+    ann = await shared_notes.join(ctx, sid, FakeWs(), "u1", "Ann", True)
+    bridge = tap()
+    shared_notes.attach(ctx, sid, bridge)
+    drain(ann)
+    f1 = frame("f1", ["ins", 0, "from a guest\n"])
+    (seq,) = shared_notes.accept_frames(
+        ctx, sid, [f1], "guest:abc", "Ana (guest)", skip=bridge, can_edit=True
+    )
+    assert drain(bridge) == []
+    assert ("bytes", f1) in drain(ann)
+    assert [(o["seq"], o["author_id"], o["author"]) for o in ctx.repo.notes_ops(sid)] == [
+        (seq, "guest:abc", "Ana (guest)")
+    ]
+    # Without `skip` it would have been delivered.
+    f2 = frame("f2", ["ins", 0, "x"])
+    shared_notes.accept_frames(ctx, sid, [f2], "guest:abc", "Ana (guest)", can_edit=True)
+    assert drain(bridge) == [("bytes", f2)]
+    await shared_notes.leave(ctx, sid, ann)
+    shared_notes.detach(ctx, sid, bridge)
+    await pending(ctx)
+
+
+@pytest.mark.anyio
+async def test_attach_starts_after_the_frames_already_logged(client, ctx, sidecar):
+    sid = meeting(ctx)
+    old = frame("f1", ["ins", 0, "old\n"])
+    ctx.repo.append_notes_ops(sid, [old], "", "Me", True)
+    bridge = tap()
+    shared_notes.attach(ctx, sid, bridge)
+    assert bridge.seen_seq == 1
+    shared_notes._deliver(ctx, sid, [(1, old)], None)  # already in its catch-up
+    assert drain(bridge) == []
+    new = frame("f2", ["ins", 0, "new\n"])
+    shared_notes._deliver(ctx, sid, [(2, new)], None)
+    assert drain(bridge) == [("bytes", new)]
+    shared_notes.detach(ctx, sid, bridge)
+    await pending(ctx)
+
+
+@pytest.mark.anyio
+async def test_detaching_the_last_member_folds_like_leave(client, ctx, sidecar):
+    sid = meeting(ctx)
+    bridge = tap()
+    shared_notes.attach(ctx, sid, bridge)
+    shared_notes.accept_frames(
+        ctx, sid, [frame("f1", ["ins", 0, "kept\n"])], "guest:abc", "Ana (guest)", can_edit=True
+    )
+    assert ctx.repo.has_unfolded_notes(sid)
+    shared_notes.detach(ctx, sid, bridge)
+    assert sid not in ctx.notes_hub.rooms
+    await pending(ctx)
+    assert ctx.repo.get(sid).notes == "kept\n" and not ctx.repo.has_unfolded_notes(sid)
+    shared_notes.detach(ctx, sid, bridge)  # again: nothing
+
+
+@pytest.mark.anyio
+async def test_visible_and_hidden_members_leave_in_either_order(client, ctx, sidecar):
+    sid = meeting(ctx)
+    ann = await shared_notes.join(ctx, sid, FakeWs(), "u1", "Ann", True)
+    bridge = tap()
+    shared_notes.attach(ctx, sid, bridge)
+    bob = await shared_notes.join(ctx, sid, FakeWs(), "u2", "Bob", True)
+    assert bob is not None
+    shared_notes.accept_frames(
+        ctx, sid, [frame("f1", ["ins", 0, "typed\n"])], "u1", "Ann", skip=ann, can_edit=True
+    )
+    drain(bridge)
+    # The tap leaving while people are there changes nothing for them.
+    shared_notes.detach(ctx, sid, bridge)
+    assert sid in ctx.notes_hub.rooms and not ctx.notes_hub.tasks
+    shared_notes.attach(ctx, sid, bridge)
+    await shared_notes.leave(ctx, sid, ann)
+    assert ctx.notes_hub.rooms[sid].members == [bob, bridge]
+    # The last visible member out folds, though the tap stays (and the room with it).
+    await shared_notes.leave(ctx, sid, bob)
+    assert sid in ctx.notes_hub.rooms and ctx.notes_hub.rooms[sid].members == [bridge]
+    await pending(ctx)
+    assert ctx.repo.get(sid).notes == "typed\n"
+    shared_notes.detach(ctx, sid, bridge)
+    assert sid not in ctx.notes_hub.rooms
+    await pending(ctx)
+
+
+@pytest.mark.anyio
+async def test_broadcast_json_reaches_visible_members_only(client, ctx, sidecar):
+    sid = meeting(ctx)
+    shared_notes.broadcast_json(ctx, sid, {"type": "guests"})  # no room: nothing
+    ws_a, ws_b = FakeWs(), FakeWs()
+    ann = await shared_notes.join(ctx, sid, ws_a, "u1", "Ann", True)
+    bob = await shared_notes.join(ctx, sid, ws_b, "u2", "Bob", False)
+    assert ann is not None and bob is not None
+    bridge = tap()
+    shared_notes.attach(ctx, sid, bridge)
+    await asyncio.sleep(0.05)
+    for ws in (ws_a, ws_b):
+        ws.sent.clear()
+    msg = {"type": "guests", "present": ["Ana"], "typing": []}
+    shared_notes.broadcast_json(ctx, sid, msg)
+    await asyncio.sleep(0.05)
+    assert ws_a.sent == [msg] and ws_b.sent == [msg]
+    assert drain(bridge) == []
+    for m in (ann, bob):
+        await shared_notes.leave(ctx, sid, m)
+    shared_notes.detach(ctx, sid, bridge)
+    await pending(ctx)

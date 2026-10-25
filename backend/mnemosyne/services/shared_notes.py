@@ -158,6 +158,10 @@ class Member:
     can_edit: bool
     typing: bool = False
     seen_seq: int = 0  # the frames up to this one were in its catch-up
+    # A hidden member is no connection (`attach`): the guest bridge's tap on the room. It gets
+    # every frame in `out` (nobody sends from it), is never listed as present or typing, and
+    # hears none of the room's JSON (presence, last_edit, `broadcast_json`).
+    hidden: bool = False
     out: asyncio.Queue = field(default_factory=asyncio.Queue)
     sender: asyncio.Task | None = None
 
@@ -174,8 +178,9 @@ class Room:
     last_edit: tuple[str, float] = ("", 0.0)  # who, and when it was last announced
 
     def broadcast(self, kind: str, data: Any, skip: Member | None = None) -> None:
+        """To the visible members (not `skip`): a hidden one only wants frames."""
         for m in self.members:
-            if m is not skip:
+            if m is not skip and not m.hidden:
                 m.send(kind, data)
 
 
@@ -622,10 +627,11 @@ def _announce_edit(app: AppContext, session_id: str, by: str, skip: Member | Non
 
 
 def _presence(room: Room) -> dict:
+    seen = [m for m in room.members if not m.hidden]
     return {
         "type": "presence",
-        "present": list(dict.fromkeys(m.name for m in room.members)),
-        "typing": list(dict.fromkeys(m.name for m in room.members if m.typing)),
+        "present": list(dict.fromkeys(m.name for m in seen)),
+        "typing": list(dict.fromkeys(m.name for m in seen if m.typing)),
     }
 
 
@@ -743,6 +749,38 @@ async def join(
     member.sender = asyncio.get_running_loop().create_task(_sender(member))
     room.broadcast("json", _presence(room), skip=member)
     return member
+
+
+def attach(app: AppContext, session_id: str, member: Member) -> None:
+    """Add a hidden member (`Member.hidden`, no WebSocket) to the meeting's room, making the
+    room if needed: `_deliver` then puts every frame appended from now on into `member.out`
+    (not the ones in the log already: `member.seen_seq` is set from the current catch-up, as a
+    join does). On the event loop. Frames it injects itself go through
+    `accept_frames(..., skip=member)`, so they are not delivered back."""
+    _remember_loop(app)
+    doc, ops = app.repo.notes_catchup(session_id)
+    room = hub(app).rooms.setdefault(session_id, Room(session_id))
+    member.hidden = True
+    member.seen_seq = max(ops[-1][0] if ops else 0, doc["folded_seq"] if doc else 0)
+    if member not in room.members:
+        room.members.append(member)
+
+
+def detach(app: AppContext, session_id: str, member: Member) -> None:
+    """Remove a member added by `attach`. Like the last `leave`, the member that empties the
+    room folds the notes. On the event loop."""
+    room = hub(app).rooms.get(session_id)
+    if room is None or member not in room.members:
+        return
+    room.members.remove(member)
+    _after_departure(app, room, member)
+
+
+def broadcast_json(app: AppContext, session_id: str, msg: dict) -> None:
+    """A JSON text message to every visible member of the meeting's room (nobody: nothing)."""
+    room = hub(app).rooms.get(session_id)
+    if room is not None:
+        room.broadcast("json", msg)
 
 
 class FramesRefused(Exception):
@@ -891,10 +929,23 @@ async def leave(
     if room is None or member not in room.members:
         return
     room.members.remove(member)
-    if room.members:
+    _after_departure(app, room, member)
+
+
+def _after_departure(app: AppContext, room: Room, gone: Member) -> None:
+    """`gone` was removed from `room`. The room empty: it is dropped and the notes folded. Else
+    the visible members hear the new presence; and when the last visible member went, only
+    taps (hidden members) are left and the notes are folded too, as nobody is editing now.
+    A tap going while others stay changes nothing."""
+    if not room.members:
+        if room.fold_timer is not None:
+            room.fold_timer.cancel()
+        del hub(app).rooms[room.session_id]
+        _spawn(app, fold_now(app, room.session_id))
+        return
+    if gone.hidden:
+        return
+    if any(not m.hidden for m in room.members):
         room.broadcast("json", _presence(room))
         return
-    if room.fold_timer is not None:
-        room.fold_timer.cancel()
-    del hub(app).rooms[session_id]
-    _spawn(app, fold_now(app, session_id))
+    _spawn(app, fold_now(app, room.session_id))

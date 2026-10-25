@@ -78,6 +78,8 @@ class AppContext:
     copilot_notes: dict = field(default_factory=dict)  # session id -> CopilotNotes
     # Live shared notes (services/shared_notes.py): the open meetings' rooms and fold locks.
     notes_hub: Any = None
+    # Guest notes (services/guest_notes.py): the bridges of live rooms and a lock per meeting.
+    guest_bridges: Any = None
     # A team server's per-person calendars (calendar_for), by ICS link.
     person_calendars: dict = field(default_factory=dict)
     team_host: TeamHost = field(default_factory=lambda: TeamHost())
@@ -108,9 +110,25 @@ class AppContext:
         self.sessions.before_delete = self._forget_publications
 
     def _forget_publications(self, session_id: str):
+        from ..services import guest_notes
         from ..services.publishing import forget_session
 
-        return forget_session(self, session_id)
+        afters = [
+            after
+            for after in (
+                forget_session(self, session_id),
+                guest_notes.forget_session(self, session_id),
+            )
+            if after is not None
+        ]
+        if not afters:
+            return None
+
+        def after() -> None:
+            for step in afters:
+                step()
+
+        return after
 
     def calendar_for(self, user_id: str) -> CalendarService:
         """Whose calendar: on a team server, a person's own ICS feed (services/prefs.py),
@@ -533,6 +551,10 @@ class AppContext:
         await self._try("Share announcer", self.share_announce.start)
         await self._try("Share pull", self.share_pull.start)
         await self._try("Share push", self.share_push.start)
+        # Live guest notes rooms: a bridge for each, joined with the last seq it applied.
+        from ..services import guest_notes
+
+        await self._try("Guest notes", lambda: guest_notes.resume(self))
 
     async def _reconcile_tasks(self) -> None:
         from ..services import task_links, task_migration
@@ -608,8 +630,9 @@ class AppContext:
         await self.echo.stop()
         await self.jobs.shutdown()
         await self.models.unload()
-        from ..services import shared_notes
+        from ..services import guest_notes, shared_notes
 
+        await guest_notes.shutdown(self)  # before the notes hub: its bridges detach from it
         await shared_notes.shutdown(self)
         self.repo.close()
 

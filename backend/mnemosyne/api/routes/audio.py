@@ -29,7 +29,7 @@ from ...audio.streams import CaptureApp
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, Recording, Session, SessionStatus
 from ...models.transcript import TranscriptSegment
-from ...services import history
+from ...services import guest_notes, history
 from ...services.copilot import copilot_runner
 from ...services.encryption import seal_session_audio
 from ...services.origin import audio_elsewhere, is_foreign, origin_name, require_local_audio
@@ -342,6 +342,7 @@ async def begin_recording(
         devices=[recording.labels.get(p.device_id, str(p.device_id)) for p in recording.processes],
         restart=keep_notes,
     )
+    guest_notes.recording_started(ctx, session.id)  # a pending automatic end of a live room is off
     ctx.level_tasks[session.id] = asyncio.create_task(_stream_levels(ctx, session.id, recording))
 
     live_job_id = None
@@ -401,6 +402,7 @@ async def stop_active(
         reason=reason,
         seconds=round(time.time() - recording.started_at, 1),
     )
+    guest_notes.recording_stopped(ctx, session_id)  # a live guest room ends some hours later
     task = ctx.level_tasks.pop(session_id, None)
     if task is not None:
         task.cancel()

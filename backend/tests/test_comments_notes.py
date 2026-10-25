@@ -5,9 +5,12 @@ fold and the sync union store them). The sidecar is the `notes doc` stand-in of
 tests/fake_link.py, whose toy `["comment", id, start, end]` op marks a range."""
 
 import base64
+import inspect
 
 import pytest
 
+from mnemosyne import access
+from mnemosyne.models.comment import CommentCreate
 from mnemosyne.models.session import Session
 from mnemosyne.services import comments, shared_notes
 from tests import fake_link
@@ -296,3 +299,75 @@ async def test_an_adopted_document_stores_its_ranges(nodes, sidecar):  # noqa: F
     meeting = comments._Meeting.of(b.ctx, b.repo.get(sid))
     placed = meeting.view(b.repo.get_comment(cid))
     assert placed.notes_range == [5, 9] and not placed.changed
+
+
+# ---- a guest's comments (phase 9: written by the owner's bridge with an explicit actor) -------
+
+ANA = ("guest:abc", "Ana (guest)")
+BEN = ("guest:def", "Ben (guest)")
+
+
+def _guest_thread(ctx, sid, actor=ANA, comment_id="0123456789ab"):
+    req = CommentCreate(text="Why?", target="notes", exact="launch plan")
+    return comments.create(ctx, sid, req, comment_id=comment_id, actor=actor)
+
+
+def test_an_actor_comments_on_the_notes_under_their_name(ctx, sidecar):
+    sid = _meeting(ctx)
+    c = _guest_thread(ctx, sid)
+    assert c.id == "0123456789ab" and c.target == "notes" and c.quote == "launch plan"
+    assert (c.author_id, c.author) == ANA
+    assert c.anchor == {"mark": "comment:0123456789ab"}
+    # They may change or delete their own comment, never resolve the thread.
+    assert (c.can_edit, c.can_delete, c.can_resolve) == (True, True, False)
+    stored = ctx.repo.get_comment(c.id)
+    assert (stored.author_id, stored.author) == ANA
+    # Sent twice (a retry): the same comment; another guest cannot take the id.
+    assert _guest_thread(ctx, sid).id == c.id
+    with pytest.raises(comments.BadComment):
+        _guest_thread(ctx, sid, actor=BEN)
+    # A reply by someone else.
+    reply = comments.create(ctx, sid, CommentCreate(text="Because", parent_id=c.id), actor=BEN)
+    assert (reply.author_id, reply.author, reply.parent_id) == (*BEN, c.id)
+    assert (reply.can_edit, reply.can_delete) == (True, True)
+
+
+def test_an_actor_edits_and_deletes_only_their_own(ctx, sidecar):
+    sid = _meeting(ctx)
+    c = _guest_thread(ctx, sid)
+    reply = comments.create(ctx, sid, CommentCreate(text="Because", parent_id=c.id), actor=BEN)
+    with pytest.raises(access.Forbidden):
+        comments.edit(ctx, sid, c.id, "Hijacked", actor=BEN)
+    with pytest.raises(access.Forbidden):
+        comments.delete(ctx, sid, c.id, actor=BEN)
+    with pytest.raises(access.Forbidden):
+        comments.delete(ctx, sid, reply.id, actor=ANA)  # the thread's author is not a moderator
+    assert ctx.repo.get_comment(c.id).text == "Why?"
+    edited = comments.edit(ctx, sid, c.id, "  Why not?  ", actor=ANA)
+    assert edited.text == "Why not?" and (edited.author_id, edited.author) == ANA
+    comments.delete(ctx, sid, reply.id, actor=BEN)
+    assert ctx.repo.get_comment(reply.id) is None
+    comments.delete(ctx, sid, c.id, actor=ANA)
+    assert ctx.repo.get_comment(c.id) is None
+
+
+def test_an_actor_cannot_resolve_and_resolve_takes_no_actor(ctx, sidecar):
+    sid = _meeting(ctx)
+    c = _guest_thread(ctx, sid)
+    with pytest.raises(access.Forbidden):
+        comments._check(ctx, sid, ctx.repo.get_comment(c.id), "resolve", ANA)
+    assert "actor" not in inspect.signature(comments.resolve).parameters
+    assert "actor" not in inspect.signature(comments.reopen).parameters
+    # The owner (on the desktop, nobody signed in) resolves it, and moderates the guest's text.
+    assert comments.resolve(ctx, sid, c.id).resolved_at is not None
+    assert comments.edit(ctx, sid, c.id, "Owner edit").text == "Owner edit"
+    comments.delete(ctx, sid, c.id)
+    assert ctx.repo.get_comment(c.id) is None
+
+
+def test_without_an_actor_nothing_changes(client, ctx, sidecar):
+    sid = _meeting(ctx)
+    c = _post_notes(client, sid).json()
+    assert c["author_id"] == "" and c["can_edit"] and c["can_delete"] and c["can_resolve"]
+    got = comments.edit(ctx, sid, c["id"], "Changed")
+    assert got.author_id == "" and got.text == "Changed"

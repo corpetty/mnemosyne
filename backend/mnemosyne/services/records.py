@@ -63,7 +63,16 @@ def audio_hashes(session: Session) -> dict[str, str]:
 # Seals that record something that happened rather than a change of content: made even when the
 # content and audio are what the last seal covered, so the chain shows when and in which order
 # (services/publishing.py).
-EVENT_SEALS = frozenset({"published", "publication updated", "unpublished"})
+EVENT_SEALS = frozenset(
+    {
+        "published",
+        "publication updated",
+        "unpublished",
+        "guest notes started",
+        "guest notes ended",
+        "guest notes stopped",
+    }
+)
 
 
 def seal(app: AppContext, session_id: str, reason: str) -> dict | None:
@@ -218,6 +227,9 @@ One folder per meeting:
   publications.json  links made to share the meeting (only for meetings that have any): when
                      and by whom each version was published, what it showed, where it was
                      put, when it expired or was withdrawn. Never the links themselves
+  guest_notes.json   the meeting's notes opened to guests (only for meetings that had it): the
+                     host, the room's id, when and by whom it was started, ended and stopped.
+                     Never the link, its key or the host token
   audio/             the recordings (each channel and the mix), unencrypted
 
 deletions.json lists meetings and audio deleted in the period, with who, when and why.
@@ -319,6 +331,11 @@ def export_zip(app: AppContext, request: ExportRequest, dest: Path, progress=Non
                     f"{folder}/publications.json",
                     json.dumps(published, indent=1, default=str).encode(),
                 )
+            guests = guest_notes_record(app, session)
+            if guests:
+                put(
+                    f"{folder}/guest_notes.json", json.dumps(guests, indent=1, default=str).encode()
+                )
             for path in audio_files(session):
                 with plaintext(path, app.file_key) as plain:
                     put(
@@ -343,6 +360,24 @@ def export_zip(app: AppContext, request: ExportRequest, dest: Path, progress=Non
         )
         z.writestr("SHA256SUMS", "".join(f"{h}  {name}\n" for h, name in sums))
     return {"meetings": len(meetings), "bytes": dest.stat().st_size}
+
+
+def guest_notes_record(app: AppContext, session: Session) -> dict | None:
+    """The meeting's guest notes room for the records export (services/guest_notes.py): where it
+    was, when and by whom it was started, ended and stopped, and when it expires. Never the
+    link, its key, the room token or the host token."""
+    row = app.repo.guest_room(session.id)
+    if row is None:
+        return None
+    return {
+        "host": row["host_url"],
+        "room": row["room"],
+        "created_at": row["created_at"],
+        "started_by": row["started_by"],
+        "ended_at": row["ended_at"] or None,
+        "deleted_at": row["deleted_at"] or None,
+        "expires_at": row["expires_at"] or None,
+    }
 
 
 def publications_record(app: AppContext, session: Session) -> list[dict]:

@@ -43,7 +43,7 @@ from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # Fields of a meeting that do not travel in library sync: changing only these is no new version.
 # Meta key prefix of the last of my notes frames the owner accepted, per meeting shared with me.
@@ -453,6 +453,24 @@ CREATE TABLE IF NOT EXISTS publications (
 CREATE INDEX IF NOT EXISTS publications_session ON publications(session_id);
 CREATE UNIQUE INDEX IF NOT EXISTS publications_live ON publications(session_id)
     WHERE unpublished_at IS NULL;
+-- Guest notes rooms (phase 9): one per meeting. `key` is the room's secret, `token` the
+-- publisher token on the host, `room_token` the room's own token. Belongs to the machine that
+-- started it: never travels in library sync and is not a new version of the meeting.
+CREATE TABLE IF NOT EXISTS guest_rooms (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    room TEXT NOT NULL,
+    key BLOB NOT NULL,
+    token TEXT NOT NULL,
+    room_token TEXT NOT NULL,
+    host_url TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    started_by TEXT NOT NULL DEFAULT '',
+    ended_at TEXT NOT NULL DEFAULT '',
+    deleted_at TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL DEFAULT '',
+    auto_end_at TEXT NOT NULL DEFAULT '',
+    last_seq INTEGER NOT NULL DEFAULT 0
+);
 -- Library sync (services/sync): the states served to each peer, the last few per meeting (the
 -- base of a three-way merge), and meetings deleted. No foreign key: a tombstone outlives its
 -- meeting, that is its job.
@@ -2045,6 +2063,68 @@ class SessionRepository:
         with self._lock, self._conn:
             self._conn.execute(self._PUB_UPSERT, self._publication_values(row))
             self._touch(row["session_id"])
+
+    # ---- guest notes rooms (services/guest_notes.py; no access checks, no `_touch`) -----
+
+    _GUEST_COLS = (
+        "session_id, room, key, token, room_token, host_url, created_at, started_by, ended_at,"
+        " deleted_at, expires_at, auto_end_at, last_seq"
+    )
+    _GUEST_FIELDS = frozenset(c.strip() for c in _GUEST_COLS.split(",")) - {"session_id"}
+
+    @staticmethod
+    def _guest_room(r: sqlite3.Row) -> dict:
+        row = dict(r)
+        row["key"] = bytes(row["key"])
+        return row
+
+    def guest_room(self, session_id: str) -> dict | None:
+        with self._lock:
+            r = self._conn.execute(
+                f"SELECT {self._GUEST_COLS} FROM guest_rooms WHERE session_id=?", (session_id,)
+            ).fetchone()
+        return None if r is None else self._guest_room(r)
+
+    def put_guest_room(self, row: dict) -> None:
+        """Insert or replace the meeting's room (missing optional columns take their defaults)."""
+        defaults = {
+            "started_by": "",
+            "ended_at": "",
+            "deleted_at": "",
+            "expires_at": "",
+            "auto_end_at": "",
+            "last_seq": 0,
+        }
+        full = {**defaults, **row}
+        cols = [c.strip() for c in self._GUEST_COLS.split(",")]
+        with self._lock, self._conn:
+            self._conn.execute(
+                f"INSERT OR REPLACE INTO guest_rooms ({self._GUEST_COLS})"
+                f" VALUES ({','.join('?' * len(cols))})",
+                tuple(full[c] for c in cols),
+            )
+
+    def live_guest_rooms(self) -> list[dict]:
+        """Rooms not deleted, ended ones included (they still need expiry handling)."""
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {self._GUEST_COLS} FROM guest_rooms WHERE deleted_at=''"
+                " ORDER BY created_at, session_id"
+            ).fetchall()
+        return [self._guest_room(r) for r in rows]
+
+    def set_guest_room(self, session_id: str, **fields) -> None:
+        if not fields:
+            return
+        bad = set(fields) - self._GUEST_FIELDS
+        if bad:
+            raise ValueError(f"unknown guest room fields: {sorted(bad)}")
+        sets = ", ".join(f"{k}=?" for k in fields)
+        with self._lock, self._conn:
+            self._conn.execute(
+                f"UPDATE guest_rooms SET {sets} WHERE session_id=?",
+                (*fields.values(), session_id),
+            )
 
     def mark_unpublished(self, pub_id: str, at: str, *, touch: bool = True) -> None:
         """`touch=False` for what every machine works out for itself (an expiry)."""

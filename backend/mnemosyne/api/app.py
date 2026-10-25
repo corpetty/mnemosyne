@@ -26,6 +26,7 @@ from .routes.encryption import router as encryption_router
 from .routes.export import router as export_router
 from .routes.external_notes import router as external_notes_router
 from .routes.glossary import router as glossary_router
+from .routes.guest_notes import router as guest_notes_router
 from .routes.history import router as history_router
 from .routes.integrations import router as integrations_router
 from .routes.jobs import router as jobs_router
@@ -104,6 +105,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(sessions_router)
     app.include_router(clips_router)
     app.include_router(publishing_router)
+    app.include_router(guest_notes_router)
     app.include_router(encryption_router)
     app.include_router(models_router)
     app.include_router(export_router)

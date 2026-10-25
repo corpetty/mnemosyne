@@ -2096,6 +2096,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/guest-notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Guest Notes
+         * @description The meeting's guest notes room (live or ended), or null (200) when there is none or it
+         *     was stopped. The link only for its owner or an admin.
+         */
+        get: operations["get_guest_notes_api_sessions__session_id__guest_notes_get"];
+        /**
+         * Start Guest Notes
+         * @description Open the meeting's notes to guests: the live room, or a new one (an ended room is
+         *     replaced). 403 when not the owner (or, on a team server, not allowed there), 409 when it
+         *     cannot start (no host, no sidecar, a shared meeting), 502 when the host refuses.
+         */
+        put: operations["start_guest_notes_api_sessions__session_id__guest_notes_put"];
+        post?: never;
+        /**
+         * Stop Guest Notes
+         * @description Stop: the room is deleted from its host at once, live or ended, and the link dies.
+         *     Returns the room with state "stopped" (no link). 404 when there is none.
+         */
+        delete: operations["stop_guest_notes_api_sessions__session_id__guest_notes_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/guest-notes/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End Guest Notes
+         * @description End the room: guests keep reading until it expires (24 h), nobody can type. 404 when
+         *     the meeting has no live room.
+         */
+        post: operations["end_guest_notes_api_sessions__session_id__guest_notes_end_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/guest-notes/new-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * New Guest Notes Link
+         * @description A new room and key: the old link stops working and its guests are gone. 404 when the
+         *     meeting has no guest notes.
+         */
+        post: operations["new_guest_notes_link_api_sessions__session_id__guest_notes_new_link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/history": {
         parameters: {
             query?: never;
@@ -5108,6 +5182,40 @@ export interface components {
             /** Heard */
             heard: string;
         };
+        /** GuestRoom */
+        GuestRoom: {
+            /** Created At */
+            created_at: string;
+            /**
+             * Ended At
+             * @default
+             */
+            ended_at: string;
+            /**
+             * Expires At
+             * @default
+             */
+            expires_at: string;
+            /**
+             * Guests Present
+             * @default []
+             */
+            guests_present: string[];
+            /** Host Url */
+            host_url: string;
+            /**
+             * Started By
+             * @default
+             */
+            started_by: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "live" | "ended" | "stopped";
+            /** Url */
+            url: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -6870,6 +6978,8 @@ export interface components {
         };
         /** SettingsUpdate */
         SettingsUpdate: {
+            /** Allow Guest Notes */
+            allow_guest_notes?: boolean | null;
             /** Allow Publishing */
             allow_publishing?: boolean | null;
             /** Anthropic Api Key */
@@ -6954,6 +7064,10 @@ export interface components {
             glossary_llm_correct?: boolean | null;
             /** Gpu Support */
             gpu_support?: string | null;
+            /** Guest Host */
+            guest_host?: string | null;
+            /** Guest Notes End Hours */
+            guest_notes_end_hours?: number | null;
             /** Hf Token */
             hf_token?: string | null;
             /** Hubspot Auto Push */
@@ -7151,6 +7265,8 @@ export interface components {
         };
         /** SettingsValues */
         SettingsValues: {
+            /** Allow Guest Notes */
+            allow_guest_notes: boolean;
             /** Allow Publishing */
             allow_publishing: boolean;
             /** Anthropic Api Key */
@@ -7241,6 +7357,10 @@ export interface components {
             glossary_llm_correct: boolean;
             /** Gpu Support */
             gpu_support: string;
+            /** Guest Host */
+            guest_host: string;
+            /** Guest Notes End Hours */
+            guest_notes_end_hours: number;
             /** Hf Token */
             hf_token: string;
             /** Hubspot Auto Push */
@@ -12996,6 +13116,161 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SendResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_guest_notes_api_sessions__session_id__guest_notes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuestRoom"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_guest_notes_api_sessions__session_id__guest_notes_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuestRoom"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_guest_notes_api_sessions__session_id__guest_notes_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuestRoom"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    end_guest_notes_api_sessions__session_id__guest_notes_end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuestRoom"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    new_guest_notes_link_api_sessions__session_id__guest_notes_new_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuestRoom"];
                 };
             };
             /** @description Validation Error */

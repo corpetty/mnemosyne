@@ -1,5 +1,7 @@
 """Session management endpoints."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from ... import access
@@ -12,7 +14,7 @@ from ...models.session import (
     Session,
     SessionSummary,
 )
-from ...services import contacts, history, shared_notes, shared_with_me, summary_edit
+from ...services import contacts, guest_notes, history, shared_notes, shared_with_me, summary_edit
 from ...services.combine import combine_runner
 from ...services.copilot import copilot_ask_runner
 from ...services.origin import require_local_audio
@@ -20,6 +22,8 @@ from ...services.pipeline import transcribe_session
 from ...services.stats import MeetingStats, meeting_stats
 from ...services.summary_edit import SummaryEdit
 from ..context import AppContext, get_ctx
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -141,6 +145,12 @@ async def delete_session(session_id: str, reason: str = "", ctx: AppContext = De
         check_delete(ctx, session, "meeting", reason)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    # Its guest notes room goes first (the link dies, the bridge leaves); never a reason to keep
+    # the meeting.
+    try:
+        await guest_notes.stop(ctx, session_id, by=getattr(access.principal(), "name", ""))
+    except Exception:
+        logger.warning("Could not stop the guest notes of %s before deleting it", session_id)
     # A meeting someone shared with me: this removes only my copy (the repository leaves no
     # tombstone for it), so it is the app's own write. While the share is live, the next pull
     # brings it back.

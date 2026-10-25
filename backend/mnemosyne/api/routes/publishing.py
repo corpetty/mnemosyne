@@ -32,6 +32,9 @@ CSP = (
     "media-src blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; "
     "frame-ancestors 'none'"
 )
+GUEST_DIR = Path(__file__).resolve().parent.parent / "static" / "guest"
+# The guest notes page (guest/): the viewer's policy, plus WebAssembly for the notes document.
+GUEST_CSP = CSP.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'")
 IMMUTABLE = "public, max-age=31536000, immutable"
 SECURITY = {"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"}
 PLACEHOLDER = """<!doctype html>
@@ -39,6 +42,7 @@ PLACEHOLDER = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body><p>The viewer for published meetings is not built into this Mnemosyne.</p></body></html>
 """
+GUEST_PLACEHOLDER = PLACEHOLDER.replace("published meetings", "guest notes")
 
 
 def _session(ctx: AppContext, session_id: str):
@@ -295,14 +299,13 @@ _TYPES = {
     ".ico": "image/x-icon",
     ".woff2": "font/woff2",
     ".json": "application/json",
+    ".wasm": "application/wasm",
     ".txt": "text/plain; charset=utf-8",
 }
 
 
-@router.get("/p/{folder}/{rest:path}", include_in_schema=False)
-async def viewer_asset(folder: str, rest: str):
-    """/p/<dir>/<path>: the viewer build's files (its assets/ folder)."""
-    root = VIEWER_DIR.resolve()
+def _static(root: Path, folder: str, rest: str, csp: str):
+    root = root.resolve()
     parts = Path(folder, rest).parts
     if any(p.startswith(".") or "\\" in p for p in parts):
         return _error(404, "not_found")
@@ -312,5 +315,31 @@ async def viewer_asset(folder: str, rest: str):
     return FileResponse(
         path,
         media_type=_TYPES.get(path.suffix.lower(), "application/octet-stream"),
-        headers=_viewer_headers("no-cache"),  # as the publish host does
+        headers={**SECURITY, "Content-Security-Policy": csp, "Cache-Control": "no-cache"},
     )
+
+
+@router.get("/p/{folder}/{rest:path}", include_in_schema=False)
+async def viewer_asset(folder: str, rest: str):
+    """/p/<dir>/<path>: the viewer build's files (its assets/ folder)."""
+    return _static(VIEWER_DIR, folder, rest, CSP)
+
+
+# ---- the guest notes page (services/guest_notes.py; publish-host/src/app.rs serves the same) ---
+
+
+@router.get("/n/{room}", include_in_schema=False)
+async def guest_page(room: str):
+    """Any /n/<room> is the guests' page: it reads the room and key from its own address and
+    says "not found" itself, so this never tells which rooms exist."""
+    index = GUEST_DIR / "index.html"
+    headers = {**SECURITY, "Content-Security-Policy": GUEST_CSP, "Cache-Control": "no-store"}
+    if not index.is_file():
+        return HTMLResponse(GUEST_PLACEHOLDER, status_code=503, headers=headers)
+    return FileResponse(index, media_type="text/html", headers=headers)
+
+
+@router.get("/n/{folder}/{rest:path}", include_in_schema=False)
+async def guest_asset(folder: str, rest: str):
+    """/n/<dir>/<path>: the guest page build's files (its assets/ folder, the wasm)."""
+    return _static(GUEST_DIR, folder, rest, GUEST_CSP)

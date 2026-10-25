@@ -841,6 +841,47 @@ answer has `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`;
 - `GET /pub/{id}/{sha256}`: a sealed clip, `Cache-Control: public, max-age=31536000, immutable`; `404` if the current
   version does not hold it.
 
+### Guest notes: `GET|PUT|DELETE /api/sessions/{session_id}/guest-notes` · `POST …/guest-notes/end` · `POST …/guest-notes/new-link`
+
+Opens the meeting's live notes to people who have no Mnemosyne: a link to a page in their browser, through a
+room on a host that cannot read it (services/guest_notes.py, guest/). The host is `guest_host`, else
+`publish_host`; with neither, starting answers `409 "No host for guest notes…"`. All five answer a `GuestRoom`:
+`{ url, host_url, state: "live"|"ended"|"stopped", created_at, ended_at, expires_at, started_by, guests_present }`.
+
+- `GET` the room (live or ended), or `null` with `200` when the meeting has none or it was stopped (it is not a
+  `404`, as with `…/publication`). Anyone who can see the meeting may ask; `url` (`<host>/n/<room>#<key>`, the key is
+  in the fragment and nothing else carries it) and `guests_present` (guests' names) are filled only for the
+  meeting's owner and admins, readers get `url: null` and `[]`.
+- `PUT` opens it: the live room if there is one, else a new one (an ended room is deleted from its host first: one
+  room per meeting). Owner or admin only (`403`); on a team server also `allow_guest_notes` (off by default, `403`
+  "turned off"). `409` when it cannot start (no host, the `mnemosyne-link` sidecar is missing, the meeting was
+  shared with you, its notes have not arrived from sync); `502` when the host refuses or cannot be reached.
+- `POST …/end` ends the live room: a final snapshot, nobody can type, guests may read until it expires
+  (`guest_notes_end_hours` after the recording stopped ends it by itself; an ended room stays 24 h, at most the
+  room's 7 days). `404` when there is no live room. Owner or admin.
+- `POST …/new-link` stops the room and starts a new one: new id and key, the old link and its guests are gone. `404`
+  when the meeting has no guest notes. Owner or admin.
+- `DELETE` stops the room: deleted from its host at once, live or ended; returns it with `state: "stopped"` and
+  `url: null`; `404` when there is none. Owner or admin, also when `allow_guest_notes` was turned off since. Deleting
+  the meeting stops its room first (best effort).
+
+Starting, ending and stopping are in the meeting's history (`guest_notes_started|ended|stopped`) and each seals a
+record version (`EVENT_SEALS`); the records export has a `guest_notes.json` per such meeting (host, room id, who and
+when; never the link, key or tokens).
+
+Open pages, no sign-in (the key in the link is the permission), also on the team listener, with the publication
+viewer's headers and a CSP that adds `'wasm-unsafe-eval'` to `script-src` (the notes document runs as WebAssembly):
+`GET /n/{room}` is the guests' `index.html` for any room id (it reads room and key from its own address;
+`503` with a plain page when not built in) and `GET /n/{folder}/{path}` its build files (`/n/assets/…`, the `.wasm` as
+`application/wasm`).
+
+The room protocol (guest page and the owner's backend both speak it to the host): HTTP with the owner's publisher
+token to create (`PUT /live/{room}`), snapshot (`PUT …/snapshot`, `X-Room-Since` prunes the log), end
+(`POST …/end`) and delete (`DELETE`); a WebSocket `GET /live/{room}` with the room token for everyone: `join`,
+`welcome`, the snapshot, the log after `since`, then live relay (`0x01 || seq || envelope`), presence (`0x02`), `count`
+and `ended`. Everything in an envelope is sealed (AES-256-GCM, `services/guest_format.py`; the host holds only the
+room token). The exact messages, close codes and limits are in the header of `publish-host/src/live.rs`.
+
 ### Transcript editing
 
 All return the updated `SessionDetail`, recompute `participants`, and emit a `session` event.

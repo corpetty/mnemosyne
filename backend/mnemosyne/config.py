@@ -286,6 +286,13 @@ class Settings(BaseSettings):
     allow_publishing: bool = False
     # How long a new publication stays up, in days (a publish host keeps one at most 365).
     publish_default_expiry_days: int = 90
+    # Guest notes (phase 9): a live notes room outsiders join with a link. guest_host: a publish
+    # host that serves rooms; blank = publish_host, else ours once it runs. Team servers: off
+    # until an admin turns allow_guest_notes on. guest_notes_end_hours: how long after the
+    # recording stops a room is ended.
+    guest_host: str = ""
+    allow_guest_notes: bool = False
+    guest_notes_end_hours: int = 12
 
     # Calendar: private ICS address (or a local .ics path). Recordings started during
     # a meeting are named after it and remember its attendees.
@@ -415,6 +422,13 @@ class Settings(BaseSettings):
     @classmethod
     def _clamp_expiry(cls, v: int) -> int:
         return max(1, min(365, v))
+
+    @field_validator("guest_notes_end_hours")
+    @classmethod
+    def _end_hours(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("guest_notes_end_hours must be at least 1")
+        return v
 
     @classmethod
     def settings_customise_sources(
