@@ -21,12 +21,15 @@
 
 	const session = $derived(sessionState.activeSession);
 	const sid = $derived(session?.id ?? '');
-	const visible = $derived(!!session && !session.shared_from && canChange(session));
+	const visible = $derived(!!session && !session.shared_from && canChange(session) && guestNotesState.allowed);
 	const loaded = $derived(guestNotesState.rooms[sid]);
 	// "stopped" is the same as no room.
 	const room = $derived(loaded && loaded.state !== 'stopped' ? loaded : null);
 	const live = $derived(room?.state === 'live');
 
+	$effect(() => {
+		if (!guestNotesState.settingsLoaded) void guestNotesState.loadSettings();
+	});
 	$effect(() => {
 		if (visible && sid) void guestNotesState.load(sid);
 	});

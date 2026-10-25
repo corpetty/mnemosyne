@@ -176,6 +176,7 @@ class Room:
     fold_timer: asyncio.TimerHandle | None = None
     dirty_since: float | None = None  # loop time of the first frame since the last fold
     last_edit: tuple[str, float] = ("", 0.0)  # who, and when it was last announced
+    guests_msg: dict | None = None  # the last non-empty "guests" message, for later joiners
 
     def broadcast(self, kind: str, data: Any, skip: Member | None = None) -> None:
         """To the visible members (not `skip`): a hidden one only wants frames."""
@@ -742,6 +743,8 @@ async def join(
     if waiting:
         hello["waiting_for_sync"] = True
     member.send("json", hello)
+    if room.guests_msg is not None and not member.hidden:
+        member.send("json", room.guests_msg)
     if snapshot is not None:
         member.send("bytes", bytes(snapshot))
     for _, frame in ops:
@@ -780,6 +783,8 @@ def broadcast_json(app: AppContext, session_id: str, msg: dict) -> None:
     """A JSON text message to every visible member of the meeting's room (nobody: nothing)."""
     room = hub(app).rooms.get(session_id)
     if room is not None:
+        if msg.get("type") == "guests":
+            room.guests_msg = msg if msg.get("present") else None
         room.broadcast("json", msg)
 
 

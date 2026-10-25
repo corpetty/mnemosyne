@@ -49,7 +49,7 @@ jobs:
       - run: pnpm build
 
   viewer:
-    name: Publication viewer is current
+    name: Viewer and guest page are current
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -70,12 +70,25 @@ jobs:
             echo "::error::the committed viewer is stale: run pnpm build:viewer and commit $out"
             exit 1
           fi
+      - name: Rebuild the guest page
+        run: pnpm build:guest
+      - name: The committed guest page is current
+        run: |
+          out=backend/mnemosyne/api/static/guest
+          if [ -n "$(git status --porcelain -- "$out")" ]; then
+            git status --short -- "$out"
+            git diff --stat -- "$out"
+            echo "::error::the committed guest page is stale: run pnpm build:guest and commit $out"
+            exit 1
+          fi
       # What this runner built, to compare with a local build when the two disagree.
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: viewer-build
-          path: backend/mnemosyne/api/static/viewer/
+          path: |
+            backend/mnemosyne/api/static/viewer/
+            backend/mnemosyne/api/static/guest/
           retention-days: 7
 
   e2e:
@@ -104,14 +117,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: link
+          workspaces: |
+            link
+            publish-host
       - name: Build the link sidecar (debug is fast enough for the tests)
         run: cargo build --locked --manifest-path link/Cargo.toml
+      # The guest-notes specs meet on a real publish host (tests-e2e/start-publish-host.sh).
+      - name: Build the publish host
+        run: cargo build --locked --manifest-path publish-host/Cargo.toml
       - name: Install browsers (Chromium, and WebKit for the specs that need it)
         run: pnpm exec playwright install --with-deps chromium webkit
       - run: pnpm test:e2e
         env:
           MNEMOSYNE_LINK_BIN: ${{ github.workspace }}/link/target/debug/mnemosyne-link
+          MNEMOSYNE_PUBLISH_HOST_BIN: ${{ github.workspace }}/publish-host/target/debug/mnemosyne-publish-host
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

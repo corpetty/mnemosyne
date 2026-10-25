@@ -1,5 +1,6 @@
 import * as backend from '$lib/api/backend.js';
 import type { GuestRoom } from '$lib/types/index.js';
+import { connectionState } from './connection.svelte.js';
 
 /** A meeting's guest notes room (the link guests edit the notes through), per meeting. */
 class GuestNotesState {
@@ -7,6 +8,23 @@ class GuestNotesState {
   rooms = $state<Record<string, GuestRoom | null>>({});
   busy = $state(false);
   error = $state<string | null>(null);
+  allowGuestNotes = $state(false);
+  settingsLoaded = $state(false);
+
+  /** Guest notes are on: always on the desktop, on a team server once an admin allows it. */
+  get allowed(): boolean {
+    return !connectionState.me?.team_mode || this.allowGuestNotes;
+  }
+
+  async loadSettings() {
+    try {
+      const v = (await backend.getSettings()).values;
+      this.allowGuestNotes = !!v.allow_guest_notes;
+      this.settingsLoaded = true;
+    } catch {
+      /* not connected yet: tried again on the next open */
+    }
+  }
 
   /** Whether a room has been loaded for this meeting (the controller reloads those on events). */
   watching(sessionId: string): boolean {

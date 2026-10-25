@@ -15,6 +15,7 @@ auto_summarize = false
 setup_complete = ${E2E_SETUP_COMPLETE:-true}
 obsidian_vault_path = "$data/vault"
 backup_dir = "$data/backups"
+guest_host = "http://127.0.0.1:8028"
 TOML
 export MNEMOSYNE_DEMO=1 MNEMOSYNE_DATA_DIR="$data/db" MNEMOSYNE_CONFIG_FILE="$data/config.toml"
 cd "$root/backend"

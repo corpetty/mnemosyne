@@ -33,7 +33,7 @@ export default defineConfig({
     // also run in WebKit, the engine of the desktop app's window.
     {
       name: 'webkit',
-      testMatch: ['shared-notes.spec.ts', 'notes-editor.spec.ts', 'publish.spec.ts'],
+      testMatch: ['shared-notes.spec.ts', 'notes-editor.spec.ts', 'publish.spec.ts', 'guest-notes.spec.ts'],
       use: { ...devices['Desktop Safari'] }
     }
   ],
@@ -41,6 +41,12 @@ export default defineConfig({
     {
       command: 'bash tests-e2e/start-backend.sh',
       url: `${BACKEND}/health`,
+      reuseExistingServer: false,
+      timeout: 120_000
+    },
+    {
+      command: 'bash tests-e2e/start-publish-host.sh',
+      url: 'http://127.0.0.1:8028/health',
       reuseExistingServer: false,
       timeout: 120_000
     },

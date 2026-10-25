@@ -701,3 +701,30 @@ async def test_broadcast_json_reaches_visible_members_only(client, ctx, sidecar)
         await shared_notes.leave(ctx, sid, m)
     shared_notes.detach(ctx, sid, bridge)
     await pending(ctx)
+
+
+@pytest.mark.anyio
+async def test_a_late_joiner_gets_the_guests_after_hello(client, ctx, sidecar):
+    sid = meeting(ctx)
+    ws_a = FakeWs()
+    ann = await shared_notes.join(ctx, sid, ws_a, "u1", "Ann", True)
+    assert ann is not None
+    msg = {"type": "guests", "present": ["Ana"], "typing": []}
+    shared_notes.broadcast_json(ctx, sid, msg)
+    ws_b = FakeWs()
+    bob = await shared_notes.join(ctx, sid, ws_b, "u2", "Bob", True)
+    assert bob is not None
+    await asyncio.sleep(0.05)
+    kinds = [m.get("type") for m in ws_b.sent if isinstance(m, dict)]
+    assert kinds[:2] == ["hello", "guests"]
+    assert [m for m in ws_b.sent if isinstance(m, dict)][1] == msg
+    # an empty message clears it: the next joiner hears nothing
+    shared_notes.broadcast_json(ctx, sid, {"type": "guests", "present": [], "typing": []})
+    ws_c = FakeWs()
+    cy = await shared_notes.join(ctx, sid, ws_c, "u3", "Cy", True)
+    assert cy is not None
+    await asyncio.sleep(0.05)
+    assert [m.get("type") for m in ws_c.sent if isinstance(m, dict)] == ["hello"]
+    for m in (ann, bob, cy):
+        await shared_notes.leave(ctx, sid, m)
+    await pending(ctx)

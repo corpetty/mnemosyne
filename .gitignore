@@ -45,6 +45,7 @@ data/
 src-tauri/binaries/
 src-tauri/resources/
 tests-e2e/.data*/
+tests-e2e/.publish/
 test-results/
 playwright-report/
 flatpak/mnemosyne.deb
