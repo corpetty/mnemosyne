@@ -36,6 +36,16 @@ time. Meetings shared with you by someone else cannot be opened to guests.
   threads; that stays with you.
 - **Agenda**: the meeting's title, date, your name and the agenda (the calendar event's
   description the copilot follows), with the items the copilot has marked covered ticked.
+- **Carets and typing**: each person present shows as a coloured caret or selection in the notes with their name,
+  and a name that is typing is marked, for you and for guests alike, whichever way they connected (iroh, tunnel or host).
+  A guest's colour comes from their page's id, so it stays the same when they reload; yours and your other
+  editors' from who they are.
+- **Time chips**: while the meeting is recording, `/` (or **＋ Insert**) offers the current time; it is inserted as
+  a chip, a small pill with the time into the recording, which opens the transcript at that line on your side. Without
+  a recording the choice is not offered.
+- **Mentions**: `@` (or `[[`, or **＋ Insert**) lists the people present in the room, you and the other guests, and
+  inserts the one picked as a person chip; a name that matches nobody can still be inserted as typed. Chips are plain
+  text to guests: they cannot be clicked, and there are no meeting chips on this page.
 - **Presence**: who else is here and who is typing, and a state: Connecting, Live or Ended.
 
 ## The link is the permission
@@ -163,8 +173,9 @@ meeting's owner or an admin can start them. See [team-server.md](team-server.md#
 - A room takes at most 64 connections at once, and a room lives at most 7 days.
 - Over iroh, one relay connection carries all guests: with n0's relays that is rate-limited, and
   ten guests each loading a 1 MB snapshot take about ten seconds in all.
-- Presence (who is here, who is typing) is not shared between the guests who came through your
-  computer and those who came through a host.
+- Menus open on single typed characters. Some Android keyboards send a whole word at once, so
+  typing `@` inside a word or after a suggestion may not open the mention list; use the **＋ Insert**
+  button instead.
 - A guest page that cannot reach your computer and is told by the publish host that the room is
   not there takes the notes as no longer shared and drops its saved copy. If the copy on the host
   could not be made when you started (only logged), that also happens while your computer is merely off.

@@ -164,3 +164,90 @@ def test_empty_notes_add_nothing_to_the_summary(client, ctx, fake_provider, tran
     client.post(f"/api/sessions/{sid}/notes", json={"notes": "   \n"})
     assert run_summarize(client, sid, {"provider": "fake"})["status"] == "completed"
     assert "Attendees' notes" not in fake_provider.calls[-1]["system_prompt"]
+
+
+# ---- action items typed in the notes (services/notes_items.py) -------------------------------
+
+
+def _meeting_with_notes_items(ctx):
+    from datetime import datetime
+
+    from mnemosyne.models.session import NotesItem, Session
+    from mnemosyne.models.transcript import TranscriptSegment
+
+    sid = ctx.repo.save(
+        Session(
+            name="Planning",
+            created_at=datetime(2026, 10, 8, 10),
+            transcript=[TranscriptSegment(text="the deck", speaker="Ann", start=0, end=2)],
+        )
+    ).id
+    ctx.repo.set_notes_items(
+        sid,
+        [
+            NotesItem(id="a" * 16, line="1" * 64, text="Send the deck to the board", owner="Ada"),
+            NotesItem(id="b" * 16, line="2" * 64, text="Book the room", owner="Bo", done=True),
+            NotesItem(id="c" * 16, line="3" * 64, text="Water the plants", owner=None),
+        ],
+    )
+    return sid
+
+
+def _llm_reply(*items) -> str:
+    import json
+
+    return json.dumps(
+        {"summary": ["Notes."], "decisions": [], "open_questions": [], "action_items": list(items)}
+    )
+
+
+def test_notes_items_hint_lists_text_and_owner():
+    from mnemosyne.summarization.prompts import notes_items_hint
+
+    assert notes_items_hint([]) == ""
+    block = notes_items_hint([("Send the deck", "Ada"), ("Book the room", None)])
+    assert block.startswith(
+        "Already recorded as action items in the meeting notes (do not list them again):"
+    )
+    assert "- Send the deck (owner: Ada)\n- Book the room" in block
+
+
+def test_the_summary_prompt_tells_which_action_items_the_notes_hold(client, ctx, fake_provider):
+    sid = _meeting_with_notes_items(ctx)
+    fake_provider.summary = _llm_reply()
+    assert run_summarize(client, sid, {"provider": "fake"})["status"] == "completed"
+    prompt = fake_provider.calls[0]["system_prompt"]
+    assert "Already recorded as action items in the meeting notes" in prompt
+    assert "- Send the deck to the board (owner: Ada)" in prompt
+    assert "- Book the room (owner: Bo)" in prompt
+    assert "- Water the plants" in prompt
+
+
+def test_no_notes_items_no_hint(client, ctx, fake_provider):
+    sid = _meeting_with_notes_items(ctx)
+    ctx.repo.set_notes_items(sid, [])
+    fake_provider.summary = _llm_reply()
+    assert run_summarize(client, sid, {"provider": "fake"})["status"] == "completed"
+    assert "Already recorded as action items" not in fake_provider.calls[0]["system_prompt"]
+
+
+def test_an_llm_item_that_repeats_a_notes_item_is_dropped(client, ctx, fake_provider):
+    sid = _meeting_with_notes_items(ctx)
+    fake_provider.summary = _llm_reply(
+        {"text": "Send the deck to the board.", "owner": "Ada"},  # the same, owner the same
+        {"text": "Book the room", "owner": "Cy"},  # same words, another owner: stays
+        {"text": "Book the room"},  # same words, no owner: dropped
+        {"text": "water the plants!", "owner": "Cy"},  # the notes item has no owner: dropped
+        {"text": "Order badges", "owner": "Ada"},
+    )
+    assert run_summarize(client, sid, {"provider": "fake"})["status"] == "completed"
+    texts = [(a.text, a.owner) for a in ctx.repo.get(sid).summary_data.action_items]
+    assert texts == [("Book the room", "Cy"), ("Order badges", "Ada")]
+    assert len(ctx.repo.notes_items(sid)) == 3  # the notes' own items are untouched
+
+
+def test_an_ownerless_llm_item_matches_a_notes_item_with_an_owner(client, ctx, fake_provider):
+    sid = _meeting_with_notes_items(ctx)
+    fake_provider.summary = _llm_reply({"text": "Send the deck to the board"})
+    assert run_summarize(client, sid, {"provider": "fake"})["status"] == "completed"
+    assert ctx.repo.get(sid).summary_data.action_items == []

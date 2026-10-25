@@ -19,6 +19,7 @@ from .session import (
     AgendaItem,
     CopilotNotes,
     ExternalNotes,
+    NotesItem,
     Recording,
     SummaryData,
 )
@@ -209,6 +210,10 @@ class SyncSession(ApiModel):
     # snapshot, folded when served; None when the meeting has none (or the sidecar is missing
     # there). Merged by op-set union (services/sync_notes.py), never three-way.
     notes_doc: str | None = None
+    # The action items typed in the notes (`sessions.notes_items`, services/notes_items.py).
+    # None = the sender does not know the field (an older peer): ours are kept, never wiped.
+    # Merged per id (services/sync_merge.py): state fields three-way, derived fields ours.
+    notes_items: list[NotesItem] | None = None
     participants: list[str] = Field(default_factory=list)
     attendees: list[str] = Field(default_factory=list)
     local_only: bool = False

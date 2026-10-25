@@ -1,5 +1,6 @@
 """Tasks across meetings (services/task_links.py): linking, fan-out, reconcile, suggestions."""
 
+import base64
 from datetime import datetime
 
 import pytest
@@ -8,8 +9,10 @@ from fastapi.testclient import TestClient
 from mnemosyne import access
 from mnemosyne.api.app import create_app
 from mnemosyne.models.session import ActionItem, Session, SummaryData
-from mnemosyne.services import task_links
+from mnemosyne.services import notes_items, shared_notes, task_links
 from mnemosyne.services.tasks import carry_over
+from tests import fake_link
+from tests.fake_link import doc_frame
 
 LONG = "Write the migration guide for the new storage format"
 LONG_CLOSE = "Write the migration guide for new storage formats"
@@ -275,3 +278,102 @@ def test_an_old_meeting_does_not_link_to_a_newer_meetings_open_twin(ctx):
     links = task_links.link_items(ctx, new.id)  # the newer one does join the older one
     assert [link.other_session_id for link in links] == [old.id]
     assert _items(ctx, old.id)[0].task_id == _items(ctx, new.id)[0].task_id != ""
+
+
+# ---- action items from the notes are mentions (phase 11) -----------------------------------
+
+ADA = "[@Ada Lovelace](mnemosyne:person/Ada%20Lovelace)"
+
+
+@pytest.fixture
+def sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr(shared_notes, "FOLD_DELAY", 1000.0)
+    monkeypatch.setattr(shared_notes, "FOLD_EVERY", 1000.0)
+    return fake_link.install(tmp_path, monkeypatch)
+
+
+def _typed(ctx, sid, fid, *ops):
+    frame = base64.b64decode(doc_frame(fid, *ops))
+    shared_notes.accept_frames(ctx, sid, [frame], "u-ada", "Ada", can_edit=True)
+    shared_notes.fold_blocking(ctx, sid)
+
+
+def _notes_meeting(ctx, name, day, text):
+    s = ctx.repo.save(Session(name=name, created_at=datetime(2026, 10, day, 10)))
+    _typed(ctx, s.id, "f1", ["set", f"- [ ] {ADA}: {text}\n"])
+    return s
+
+
+def test_a_notes_item_links_with_an_older_open_task_by_exact_text(ctx, sidecar):
+    old = _meeting(ctx, "Infra weekly", [_item("Send the deck", "Ada Lovelace", "a1")], 1)
+    done = _meeting(ctx, "Older", [_item("Send the deck", "Ada Lovelace", "d1", done=True)], 2)
+    new = _notes_meeting(ctx, "Planning", 8, "send the deck!")  # the fold links it
+    (item,) = ctx.repo.notes_items(new.id)
+    assert item.text == "send the deck!" and len(item.task_id) == 12
+    assert _items(ctx, old.id)[0].task_id == item.task_id
+    assert _items(ctx, done.id)[0].task_id == ""  # a done task stays done
+    assert _history(ctx, new.id, "task_linked") == [
+        {"task": "send the deck!", "earlier": "Infra weekly", "session": old.id}
+    ]
+    obj = task_links.index(ctx.repo)[item.task_id]
+    assert [(m.session_id, m.source, m.idx) for m in obj.mentions] == [
+        (new.id, "notes", -1),
+        (old.id, "summary", 0),
+    ]
+    assert task_links.object_of(ctx.repo, new.id, item.id).key == item.task_id
+
+
+def test_a_linked_summary_mention_tick_reaches_the_notes_line(ctx, sidecar):
+    a = _notes_meeting(ctx, "Infra weekly", 1, "update the docs")
+    (item,) = ctx.repo.notes_items(a.id)
+    b = _meeting(ctx, "Infra weekly 2", [_item("Update the docs", "Ada Lovelace", "b1")], 8)
+    assert [lk.other_item_id for lk in task_links.link_items(ctx, b.id)] == [item.id]
+    tid = _items(ctx, b.id)[0].task_id
+    assert ctx.repo.notes_items(a.id)[0].task_id == tid
+    before = ctx.repo.sync_state(a.id)[1]
+    assert task_links.set_done(ctx, tid, True, by="Bob") == 2
+    assert ctx.repo.notes_items(a.id)[0].done
+    assert ctx.repo.get(a.id).notes.startswith("- [x]")
+    assert ctx.repo.notes_ops(a.id)[-1]["frame"].startswith(b"\xde")
+    assert ctx.repo.sync_state(a.id)[1] != before
+    assert _history(ctx, a.id, "task_done") == [{"task": "update the docs", "by": "Bob"}]
+    # follow and an issue link reach it too, without touching the document.
+    n = len(ctx.repo.notes_ops(a.id))
+    task_links.set_follow(ctx, tid, True)
+    task_links.set_issue_url(ctx, tid, "https://x/1")
+    stored = ctx.repo.notes_items(a.id)[0]
+    assert (stored.follow, stored.issue_url) == (True, "https://x/1")
+    assert len(ctx.repo.notes_ops(a.id)) == n
+
+
+def test_reconcile_ticks_a_notes_mention_from_its_head(ctx, sidecar):
+    tid = "abcabcabcabc"
+    a = _notes_meeting(ctx, "Infra weekly", 1, "update the docs")
+    (item,) = ctx.repo.notes_items(a.id)
+    assert notes_items.write_fields(ctx, a.id, item.id, task_id=tid)
+    _meeting(ctx, "Later", [_item("Update the docs", "Ada", "b1", task_id=tid, done=True)], 8)
+    assert task_links.reconcile(ctx) == 1
+    assert ctx.repo.notes_items(a.id)[0].done
+    assert ctx.repo.get(a.id).notes.startswith("- [x]")
+    assert task_links.reconcile(ctx) == 0
+
+
+def test_a_notes_mention_the_notes_cannot_take_fails_the_tick(ctx, sidecar, monkeypatch):
+    a = _notes_meeting(ctx, "Infra weekly", 1, "update the docs")
+    (item,) = ctx.repo.notes_items(a.id)
+    monkeypatch.setenv("FAKE_NOTES_DOC_FAIL", "1")
+    with pytest.raises(shared_notes.NotesDocError):
+        task_links.set_done(ctx, f"{a.id}:{item.id}", True)
+    assert not ctx.repo.notes_items(a.id)[0].done
+
+
+def test_continued_notes_covers_notes_items(ctx, sidecar):
+    from mnemosyne.api.routes.export import continued_notes
+
+    old = _notes_meeting(ctx, "Planning", 1, "send the deck")
+    later = _meeting(ctx, "Follow-up", [_item("Send the deck", "Ada Lovelace", "b1")], 8)
+    task_links.link_items(ctx, later.id, "exact")
+    (item,) = ctx.repo.notes_items(old.id)
+    assert item.task_id
+    assert continued_notes(ctx, ctx.repo.get(old.id)) == {item.id: "2026-10-08-Follow-up"}
+    assert continued_notes(ctx, ctx.repo.get(later.id)) == {}  # the head is not continued

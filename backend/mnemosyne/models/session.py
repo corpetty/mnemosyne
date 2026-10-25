@@ -69,6 +69,17 @@ class ActionItem(ApiModel):
     _continues: str = PrivateAttr(default="")
 
 
+class NotesItem(ActionItem):
+    """An action item typed in the meeting's live notes (phase 11): a task line with a person
+    chip (services/notes_items.py). `text`, `owner`, `at` and `done` are derived from the line
+    at each fold; `follow`, `due`, `issue_url` and `task_id` are state kept across folds. `id`
+    is 16 hex from the line id (task key `<session>:<id>`)."""
+
+    line: str  # the element id of the line's `\n` in the notes document (64 hex)
+    by: str = ""  # who added the line or made it a task (a frame's author), "" = not known
+    source: Literal["notes"] = "notes"
+
+
 class CopilotItem(ApiModel):
     text: str
     owner: str | None = None
@@ -221,6 +232,9 @@ class Session(ApiModel):
     # A meeting someone shared WITH this person (phase 8): the sharer's person key (64 hex);
     # "" for our own meetings. Such a meeting never travels in library sync.
     shared_from: str = ""
+    # Action items typed in the live notes (task lines with a person chip), in document order;
+    # derived at each fold of the notes document (services/notes_items.py).
+    notes_items: list[NotesItem] = Field(default_factory=list)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

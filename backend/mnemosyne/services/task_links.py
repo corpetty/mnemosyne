@@ -25,6 +25,11 @@ join it to a newer one's task. A done task that comes up again stays a new task.
 a `task_linked` history line. `link_pair` / `unlink` are the manual ones; `suggestions` lists
 close pairs on existing data that are not linked or dismissed.
 
+Notes items (phase 11, services/notes_items.py): action items typed in a meeting's live notes are
+mentions too (`TaskMention.source` "notes", idx -(j+1)), linked and fanned out like the summary's.
+Their writes go through `notes_items.write_fields` (done into the document as well, C16 of
+docs/plans/2026-10-25-phase-11-tasks.md), never the repository's summary writers.
+
 Access: `index(repo, visible)` filters with the set the caller passes (None = all meetings);
 every other function here filters with `repo.visible_ids()` of the current principal (None =
 no principal = everything). Writing a `task_id` needs read access to the meeting (a reader
@@ -43,7 +48,7 @@ from uuid import uuid4
 
 from .. import access
 from ..models.base import ApiModel
-from ..models.session import ActionItem
+from ..models.session import ActionItem, NotesItem
 from . import history
 from .brief import people_match, title_match
 from .tasks import _norm, owner_parts
@@ -67,8 +72,9 @@ class TaskMention(ApiModel):
     session_id: str
     session_name: str
     created_at: datetime
-    idx: int  # position in the meeting's summary_data.action_items
-    item_id: str  # ActionItem.id ("" for an old item without one)
+    idx: int  # position in the meeting's summary_data.action_items; -(j+1) for a notes item
+    item_id: str  # ActionItem.id ("" for an old item without one) / NotesItem.id
+    source: Literal["summary", "notes"] = "summary"
     text: str
     owner: str | None
     due: date | None
@@ -131,7 +137,14 @@ class _Meeting:
     created_at: datetime
     owner_id: str
     attendees: list[str]
-    items: list[ActionItem] = field(default_factory=list)
+    items: list[ActionItem] = field(default_factory=list)  # the summary's
+    notes: list[NotesItem] = field(default_factory=list)  # typed in the notes
+
+    def entries(self) -> list[tuple[int, ActionItem, Literal["summary", "notes"]]]:
+        """(idx, item, source) of every action item: the summary's, then the notes'."""
+        return [(i, a, "summary") for i, a in enumerate(self.items)] + [
+            (-(j + 1), a, "notes") for j, a in enumerate(self.notes)
+        ]
 
 
 def _meetings(repo: SessionRepository) -> list[_Meeting]:
@@ -143,6 +156,7 @@ def _meetings(repo: SessionRepository) -> list[_Meeting]:
             owner_id=r["owner_id"],
             attendees=r["attendees"],
             items=r["summary_data"].action_items,
+            notes=r.get("notes_items", []),
         )
         for r in repo.action_item_sources()
         if not r["shared_from"]  # another person's meeting: never linked, never reconciled
@@ -153,13 +167,14 @@ def _key(session_id: str, item: ActionItem, idx: int) -> str:
     return item.task_id or f"{session_id}:{item.id or f'#{idx}'}"
 
 
-def _mention(m: _Meeting, idx: int, a: ActionItem) -> TaskMention:
+def _mention(m: _Meeting, idx: int, a: ActionItem, source: str = "summary") -> TaskMention:
     return TaskMention(
         session_id=m.id,
         session_name=m.name,
         created_at=m.created_at,
         idx=idx,
         item_id=a.id,
+        source=source,
         text=a.text,
         owner=a.owner,
         due=a.due,
@@ -197,8 +212,8 @@ def _grouped(meetings: list[_Meeting], visible: set[str] | None) -> dict[str, li
     for m in meetings:
         if visible is not None and m.id not in visible:
             continue
-        for i, a in enumerate(m.items):
-            groups.setdefault(_key(m.id, a, i), []).append(_mention(m, i, a))
+        for i, a, source in m.entries():
+            groups.setdefault(_key(m.id, a, i), []).append(_mention(m, i, a, source))
     return groups
 
 
@@ -243,7 +258,7 @@ def _find(meetings: list[_Meeting], session_id: str, item_id: str):
         return None
     for m in meetings:
         if m.id == session_id:
-            for i, a in enumerate(m.items):
+            for i, a, _ in m.entries():
                 if a.id == item_id:
                     return m, i, a
     return None
@@ -305,8 +320,32 @@ def _older(a: tuple, b: tuple) -> bool:
     return a < b
 
 
+def _is_notes_item(app: AppContext, session_id: str, item_id: str) -> bool:
+    """A notes item's id (16 hex) is never a summary item's (8 hex), C14: no need to look at
+    the summary first."""
+    return bool(item_id) and any(n.id == item_id for n in app.repo.notes_items(session_id) or [])
+
+
 def _set_task_id(app: AppContext, session_id: str, item_id: str, task_id: str) -> bool:
+    if _is_notes_item(app, session_id, item_id):
+        from . import notes_items
+
+        # Read access, as for a summary item (a reader links a task they were given).
+        return app.repo.exists(session_id) and notes_items.write_fields(
+            app, session_id, item_id, task_id=task_id
+        )
     return app.repo.set_action_item_fields_by_id(session_id, item_id, task_id=task_id)
+
+
+def _write_mention(app: AppContext, x: TaskMention, values: dict) -> bool:
+    """done/follow/issue_url onto one mention, without an access check (fan-out): a notes item
+    through notes_items.write_fields (done into the document too; raises
+    shared_notes.NotesDocError when it cannot be), a summary item through the repository."""
+    if x.source == "notes":
+        from . import notes_items
+
+        return notes_items.write_fields(app, x.session_id, x.item_id, **values)
+    return app.repo.fan_out_action_item_fields(x.session_id, x.item_id, **values)
 
 
 def _notify(app: AppContext, session_ids, acting: str = "") -> None:
@@ -339,14 +378,17 @@ def _settle(app: AppContext, mentions: list[TaskMention], visible: set[str] | No
     head = seen[0]
     want = {"done": head.done, "follow": head.follow, "issue_url": _issue_of(seen + ordered)}
     changed: set[str] = set()
+    from .shared_notes import NotesDocError
+
     for x in ordered:
         diff = {k: v for k, v in want.items() if getattr(x, k) != v}
-        if (
-            diff
-            and x.item_id
-            and app.repo.fan_out_action_item_fields(x.session_id, x.item_id, **diff)
-        ):
-            changed.add(x.session_id)
+        if not diff or not x.item_id:
+            continue
+        try:
+            if _write_mention(app, x, diff):
+                changed.add(x.session_id)
+        except NotesDocError as e:  # left as it is: the next reconcile tries again
+            logger.warning("Could not settle a notes item of %s: %s", x.session_id, e)
     return changed
 
 
@@ -363,7 +405,7 @@ def link_items(
     if this is None:
         return []
     visible = repo.visible_ids()
-    taken = {a.task_id for a in this.items if a.task_id}
+    taken = {a.task_id for _, a, _ in this.entries() if a.task_id}
     candidates = [
         o
         for o in _objects(meetings, visible).values()
@@ -374,7 +416,7 @@ def link_items(
         and _older((o.mentions[0].created_at, o.mentions[0].session_id), (this.created_at, this.id))
     ]
     candidates.sort(key=lambda o: (o.mentions[0].created_at, o.mentions[0].idx), reverse=True)
-    pending = [(i, a) for i, a in enumerate(this.items) if a.id and not a.task_id]
+    pending = [(i, a) for i, a, _ in this.entries() if a.id and not a.task_id]
     used: set[str] = set()
     matched: list[tuple[ActionItem, TaskObject, str]] = []
 
@@ -539,7 +581,11 @@ def unlink(app: AppContext, session_id: str, item_id: str, acting: str = "") -> 
 
 def _fan_out(app: AppContext, key: str, **values) -> tuple[list[TaskMention], TaskMention]:
     """Write `values` to every mention of the task `key`. The mentions changed and the head
-    (among the visible ones). LookupError when the caller can see no mention of it."""
+    (among the visible ones). LookupError when the caller can see no mention of it;
+    shared_notes.NotesDocError when a notes mention could not take it and nothing changed (a
+    mention that failed among others that changed is logged and left as it is)."""
+    from .shared_notes import NotesDocError
+
     meetings = _meetings(app.repo)
     visible = app.repo.visible_ids()
     mentions = _newest_first(_all_mentions(meetings, key))
@@ -547,10 +593,17 @@ def _fan_out(app: AppContext, key: str, **values) -> tuple[list[TaskMention], Ta
     if not seen:
         raise LookupError("No such task")
     changed = []
+    failed: NotesDocError | None = None
     for x in mentions:
         if any(getattr(x, k) != v for k, v in values.items()) and x.item_id:
-            if app.repo.fan_out_action_item_fields(x.session_id, x.item_id, **values):
-                changed.append(x)
+            try:
+                if _write_mention(app, x, values):
+                    changed.append(x)
+            except NotesDocError as e:
+                logger.warning("Could not write a notes item of %s: %s", x.session_id, e)
+                failed = failed or e
+    if failed is not None and not changed:
+        raise failed
     return changed, seen[0]
 
 

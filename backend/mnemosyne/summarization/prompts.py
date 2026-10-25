@@ -216,6 +216,18 @@ def open_tasks_hint(offers: list[tuple[str, str, str | None, str]]) -> str:
     )
 
 
+def notes_items_hint(items: list[tuple[str, str | None]]) -> str:
+    """The action items already typed in the meeting's notes (services/notes_items.py), as
+    (text, owner), for the summary model so it does not list them again. Empty for none."""
+    lines = [f"- {text}" + (f" (owner: {owner})" if owner else "") for text, owner in items if text]
+    if not lines:
+        return ""
+    return (
+        "Already recorded as action items in the meeting notes (do not list them again):\n"
+        + "\n".join(lines)
+    )
+
+
 def _mmss_or_none(seconds: float | None) -> str | None:
     return mmss(seconds) if seconds is not None else None
 

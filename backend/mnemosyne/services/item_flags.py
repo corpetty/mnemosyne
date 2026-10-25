@@ -6,7 +6,8 @@ linked item's other mentions follow (services/task_links.py, which logs a line i
 it changes). An unlinked tick by someone other than the meeting's owner is logged in its
 history. A tick is written to the meeting's Obsidian note too, or the next pass over the vault
 would take the old state back. On a meeting someone shared with me, only when the share includes
-its action items (phase 8).
+its action items (phase 8). Summary items only: a notes item (negative TaskItem.idx) is refused;
+its path is services/notes_items.py `update`.
 """
 
 from __future__ import annotations
@@ -37,6 +38,10 @@ def set_item_flags(
     is returned. `by`: who did it, for history lines. Blocking (the vault note)."""
     from .vault_sync import write_tick  # vault_sync imports services.tasks: not at the top
 
+    if idx < 0:
+        # -(j+1) is a notes item (TaskItem.idx): they go by id, through the document
+        # (services/notes_items.py `update`), never by a position in the summary.
+        raise ValueError("Not a summary action item: notes items are changed by id")
     if session.shared_from and not access.is_internal():
         # Someone else's meeting shared with me: only when its action items were shared, as
         # the owner's hub will check (services/shared_with_me.py).

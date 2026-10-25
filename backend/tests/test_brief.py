@@ -122,3 +122,59 @@ def test_brief_collapses_linked_task_and_hides_one_done_elsewhere(client, ctx):
     assert [(i["text"], i["task_id"], i["session_name"]) for i in b["open_items"]] == [
         ("Rotate all the keys", "t1", "Infra weekly 09/17")
     ]
+
+
+def _notes_item(item_id, text, owner=None, done=False, **kw):
+    from mnemosyne.models.session import NotesItem
+
+    return NotesItem(id=item_id * 16, line=item_id * 64, text=text, owner=owner, done=done, **kw)
+
+
+def test_the_brief_lists_open_notes_items_like_summary_items(client, ctx):
+    old, last, _ = _seed(ctx)
+    ctx.repo.set_notes_items(
+        last.id,
+        [
+            _notes_item("a", "Send the deck", "Ada"),
+            _notes_item("b", "Already done", "Ada", done=True),
+        ],
+    )
+    b = client.get(
+        "/api/brief", params={"title": "Infra weekly", "attendees": ["Jakub", "Corey"]}
+    ).json()
+    rows = [(i["text"], i["owner"], i["source"], i["idx"], i["item_id"]) for i in b["open_items"]]
+    assert rows == [
+        ("Draft a cost breakdown", "Jakub", "summary", 0, ""),
+        ("Send the deck", "Ada", "notes", -1, "a" * 16),
+        ("Rotate the keys", "Jakub", "summary", 0, ""),
+    ]
+    assert {i["session_name"] for i in b["open_items"][:2]} == {"Infra weekly 09/17"}
+
+
+def test_a_meeting_with_only_notes_items_has_open_items(client, ctx):
+    s = ctx.repo.save(
+        Session(name="Infra weekly", created_at=datetime(2026, 9, 10, 15), attendees=["Ann"])
+    )
+    ctx.repo.set_notes_items(s.id, [_notes_item("c", "Call the vendor", "Ann")])
+    b = client.get("/api/brief", params={"title": "Infra weekly"}).json()
+    assert [(i["text"], i["source"]) for i in b["open_items"]] == [("Call the vendor", "notes")]
+
+
+def test_a_linked_notes_item_is_one_row_with_its_task(client, ctx):
+    a = ctx.repo.save(
+        Session(
+            name="Infra weekly",
+            created_at=datetime(2026, 9, 10, 15),
+            summary="s",
+            summary_data=SummaryData(
+                action_items=[ActionItem(id="a1", text="Rotate keys", task_id="t1")]
+            ),
+        )
+    )
+    b = ctx.repo.save(Session(name="Infra weekly 2", created_at=datetime(2026, 9, 17, 15)))
+    ctx.repo.set_notes_items(b.id, [_notes_item("d", "Rotate all keys", task_id="t1")])
+    got = client.get("/api/brief", params={"title": "Infra weekly"}).json()["open_items"]
+    assert [(i["text"], i["task_id"], i["session_name"], i["source"]) for i in got] == [
+        ("Rotate all keys", "t1", "Infra weekly 2", "notes")
+    ]
+    assert a.id != b.id

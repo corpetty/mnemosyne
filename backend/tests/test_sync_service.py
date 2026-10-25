@@ -4,7 +4,7 @@ from the other through `httpx.ASGITransport`. No network, no iroh. Text merges r
 stand-in sidecar (tests/fake_link.py), one scenario through the real mnemosyne-link if built."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from importlib.metadata import version as package_version
 
 import httpx
@@ -15,15 +15,19 @@ from mnemosyne.config import Settings
 from mnemosyne.export.note_merge import MergeError, merge_many
 from mnemosyne.models.session import (
     ActionItem,
+    NotesItem,
     Session,
     SessionStatus,
     SummaryData,
     TranscriptSegment,
 )
-from mnemosyne.services import summary_doc
+from mnemosyne.models.sync_session import SyncSession
+from mnemosyne.services import summary_doc, sync_merge
 from mnemosyne.services.link import find_binary
+from mnemosyne.services.sync_merge import merge
 from mnemosyne.services.sync_peers import SyncPeer, now_iso
 from mnemosyne.services.sync_service import TOMBSTONE_CURSOR
+from mnemosyne.services.sync_state import export_session, write_session
 from mnemosyne.storage.crypto import MemoryKeyStore
 from tests import fake_link
 from tests.fakes import FakeProvider
@@ -722,3 +726,108 @@ async def test_a_task_linked_across_meetings_settles_on_its_head_after_a_round(n
         assert n.repo.get(new).summary_data.action_items[0].done is True
         assert n.repo.get(old).summary_data.action_items[0].done is True
     assert vv(a, old) == vv(b, old)
+
+
+# ---- action items typed in the notes (phase 11) ---------------------------------------------
+
+
+def _notes_item(n: int, text: str, **kw) -> NotesItem:
+    return NotesItem(id=f"{n:016x}".replace("0", "a"), line=f"{n:064x}", text=text, **kw)
+
+
+def _set_items(node: Node, sid: str, items: list[NotesItem]) -> None:
+    """A state write (follow, due...): the items, and the new version a real writer counts."""
+    assert node.repo.set_notes_items(sid, items)
+    with node.repo._lock, node.repo._conn:
+        node.repo._touch(sid)
+
+
+async def test_notes_items_arrive_with_a_new_meeting(nodes):
+    a, b = nodes
+    sid = meeting(a)
+    item = _notes_item(1, "Send the budget", owner="Bob", at=12.0, done=True, by="ann")
+    item.follow = True
+    item.due = date(2026, 11, 3)
+    a.repo.set_notes_items(sid, [item])
+    await pull(b, a)
+    assert b.repo.notes_items(sid) == [item]
+
+
+async def test_a_follow_on_one_side_and_a_due_on_the_other_both_survive(nodes, sidecar):
+    a, b = nodes
+    sid = meeting(a)
+    one, two = _notes_item(1, "Send the budget"), _notes_item(2, "Book the venue")
+    a.repo.set_notes_items(sid, [one, two])
+    await pull(b, a)
+    assert b.repo.notes_items(sid) == [one, two]
+
+    _set_items(a, sid, [one.model_copy(update={"follow": True}), two])
+    _set_items(b, sid, [one, two.model_copy(update={"due": date(2026, 12, 1)})])
+    for x, y in ((a, b), (b, a), (a, b), (b, a)):
+        await pull(x, y)
+    for n in (a, b):
+        got = {i.id: i for i in n.repo.notes_items(sid)}
+        assert got[one.id].follow is True and got[one.id].due is None, n.name
+        assert got[two.id].due == date(2026, 12, 1) and got[two.id].follow is False, n.name
+    assert vv(a, sid) == vv(b, sid)
+
+
+async def test_an_item_only_the_peer_has_is_kept_and_derived_fields_stay_ours(nodes, sidecar):
+    a, b = nodes
+    sid = meeting(a)
+    one = _notes_item(1, "Send the budget")
+    a.repo.set_notes_items(sid, [one])
+    await pull(b, a)
+    # B's fold re-derived the text and added a line; A set a follow concurrently.
+    new = _notes_item(3, "Call the client")
+    _set_items(b, sid, [one.model_copy(update={"text": "Send the budget (B)", "done": True}), new])
+    _set_items(a, sid, [one.model_copy(update={"follow": True})])
+    for x, y in ((a, b), (b, a)):
+        await pull(x, y)
+    got = {i.id: i for i in a.repo.notes_items(sid)}
+    assert set(got) == {one.id, new.id}
+    assert got[one.id].follow is True
+    # Derived fields stay each machine's own: its fold derives them from the document.
+    assert got[one.id].text == "Send the budget" and got[one.id].done is False
+
+
+async def test_an_older_peer_without_notes_items_wipes_nothing(nodes, sidecar):
+    a, b = nodes
+    sid = meeting(a)
+    one = _notes_item(1, "Send the budget", follow=True)
+    a.repo.set_notes_items(sid, [one])
+    await pull(b, a)
+    # The document as an older peer would send it: no such field at all.
+    doc = export_session(b.repo, sid, b.id)
+    assert doc.notes_items == [one]
+    older = SyncSession.model_validate(doc.model_dump(exclude={"notes_items"}))
+    assert older.notes_items is None
+    write_session(b.repo, older, local_device_id=b.id, vv=older.vv, bump=False)
+    assert b.repo.notes_items(sid) == [one]
+    # And in a merge: theirs without the field leaves ours as they are.
+    merged, _ = merge(doc, doc, older, ours_is_origin=False, binary=None)
+    assert merged.notes_items == [one]
+    merged, report = merge(None, doc, older, ours_is_origin=False, binary=None)
+    assert merged.notes_items == [one]
+
+
+def test_notes_items_merge_without_a_base_takes_a_value_set_on_one_side():
+    one = _notes_item(1, "A")
+    ours = [one.model_copy(update={"follow": True})]
+    theirs = [one.model_copy(update={"due": date(2026, 1, 2)}), _notes_item(2, "B")]
+    pick = sync_merge._newer_scalar("ours")
+    out = sync_merge.merge_notes_items(None, ours, theirs, pick)
+    assert [(i.id, i.follow, i.due) for i in out] == [
+        (one.id, True, date(2026, 1, 2)),
+        (theirs[1].id, False, None),
+    ]
+
+
+def test_an_item_we_dropped_stays_dropped_unless_they_touched_it():
+    one, two = _notes_item(1, "A"), _notes_item(2, "B")
+    pick = sync_merge._newer_scalar("ours")
+    out = sync_merge.merge_notes_items([one, two], [], [one, two], pick)
+    assert out == []
+    touched = two.model_copy(update={"follow": True})
+    out = sync_merge.merge_notes_items([one, two], [], [one, touched], pick)
+    assert out == [touched]

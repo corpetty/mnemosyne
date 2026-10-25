@@ -47,6 +47,7 @@ class Union:
     changed: bool  # the union differs from the local snapshot
     plain: str | None = None  # its plain text and comment ranges (shared_notes.marks_of)
     comments: dict | None = None
+    tasks: list | None = None  # its task lines (the sidecar's `tasks`), None when not reported
 
 
 def author(peer_name: str) -> str:
@@ -81,13 +82,32 @@ def union(ctx: AppContext, session_id: str, theirs: str) -> Union:
     except (KeyError, TypeError, ValueError) as e:
         raise NotesDocError(f"unreadable merge reply: {e}") from e
     plain, comments = shared_notes.marks_of(reply)
-    return Union(merged, markdown, frames, changed=merged != mine, plain=plain, comments=comments)
+    tasks = reply.get("tasks")
+    return Union(
+        merged,
+        markdown,
+        frames,
+        changed=merged != mine,
+        plain=plain,
+        comments=comments,
+        tasks=tasks if isinstance(tasks, list) else None,
+    )
+
+
+def _derive_items(ctx: AppContext, session_id: str, tasks: list | None) -> None:
+    """The meeting's action items from the notes, derived silently (no history, no linking):
+    the machine where a line was typed logged it, and its events travel with the meeting
+    (services/notes_items.py). Never raises."""
+    from . import notes_items
+
+    notes_items.apply(ctx, session_id, tasks, log=False)
 
 
 def store_union(ctx: AppContext, session_id: str, u: Union, peer_name: str) -> None:
     """Store a union (no new version of the meeting: the caller's write of the rest counts it)
     and send the editors connected here what the merge brought."""
     if not u.changed:
+        _derive_items(ctx, session_id, u.tasks)  # the same document: only repairs
         return
     seqs = ctx.repo.store_synced_notes_doc(
         session_id,
@@ -99,6 +119,7 @@ def store_union(ctx: AppContext, session_id: str, u: Union, peer_name: str) -> N
         plain=u.plain,
         comments=u.comments,
     )
+    _derive_items(ctx, session_id, u.tasks)
     if seqs:
         shared_notes._on_loop(
             ctx,
@@ -125,6 +146,7 @@ def adopt(ctx: AppContext, session_id: str, theirs: str, peer_name: str) -> bool
     markdown: str | None = None
     plain: str | None = None
     comments: dict | None = None
+    tasks: list | None = None
     binary = shared_notes._binary()
     if binary is not None:
         try:
@@ -139,6 +161,7 @@ def adopt(ctx: AppContext, session_id: str, theirs: str, peer_name: str) -> bool
             )
             markdown = str(reply["markdown"])
             plain, comments = shared_notes.marks_of(reply)
+            tasks = reply.get("tasks") if isinstance(reply.get("tasks"), list) else None
         except (NotesDocError, KeyError) as e:
             logger.warning("Sync: the notes document of %s cannot be read: %s", session_id, e)
             return False
@@ -150,6 +173,7 @@ def adopt(ctx: AppContext, session_id: str, theirs: str, peer_name: str) -> bool
     repo.store_synced_notes_doc(
         session_id, snapshot, markdown, [], author(peer_name), plain=plain, comments=comments
     )
+    _derive_items(ctx, session_id, tasks)
     shared_notes._on_loop(ctx, reload_room, ctx, session_id)
     return True
 

@@ -35,7 +35,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..models.session import ActionItem, SummaryData
+from ..models.session import ActionItem, NotesItem, SummaryData
 from . import history
 from .tasks import same_item
 
@@ -205,21 +205,84 @@ def pairs(ticks: list[Tick], items: list[ActionItem]) -> list[tuple[int, Tick]]:
     return out
 
 
+def notes_pairs(ticks: list[Tick], items: list[NotesItem]) -> list[tuple[int, Tick]]:
+    """(notes item index, tick) for the lines whose block id is the id of an action item typed in
+    the notes (services/notes_items.py), each item at most once. Never by text: an item's text
+    is the notes' to change, and a line without our block id is not ours to guess at."""
+    out: list[tuple[int, Tick]] = []
+    used: set[int] = set()
+    for tick in ticks:
+        if not tick.block_id:
+            continue
+        idx = next(
+            (i for i, n in enumerate(items) if n.id == tick.block_id and i not in used), None
+        )
+        if idx is not None:
+            used.add(idx)
+            out.append((idx, tick))
+    return out
+
+
 def apply_vault_ticks(ctx: AppContext, session: Session, vault_path: str) -> bool:
     """Take the done state of the meeting's action items from its note in the vault. True when
     anything changed (the caller reads the session again). A tick of an item that other
     meetings mention too (`task_id`) is the task's: it is fanned out to all of them, and their
-    notes' lines rewritten, once the lock is free (`write_tick` takes it). Never raises."""
+    notes' lines rewritten, once the lock is free (`write_tick` takes it). A tick of an action
+    item typed in the notes goes through `notes_items.write_fields` (into the notes document
+    too), also once the lock is free. Never raises."""
     fan: list[tuple[str, int, bool]] = []
+    typed: list[tuple[NotesItem, bool]] = []
     try:
         with _lock:
-            changed = _apply(ctx, session, note_path(ctx, session, vault_path), fan)
+            changed = _apply(ctx, session, note_path(ctx, session, vault_path), fan, typed)
     except Exception:
         logger.warning("Could not read the ticks of session %s", session.id, exc_info=True)
         return False
+    if typed:
+        wrote = _write_notes_ticks(ctx, session.id, typed, fan)
+        changed = changed or wrote
     for task_id, _, done in fan:
         _fan_out_tick(ctx, session.id, task_id, done, vault_path)
     return changed
+
+
+def _write_notes_ticks(
+    ctx: AppContext,
+    session_id: str,
+    ticks: list[tuple[NotesItem, bool]],
+    fan: list[tuple[str, int, bool]],
+) -> bool:
+    """Put ticks read from the vault onto the meeting's notes items: a `done` write by
+    "Obsidian" (the task line in the document changes too, shared with whoever has the notes
+    open), a history line as for a summary item's. An item that cannot be written (no sidecar,
+    the line gone) is left as it is. Never raises. True when anything was written."""
+    from . import notes_items
+
+    wrote = False
+    for item, done in ticks:
+        try:
+            if not notes_items.write_fields(
+                ctx, session_id, item.id, author=("", "Obsidian"), done=done
+            ):
+                continue
+        except Exception as e:
+            logger.warning("Could not take a tick of %s from Obsidian: %s", session_id, e)
+            continue
+        wrote = True
+        history.log(
+            ctx, session_id, "task_done" if done else "task_reopened",
+            task=item.text, by="Obsidian",
+        )  # fmt: skip
+        if item.task_id:
+            fan.append((item.task_id, 0, done))
+    if wrote:
+        logger.info("Ticks from Obsidian applied to the notes items of session %s", session_id)
+        current = ctx.sessions.get_session(session_id)
+        if current is not None:
+            ctx.bus.publish(
+                {"type": "session", "session_id": session_id, "status": current.status.value}
+            )
+    return wrote
 
 
 def _fan_out_tick(
@@ -265,10 +328,17 @@ def _same_status(recorded: str, done: bool | None) -> bool:
 
 
 def _apply(
-    ctx: AppContext, session: Session, path: Path, fan: list[tuple[str, int, bool]] | None = None
+    ctx: AppContext,
+    session: Session,
+    path: Path,
+    fan: list[tuple[str, int, bool]] | None = None,
+    typed: list[tuple[NotesItem, bool]] | None = None,
 ) -> bool:
     """`fan` collects (task id, item index, done) of the changed items that belong to a task:
-    the caller fans them out after releasing `_lock`."""
+    the caller fans them out after releasing `_lock`. `typed` collects (notes item, done) of the
+    ticks that belong to action items typed in the notes (a block id of `notes_items`): they
+    are written after `_lock` is free (`_write_notes_ticks`), never here, and do not count in
+    the return value."""
     from ..export.note_merge import box_at, box_positions  # note_merge imports this module
 
     try:
@@ -285,20 +355,37 @@ def _apply(
     if record is not None and record["path"] != str(path):
         record = None
     positions = box_positions(text) if record is not None else {}
-    changed = False
-    for idx, tick in pairs(ticks, items):
-        item = items[idx]
+
+    def theirs(tick: Tick, item: ActionItem) -> bool:
+        """Is this box the user's doing, a change from what the item says now?"""
         if tick.done is None or tick.done == item.done:
-            continue
+            return False
         if record is not None:
             # The note is compared with what we wrote, not with the clock: the same status as
             # we wrote is not the user's doing (a stale note included).
             key, n = positions.get(tick.line, ("", 0))
             wrote = box_at(record["boxes"], key, n)
             if wrote is not None and _same_status(wrote[0], tick.done):
-                continue
+                return False
         elif not tick.done and written <= session.updated_at:
-            continue  # a note older than our tick: stale, not a reopen
+            return False  # a note older than our tick: stale, not a reopen
+        return True
+
+    # Lines that are action items typed in the notes are theirs, never a summary item's (by a
+    # similar text): they go to notes_items.write_fields.
+    noted = notes_pairs(ticks, session.notes_items)
+    own = {id(t) for _, t in noted}
+    if typed is not None:
+        typed.extend(
+            (session.notes_items[i], t.done)
+            for i, t in noted
+            if t.done is not None and theirs(t, session.notes_items[i])
+        )
+    changed = False
+    for idx, tick in pairs([t for t in ticks if id(t) not in own], items):
+        item = items[idx]
+        if not theirs(tick, item):
+            continue
         if not ctx.repo.set_action_item_done(session.id, idx, tick.done):
             continue
         item.done = tick.done

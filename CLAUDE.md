@@ -204,6 +204,15 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   (URLs, `comment:<id>`) travel as 0xAF artifact frames beside the 0xDE delta, never inside it.
 - Indexes in the notes model and the sidecar are code points, not UTF-16 (src/lib/notes/model.ts
   `cpLen`/`cpIndex`/`utf16Index`); an astral character is 1 there and 2 in a JS string.
+- Notes chips are `link` marks with `mnemosyne:` URLs; dom.ts gives an `href` only to http(s) and mailto, so a chip
+  (or a peer's `javascript:` link) never navigates. Anything that is not the editor must read `plain_notes` /
+  `obsidian_notes`, never the raw markdown.
+- A notes item's state (done, follow, due, issue_url, task_id) is written only through `notes_items.write_fields`: it
+  `_touch`es the meeting for library sync and appends the `set_kind` frame for done. The derivation at a fold
+  (`notes_items.apply`, `set_notes_items`) never `_touch`es: each machine derives its own. `set_text` may give a line
+  a new id, so a vanished line's state moves to the line with the same text and owner.
+- `src/lib/notes/ui/` imports only from `src/lib/notes/` (never `$lib/stores`, `$lib/api`, toasts): the guest Vite
+  entry bundles it. App-only behaviour comes in through the host and provider objects.
 
 ## Roadmap (agreed 2026-09-22)
 
@@ -530,6 +539,27 @@ CI (no clang locally): after changing it, push, take the `guest-wasm-pkg` artifa
 download <run> -n guest-wasm-pkg -D guest/pkg`), commit guest/pkg, then `pnpm build:guest` and commit
 backend/mnemosyne/api/static/guest. The guest e2e uses `mnemosyne-link dev-relay` on 8038 (feature `dev-relay`, never
 in releases). The room stays up only while this computer is on (sleep inhibitor held while a room is live).
+
+The notes editor, live (unreleased, phase 11; design in the hashseq plan, build order and corrections in
+docs/plans/2026-10-25-phase-11-tasks.md): one editor for the desktop and the guest page, tools where the work is, live
+carets, chips, and action items typed in the notes. `src/lib/notes/ui/` (`NotesEditor.svelte`, slim, selection and
+touch toolbars, `/` `@` `[[` menu in slash.ts, `CaretOverlay.svelte`) is mounted by components/SharedNotes.svelte and
+guest/src/Notes.svelte through a `NotesHost` plus `presence` / `inserts` providers (src/lib/app/notesPresence.ts,
+notesInserts.ts, guest/src/presence.ts, inserts.ts); input.ts gained `command`, `setLineKind(kind, {toggle:false})`,
+`onTyped` and `interceptKey`. Presence: `Member.key` (`m<8 hex>`), `sel` ({a, f} element ids) and `typing` in memory in
+services/shared_notes.py, `presence.members` plus coalesced `caret` (100 ms) to the editors; the guest bridge is a
+`presence_tap` member that seals owner-side carets to the room as PRESENCE `o:<key>` (guest_notes.py), hears guests'
+PRESENCE `sel` / `gone` back as `guests` + `guest_caret`, and forwards a guest's envelope into the other rooms
+(publish-host rooms.rs has a separate presence channel, 10/s). Chips are `link` marks with `mnemosyne:t/<part>/<s>`,
+`person/<name>`, `meeting/<id>` URLs (src/lib/notes/chips.ts; services/notes_chips.py `plain_notes`, `obsidian_notes`,
+`retarget_chips`, `task_line_parts`); time chips count from `clock` {part, offset, started_at} (services/parts.py
+`recording_clock`, on start/active recording and the guests' META). Notes items (services/notes_items.py): a task line
+with a person chip is an action item, `Session.notes_items` (`sessions.notes_items`, ids 16 hex from the line id)
+derived at every fold-result site from the sidecar's new `tasks` list; they are task objects (`TaskItem.item_id`,
+`source`, `idx` < 0; task_links, item_flags, Obsidian, sync's `SyncSession.notes_items`), changed through
+`PATCH /api/sessions/{id}/notes-items/{item_id}`, and a tick goes into the document with the sidecar's `set_kind`
+(notes-core/src/api.rs). Tests: backend test_notes_items / test_notes_chips, Vitest chips/slash/carets/placement,
+tests-e2e/notes-items.spec.ts; harness at /dev/notes-editor.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
