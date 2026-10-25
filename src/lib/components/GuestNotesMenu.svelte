@@ -17,7 +17,7 @@
 	let confirming = $state<'end' | 'new' | 'stop' | null>(null);
 	let showQr = $state(false);
 	let qr = $state('');
-	let noHost = $state(false);
+	let noHost = $state('');
 
 	const session = $derived(sessionState.activeSession);
 	const sid = $derived(session?.id ?? '');
@@ -38,7 +38,7 @@
 		open = false;
 		confirming = null;
 		showQr = false;
-		noHost = false;
+		noHost = '';
 	});
 
 	$effect(() => {
@@ -84,17 +84,25 @@
 
 	/** Run a change; failures go to the toast (a missing host also shows the hint). */
 	async function run(call: (id: string) => Promise<unknown>, done?: string) {
-		noHost = false;
+		noHost = '';
 		confirming = null;
 		await call(sid);
 		const err = guestNotesState.error;
 		if (err) {
-			if (/^409: No host for guest notes/.test(err)) noHost = true;
+			if (/^409: /.test(err)) noHost = err.replace(/^\d+: /, '');
 			else toastState.error(err.replace(/^\d+: /, ''));
 		} else if (done) {
 			toastState.success(done);
 		}
 	}
+
+	const hostOf = (u: string) => {
+		try {
+			return new URL(u).host;
+		} catch {
+			return u;
+		}
+	};
 
 	const create = () => run((id) => guestNotesState.start(id));
 	const endRoom = () => run((id) => guestNotesState.end(id));
@@ -117,6 +125,27 @@
 	}}
 />
 
+{#snippet how()}
+	{#if room}
+		<div class="space-y-0.5 text-xs text-gray-500">
+			{#if room.transport === 'iroh'}
+				<p>Works while this computer is on.</p>
+				{#if room.relay_kind === 'n0'}
+					<p class="text-amber-300">Through a free testing relay.</p>
+				{:else if room.relay_kind === 'custom'}
+					<p>Through your relay {hostOf(room.relay)}.</p>
+				{/if}
+			{:else if room.transport === 'tunnel'}
+				<p>Works while this computer is on.</p>
+				<p>{room.public_url.endsWith('.trycloudflare.com') ? 'Through a temporary Cloudflare address.' : 'Through your Tailscale address.'}</p>
+			{/if}
+			{#if room.mirror_host_url}
+				<p>Also kept on {hostOf(room.mirror_host_url)} after the meeting.</p>
+			{/if}
+		</div>
+	{/if}
+{/snippet}
+
 {#if visible}
 	<span class="relative inline-block" bind:this={root}>
 		<button
@@ -137,7 +166,7 @@
 						Anyone with the link can type in these notes, comment on them and see the agenda. Nothing else from the meeting goes out.
 					</p>
 					{#if noHost}
-						<p class="text-xs text-amber-300">Set a publish host in Settings to invite guests.</p>
+						<p class="text-xs text-amber-300">{noHost}</p>
 						<button onclick={openSettings} class="rounded bg-gray-800 border border-gray-700 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700">Open Settings</button>
 					{/if}
 					<button
@@ -171,9 +200,12 @@
 						<p class="text-xs text-gray-400">
 							{names.length ? `Here now: ${names.join(', ')}` : 'Nobody has opened it yet'}
 						</p>
+						{@render how()}
 					{:else}
 						<p class="text-xs text-gray-300">Guest notes ended. Guests can read them until {when(room.expires_at)}.</p>
 					{/if}
+
+					{#if !live}{@render how()}{/if}
 
 					{#if confirming}
 						<div class="space-y-1 rounded border border-gray-800 bg-gray-950/40 p-2">

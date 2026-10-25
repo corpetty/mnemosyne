@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatHostTime, formatMeetingDate, ownersNotes, peopleLine, statusPill, typingLine } from './display';
+import { connectingLine, savedLine, formatHostTime, formatMeetingDate, ownersNotes, peopleLine, statusPill, typingLine } from './display';
 import type { Person } from './doc';
 
 const person = (gid: string, name: string, typing = false): Person => ({ gid, name, typing, at: 0 });
@@ -45,5 +45,28 @@ describe('lines', () => {
 		expect(statusPill('live')).toMatchObject({ label: 'Live', tone: 'green' });
 		expect(statusPill('reconnecting').tone).toBe('amber');
 		expect(statusPill('full').detail).toBe('Too many people are in these notes right now');
+	});
+});
+
+describe('connectingLine', () => {
+	it("names the owner's computer while iroh is tried, once the owner is known", () => {
+		expect(connectingLine('connecting', 'iroh', 'Alice')).toBe("Connecting to Alice's computer…");
+		expect(connectingLine('reconnecting', 'iroh', 'Alice')).toBe("Connecting to Alice's computer…");
+		expect(connectingLine('connecting', 'iroh', '')).toBe("Connecting to the meeting host's computer…");
+		expect(connectingLine('connecting', 'host', 'Alice')).toBe('Connecting…');
+		expect(connectingLine('catching_up', 'iroh', 'Alice')).toBe('Connecting…');
+		expect(connectingLine('connecting', null, null)).toBe('Connecting…');
+	});
+});
+
+describe('savedLine', () => {
+	it('says when it was saved and whose computer is off', () => {
+		const at = Date.UTC(2026, 9, 25, 12, 0, 0);
+		expect(savedLine(at, 'Alice', 'en-US')).toMatch(/^A saved copy from .*2026.*: Alice's computer is off\. It is read-only\.$/);
+		expect(savedLine(at, '', 'en-US')).toContain("the meeting host's computer is off. It is read-only.");
+		expect(savedLine(null, 'Alice')).toBe("A saved copy: Alice's computer is off. It is read-only.");
+	});
+	it('has a pill', () => {
+		expect(statusPill('saved')).toMatchObject({ label: 'Saved copy', tone: 'gray' });
 	});
 });

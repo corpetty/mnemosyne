@@ -46,6 +46,8 @@ export function statusPill(status: GuestStatus): Pill {
 			return { label: 'Live', tone: 'green', detail: 'Edits reach everyone as you type' };
 		case 'reconnecting':
 			return { label: 'Reconnecting…', tone: 'amber', detail: 'Your edits are kept and sent once connected' };
+		case 'saved':
+			return { label: 'Saved copy', tone: 'gray', detail: "The owner's computer is off: this is the copy saved in this browser, read-only" };
 		case 'ended':
 			return { label: 'Ended', tone: 'gray', detail: 'These notes ended' };
 		case 'gone':
@@ -55,6 +57,24 @@ export function statusPill(status: GuestStatus): Pill {
 		case 'error':
 			return { label: 'Error', tone: 'red', detail: "This link doesn't open these notes" };
 	}
+}
+
+/**
+ * The line shown while there is nothing to read yet: "Connecting to Alice's computer…" while
+ * iroh to the owner's computer is being tried ("the meeting host's" while the owner is not
+ * known yet), else "Connecting…".
+ */
+export function connectingLine(status: GuestStatus, transport: string | null | undefined, owner: string | null | undefined): string {
+	const trying = status === 'connecting' || status === 'reconnecting';
+	if (!trying || transport !== 'iroh') return 'Connecting…';
+	return `Connecting to ${owner ? `${owner}'s` : "the meeting host's"} computer…`;
+}
+
+/** The banner over a saved copy: when it was saved and why it is read-only. */
+export function savedLine(savedAtMs: number | null | undefined, owner: string | null | undefined, locale?: string): string {
+	const when = savedAtMs ? formatHostTime(savedAtMs / 1000, locale) : '';
+	const who = owner ? `${owner}'s` : "the meeting host's";
+	return `A saved copy${when ? ` from ${when}` : ''}: ${who} computer is off. It is read-only.`;
 }
 
 /** "Alice (host), Bob": the others in the room, the owner first and marked. */

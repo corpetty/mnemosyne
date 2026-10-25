@@ -3,9 +3,9 @@
 #
 #   scripts/build-guest.sh          (or: pnpm build:guest)
 #
-#   index.html         the page, served at /n/<room> by the backend and the publish host; its JS,
-#                      CSS and the notes wasm are /n/assets/<name>-<hash>.* (absolute paths, so
-#                      they resolve under /n/<room>; both servers serve /n/assets/*).
+#   index.html         the page, served at /n/<room> and /n/ by the backend and the publish host,
+#                      and at /mnemosyne/n/ by GitHub Pages; its JS, CSS and wasm are
+#                      ./assets/<name>-<hash>.* (relative, so they resolve on every origin).
 #   assets/            those files.
 #
 # The output is committed and must be reproducible: CI rebuilds it and fails when it differs.

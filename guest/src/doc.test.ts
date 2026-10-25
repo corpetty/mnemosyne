@@ -3,9 +3,11 @@
 // a log with seqs, an optional sealed snapshot, frames relayed to the others, acks to the sender.
 // Node, for crypto.subtle (jsdom has none); the wasm is loaded by the notes test harness.
 import { afterEach, describe, expect, it } from 'vitest';
+import { openDoc } from '$lib/notes/model.js';
 import { ORIGIN, WasmHashWeb, sameBytes } from '$lib/notes/test-harness.js';
 import { insertText, setLink } from '$lib/notes/commands.js';
-import { ARTIFACT_TAG, DELTA_TAG } from '$lib/notes/sync.js';
+import { ARTIFACT_TAG, DELTA_TAG, drain } from '$lib/notes/sync.js';
+import { MemoryCopyStore, type CopyRec } from './copy';
 import { DEBOUNCE_MS, GuestDoc, PRESENCE_TTL_MS, type GuestDocOptions } from './doc';
 import {
   Kind,
@@ -571,5 +573,194 @@ describe('GuestDoc', () => {
     A.reconnect();
     await settle(host, A);
     expect(A.catchUps).toBe(2);
+  });
+});
+
+// ---- the copy kept in the browser ------------------------------------------------------------
+
+/** Sockets that close at once with `code` while `gate.down`, else behave like the host's. */
+function gated(host: Host, gate: { down: boolean; code: number }): new (url: string) => HostSocket {
+  return class extends host.Socket {
+    constructor(url: string) {
+      super(url);
+      if (gate.down) {
+        this.readyState = 3;
+        queueMicrotask(() => this.onclose?.({ code: gate.code }));
+      }
+    }
+  };
+}
+
+const FUTURE = () => new Date(Date.now() + 3_600_000).toISOString();
+
+/** A room with some notes, a sealed snapshot of them, and the guest that wrote them. */
+async function withSnapshot(): Promise<{ host: Host; env: Uint8Array }> {
+  const host = await Host.create();
+  const A = guest(host, 'Ana');
+  await settle(host, A);
+  append(A, 'kept notes\n');
+  A.flush();
+  await settle(host, A);
+  await host.postSnapshot({
+    notes: b64urlEncode(A.doc!.web.encode()),
+    frames: [],
+    origin: ORIGIN,
+    meta: { title: 'Weekly', date: '2026-10-24', owner: 'Olga', agenda: [], ended: false, ended_at: '' }
+  });
+  A.destroy();
+  return { host, env: host.snapshot!.env };
+}
+
+function savedRec(env: Uint8Array, over: Partial<CopyRec> = {}): CopyRec {
+  return { envelope: env, expires: FUTURE(), ended_at: null, saved_at: '2026-10-24T10:00:00.000Z', ...over };
+}
+
+describe('GuestDoc saved copy', () => {
+  it('keeps the latest snapshot envelope as received, with the room\'s times', async () => {
+    const { host, env } = await withSnapshot();
+    const copies = new MemoryCopyStore();
+    const B = guest(host, 'Ben', { copies });
+    await settle(host, B);
+    const kept = copies.copies.get(host.room)!;
+    expect(Array.from(kept.envelope)).toEqual(Array.from(env));
+    expect(kept.expires).toBe(new Date(9999 * 1000).toISOString());
+    expect(kept.ended_at).toBeNull();
+    expect(Number.isNaN(Date.parse(kept.saved_at))).toBe(false);
+    // nothing but envelope and times: no key, no plaintext
+    expect(Object.keys(kept).sort()).toEqual(['ended_at', 'envelope', 'expires', 'saved_at']);
+    // the room ending adds ended_at and the new expiry to the same envelope
+    host.end();
+    await settle(host, B);
+    const ended = copies.copies.get(host.room)!;
+    expect(Array.from(ended.envelope)).toEqual(Array.from(env));
+    expect(ended.ended_at).toBe(new Date(1234 * 1000).toISOString());
+    expect(ended.expires).toBe(new Date(5678 * 1000).toISOString());
+  });
+
+  it('keeps nothing when the room sent no snapshot', async () => {
+    const host = await Host.create();
+    const copies = new MemoryCopyStore();
+    const A = guest(host, 'Ana', { copies });
+    await settle(host, A);
+    expect(copies.copies.size).toBe(0);
+  });
+
+  it('offline with a saved copy: opens it read-only, decrypted with the link\'s key', async () => {
+    const { host, env } = await withSnapshot();
+    const copies = new MemoryCopyStore();
+    await copies.save(host.room, savedRec(env));
+    const gate = { down: true, code: 1006 };
+    const B = guest(host, 'Ben', { copies, webSocket: gated(host, gate), offlineMs: 20 });
+    await settle(host, B);
+    expect(B.status).toBe('saved');
+    expect(B.saved).toBe(true);
+    expect(B.readOnly).toBe(true);
+    expect(B.savedAt).toBe(Date.parse('2026-10-24T10:00:00.000Z'));
+    expect(text(B)).toBe('kept notes\n');
+    expect(B.meta?.owner).toBe('Olga');
+    // read-only: no edits, no comments
+    expect(B.applyLocal((d) => insertText(d, 0, 'x'))).toBeUndefined();
+    expect(await B.sendComment({ op: 'create' })).toBe(false);
+    expect(text(B)).toBe('kept notes\n');
+    expect(copies.copies.has(host.room)).toBe(true);
+  });
+
+  it('opens the saved copy after the offline budget when no socket ever answers', async () => {
+    const { host, env } = await withSnapshot();
+    const copies = new MemoryCopyStore();
+    await copies.save(host.room, savedRec(env));
+    // a socket that opens but never welcomes
+    const silent = class extends host.Socket {
+      constructor(url: string) {
+        super(url);
+        this.send = () => {};
+      }
+    };
+    const B = guest(host, 'Ben', { copies, webSocket: silent, offlineMs: 20 });
+    await tick(5);
+    expect(B.status).toBe('connecting');
+    await tick(40);
+    await settle(host, B);
+    expect(B.status).toBe('saved');
+    expect(text(B)).toBe('kept notes\n');
+  });
+
+  it('removes an expired copy and shows nothing', async () => {
+    const { host, env } = await withSnapshot();
+    const copies = new MemoryCopyStore();
+    await copies.save(host.room, savedRec(env, { expires: new Date(Date.now() - 1000).toISOString() }));
+    const B = guest(host, 'Ben', { copies, webSocket: gated(host, { down: true, code: 1006 }), offlineMs: 20 });
+    await settle(host, B);
+    expect(B.status).toBe('connecting');
+    expect(B.doc).toBeNull();
+    expect(copies.copies.size).toBe(0);
+  });
+
+  it('removes the copy when the room is gone (4410)', async () => {
+    const { host, env } = await withSnapshot();
+    // offline start: the host answers 4410 at once
+    const a = new MemoryCopyStore();
+    await a.save(host.room, savedRec(env));
+    const B = guest(host, 'Ben', { copies: a, webSocket: gated(host, { down: true, code: 4410 }), offlineMs: 20 });
+    await settle(host, B);
+    expect(B.status).toBe('gone');
+    expect(B.saved).toBe(false);
+    expect(a.copies.size).toBe(0);
+    // and after having been live: the host drops the room
+    const b = new MemoryCopyStore();
+    const C = guest(host, 'Cy', { copies: b });
+    await settle(host, C);
+    expect(b.copies.size).toBe(1);
+    socketOf(host, C).drop(4410);
+    await settle(host, C);
+    expect(C.status).toBe('gone');
+    expect(b.copies.size).toBe(0);
+  });
+
+  it('removes a copy the link\'s key does not open', async () => {
+    const { host } = await withSnapshot();
+    const other = await Host.create();
+    await other.postSnapshot({ notes: '', frames: [], origin: ORIGIN, meta: { title: 'Other', owner: 'Eve' } });
+    const copies = new MemoryCopyStore();
+    await copies.save(host.room, savedRec(other.snapshot!.env));
+    const B = guest(host, 'Ben', { copies, webSocket: gated(host, { down: true, code: 1006 }), offlineMs: 20 });
+    await settle(host, B);
+    expect(B.status).toBe('connecting');
+    expect(B.saved).toBe(false);
+    expect(B.doc).toBeNull();
+    expect(copies.copies.size).toBe(0);
+  });
+
+  it('a live connection replaces the saved copy', async () => {
+    const { host, env } = await withSnapshot();
+    const copies = new MemoryCopyStore();
+    await copies.save(host.room, savedRec(env));
+    const gate = { down: true, code: 1006 };
+    const B = guest(host, 'Ben', { copies, webSocket: gated(host, gate), offlineMs: 20 });
+    await settle(host, B);
+    expect(B.status).toBe('saved');
+    // the owner's computer comes back with newer notes
+    const owner = host.seq;
+    gate.down = false;
+    host.append(
+      await sealNotes(host.keys, host.room, '', 'Olga', (() => {
+        const w = new WasmHashWeb();
+        w.mergeEncoded(B.doc!.web.encode());
+        const d = openDoc(w, ORIGIN);
+        insertText(d, d.web.textLen(d.obj), 'newer\n');
+        return drain(w)[0];
+      })()),
+      null
+    );
+    expect(host.seq).toBe(owner + 1);
+    B.reconnect();
+    await settle(host, B);
+    expect(B.status).toBe('live');
+    expect(B.saved).toBe(false);
+    expect(B.readOnly).toBe(false);
+    expect(text(B)).toContain('kept notes\n');
+    expect(text(B)).toContain('newer\n');
+    expect(B.applyLocal((d) => insertText(d, 0, 'x'))).not.toBeUndefined();
+    expect(copies.copies.has(host.room)).toBe(true);
   });
 });

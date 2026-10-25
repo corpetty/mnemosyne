@@ -25,14 +25,16 @@
 import { openDoc, type Doc } from '$lib/notes/model.js';
 import { ARTIFACT_TAG, DELTA_TAG, applyRemote, drain } from '$lib/notes/sync.js';
 import { WasmHashWeb } from '$lib/notes/wasm.js';
+import { defaultCopyStore, expired, type CopyRec, type CopyStore } from './copy';
 import { Kind, b64urlDecode, parseNotes, sealJson, sealNotes, unseal, type GuestKeys } from './format';
-import { RoomClient, roomUrl, type RoomSocketCtor, type RoomState, type Welcome } from './room';
+import { RoomClient, roomUrl, type RoomSocketCtor, type RoomState, type RoomTransport, type Welcome } from './room';
 
 export type GuestStatus =
   | 'connecting' // nothing joined yet, no document
   | 'catching_up' // joined, the replay is arriving
   | 'live'
   | 'reconnecting' // dropped: the document is kept and editable locally
+  | 'saved' // nobody answered: the copy kept in this browser, read-only
   | 'ended' // the room is read-only for good (until it expires)
   | 'gone' // deleted, expired or a wrong link
   | 'full' // the host refused: too many people (only known with a probe)
@@ -47,6 +49,12 @@ export const TYPING_IDLE_MS = 2000;
 export const PRESENCE_MS = 15_000;
 /** Someone else's presence counts for this long (ms). */
 export const PRESENCE_TTL_MS = 30_000;
+/**
+ * Nobody has welcomed us this long after the transports' own budgets (their sum) and the host's
+ * attempt: the saved copy is opened (ms). The same happens at once when every transport has
+ * failed in a round.
+ */
+export const OFFLINE_EXTRA_MS = 6000;
 
 const ORIGIN_HEX = /^[0-9a-f]{64}$/;
 
@@ -105,7 +113,13 @@ export interface GuestDocOptions {
   name: string;
   /** The socket URL; defaults to /live/<room> on the page's origin. */
   url?: string;
+  /** The ways to the room in order (transports.ts); when given, `url` is not used. */
+  transports?: RoomTransport[];
   webSocket?: RoomSocketCtor;
+  /** Where the sealed copy is kept until the link expires; defaults to IndexedDB (copy.ts). */
+  copies?: CopyStore;
+  /** Open the saved copy when nobody has welcomed us after this long (ms); see OFFLINE_EXTRA_MS. */
+  offlineMs?: number;
   probe?: () => Promise<'gone' | 'full' | null>;
   /** The notes object's origin when known up front; else it comes with the snapshot or meta. */
   origin?: string;
@@ -213,6 +227,10 @@ export class GuestDoc {
   sentFrames = 0;
   /** Bumped when a (re)connect's replay has been merged: the comments panel resends then. */
   catchUps = 0;
+  /** Showing the copy saved in this browser (read-only) because nobody answers. */
+  saved = false;
+  /** When that copy was saved (ms since 1970), while `saved`. */
+  savedAt: number | null = null;
 
   onRemoteChange: (() => void) | undefined;
   wrapRemote: ((apply: () => void) => void) | undefined;
@@ -222,7 +240,15 @@ export class GuestDoc {
   private readonly roomId: string;
   private readonly keys: GuestKeys;
   private readonly url: string;
+  private readonly transports: RoomTransport[] | undefined;
   private readonly now: () => number;
+  private readonly store: CopyStore;
+  private readonly offlineMs: number;
+  /** The latest sealed snapshot envelope, exactly as received (or loaded): what is kept. */
+  private lastEnvelope: Uint8Array | null = null;
+  private storeChain: Promise<void> = Promise.resolve();
+  private offlineTimer: ReturnType<typeof setTimeout> | null = null;
+  private triedSaved = false;
   private origin: string | null;
   private web: WasmHashWeb | null = null;
   private mirror: WasmHashWeb | null = null;
@@ -249,7 +275,11 @@ export class GuestDoc {
     this.keys = opts.keys;
     this.you = { gid: opts.gid, name: opts.name };
     this.url = opts.url ?? roomUrl(opts.room);
+    this.transports = opts.transports?.length ? opts.transports : undefined;
     this.now = opts.now ?? Date.now;
+    this.store = opts.copies ?? defaultCopyStore();
+    this.offlineMs =
+      opts.offlineMs ?? (this.transports ?? []).reduce((sum, t) => sum + (t.budgetMs ?? 0), 0) + OFFLINE_EXTRA_MS;
     this.origin = opts.origin && ORIGIN_HEX.test(opts.origin) ? opts.origin : null;
     this.onRemoteChange = opts.onRemoteChange;
     this.wrapRemote = opts.wrapRemote;
@@ -280,7 +310,9 @@ export class GuestDoc {
           this.enqueue(() => this.finishCatchUp(gen));
         },
         onEnded: (endedAt, expires) => this.markEnded(endedAt, expires),
-        onState: (s) => this.onRoomState(s)
+        onState: (s) => this.onRoomState(s),
+        onTransport: () => this.notify(),
+        onUnreachable: () => this.offline()
       },
       { webSocket: opts.webSocket, probe: opts.probe }
     );
@@ -298,7 +330,13 @@ export class GuestDoc {
       if (this.caughtGen === this.room.generation) return this.ended ? 'ended' : 'live';
       return 'catching_up';
     }
+    if (this.saved) return 'saved';
     return this.web ? 'reconnecting' : 'connecting';
+  }
+
+  /** The transport being tried or used ('iroh', 'host'); null before connect. */
+  get transport(): string | null {
+    return this.room.transport;
   }
 
   /** Who else is here (presence heard in the last 30 s), the owner first. */
@@ -324,7 +362,8 @@ export class GuestDoc {
 
   connect(): void {
     if (this.destroyed) return;
-    this.room.connect(this.url, this.keys.roomToken);
+    this.room.connect(this.transports ?? this.url, this.keys.roomToken);
+    if (!this.offlineTimer && !this.triedSaved) this.offlineTimer = setTimeout(() => this.offline(), this.offlineMs);
     if (!this.presenceTimer) this.presenceTimer = setInterval(() => this.presenceTick(), PRESENCE_MS);
   }
 
@@ -404,8 +443,9 @@ export class GuestDoc {
     for (;;) {
       const a = this.inChain;
       const b = this.outChain;
-      await Promise.all([a, b]);
-      if (a === this.inChain && b === this.outChain) return;
+      const c = this.storeChain;
+      await Promise.all([a, b, c]);
+      if (a === this.inChain && b === this.outChain && c === this.storeChain) return;
     }
   }
 
@@ -441,7 +481,7 @@ export class GuestDoc {
    * name. Queued while reconnecting. True when it went out now.
    */
   sendComment(op: Record<string, unknown>): Promise<boolean> {
-    if (!this.you.name) return Promise.resolve(false); // nothing is said without a name
+    if (!this.you.name || this.saved) return Promise.resolve(false); // nothing is said without a name
     const obj = { ...op, gid: this.you.gid, name: this.you.name };
     let sent = false;
     this.outChain = this.outChain.then(async () => {
@@ -474,6 +514,14 @@ export class GuestDoc {
     // Frames sent on the old socket are either in the replay or will be drained again.
     this.inflight.clear();
     for (const done of this.syncWaiters.splice(0)) done();
+    // Somebody answered: the live room replaces the saved copy (finishCatchUp merges into it).
+    if (this.saved) {
+      this.saved = false;
+      this.savedAt = null;
+      if (!this.ended) this.readOnly = false;
+    }
+    if (this.offlineTimer) clearTimeout(this.offlineTimer);
+    this.offlineTimer = null;
     this.present = w.present;
     this.expires = w.expires || this.expires;
     if (w.ended) this.markEnded(w.ended_at, w.expires || null);
@@ -482,6 +530,18 @@ export class GuestDoc {
   }
 
   private async onSnapshot(env: Uint8Array): Promise<void> {
+    try {
+      await this.readSnapshot(env);
+    } catch (e) {
+      this.forget(); // a copy this key does not open is of no use
+      throw e;
+    }
+    this.lastEnvelope = env;
+    this.persist();
+  }
+
+  /** Open a sealed snapshot into the mirror, threads and meta. Throws when it cannot be used. */
+  private async readSnapshot(env: Uint8Array): Promise<void> {
     let obj: unknown;
     try {
       const { kind, plaintext } = await unseal(this.keys, this.roomId, env);
@@ -623,6 +683,7 @@ export class GuestDoc {
     this.readOnly = true;
     if (endedAt !== null) this.endedAt = endedAt;
     if (expires !== null) this.expires = expires;
+    this.persist(); // the copy learns the room ended
     if (this.drainTimer) clearTimeout(this.drainTimer);
     this.drainTimer = null;
     this.dirtySince = null;
@@ -633,6 +694,12 @@ export class GuestDoc {
   }
 
   private onRoomState(_s: RoomState): void {
+    if (this.room.state === 'gone') {
+      // Deleted, expired or not this link's room: nothing to keep.
+      this.saved = false;
+      this.savedAt = null;
+      this.forget();
+    }
     if (this.room.state !== 'live' && this.room.state !== 'ended') {
       if (this.drainTimer) clearTimeout(this.drainTimer);
       this.drainTimer = null;
@@ -640,6 +707,80 @@ export class GuestDoc {
       this.typingSent = false;
     }
     this.notify();
+  }
+
+  // ---- the saved copy ---------------------------------------------------------------------------
+
+  private queueStore(job: () => Promise<void>): void {
+    this.storeChain = this.storeChain.then(job).catch(() => {});
+  }
+
+  /** Delete this room's saved copy. */
+  private forget(): void {
+    this.lastEnvelope = null;
+    this.queueStore(() => this.store.remove(this.roomId));
+  }
+
+  /** Keep the latest snapshot envelope with the times the room told us (never without an expiry). */
+  private persist(): void {
+    const envelope = this.lastEnvelope;
+    if (!envelope || !this.expires || this.expires <= 0) return;
+    const iso = (sec: number) => new Date(sec * 1000).toISOString();
+    const nowIso = new Date(this.now()).toISOString();
+    const rec: CopyRec = {
+      envelope,
+      expires: iso(this.expires),
+      ended_at: !this.ended ? null : this.endedAt !== null ? iso(this.endedAt) : this.meta?.ended_at || nowIso,
+      saved_at: nowIso
+    };
+    this.queueStore(() => this.store.save(this.roomId, rec));
+  }
+
+  /** No transport welcomed us: show the saved copy, if there is one and it has not expired. */
+  private offline(): void {
+    if (this.offlineTimer) clearTimeout(this.offlineTimer);
+    this.offlineTimer = null;
+    if (this.destroyed || this.triedSaved || this.room.generation > 0 || this.room.state !== 'connecting') return;
+    this.triedSaved = true;
+    this.enqueue(() => this.openSaved());
+  }
+
+  /** Has the room welcomed us, or said it is gone, since the saved copy was asked for? */
+  private answered(): boolean {
+    return this.room.generation > 0 || this.room.state === 'gone';
+  }
+
+  private async openSaved(): Promise<void> {
+    let rec: CopyRec | null = null;
+    try {
+      rec = await this.store.load(this.roomId);
+    } catch {
+      return;
+    }
+    if (!rec) return;
+    if (expired(rec, this.now())) {
+      this.forget();
+      return;
+    }
+    if (this.answered() || this.web) return; // the room answered first
+    try {
+      await this.readSnapshot(rec.envelope);
+    } catch {
+      this.forget(); // wrong key, or not a snapshot this page can open
+      return;
+    }
+    if (this.answered()) return;
+    const mirror = this.ensureMirror();
+    const web = WasmHashWeb.decode(mirror.encode());
+    web.applyFrontier(web.encodeFrontier());
+    this.web = web;
+    this.lastEnvelope = rec.envelope;
+    this.saved = true;
+    this.readOnly = true;
+    this.savedAt = Date.parse(rec.saved_at) || null;
+    this.expires = Date.parse(rec.expires) / 1000;
+    this.openIfOrigin();
+    this.changed();
   }
 
   // ---- outgoing --------------------------------------------------------------------------------
@@ -755,9 +896,9 @@ export class GuestDoc {
   }
 
   private clearTimers(): void {
-    for (const t of [this.drainTimer, this.typingTimer]) if (t) clearTimeout(t);
+    for (const t of [this.drainTimer, this.typingTimer, this.offlineTimer]) if (t) clearTimeout(t);
     if (this.presenceTimer) clearInterval(this.presenceTimer);
-    this.drainTimer = this.typingTimer = null;
+    this.drainTimer = this.typingTimer = this.offlineTimer = null;
     this.presenceTimer = null;
     this.dirtySince = null;
   }
