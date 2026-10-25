@@ -77,9 +77,26 @@ export function savedLine(savedAtMs: number | null | undefined, owner: string | 
 	return `A saved copy${when ? ` from ${when}` : ''}: ${who} computer is off. It is read-only.`;
 }
 
-/** "Alice (host), Bob": the others in the room, the owner first and marked. */
+/** A person on the owner's side (another window of theirs, a team member): gid "o:<key>". */
+export const isOwnerSide = (gid: string): boolean => gid.startsWith('o:');
+
+/**
+ * "Alice (host), Ana (team), Bob": the others in the room, the owner first and marked, then the
+ * people on the owner's side, then the guests. An owner-side entry named like the host is the
+ * host's own other window and adds nothing; the same name twice shows once.
+ */
 export function peopleLine(others: readonly Person[]): string {
-	return others.map((p) => (p.gid === '' ? `${p.name || 'Host'} (host)` : p.name || 'Guest')).join(', ');
+	const host = others.find((p) => p.gid === '');
+	const parts: string[] = [];
+	if (host) parts.push(`${host.name || 'Host'} (host)`);
+	const team = new Set<string>();
+	for (const p of others) {
+		if (!isOwnerSide(p.gid) || (host && p.name === host.name)) continue;
+		team.add(`${p.name || 'Someone'} (team)`);
+	}
+	parts.push(...team);
+	for (const p of others) if (p.gid !== '' && !isOwnerSide(p.gid)) parts.push(p.name || 'Guest');
+	return parts.join(', ');
 }
 
 /** "Bob is typing…", "Alice and Bob are typing…", "Alice, Bob and Carol are typing…"; "" for nobody. */

@@ -105,3 +105,71 @@ test('two people edit the same notes live', async ({ page, browser, request }, i
     await ctxB.close();
   }
 });
+
+// Live carets (phase 11, task 15): the overlay beside the editor (src/lib/notes/ui/CaretOverlay.svelte)
+// draws one `remote-caret` per OTHER person, with a `.bar`, a `.flag` (class `shown` for 3 s after a
+// move) and, for a range, `.selection span` rectangles. Presence travels over the notes WebSocket
+// (`sel`, coalesced to 100 ms) and only while the editor has focus. Both contexts are the same
+// desktop user, so the two carets have the same name; each page still sees only the other's.
+test('a caret and a selection show up in the other page and go away on blur', async ({ page, browser }, info) => {
+  const ctxA = await browser.newContext({ storageState: await page.context().storageState() });
+  const ctxB = await browser.newContext({ storageState: await page.context().storageState() });
+  try {
+    const a = await ctxA.newPage();
+    const b = await ctxB.newPage();
+    await openApp(a);
+    await importMeeting(a, info.outputDir, NAME);
+    const edA = await openNotes(a);
+    const edB = await openNotes(b);
+    const carets = (p: Page) => p.getByTestId('remote-caret');
+
+    // Two lines of text, typed by A; B is not focused, so nobody has a caret yet.
+    await edA.click();
+    await a.keyboard.type('Carets are shown');
+    await a.keyboard.press('Enter');
+    await a.keyboard.type('on the second line');
+    await expect(edB).toContainText('on the second line');
+    await expect(carets(a)).toHaveCount(0);
+    await expect(carets(b)).toHaveCount(1, { timeout: 15_000 }); // A's caret, at the end of the text
+
+    // A moves the caret to the start of the first line: B's bar for A moves up and left.
+    const bar = carets(b).locator('.bar');
+    await expect(bar).toBeVisible();
+    const before = await bar.boundingBox();
+    expect(before).not.toBeNull();
+    await a.keyboard.press('Control+Home');
+    await expect(async () => {
+      const now = await bar.boundingBox();
+      expect(now!.y).toBeLessThan(before!.y - 4);
+    }).toPass({ timeout: 15_000 });
+    // The flag with A's name shows right after the move, then fades back to the bar after ~3 s.
+    await expect(carets(b).locator('.flag')).toHaveText(/\S/);
+    await expect(carets(b).locator('.flag.shown')).toHaveCount(0, { timeout: 15_000 });
+
+    // A selects "Carets": B shows the range as rectangles; a collapsed caret has none.
+    await expect(carets(b).locator('.selection span')).toHaveCount(0);
+    for (let i = 0; i < 'Carets'.length; i++) await a.keyboard.press('Shift+ArrowRight');
+    await expect(carets(b).locator('.selection span').first()).toBeVisible({ timeout: 15_000 });
+    await expect(carets(b)).toHaveCount(1);
+    await expect(carets(a)).toHaveCount(0);
+
+    // A collapses the selection again: the rectangles go, the caret stays.
+    await a.keyboard.press('ArrowRight');
+    await expect(carets(b).locator('.selection span')).toHaveCount(0, { timeout: 15_000 });
+    await expect(bar).toBeVisible();
+
+    // B focuses its editor too: A now shows B's caret (no flicker of its own).
+    await edB.click();
+    await b.keyboard.press('Control+End');
+    await expect(carets(a)).toHaveCount(1, { timeout: 15_000 });
+    await expect(carets(b)).toHaveCount(1);
+
+    // A leaves the editor: focus is gone, so is its caret in B (and B's stays in A).
+    await edA.evaluate((el) => (el as HTMLElement).blur());
+    await expect(carets(b)).toHaveCount(0, { timeout: 15_000 });
+    await expect(carets(a)).toHaveCount(1);
+  } finally {
+    await ctxA.close();
+    await ctxB.close();
+  }
+});

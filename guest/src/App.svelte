@@ -11,7 +11,7 @@
 	import { openMarkIds } from './comments';
 	import Comments from './Comments.svelte';
 	import { ensureWasm } from '$lib/notes/wasm.js';
-	import { FULL_MESSAGE, connectingLine, formatHostTime, formatMeetingDate, ownersNotes, peopleLine, savedLine, statusPill, typingLine } from './display';
+	import { FULL_MESSAGE, connectingLine, formatHostTime, formatMeetingDate, ownersNotes, savedLine, statusPill, typingLine } from './display';
 	import { GuestDoc } from './doc';
 	import { deriveKeys, type GuestKeys } from './format';
 	import { loadGuestWasm } from './guest-wasm';
@@ -19,6 +19,8 @@
 	import { parseLink, type GuestLink } from './link';
 	import Name from './Name.svelte';
 	import Notes from './Notes.svelte';
+	import { peopleParts, whoOf } from './presence';
+	import { colorsFor } from '$lib/notes/ui/carets.js';
 	import { transportsFor } from './transports';
 
 	type View =
@@ -110,6 +112,7 @@
 			others: g?.others ?? [],
 			typing: g?.typing ?? [],
 			you: g?.you.name ?? '',
+			youGid: g?.you.gid ?? '',
 			readOnly: g?.readOnly ?? false,
 			expires: g?.expires ?? null,
 			savedAt: g?.savedAt ?? null,
@@ -127,6 +130,7 @@
 	const others = $derived(snap.others);
 	const typing = $derived(typingLine(snap.typing));
 	const you = $derived(snap.you);
+	const parts = $derived(peopleParts(others));
 	const expiresText = $derived(formatHostTime(snap.expires));
 	const savedText = $derived(savedLine(snap.savedAt, owner));
 	/** A first visit: the room is open for reading but nobody has a name yet. */
@@ -214,9 +218,19 @@
 				</span>
 			</div>
 			<p class="text-xs text-gray-500" data-testid="guest-presence">
-				{#if others.length}<span class="text-gray-400">{peopleLine(others)}</span>{/if}{#if typing}<span
+				{#if others.length}<span class="text-gray-400">{#each parts as part, i}{#if i}{', '}{/if}<span
+								class="mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle"
+								style:background-color={colorsFor(part.who).bar}
+								data-testid="guest-dot"
+								aria-hidden="true"></span>{part.text}{/each}</span>{/if}{#if typing}<span
 						aria-live="polite">{' · '}{typing}</span
-					>{/if}{#if you}{#if others.length}<span>{' · '}</span>{/if}<span>You: {you}</span>{#if !snap.readOnly}<span
+					>{/if}{#if you}{#if others.length}<span>{' · '}</span>{/if}<span
+							><span
+								class="mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle"
+								style:background-color={colorsFor(whoOf({ gid: snap.youGid, name: you })).bar}
+								data-testid="guest-dot"
+								aria-hidden="true"></span>You: {you}</span
+						>{#if !snap.readOnly}<span
 							>{' · '}</span
 						><button
 							type="button"

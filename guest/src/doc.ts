@@ -23,6 +23,7 @@
 // Envelopes are opened in arrival order on one promise chain (WebCrypto is async) and sealed in
 // drain order on another, so artifacts still go before the delta that needs them.
 import { openDoc, type Doc } from '$lib/notes/model.js';
+import type { SelectionIds } from '$lib/notes/ui/types.js';
 import { ARTIFACT_TAG, DELTA_TAG, applyRemote, drain } from '$lib/notes/sync.js';
 import { WasmHashWeb } from '$lib/notes/wasm.js';
 import { defaultCopyStore, expired, type CopyRec, type CopyStore } from './copy';
@@ -49,6 +50,8 @@ export const TYPING_IDLE_MS = 2000;
 export const PRESENCE_MS = 15_000;
 /** Someone else's presence counts for this long (ms). */
 export const PRESENCE_TTL_MS = 30_000;
+/** A moved selection goes out at most this often (ms); the newest one is sent after the wait. */
+export const SEL_EVERY_MS = 150;
 /**
  * Nobody has welcomed us this long after the transports' own budgets (their sum) and the host's
  * attempt: the saved copy is opened (ms). The same happens at once when every transport has
@@ -57,6 +60,28 @@ export const PRESENCE_TTL_MS = 30_000;
 export const OFFLINE_EXTRA_MS = 6000;
 
 const ORIGIN_HEX = /^[0-9a-f]{64}$/;
+const ELEMENT_ID = /^[0-9a-f]{64}$/i;
+
+/**
+ * A `sel` someone sent: null (no selection) or {a, f}, each null or an element id (64 hex).
+ * Anything else is not valid and the caller keeps what it had.
+ */
+export function cleanSel(v: unknown): { ok: true; sel: SelectionIds | null } | { ok: false } {
+  if (v === null) return { ok: true, sel: null };
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return { ok: false };
+  const o = v as Record<string, unknown>;
+  if (!('a' in o) || !('f' in o)) return { ok: false };
+  const out: Record<'a' | 'f', string | null> = { a: null, f: null };
+  for (const k of ['a', 'f'] as const) {
+    const x = o[k];
+    if (x === null) continue;
+    if (typeof x !== 'string' || !ELEMENT_ID.test(x)) return { ok: false };
+    out[k] = x.toLowerCase();
+  }
+  return { ok: true, sel: out };
+}
+
+const selKey = (sel: SelectionIds | null): string => (sel ? `${sel.a ?? ''}|${sel.f ?? ''}` : '-');
 
 export interface AgendaItem {
   text: string;
@@ -70,6 +95,14 @@ export interface GuestMeta {
   agenda: AgendaItem[];
   ended: boolean;
   ended_at: string;
+  /** Where the recording is while the meeting records (UTC ISO `started_at`); absent otherwise. */
+  clock?: MetaClock;
+}
+
+export interface MetaClock {
+  part: number;
+  offset: number;
+  started_at: string;
 }
 
 /** A comment as the bridge seals it for guests (guest_notes.py `_guest_comment`). */
@@ -102,6 +135,11 @@ export interface Person {
   typing: boolean;
   /** When we last heard from them (ms, `now()`). */
   at: number;
+  /**
+   * Their caret or selection as element ids (null: none); kept from earlier presence when a newer
+   * one carries none. "o:<key>" is a person on the owner's side (display.ts `isOwnerSide`).
+   */
+  sel?: SelectionIds | null;
 }
 
 export interface GuestDocOptions {
@@ -145,7 +183,17 @@ function applyQuiet(web: WasmHashWeb, frame: Uint8Array): void {
 const str = (v: unknown, d = ''): string => (typeof v === 'string' ? v : d);
 const bool = (v: unknown): boolean => v === true;
 
-function parseMeta(v: unknown): GuestMeta | null {
+function parseClock(v: unknown): MetaClock | undefined {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+  const o = v as Record<string, unknown>;
+  const { part, offset, started_at } = o;
+  if (typeof part !== 'number' || !Number.isInteger(part) || part < 0) return undefined;
+  if (typeof offset !== 'number' || !Number.isFinite(offset) || offset < 0) return undefined;
+  if (typeof started_at !== 'string' || Number.isNaN(Date.parse(started_at))) return undefined;
+  return { part, offset, started_at };
+}
+
+export function parseMeta(v: unknown): GuestMeta | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>;
   const agenda = Array.isArray(o.agenda)
@@ -153,13 +201,15 @@ function parseMeta(v: unknown): GuestMeta | null {
         .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
         .map((a) => ({ text: str(a.text), covered: bool(a.covered) }))
     : [];
+  const clock = parseClock(o.clock);
   return {
     title: str(o.title),
     date: str(o.date),
     owner: str(o.owner),
     agenda,
     ended: bool(o.ended),
-    ended_at: str(o.ended_at)
+    ended_at: str(o.ended_at),
+    ...(clock ? { clock } : {})
   };
 }
 
@@ -269,6 +319,15 @@ export class GuestDoc {
   private typingSent = false;
   private presenceTimer: ReturnType<typeof setInterval> | null = null;
   private destroyed = false;
+  /** Our own selection, and what the room was last told (selKey) and when (ms). */
+  private sel: SelectionIds | null = null;
+  private selSent = '-';
+  private selAt = -Infinity;
+  private selTimer: ReturnType<typeof setTimeout> | null = null;
+  /** `{gid, name, gone: true}` sealed ahead, so leaving can send it without waiting for WebCrypto. */
+  private goneEnv: Uint8Array | null = null;
+  private goneName = '';
+  private onPageHide: (() => void) | null = null;
 
   constructor(opts: GuestDocOptions) {
     this.roomId = opts.room;
@@ -347,9 +406,9 @@ export class GuestDoc {
     );
   }
 
-  /** Names of the others typing now. */
+  /** Names of the others typing now (one name once, whatever the windows). */
   get typing(): string[] {
-    return this.others.filter((p) => p.typing).map((p) => p.name);
+    return [...new Set(this.others.filter((p) => p.typing).map((p) => p.name))];
   }
 
   /** Called after anything observable changed. Returns the unsubscribe. */
@@ -365,6 +424,18 @@ export class GuestDoc {
     this.room.connect(this.transports ?? this.url, this.keys.roomToken);
     if (!this.offlineTimer && !this.triedSaved) this.offlineTimer = setTimeout(() => this.offline(), this.offlineMs);
     if (!this.presenceTimer) this.presenceTimer = setInterval(() => this.presenceTick(), PRESENCE_MS);
+    if (!this.onPageHide && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      this.onPageHide = () => this.pageHidden();
+      window.addEventListener('pagehide', this.onPageHide);
+    }
+  }
+
+  /**
+   * The page is going away: tell the room now, so the others do not wait out the 30 s. Best
+   * effort: the envelope was sealed ahead and goes out only when the socket is open.
+   */
+  pageHidden(): void {
+    this.announceGone();
   }
 
   /** Rejoin now, keeping the document (what was typed meanwhile is sent after the catch-up). */
@@ -378,7 +449,10 @@ export class GuestDoc {
     if (this.destroyed) return;
     this.destroyed = true;
     this.stopTyping();
+    this.announceGone();
     this.clearTimers();
+    if (this.onPageHide && typeof window !== 'undefined') window.removeEventListener('pagehide', this.onPageHide);
+    this.onPageHide = null;
     this.room.close();
     for (const done of this.syncWaiters.splice(0)) done();
   }
@@ -467,6 +541,27 @@ export class GuestDoc {
         this.stopTyping();
       }, TYPING_IDLE_MS);
     } else this.stopTyping();
+  }
+
+  /**
+   * Our selection moved (null: the editor lost focus). Goes out as PRESENCE `sel` at most every
+   * 150 ms, the newest one after the wait; nothing while not live (the join and the heartbeat
+   * carry the current one) and nothing for a repeat.
+   */
+  setSel(sel: SelectionIds | null): void {
+    if (this.destroyed) return;
+    const next = sel ? { a: sel.a ?? null, f: sel.f ?? null } : null;
+    if (selKey(next) === selKey(this.sel)) return;
+    this.sel = next;
+    if (this.readOnly || this.ended || !this.you.name || !this.room.live) return;
+    if (this.selTimer) return; // the trailing send takes the newest
+    const wait = SEL_EVERY_MS - (Date.now() - this.selAt);
+    if (wait <= 0) this.sendSel();
+    else
+      this.selTimer = setTimeout(() => {
+        this.selTimer = null;
+        this.sendSel();
+      }, wait);
   }
 
   /** A new display name: used for the next frames and announced now. */
@@ -638,7 +733,17 @@ export class GuestDoc {
     if (!obj || typeof obj !== 'object') return;
     const o = obj as Record<string, unknown>;
     if (typeof o.gid !== 'string' || o.gid === this.you.gid) return;
-    this.people.set(o.gid, { gid: o.gid, name: str(o.name), typing: bool(o.typing), at: this.now() });
+    if (o.gone === true) {
+      // The page closed (or the member left): gone now, not after PRESENCE_TTL_MS.
+      if (this.people.delete(o.gid)) this.notify();
+      return;
+    }
+    let sel = this.people.get(o.gid)?.sel ?? null;
+    if ('sel' in o) {
+      const c = cleanSel(o.sel);
+      if (c.ok) sel = c.sel; // an invalid one keeps the last
+    }
+    this.people.set(o.gid, { gid: o.gid, name: str(o.name), typing: bool(o.typing), at: this.now(), sel });
     this.notify();
   }
 
@@ -823,7 +928,13 @@ export class GuestDoc {
     // Nobody is announced without a name: a first visit joins the room (to read it) before the
     // name card is answered; `setName` announces then.
     if (this.ended || this.destroyed || !this.you.name) return;
-    const obj = { gid: this.you.gid, name: this.you.name, typing: this.typingSent };
+    const obj = { gid: this.you.gid, name: this.you.name, typing: this.typingSent, sel: this.sel };
+    // This one carries the newest selection: a pending trailing send has nothing left to say.
+    if (this.selTimer) clearTimeout(this.selTimer);
+    this.selTimer = null;
+    this.selSent = selKey(this.sel);
+    this.selAt = Date.now();
+    this.prepareGone();
     this.outChain = this.outChain
       .then(async () => {
         if (!this.room.live || this.ended) return;
@@ -831,6 +942,31 @@ export class GuestDoc {
         if (this.room.live && !this.ended) this.room.sendPresence(env, { queue: false });
       })
       .catch(() => {});
+  }
+
+  private sendSel(): void {
+    if (selKey(this.sel) !== this.selSent) this.sendPresence();
+  }
+
+  /** Seal the leaving notice for the current name (a new name seals it again). */
+  private prepareGone(): void {
+    const name = this.you.name;
+    if (this.goneEnv && this.goneName === name) return;
+    this.goneName = name;
+    this.goneEnv = null;
+    const gid = this.you.gid;
+    sealJson(this.keys, this.roomId, Kind.PRESENCE, { gid, name, gone: true }).then(
+      (env) => {
+        if (this.goneName === name) this.goneEnv = env;
+      },
+      () => {}
+    );
+  }
+
+  private announceGone(): void {
+    const env = this.goneEnv;
+    if (!env || this.ended || !this.room.live || this.goneName !== this.you.name) return;
+    this.room.sendPresence(env, { queue: false });
   }
 
   private stopTyping(): void {
@@ -896,9 +1032,9 @@ export class GuestDoc {
   }
 
   private clearTimers(): void {
-    for (const t of [this.drainTimer, this.typingTimer, this.offlineTimer]) if (t) clearTimeout(t);
+    for (const t of [this.drainTimer, this.typingTimer, this.offlineTimer, this.selTimer]) if (t) clearTimeout(t);
     if (this.presenceTimer) clearInterval(this.presenceTimer);
-    this.drainTimer = this.typingTimer = this.offlineTimer = null;
+    this.drainTimer = this.typingTimer = this.offlineTimer = this.selTimer = null;
     this.presenceTimer = null;
     this.dirtySince = null;
   }

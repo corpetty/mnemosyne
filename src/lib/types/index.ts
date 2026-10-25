@@ -204,15 +204,43 @@ export interface NotesPerson {
   name: string;
 }
 
+/** A selection as element ids (64 hex characters; null = the start of the document). */
+export interface NotesSel {
+  a: string | null;
+  f: string | null;
+}
+
+/** Someone in the room, as the relay lists them (never the connection itself, see `you.key`). */
+export interface NotesMember {
+  /** One per connection (`m` + 8 hex). */
+  key: string;
+  name: string;
+  /** The user id when there is one, else the name: the caret colour is taken from it. */
+  who: string;
+  typing: boolean;
+  sel: NotesSel | null;
+}
+
+/** A guest on the published notes link, as `guests.members` lists them. */
+export interface NotesGuestMember {
+  /** `g:` + the guest's id (the caret colour is taken from the id). */
+  key: string;
+  name: string;
+  typing: boolean;
+  sel: NotesSel | null;
+}
+
 export interface NotesHello {
   type: 'hello';
   /** sha256("mnemosyne/notes/" + session_id) in hex: the notes object's origin. */
   notes: string;
-  you: NotesPerson;
+  you: NotesPerson & { /** This connection's key in `members` and `caret` messages. */ key: string };
   read_only: boolean;
   /** Set (with read_only) for a meeting whose document has not arrived by library sync yet. */
   waiting_for_sync?: boolean;
   present: string[];
+  /** Everyone in the room now, you included. Absent from relays older than phase 11. */
+  members?: NotesMember[];
   last_edit: { by: string; at: string } | null;
   /** One binary snapshot follows. */
   snapshot: boolean;
@@ -230,13 +258,20 @@ export interface NotesUnavailable {
 export type NotesServerMessage =
   | NotesHello
   | NotesUnavailable
-  | { type: 'presence'; present: string[]; typing: string[] }
+  | { type: 'presence'; present: string[]; typing: string[]; members?: NotesMember[] }
+  /** Someone else's selection moved (at most 10 a second per person; null = no selection). */
+  | { type: 'caret'; key: string; sel: NotesSel | null }
   | { type: 'last_edit'; by: string; at: string }
   /** Guests (people on the published notes link) who are in the room or typing. */
-  | { type: 'guests'; present: string[]; typing: string[] }
+  | { type: 'guests'; present: string[]; typing: string[]; members?: NotesGuestMember[] }
+  /** A guest's selection moved (`key` is `g:<gid>`; null = no selection). */
+  | { type: 'guest_caret'; key: string; sel: NotesSel | null }
   /** The stored document was replaced (library sync): rejoin to receive it. The close follows. */
   | { type: 'reload' }
   | { type: 'pong' };
 
 /** JSON the client sends to the notes relay. */
-export type NotesClientMessage = { type: 'presence'; typing: boolean } | { type: 'ping' };
+export type NotesClientMessage =
+  /** `typing` counts only from members that can edit, `sel` from everyone. Either may be left out. */
+  | { type: 'presence'; typing?: boolean; sel?: NotesSel | null }
+  | { type: 'ping' };

@@ -5,6 +5,7 @@ into Session.notes, access, the notes route through the document, seeding. The s
 import asyncio
 import base64
 import json
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -84,12 +85,15 @@ def test_hello_snapshot_and_backlog(client, ctx, sidecar):
     sid = meeting(ctx)
     with client.websocket_connect(url(sid)) as a:
         hello = a.receive_json()
+        key = hello["you"]["key"]
+        assert re.fullmatch(r"m[0-9a-f]{8}", key)
         assert hello == {
             "type": "hello",
             "notes": shared_notes.notes_origin(sid),
-            "you": {"id": "", "name": "Me"},
+            "you": {"id": "", "name": "Me", "key": key},
             "read_only": False,
             "present": ["Me"],
+            "members": [{"key": key, "name": "Me", "who": "Me", "typing": False, "sel": None}],
             "last_edit": None,
             "snapshot": False,
             "backlog": 0,
@@ -118,7 +122,9 @@ def test_relay_without_echo_and_artifacts_logged(client, ctx, sidecar):
         a.receive_json()
         with client.websocket_connect(url(sid)) as b:
             b.receive_json()
-            assert a.receive_json() == {"type": "presence", "present": ["Me"], "typing": []}
+            presence = a.receive_json()
+            assert presence["type"] == "presence" and presence["present"] == ["Me"]
+            assert presence["typing"] == [] and len(presence["members"]) == 2
             delta = frame("f1", ["ins", 0, "hi\n"])
             artifact = bytes([0xAF]) + b"https://example.test/a-long-link"
             a.send_bytes(delta)
@@ -425,7 +431,11 @@ def test_team_who_edits_and_who_reads(team):
 
     with connect("Ann") as a:
         hello_a = a.receive_json()
-        assert hello_a["you"] == {"id": ann[0].id, "name": "Ann Lee"}
+        assert hello_a["you"] == {
+            "id": ann[0].id,
+            "name": "Ann Lee",
+            "key": hello_a["you"]["key"],
+        }
         assert not hello_a["read_only"]
         with connect("Bob") as b:
             hello_b = b.receive_json()
@@ -438,11 +448,13 @@ def test_team_who_edits_and_who_reads(team):
             assert (last["type"], last["by"]) == ("last_edit", "Bob Stone")
             assert ctx.repo.notes_doc(sid)["last_by"] == "Bob Stone"
             b.send_text(json.dumps({"type": "presence", "typing": True}))
-            assert a.receive_json() == {
-                "type": "presence",
-                "present": ["Ann Lee", "Bob Stone"],
-                "typing": ["Bob Stone"],
-            }
+            presence = a.receive_json()
+            assert presence["present"] == ["Ann Lee", "Bob Stone"]
+            assert presence["typing"] == ["Bob Stone"]
+            assert [(m["name"], m["typing"]) for m in presence["members"]] == [
+                ("Ann Lee", False),
+                ("Bob Stone", True),
+            ]
             assert [o["author_id"] for o in ctx.repo.notes_ops(sid)] == [bob[0].id]
 
             with connect("Rita") as r:
@@ -565,7 +577,9 @@ async def test_a_hidden_member_is_not_present_and_gets_every_frame(client, ctx, 
     room = ctx.notes_hub.rooms[sid]
     assert bridge.hidden and bridge in room.members
     bridge.typing = True
-    assert shared_notes._presence(room) == {"type": "presence", "present": ["Ann"], "typing": []}
+    presence = shared_notes._presence(room)
+    assert presence["present"] == ["Ann"] and presence["typing"] == []
+    assert [m["name"] for m in presence["members"]] == ["Ann"]
     assert drain(bridge) == []  # no hello, no presence, no sender
     assert bridge.sender is None
 
@@ -728,3 +742,266 @@ async def test_a_late_joiner_gets_the_guests_after_hello(client, ctx, sidecar):
     for m in (ann, bob, cy):
         await shared_notes.leave(ctx, sid, m)
     await pending(ctx)
+
+
+# ---- live carets (phase 11) ----------------------------------------------------------------
+
+ID_A, ID_B = "ab" * 32, "cd" * 32
+
+
+def sel(a=ID_A, f=ID_B) -> dict:
+    return {"a": a, "f": f}
+
+
+def say(ctx, sid, member, **msg) -> None:
+    shared_notes.receive_text(ctx, sid, member, json.dumps({"type": "presence", **msg}))
+
+
+async def joined(ctx, sid, uid: str, name: str, can_edit: bool = True) -> shared_notes.Member:
+    member = await shared_notes.join(ctx, sid, FakeWs(), uid, name, can_edit)
+    assert member is not None
+    return member
+
+
+async def quiet(*members: shared_notes.Member) -> None:
+    """Let the senders write what is queued, then forget it."""
+    await asyncio.sleep(0.05)
+    for m in members:
+        m.ws.sent.clear()
+
+
+def carets(messages: list) -> list[dict]:
+    return [d for k, d in messages if k == "json" and d["type"] == "caret"]
+
+
+@pytest.mark.anyio
+async def test_a_readers_selection_is_a_caret_and_their_typing_is_ignored(client, ctx, sidecar):
+    sid = meeting(ctx)
+    ann = await joined(ctx, sid, "u1", "Ann")
+    rita = await joined(ctx, sid, "u2", "Rita", can_edit=False)
+    await quiet(ann, rita)
+
+    say(ctx, sid, rita, typing=True, sel=sel())
+    assert rita.typing is False  # read-only: typing counts from editors only
+    assert drain(ann) == [("json", {"type": "caret", "key": rita.key, "sel": sel()})]
+    assert drain(rita) == []  # never back to the one who moved
+
+    say(ctx, sid, ann, typing=True)  # an editor's typing is rebroadcast with the members
+    ((kind, presence),) = drain(rita)
+    assert kind == "json" and presence["typing"] == ["Ann"]
+    assert [(m["key"], m["typing"], m["sel"]) for m in presence["members"]] == [
+        (ann.key, True, None),
+        (rita.key, False, sel()),
+    ]
+    for m in (ann, rita):
+        await shared_notes.leave(ctx, sid, m)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"a": ID_A},  # f missing
+        {"a": ID_A, "f": "xyz"},
+        {"a": ID_A, "f": ID_B[:-1]},
+        {"a": 5, "f": None},
+        {"a": ID_A, "f": ID_B + "00"},
+        "ab" * 32,
+        [ID_A, ID_B],
+    ],
+)
+async def test_a_malformed_selection_is_ignored(client, ctx, sidecar, monkeypatch, bad):
+    monkeypatch.setattr(shared_notes, "CARET_EVERY", 0.0)  # no coalescing in this test
+    sid = meeting(ctx)
+    ann = await joined(ctx, sid, "u1", "Ann")
+    bob = await joined(ctx, sid, "u2", "Bob")
+    await quiet(ann, bob)
+    say(ctx, sid, bob, sel=bad)
+    assert bob.sel is None and drain(ann) == []
+    say(ctx, sid, bob, sel={"a": None, "f": ID_B.upper()})  # null and upper-case hex are fine
+    assert drain(ann) == [
+        ("json", {"type": "caret", "key": bob.key, "sel": {"a": None, "f": ID_B}})
+    ]
+    say(ctx, sid, bob, sel=None)  # no selection
+    assert drain(ann) == [("json", {"type": "caret", "key": bob.key, "sel": None})]
+    for m in (ann, bob):
+        await shared_notes.leave(ctx, sid, m)
+
+
+@pytest.mark.anyio
+async def test_carets_are_coalesced_and_the_last_always_arrives(client, ctx, sidecar):
+    sid = meeting(ctx)
+    ann = await joined(ctx, sid, "u1", "Ann")
+    bob = await joined(ctx, sid, "u2", "Bob")
+    await quiet(ann, bob)
+    loop = asyncio.get_running_loop()
+    clock, timers = [1000.0], []
+    real_call_later = loop.call_later
+
+    def call_later(delay, fn, *args):
+        if fn is shared_notes._flush_caret:
+            timers.append((clock[0] + delay, fn, args))
+            return type("Handle", (), {"cancel": lambda self: timers.clear()})()
+        return real_call_later(delay, fn, *args)
+
+    def advance(seconds: float) -> None:
+        clock[0] += seconds
+        for due, fn, args in [t for t in timers if t[0] <= clock[0]]:
+            timers.remove((due, fn, args))
+            fn(*args)
+
+    ids = [f"{i:02x}" * 32 for i in range(1, 8)]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(loop, "time", lambda: clock[0])
+        mp.setattr(loop, "call_later", call_later)
+        say(ctx, sid, bob, sel=sel(ids[0], ids[0]))  # the first goes out at once
+        assert [c["sel"]["a"] for c in carets(drain(ann))] == [ids[0]]
+        for i in (1, 2, 3):  # a burst inside the window: nothing yet, newest replaces older
+            clock[0] += 0.01
+            say(ctx, sid, bob, sel=sel(ids[i], ids[i]))
+        assert drain(ann) == [] and len(timers) == 1
+        advance(shared_notes.CARET_EVERY - 0.03 - 0.001)
+        assert drain(ann) == []  # window not over
+        advance(0.002)  # over: exactly the last position
+        assert [c["sel"]["a"] for c in carets(drain(ann))] == [ids[3]]
+        assert timers == []
+        # After a quiet spell the next one is immediate again; a repeat of a position is no news.
+        advance(1.0)
+        say(ctx, sid, bob, sel=sel(ids[3], ids[3]))
+        assert drain(ann) == []
+        say(ctx, sid, bob, sel=sel(ids[4], ids[4]))
+        assert [c["sel"]["a"] for c in carets(drain(ann))] == [ids[4]]
+        # A member leaving with a flush pending: it is dropped, only the presence goes out.
+        say(ctx, sid, bob, sel=sel(ids[5], ids[5]))
+        assert len(timers) == 1
+        await shared_notes.leave(ctx, sid, bob)
+        assert timers == []
+        ((kind, presence),) = drain(ann)
+        assert presence["type"] == "presence" and [m["key"] for m in presence["members"]] == [
+            ann.key
+        ]
+    await shared_notes.leave(ctx, sid, ann)
+
+
+@pytest.mark.anyio
+async def test_presence_members_shape_and_the_joiner_sees_the_carets(client, ctx, sidecar):
+    sid = meeting(ctx)
+    ann = await joined(ctx, sid, "u1", "Ann")
+    say(ctx, sid, ann, sel=sel())
+    bob = await joined(ctx, sid, "", "Me")  # no user id: the name is `who`
+    await quiet(ann, bob)
+    expect = [
+        {"key": ann.key, "name": "Ann", "who": "u1", "typing": False, "sel": sel()},
+        {"key": bob.key, "name": "Me", "who": "Me", "typing": False, "sel": None},
+    ]
+    assert shared_notes._presence(ctx.notes_hub.rooms[sid])["members"] == expect
+    assert shared_notes._members(ctx.notes_hub.rooms[sid]) == expect
+    assert ann.key != bob.key and re.fullmatch(r"m[0-9a-f]{8}", ann.key)
+    for m in (ann, bob):
+        await shared_notes.leave(ctx, sid, m)
+
+
+@pytest.mark.anyio
+async def test_a_presence_tap_hears_presence_and_carets_only(client, ctx, sidecar):
+    sid = meeting(ctx)
+    ann = await joined(ctx, sid, "u1", "Ann")
+    bridge = shared_notes.Member(
+        ws=None, id="bridge", name="Bridge", can_edit=False, presence_tap=True
+    )
+    shared_notes.attach(ctx, sid, bridge)
+    ((kind, first),) = drain(bridge)  # the room as it is when it attaches
+    assert first["type"] == "presence" and [m["name"] for m in first["members"]] == ["Ann"]
+    assert first["present"] == ["Ann"]  # never listed itself
+
+    say(ctx, sid, ann, sel=sel())
+    assert drain(bridge) == [("json", {"type": "caret", "key": ann.key, "sel": sel()})]
+    say(ctx, sid, ann, typing=True)
+    ((kind, presence),) = drain(bridge)
+    assert presence["typing"] == ["Ann"]
+    bob = await joined(ctx, sid, "u2", "Bob")
+    ((kind, presence),) = drain(bridge)
+    assert [m["name"] for m in presence["members"]] == ["Ann", "Bob"]
+
+    # Nothing else: no guests, no last_edit, no other broadcast_json, and it cannot send.
+    shared_notes.broadcast_json(ctx, sid, {"type": "guests", "present": ["Ana"], "typing": []})
+    shared_notes.broadcast_json(ctx, sid, {"type": "other"})
+    shared_notes._announce_edit(ctx, sid, "Ann", None)
+    assert drain(bridge) == []
+    say(ctx, sid, bridge, typing=True, sel=sel())
+    assert drain(bridge) == [] and bridge.sel is None and not bridge.typing
+    assert [m["name"] for m in shared_notes._members(ctx.notes_hub.rooms[sid])] == ["Ann", "Bob"]
+    # A frame still reaches it, as before.
+    f1 = frame("f1", ["ins", 0, "hi\n"])
+    assert shared_notes.receive_frame(ctx, sid, ann, f1) is None
+    assert drain(bridge) == [("bytes", f1)]
+
+    # Members leaving: it hears the shrinking room, and the empty one once the last is gone.
+    await shared_notes.leave(ctx, sid, bob)
+    ((kind, presence),) = drain(bridge)
+    assert [m["name"] for m in presence["members"]] == ["Ann"]
+    await shared_notes.leave(ctx, sid, ann)
+    ((kind, presence),) = drain(bridge)
+    assert presence["members"] == [] and presence["present"] == []
+    shared_notes.detach(ctx, sid, bridge)
+    await pending(ctx)
+
+
+@pytest.mark.anyio
+async def test_a_plain_tap_still_hears_no_json(client, ctx, sidecar):
+    sid = meeting(ctx)
+    ann = await joined(ctx, sid, "u1", "Ann")
+    bridge = tap()
+    shared_notes.attach(ctx, sid, bridge)
+    say(ctx, sid, ann, sel=sel(), typing=True)
+    assert drain(bridge) == []
+    await shared_notes.leave(ctx, sid, ann)
+    assert drain(bridge) == []
+    shared_notes.detach(ctx, sid, bridge)
+    await pending(ctx)
+
+
+def test_selection_over_the_socket(client, ctx, sidecar):
+    sid = meeting(ctx)
+    with client.websocket_connect(url(sid)) as a:
+        hello_a = a.receive_json()
+        with client.websocket_connect(url(sid)) as b:
+            hello_b = b.receive_json()
+            assert [m["key"] for m in hello_b["members"]] == [
+                hello_a["you"]["key"],
+                hello_b["you"]["key"],
+            ]
+            assert a.receive_json()["type"] == "presence"
+            b.send_text(json.dumps({"type": "presence", "sel": sel()}))
+            assert a.receive_json() == {"type": "caret", "key": hello_b["you"]["key"], "sel": sel()}
+            b.send_text(json.dumps({"type": "presence", "sel": {"a": "nope", "f": None}}))
+            settle(b)
+            settle(a)  # a's next message is its pong: the bad selection relayed nothing
+
+
+# ---- action items from the notes (phase 11, services/notes_items.py) ---------------------------
+
+
+def test_a_task_line_typed_over_the_socket_is_an_action_item(client, ctx, sidecar):
+    sid = meeting(ctx)
+    line = "- [ ] [@Ada](mnemosyne:person/Ada) sends the deck\n"
+    with client.websocket_connect(url(sid)) as a:
+        a.receive_json()
+        a.send_bytes(frame("f1", ["ins", 0, line]))
+        settle(a)
+        assert shared_notes.fold_blocking(ctx, sid)
+    (item,) = client.get(f"/api/sessions/{sid}").json()["notes_items"]
+    assert (item["owner"], item["text"], item["done"], item["source"], item["by"]) == (
+        "Ada",
+        "sends the deck",
+        False,
+        "notes",
+        "Me",
+    )
+    kinds = [e["kind"] for e in ctx.repo.events(sid)]
+    assert kinds.count("notes_task_added") == 1
+    # The notes route (author "api") rewrites the line elsewhere: the item keeps its id.
+    r = client.post(f"/api/sessions/{sid}/notes", json={"notes": "# Notes\n" + line})
+    assert r.status_code == 200, r.text
+    (after,) = client.get(f"/api/sessions/{sid}").json()["notes_items"]
+    assert after["id"] == item["id"] and after["line"] != item["line"]
+    assert [e["kind"] for e in ctx.repo.events(sid)].count("notes_task_added") == 1

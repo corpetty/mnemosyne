@@ -72,9 +72,9 @@ async function createLink(page: Page) {
   return { link, menu };
 }
 
-async function guestJoins(page: Page, link: string, name: string) {
+async function guestJoins(page: Page, link: string, name: string, opts: { checkCsp?: boolean } = {}) {
   const response = await page.goto(link);
-  expect(response?.headers()['content-security-policy'] ?? '').toContain(`ws://${RELAY}`);
+  if (opts.checkCsp !== false) expect(response?.headers()['content-security-policy'] ?? '').toContain(`ws://${RELAY}`);
   await expect(page.getByRole('heading', { name: /^Join .+'s notes$/ })).toBeVisible({ timeout: 60_000 });
   await page.getByRole('textbox', { name: 'Your name' }).fill(name);
   await page.getByRole('button', { name: 'Join', exact: true }).click();
@@ -184,5 +184,82 @@ test('with a publish host the link points at its page and a mirror keeps the roo
     await expect(guest.getByTestId('guest-notes-editor')).toHaveCount(0);
   } finally {
     await guestCtx.close();
+  }
+});
+
+// Live carets across transports (phase 11, task 15). Ina opens the format 2 link (iroh first);
+// Bob opens the same room as a format 1 link (`<host>/n/<room>#<key>`, no endpoint), which can
+// only use the mirror host's WebSocket. They share no room, so each sees the other (typing line
+// and caret) only because the owner's bridge forwards presence between the iroh room and the
+// mirror. The owner page sees both guests' carets, and both guests the owner's.
+test('carets and typing cross between an iroh guest, a mirror-host guest and the owner', async ({ page, browser, request }, info) => {
+  await putSettings(request, { guest_transport: 'iroh', guest_host: PUBLISH_HOST });
+  const inaCtx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  const bobCtx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  try {
+    const { owner } = await setUp(page, request, info.outputDir);
+    const { link, menu } = await createLink(page);
+    const m = new RegExp(`^${PUBLISH_HOST}/n/([0-9a-f]{16})#2\\.\\1\\.([^.]+)\\.`).exec(link);
+    expect(m, link).not.toBeNull();
+    const hostLink = `${PUBLISH_HOST}/n/${m![1]}#${m![2]}`;
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+
+    const ina = await inaCtx.newPage();
+    const bob = await bobCtx.newPage();
+    const inaEditor = await guestJoins(ina, link, 'Ina');
+    const bobEditor = await guestJoins(bob, hostLink, 'Bob', { checkCsp: false });
+    await expect(page.getByTestId('notes-status')).toContainText(/Guests here: (Ina, Bob|Bob, Ina)/, { timeout: 30_000 });
+
+    const carets = (p: Page, who?: string) =>
+      p.locator(who ? `[data-testid="remote-caret"][data-name="${who}"]` : '[data-testid="remote-caret"]');
+    const typeSlowly = (p: Page, text: string) => p.keyboard.type(text, { delay: 120 });
+
+    // Ina types a line (Bob gets it across the bridge) while Bob's page shows her typing.
+    await inaEditor.click();
+    const typing = typeSlowly(ina, 'Ina is writing a line of notes');
+    await expect(bob.getByTestId('guest-status')).toContainText('Ina is typing…', { timeout: 30_000 });
+    await expect(page.getByTestId('notes-status')).toContainText('Ina is typing…', { timeout: 30_000 });
+    await typing;
+    await expect(bobEditor).toContainText('Ina is writing a line of notes', { timeout: 30_000 });
+
+    // Bob opens a line of his own, slowly, and Ina sees him typing.
+    await bobEditor.click();
+    await bob.keyboard.press('Control+End');
+    await bob.keyboard.press('Enter');
+    const typing2 = typeSlowly(bob, 'Bob answers on the host');
+    await expect(ina.getByTestId('guest-status')).toContainText('Bob is typing…', { timeout: 30_000 });
+    await typing2;
+    await expect(inaEditor).toContainText('Bob answers on the host', { timeout: 30_000 });
+
+    // Carets: the owner sees both guests, each guest the other one, and nobody sees themselves.
+    await expect(carets(page, 'Ina').locator('.bar')).toBeVisible({ timeout: 30_000 });
+    await expect(carets(page, 'Bob').locator('.bar')).toBeVisible({ timeout: 30_000 });
+    await expect(carets(ina, 'Bob').locator('.bar')).toBeVisible({ timeout: 30_000 });
+    await expect(carets(bob, 'Ina').locator('.bar')).toBeVisible({ timeout: 30_000 });
+    await expect(carets(ina, 'Ina')).toHaveCount(0);
+    await expect(carets(bob, 'Bob')).toHaveCount(0);
+
+    // Ina selects a word: Bob (on the other transport) and the owner see the range.
+    await inaEditor.getByText('Ina is writing a line of notes').click();
+    await ina.keyboard.press('Home');
+    for (let i = 0; i < 'Ina'.length; i++) await ina.keyboard.press('Shift+ArrowRight');
+    await expect(carets(bob, 'Ina').locator('.selection span').first()).toBeVisible({ timeout: 30_000 });
+    await expect(carets(page, 'Ina').locator('.selection span').first()).toBeVisible({ timeout: 30_000 });
+
+    // The owner focuses the notes: both guests get a third caret (the owner's, under their name).
+    await owner.click();
+    await page.keyboard.press('Control+Home');
+    await expect(ina.getByTestId('remote-caret')).toHaveCount(2, { timeout: 30_000 });
+    await expect(bob.getByTestId('remote-caret')).toHaveCount(2, { timeout: 30_000 });
+
+    // Bob leaves the editor: his caret goes from the owner's page and from Ina's.
+    await bobEditor.evaluate((el) => (el as HTMLElement).blur());
+    await expect(carets(page, 'Bob')).toHaveCount(0, { timeout: 30_000 });
+    await expect(carets(ina, 'Bob')).toHaveCount(0, { timeout: 30_000 });
+    await expect(carets(page, 'Ina').locator('.bar')).toBeVisible();
+  } finally {
+    await inaCtx.close();
+    await bobCtx.close();
   }
 });

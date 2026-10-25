@@ -259,15 +259,249 @@ async def test_guest_presence_reaches_the_owners_editors(ctx, host, monkeypatch)
     )
     await ana.send(bytes([T_PRESENCE]) + presence)
     await until(lambda: sent)
-    assert sent[-1] == {"type": "guests", "present": ["Ana (guest)"], "typing": ["Ana (guest)"]}
+    assert sent[-1] == {
+        "type": "guests",
+        "present": ["Ana (guest)"],
+        "typing": ["Ana (guest)"],
+        "members": [{"key": "g:abc", "name": "Ana (guest)", "typing": True, "sel": None}],
+    }
     assert guest_notes.guests_present(ctx, sid) == ["Ana (guest)"]
     # The owner's heartbeat goes to the room; a guest silent for too long has gone.
     await bridge.tick(now=time.monotonic() + guest_notes.PRESENCE_TTL + 1)
-    assert sent[-1] == {"type": "guests", "present": [], "typing": []}
+    assert sent[-1] == {"type": "guests", "present": [], "typing": [], "members": []}
     beat = await until(lambda: ana.binary(T_PRESENCE))
     kind, obj = gf.unseal_json(row["key"], row["room"], beat[0][1])
     assert obj == {"gid": "", "name": "Corey", "typing": False}
     await ana.close()
+
+
+# ---- carets (phase 11) ---------------------------------------------------------------------
+
+S1 = {"a": "1" * 64, "f": "2" * 64}
+S2 = {"a": None, "f": "3" * 64}
+S3 = {"a": "4" * 64, "f": "4" * 64}
+
+
+class FakeWs:
+    """A desktop editor's WebSocket: records what its member's sender writes."""
+
+    def __init__(self) -> None:
+        self.sent: list = []
+
+    async def send_json(self, data) -> None:
+        self.sent.append(data)
+
+    async def send_bytes(self, data) -> None:
+        self.sent.append(bytes(data))
+
+    async def close(self, code=1000) -> None:
+        self.sent.append(("close", code))
+
+
+def seal_presence(row: dict, **obj) -> bytes:
+    return bytes([T_PRESENCE]) + gf.seal_json(row["key"], row["room"], gf.Kind.PRESENCE, obj)
+
+
+def presences(row: dict, client: GuestClient, gid: str | None = None) -> list[dict]:
+    """The PRESENCE envelopes a guest received, opened (only `gid`'s when given)."""
+    out = []
+    for _, env in client.binary(T_PRESENCE):
+        kind, obj = gf.unseal_json(row["key"], row["room"], env)
+        assert kind is gf.Kind.PRESENCE
+        if gid is None or obj["gid"] == gid:
+            out.append(obj)
+    return out
+
+
+async def test_a_guests_selection_reaches_the_desktop_as_a_caret(ctx, host, monkeypatch):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    sent = []
+    monkeypatch.setattr(shared_notes, "broadcast_json", lambda app, s, msg: sent.append(msg))
+    ana = await guest(host, row)
+
+    async def say(**obj) -> None:
+        n = len(sent)
+        await ana.send(seal_presence(row, gid="abc", name="Ana", **obj))
+        await until(lambda: len(sent) > n)
+
+    await say(typing=False, sel=S1)
+    assert sent == [
+        {
+            "type": "guests",
+            "present": ["Ana (guest)"],
+            "typing": [],
+            "members": [{"key": "g:abc", "name": "Ana (guest)", "typing": False, "sel": S1}],
+        }
+    ]
+    # Only the selection moved: a caret, not the whole list again.
+    await say(typing=False, sel=S2)
+    assert sent[1:] == [{"type": "guest_caret", "key": "g:abc", "sel": S2}]
+    # A malformed sel is ignored (nothing to say), and one left out keeps the last: the typing
+    # change after them carries S2.
+    for bad in ({"a": "xyz", "f": None}, {"a": S1["a"]}, "ab" * 32, [1, 2]):
+        await ana.send(seal_presence(row, gid="abc", name="Ana", typing=False, sel=bad))
+    await say(typing=True)
+    assert sent[2:] == [
+        {
+            "type": "guests",
+            "present": ["Ana (guest)"],
+            "typing": ["Ana (guest)"],
+            "members": [{"key": "g:abc", "name": "Ana (guest)", "typing": True, "sel": S2}],
+        }
+    ]
+    assert bridge.guests["abc"].sel == S2
+    # Upper-case hex is the same id; null is no selection.
+    await say(typing=True, sel={"a": "A" * 64, "f": "b" * 64})
+    await say(typing=True, sel=None)
+    assert sent[3:] == [
+        {"type": "guest_caret", "key": "g:abc", "sel": {"a": "a" * 64, "f": "b" * 64}},
+        {"type": "guest_caret", "key": "g:abc", "sel": None},
+    ]
+    # The same again is no news.
+    n = len(sent)
+    await ana.send(seal_presence(row, gid="abc", name="Ana", typing=True, sel=None))
+    await asyncio.sleep(0.1)
+    assert len(sent) == n
+    await ana.close()
+
+
+async def test_a_guest_saying_gone_is_gone_at_once(ctx, host, monkeypatch):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    sent = []
+    monkeypatch.setattr(shared_notes, "broadcast_json", lambda app, s, msg: sent.append(msg))
+    ana = await guest(host, row)
+    await ana.send(seal_presence(row, gid="abc", name="Ana", typing=True, sel=S1))
+    await ana.send(seal_presence(row, gid="def", name="Bob", typing=False))
+    await until(lambda: len(guest_notes.guests_present(ctx, sid)) == 2)
+    await ana.send(seal_presence(row, gid="abc", name="Ana", gone=True))
+    await until(lambda: guest_notes.guests_present(ctx, sid) == ["Bob (guest)"])
+    assert sent[-1] == {
+        "type": "guests",
+        "present": ["Bob (guest)"],
+        "typing": [],
+        "members": [{"key": "g:def", "name": "Bob (guest)", "typing": False, "sel": None}],
+    }
+    assert "abc" not in bridge.guests
+    await ana.close()
+
+
+async def test_owner_side_editors_are_sealed_for_the_guests(ctx, host):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    ana = await guest(host, row)
+    desk = await shared_notes.join(ctx, sid, FakeWs(), "u1", "Corey", True)
+    assert desk is not None
+    gid = "o:" + desk.key
+    # Joining: the room hears the editor at once (the bridge is a presence tap).
+    first = await until(lambda: presences(row, ana, gid))
+    assert first == [{"gid": gid, "name": "Corey", "typing": False, "sel": None}]
+    # Typing, as the hub tells the tap.
+    shared_notes.receive_text(ctx, sid, desk, json.dumps({"type": "presence", "typing": True}))
+    await until(lambda: len(presences(row, ana, gid)) == 2)
+    assert presences(row, ana, gid)[1] == {"gid": gid, "name": "Corey", "typing": True, "sel": None}
+
+    # Caret moves: one at once, then at most one per OWNER_SEL_EVERY, the newest winning.
+    loop = asyncio.get_running_loop()
+    clock, timers = [loop.time() + 1000.0], []
+    real_call_later = loop.call_later
+
+    def call_later(delay, fn, *args):
+        if getattr(fn, "__func__", None) is guest_notes.Bridge._flush_owner:
+            timers.append((clock[0] + delay, fn, args))
+            return type("Handle", (), {"cancel": lambda self: timers.clear()})()
+        return real_call_later(delay, fn, *args)
+
+    def advance(seconds: float) -> None:
+        clock[0] += seconds
+        for due, fn, args in [t for t in timers if t[0] <= clock[0]]:
+            timers.remove((due, fn, args))
+            fn(*args)
+
+    def caret(sel) -> None:
+        bridge._on_room_json({"type": "caret", "key": desk.key, "sel": sel})
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(loop, "time", lambda: clock[0])
+        mp.setattr(loop, "call_later", call_later)
+        caret(S1)  # the window is long over: out at once
+        assert len(timers) == 0
+        for sel in (S2, S3):
+            clock[0] += 0.01
+            caret(sel)
+        assert len(timers) == 1
+        advance(guest_notes.OWNER_SEL_EVERY - 0.02 - 0.001)  # not yet
+        advance(0.002)  # the window is over: the newest
+        assert timers == []
+    await until(lambda: len(presences(row, ana, gid)) == 4)
+    await asyncio.sleep(0.05)
+    assert [p["sel"] for p in presences(row, ana, gid)] == [None, None, S1, S3]
+
+    # The heartbeat: the "" owner line as in 0.24, and every editor as it is now.
+    n = len(presences(row, ana))
+    await bridge.tick(now=time.monotonic() + 1000)
+    await until(lambda: len(presences(row, ana)) == n + 2)
+    assert presences(row, ana)[n:] == [
+        {"gid": "", "name": "Corey", "typing": False},
+        {"gid": gid, "name": "Corey", "typing": True, "sel": S3},
+    ]
+
+    # Leaving: `gone` once.
+    await shared_notes.leave(ctx, sid, desk)
+    await until(lambda: presences(row, ana, gid)[-1].get("gone"))
+    assert presences(row, ana, gid)[-1] == {"gid": gid, "name": "Corey", "gone": True}
+    assert bridge.owners == {}
+    await asyncio.sleep(0.05)
+    assert len(presences(row, ana, gid)) == 6
+    await ana.close()
+
+
+async def test_no_presence_is_queued_while_the_room_is_away(ctx, host):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    desk = await shared_notes.join(ctx, sid, FakeWs(), "u1", "Corey", True)
+    assert desk is not None
+    await until(lambda: desk.key in bridge.owners)
+    room_id, room = host.room()
+    room.full = True  # rejoins are refused (4429) until it is not
+    for ws in list(room.clients):
+        await ws.close()
+    await until(lambda: not bridge.connected.is_set())
+    bridge._on_room_json({"type": "caret", "key": desk.key, "sel": S1})
+    await until(lambda: bridge.owners[desk.key].timer is None)  # its flush came and went
+    await bridge.tick(now=time.monotonic() + 1000)
+    assert [t for t, _ in list(bridge.outq._queue) if t == T_PRESENCE] == []
+    assert bridge.owners[desk.key].sel == S1
+    room.full = False
+    await until(lambda: bridge.connected.is_set())
+    ana = await guest(host, row)
+    await bridge.tick(now=time.monotonic() + 2000)
+    await until(lambda: len(presences(row, ana)) == 2)
+    await asyncio.sleep(0.05)
+    # Nothing stale from the time away: the heartbeat says it as it is.
+    assert presences(row, ana) == [
+        {"gid": "", "name": "Corey", "typing": False},
+        {"gid": "o:" + desk.key, "name": "Corey", "typing": False, "sel": S1},
+    ]
+    await shared_notes.leave(ctx, sid, desk)
+    await ana.close()
+
+
+async def test_presence_left_in_the_queue_is_dropped_on_a_disconnect(ctx, host):
+    sid = meeting(ctx)
+    row = {
+        "room": "0123456789abcdef",
+        "key": bytes(range(32)),
+        "token": "t",
+        "room_token": "rt",
+        "host_url": host.url,
+    }
+    bridge = guest_notes.Bridge(ctx, sid, row)  # never started: nothing reads the queue
+    for item in ((T_NOTES, b"n1"), (T_PRESENCE, b"p1"), (T_NOTES, b"n2"), (T_PRESENCE, b"p2")):
+        bridge.outq.put_nowait(item)
+    bridge._drop_queued_presence()
+    assert list(bridge.outq._queue) == [(T_NOTES, b"n1"), (T_NOTES, b"n2")]
 
 
 # ---- comments ---------------------------------------------------------------------------------
@@ -842,6 +1076,67 @@ async def test_starting_a_recording_through_the_api_cancels_the_scheduled_end(
         ctx.active_recordings.pop(sid, None)
 
 
+async def test_meta_carries_the_part_clock_while_the_meeting_records(
+    app, ctx, host, fake_pipewire, settings
+):
+    """Guests' time chips: META gets `clock` when a recording starts and loses it at stop."""
+    settings.live_transcription = False
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    ana = await guest(host, row)
+    first = await until(lambda: metas(row, ana))
+    assert "clock" not in first[-1]
+    sent = len(first)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.post("/api/audio/start", json={"device_ids": [1], "session_id": sid})
+        assert r.status_code == 200, r.text
+        clock = r.json()["clock"]
+        await until(lambda: len(metas(row, ana)) > sent)
+        meta = metas(row, ana)[-1]
+        assert meta["clock"] == clock and clock["part"] == 0 and clock["offset"] == 0.0
+        assert guest_notes.meta_for_guests(ctx, sid)["clock"] == clock
+        sent = len(metas(row, ana))
+        r = await c.post(f"/api/audio/stop/{sid}", json={"transcribe": False})
+        assert r.status_code == 200, r.text
+        await ctx.jobs.wait(r.json()["job_id"])
+    await until(lambda: len(metas(row, ana)) > sent)
+    assert "clock" not in metas(row, ana)[-1]
+    assert "clock" not in guest_notes.meta_for_guests(ctx, sid)
+    await ana.close()
+
+
+async def test_a_new_part_sends_its_clock_to_the_guests(ctx, host):
+    """A capture restart stops one part and starts the next: META follows both."""
+    from mnemosyne.audio.capture import RecordingSession
+
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    ana = await guest(host, row)
+    sent = len(await until(lambda: metas(row, ana)))
+    part = RecordingSession(session_id="rec2", output_dir=ctx.settings.recordings_dir, part=1)
+    part.is_recording = True
+    part.clock_start = (1, 300.0)
+    ctx.active_recordings[sid] = part
+    try:
+        guest_notes.recording_started(ctx, sid)
+        await until(lambda: len(metas(row, ana)) > sent)
+        clock = metas(row, ana)[-1]["clock"]
+        assert clock["part"] == 1 and clock["offset"] == 300.0 and clock["started_at"]
+        # The same clock again is not sent twice.
+        sent = len(metas(row, ana))
+        guest_notes.recording_started(ctx, sid)
+        await asyncio.sleep(0.1)
+        assert len(metas(row, ana)) == sent
+    finally:
+        del ctx.active_recordings[sid]
+    guest_notes.recording_stopped(ctx, sid)
+    await until(lambda: len(metas(row, ana)) > sent)
+    assert "clock" not in metas(row, ana)[-1]
+    await ana.close()
+
+
 # ---- iroh rooms on this computer (phase 10) ------------------------------------------------
 
 ENDPOINT = "a" * 64
@@ -1005,6 +1300,48 @@ async def test_a_mirrored_room_is_on_both_and_frames_cross_once(ctx, iroh, mirro
         await client.send(bytes([T_PRESENCE]) + presence)
     await until(lambda: len(guest_notes.guests_present(ctx, sid)) == 2)
     assert sorted(guest_notes.guests_present(ctx, sid)) == ["Ana (guest)", "Bob (guest)"]
+    await ana.close()
+    await bob.close()
+
+
+async def test_guest_presence_crosses_the_mirror_byte_for_byte(ctx, iroh, mirror):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, iroh, sid)
+    other = guest_notes.bridge_for(ctx, sid, guest_notes.MIRROR)
+    assert other is not None
+    await until(lambda: other.connected.is_set())
+    ana = await guest(iroh, row)  # on iroh
+    bob = await guest(mirror, row)  # on the mirror
+    pa = seal_presence(row, gid="abc", name="Ana", typing=True, sel=S1)
+    pb = seal_presence(row, gid="def", name="Bob", typing=False, sel=None)
+    await ana.send(pa)
+    await until(lambda: bob.binary(T_PRESENCE))
+    await bob.send(pb)
+    await until(lambda: ana.binary(T_PRESENCE))
+    await asyncio.sleep(0.1)
+    # Exactly the envelope each sent, once, and never back to its sender.
+    assert bob.binary(T_PRESENCE) == [(0, pa[1:])]
+    assert ana.binary(T_PRESENCE) == [(0, pb[1:])]
+    # The desktop sees both, each from the bridge that heard it first-hand.
+    assert sorted(m["key"] for m in guest_notes._guest_members(ctx, sid)) == ["g:abc", "g:def"]
+    assert set(bridge.guests) == {"abc"} and set(other.guests) == {"def"}
+    # Owner-side presence is sealed by each bridge for its own room, never forwarded.
+    desk = await shared_notes.join(ctx, sid, FakeWs(), "u1", "Corey", True)
+    assert desk is not None
+    gid = "o:" + desk.key
+    await until(lambda: presences(row, ana, gid) and presences(row, bob, gid))
+    await bridge.tick(now=time.monotonic() + 1000)  # the primary's "" heartbeat: iroh only
+    await until(lambda: presences(row, ana, ""))
+    await asyncio.sleep(0.1)
+    assert presences(row, bob, "") == []
+    assert len(presences(row, ana, gid)) == 2 and len(presences(row, bob, gid)) == 1
+    # A guest leaving is forwarded too.
+    gone = seal_presence(row, gid="abc", name="Ana", gone=True)
+    await ana.send(gone)
+    await until(lambda: len(bob.binary(T_PRESENCE)) > 2)
+    assert bob.binary(T_PRESENCE)[-1] == (0, gone[1:])
+    await until(lambda: [m["key"] for m in guest_notes._guest_members(ctx, sid)] == ["g:def"])
+    await shared_notes.leave(ctx, sid, desk)
     await ana.close()
     await bob.close()
 

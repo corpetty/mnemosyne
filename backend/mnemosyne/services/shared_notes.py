@@ -29,6 +29,8 @@ import hashlib
 import json
 import logging
 import os
+import re
+import secrets
 import subprocess
 import threading
 import time
@@ -51,6 +53,7 @@ MAX_FRAME = 2 * 1024 * 1024  # ~40 B per typed character: a 6,500-character past
 FOLD_DELAY = 2.0  # seconds after the last frame
 FOLD_EVERY = 30.0  # at the latest, while frames keep coming
 LAST_EDIT_EVERY = 15.0  # a `last_edit` message at most this often for the same person
+CARET_EVERY = 0.1  # a `caret` message at most this often for the same member (the last one wins)
 DOC_TIMEOUT = 60.0
 SEED_AUTHOR, API_AUTHOR = "seed", "api"
 
@@ -162,6 +165,18 @@ class Member:
     # every frame in `out` (nobody sends from it), is never listed as present or typing, and
     # hears none of the room's JSON (presence, last_edit, `broadcast_json`).
     hidden: bool = False
+    # A hidden member that also hears `presence` and `caret` messages (never `guests`,
+    # `last_edit` or other `broadcast_json`): the guest bridge, which seals owner-side carets for
+    # the guests. It is never listed in `members`/`present` and cannot send presence.
+    presence_tap: bool = False
+    # Who this connection is in `presence.members`/`caret` messages: random at join. (Guests are
+    # `g:<gid>` elsewhere; one person's two windows are two keys.)
+    key: str = field(default_factory=lambda: "m" + secrets.token_hex(4))
+    # The selection last sent: {"a": anchor element id | None, "f": focus ... | None} (hex),
+    # or None. Memory only: never stored or logged.
+    sel: dict | None = None
+    caret_sent: float = float("-inf")  # loop time of the last `caret` message out
+    caret_timer: asyncio.TimerHandle | None = None  # the trailing flush of a coalesced one
     out: asyncio.Queue = field(default_factory=asyncio.Queue)
     sender: asyncio.Task | None = None
 
@@ -183,6 +198,13 @@ class Room:
         for m in self.members:
             if m is not skip and not m.hidden:
                 m.send(kind, data)
+
+    def broadcast_presence(self, data: dict, skip: Member | None = None) -> None:
+        """`presence` and `caret` messages: the visible members (not `skip`) and the taps."""
+        self.broadcast("json", data, skip=skip)
+        for m in self.members:
+            if m.hidden and m.presence_tap and m is not skip:
+                m.send("json", data)
 
 
 class Hub:
@@ -346,7 +368,28 @@ def _fold_locked(app: AppContext, session_id: str, binary: str) -> bool:
         if app.repo.notes_source(session_id) is not None:
             raise
         return False
+    _derive_items(app, session_id, reply, [seq for seq, _ in ops])
     return _write_notes(app, session_id, markdown)
+
+
+def _derive_items(
+    app: AppContext, session_id: str, reply: dict, seqs: list[int], author: str | None = None
+) -> None:
+    """The meeting's action items from the notes (services/notes_items.py), from a fold result
+    of this machine: `seqs` are the request's frames (the reply's `frame` indexes them),
+    `author` who made what the request itself did (set_text). Never raises."""
+    from . import notes_items
+
+    tasks = reply.get("tasks")
+    if not isinstance(tasks, list):
+        return
+    try:
+        authors = app.repo.notes_op_authors(session_id, seqs)
+    except Exception:
+        logger.warning("Could not read the notes authors of %s", session_id, exc_info=True)
+        authors = []
+    fallback = author if author is not None else notes_items.unique_author(authors)
+    notes_items.apply(app, session_id, tasks, authors=authors, fallback=fallback)
 
 
 def _catch_up_locked(
@@ -420,6 +463,7 @@ def _set_text_blocking(
             app.repo.store_notes_fold(
                 session_id, folded, seqs[-1] if seqs else last, rendered, *marks_of(reply)
             )
+            _derive_items(app, session_id, reply, [seq for seq, _ in ops], author)
             _write_notes(app, session_id, rendered)
         else:
             _fold_locked(app, session_id, binary)
@@ -469,10 +513,63 @@ def mark_comment_blocking(
         if seqs[0] == last + 1:
             # Nothing came in meanwhile: the reply's snapshot is the whole log.
             app.repo.store_notes_fold(session_id, folded, seqs[-1], rendered, *marks_of(reply))
+            _derive_items(app, session_id, reply, [seq for seq, _ in ops])
             _write_notes(app, session_id, rendered)
         else:
             _fold_locked(app, session_id, binary)
         return list(zip(seqs, frames, strict=True))
+
+
+# ---- ticking a task line (phase 11, services/notes_items.py `write_fields`) ----------------
+
+
+def set_kind_blocking(
+    app: AppContext, session_id: str, line: str, kind: str, author_id: str, author: str
+) -> list[tuple[int, bytes]]:
+    """Make the task line whose `\\n` is element `line` open (`kind` "task") or done
+    ("task_done"), by the sidecar's `set_kind`: a tick made outside the editor (Tasks, a linked
+    mention's fan-out, reconcile) reaches the document (C16 of
+    docs/plans/2026-10-25-phase-11-tasks.md). As mark_comment_blocking: the frames are appended
+    to the log as `author`, folded (the notes items derived again), and sent to the meeting's
+    open editors; returned. [] when the line shows `kind` already. Raises NotesDocError (no
+    sidecar, an unknown or deleted line, not a task line, a failing run)."""
+    if kind not in ("task", "task_done"):
+        raise ValueError(f"Not a task kind: {kind}")
+    binary = _binary()
+    if binary is None:
+        raise NotesDocError("mnemosyne-link not found")
+    with hub(app).lock(session_id):
+        snapshot, ops, last = _state(app, session_id)
+        reply = _run_doc(
+            binary,
+            {
+                "op": "set_kind",
+                "notes": notes_origin(session_id),
+                "snapshot": snapshot,
+                "frames": [_b64(f) for _, f in ops],
+                "line": line,
+                "kind": kind,
+            },
+        )
+        try:
+            frames = [_unb64(f) for f in reply["frames"]]
+            folded = _unb64(reply["snapshot"])
+            rendered = str(reply["markdown"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise NotesDocError(f"unreadable set_kind reply: {e}") from e
+        seqs = app.repo.append_notes_ops(session_id, frames, author_id, author, False)
+        if not seqs:
+            return []
+        if seqs[0] == last + 1:
+            # Nothing came in meanwhile: the reply's snapshot is the whole log.
+            app.repo.store_notes_fold(session_id, folded, seqs[-1], rendered, *marks_of(reply))
+            _derive_items(app, session_id, reply, [seq for seq, _ in ops], author)
+            _write_notes(app, session_id, rendered)
+        else:
+            _fold_locked(app, session_id, binary)
+        out = list(zip(seqs, frames, strict=True))
+    _on_loop(app, _deliver, app, session_id, out, None)
+    return out
 
 
 def seed_blocking(app: AppContext, session_id: str) -> list[tuple[int, bytes]]:
@@ -627,13 +724,77 @@ def _announce_edit(app: AppContext, session_id: str, by: str, skip: Member | Non
     )
 
 
+def _members(room: Room) -> list[dict]:
+    """The visible members for `presence.members`: `who` (the user id, else the name) is what the
+    caret colour is taken from."""
+    return [
+        {
+            "key": m.key,
+            "name": m.name,
+            "who": m.id or m.name,
+            "typing": m.typing,
+            "sel": m.sel,
+        }
+        for m in room.members
+        if not m.hidden
+    ]
+
+
 def _presence(room: Room) -> dict:
     seen = [m for m in room.members if not m.hidden]
     return {
         "type": "presence",
         "present": list(dict.fromkeys(m.name for m in seen)),
         "typing": list(dict.fromkeys(m.name for m in seen if m.typing)),
+        "members": _members(room),
     }
+
+
+_HEX64 = re.compile(r"[0-9a-fA-F]{64}")
+
+
+def _clean_sel(value: Any) -> tuple[bool, dict | None]:
+    """A client's `sel`: (valid, the selection). None is valid (no selection); `a` and `f` must
+    each be null or an element id (64 hex characters). Anything else is ignored whole."""
+    if value is None:
+        return True, None
+    if not isinstance(value, dict) or "a" not in value or "f" not in value:
+        return False, None
+    out = {}
+    for k in ("a", "f"):
+        v = value[k]
+        if v is not None and not (isinstance(v, str) and _HEX64.fullmatch(v)):
+            return False, None
+        out[k] = v.lower() if v is not None else None
+    return True, out
+
+
+def _send_caret(room: Room, member: Member, now: float) -> None:
+    member.caret_sent = now
+    room.broadcast_presence({"type": "caret", "key": member.key, "sel": member.sel}, skip=member)
+
+
+def _flush_caret(room: Room, member: Member) -> None:
+    member.caret_timer = None
+    if member in room.members:
+        _send_caret(room, member, asyncio.get_running_loop().time())
+
+
+def _move_caret(room: Room, member: Member, sel: dict | None) -> None:
+    """The member's selection changed. At most one `caret` per CARET_EVERY: inside the window the
+    newest position waits (replacing an older one) and goes out when the window ends."""
+    if member.sel == sel:
+        return
+    member.sel = sel
+    if member.caret_timer is not None:
+        return  # a flush is due and sends `member.sel` as it is then
+    loop = asyncio.get_running_loop()
+    now = loop.time()
+    wait = member.caret_sent + CARET_EVERY - now
+    if wait <= 0:
+        _send_caret(room, member, now)
+    else:
+        member.caret_timer = loop.call_later(wait, _flush_caret, room, member)
 
 
 def _schedule_fold(app: AppContext, room: Room) -> None:
@@ -733,9 +894,10 @@ async def join(
     hello = {
         "type": "hello",
         "notes": notes_origin(session_id),
-        "you": {"id": you_id, "name": you_name},
+        "you": {"id": you_id, "name": you_name, "key": member.key},
         "read_only": not member.can_edit,
         "present": _presence(room)["present"],
+        "members": _members(room),
         "last_edit": last,
         "snapshot": snapshot is not None,
         "backlog": len(ops),
@@ -750,7 +912,7 @@ async def join(
     for _, frame in ops:
         member.send("bytes", frame)
     member.sender = asyncio.get_running_loop().create_task(_sender(member))
-    room.broadcast("json", _presence(room), skip=member)
+    room.broadcast_presence(_presence(room), skip=member)
     return member
 
 
@@ -767,6 +929,8 @@ def attach(app: AppContext, session_id: str, member: Member) -> None:
     member.seen_seq = max(ops[-1][0] if ops else 0, doc["folded_seq"] if doc else 0)
     if member not in room.members:
         room.members.append(member)
+    if member.presence_tap:
+        member.send("json", _presence(room))
 
 
 def detach(app: AppContext, session_id: str, member: Member) -> None:
@@ -896,7 +1060,9 @@ def receive_frame(app: AppContext, session_id: str, member: Member, frame: bytes
 
 
 def receive_text(app: AppContext, session_id: str, member: Member, text: str) -> None:
-    """A JSON message from a member: `{"type":"presence","typing":bool}` or a ping."""
+    """A JSON message from a member: `{"type":"presence","typing"?:bool,"sel"?:{"a","f"}|null}`
+    or a ping. `typing` counts from members that can edit, `sel` from every member (a malformed
+    one is ignored); neither is stored or logged."""
     try:
         msg = json.loads(text)
     except ValueError:
@@ -906,14 +1072,20 @@ def receive_text(app: AppContext, session_id: str, member: Member, text: str) ->
     if msg.get("type") == "ping":
         member.send("json", {"type": "pong"})
         return
-    if msg.get("type") != "presence" or not member.can_edit:
+    if msg.get("type") != "presence" or member.hidden:
         return
-    typing = bool(msg.get("typing"))
     room = hub(app).rooms.get(session_id)
-    if room is None or member.typing == typing:
+    if room is None or member not in room.members:
         return
-    member.typing = typing
-    room.broadcast("json", _presence(room), skip=member)
+    if "sel" in msg:
+        ok, sel = _clean_sel(msg["sel"])
+        if ok:
+            _move_caret(room, member, sel)
+    if member.can_edit and "typing" in msg:
+        typing = bool(msg["typing"])
+        if member.typing != typing:
+            member.typing = typing
+            room.broadcast_presence(_presence(room), skip=member)
 
 
 async def leave(
@@ -942,6 +1114,9 @@ def _after_departure(app: AppContext, room: Room, gone: Member) -> None:
     the visible members hear the new presence; and when the last visible member went, only
     taps (hidden members) are left and the notes are folded too, as nobody is editing now.
     A tap going while others stay changes nothing."""
+    if gone.caret_timer is not None:
+        gone.caret_timer.cancel()
+        gone.caret_timer = None
     if not room.members:
         if room.fold_timer is not None:
             room.fold_timer.cancel()
@@ -950,7 +1125,7 @@ def _after_departure(app: AppContext, room: Room, gone: Member) -> None:
         return
     if gone.hidden:
         return
+    room.broadcast_presence(_presence(room))  # only taps may be left: they drop its carets
     if any(not m.hidden for m in room.members):
-        room.broadcast("json", _presence(room))
         return
     _spawn(app, fold_now(app, room.session_id))

@@ -914,19 +914,27 @@ async fn connections_are_capped() {
     assert_eq!(welcome["present"], 2);
 }
 
+/// Floods the room from the host's side (no connection, so no per-connection cap) while `slow`
+/// reads nothing: its socket fills, then the room's channel overflows. `kind` 0x01 appends
+/// frames, 0x02 relays presence.
+async fn flood_while_stalled(h: &Host, kind: u8, n: usize) {
+    let blob = vec![1u8; 64 * 1024];
+    for _ in 0..n {
+        if kind == 0x01 {
+            h.app.rooms.append(ROOM, 0, &blob).await.unwrap();
+        } else {
+            h.app.rooms.presence(ROOM, 0, &blob).await.unwrap();
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_client_too_slow_for_the_relay_is_told_to_rejoin() {
-    let h = host().await;
+    let h = host_with(|c| c.room_log_max_bytes = 1 << 30).await;
     h.create(ROOM).await;
     let (mut slow, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
-    let (mut fast, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
-    // Presence is relayed, not logged: enough of it fills the socket and then the channel
-    // while `slow` reads nothing.
-    let blob = tagged(0x02, &[1; 64 * 1024]);
-    for _ in 0..600 {
-        send_bin(&mut fast, blob.clone()).await;
-    }
-    nothing_more(&mut fast).await;
+    // Enough frames to fill the socket and then the channel while `slow` reads nothing.
+    flood_while_stalled(&h, 0x01, 600).await;
     let got = loop {
         match next(&mut slow).await {
             Got::Bin(_) | Got::Text(_) => continue,
@@ -934,6 +942,93 @@ async fn a_client_too_slow_for_the_relay_is_told_to_rejoin() {
         }
     };
     assert_eq!(got, Got::Closed(4409, "lagged".into()));
+}
+
+#[tokio::test]
+async fn a_client_behind_on_presence_is_not_closed() {
+    let h = host().await;
+    h.create(ROOM).await;
+    let (mut slow, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    let (mut fast, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    let sent = 600;
+    flood_while_stalled(&h, 0x02, sent).await;
+    // A frame after the flood still reaches `slow`, which was never closed.
+    // (`fast` read nothing either; it skips its share of the presence to find its ack.)
+    send_bin(&mut fast, tagged(0x01, b"later")).await;
+    loop {
+        match next(&mut fast).await {
+            Got::Text(t) if t.contains("\"ack\"") => break,
+            Got::Closed(code, why) => panic!("closed {code} {why}"),
+            _ => continue,
+        }
+    }
+    let mut presence = 0;
+    loop {
+        match next(&mut slow).await {
+            Got::Bin(b) if b[0] == 0x02 => presence += 1,
+            Got::Bin(b) => {
+                assert_eq!(b, frame(0x01, 1, b"later"));
+                break;
+            }
+            Got::Text(_) => continue,
+            closed => panic!("a listener behind on presence was closed: {closed:?}"),
+        }
+    }
+    // It missed some of the presence (that is what lagging is), and it is still served.
+    assert!(
+        presence < sent,
+        "{presence} of {sent} arrived: it never lagged"
+    );
+    slow.send(Message::text("ping")).await.unwrap();
+    loop {
+        match next(&mut slow).await {
+            Got::Text(t) if t == "pong" => break,
+            Got::Closed(code, why) => panic!("closed {code} {why}"),
+            _ => continue,
+        }
+    }
+}
+
+#[tokio::test]
+async fn presence_from_one_connection_is_capped() {
+    let h = host().await;
+    h.create(ROOM).await;
+    let (mut a, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    let (mut b, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    let started = std::time::Instant::now();
+    for i in 0..300u32 {
+        send_bin(&mut a, tagged(0x02, &i.to_be_bytes())).await;
+    }
+    // B reads until the relay has been quiet for a while.
+    let mut received = 0usize;
+    loop {
+        match tokio::time::timeout(Duration::from_millis(500), b.next()).await {
+            Err(_) => break,
+            Ok(Some(Ok(Message::Binary(m)))) => {
+                assert_eq!(m[0], 0x02);
+                received += 1;
+            }
+            Ok(Some(Ok(Message::Close(f)))) => panic!("closed: {f:?}"),
+            Ok(None | Some(Err(_))) => panic!("socket lost"),
+            Ok(Some(Ok(_))) => continue,
+        }
+    }
+    let secs = started.elapsed().as_secs_f64();
+    assert!(received >= 20, "the burst was cut: {received}");
+    let most = 20.0 + 10.0 * secs + 1.0;
+    assert!(
+        (received as f64) <= most,
+        "{received} presence messages in {secs:.2} s, at most {most:.1} allowed"
+    );
+    assert!(received < 300);
+    // Dropped silently: no error for A, and its connection (and B's) still works; frames are
+    // not touched by the cap.
+    nothing_more(&mut a).await;
+    assert_eq!(append(&mut a, b"still fine").await, 1);
+    assert_eq!(
+        next_but_counts(&mut b).await,
+        Got::Bin(frame(0x01, 1, b"still fine"))
+    );
 }
 
 #[tokio::test]
