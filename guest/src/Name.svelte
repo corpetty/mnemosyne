@@ -59,7 +59,7 @@
 		/>
 	</label>
 	<p class="text-xs text-gray-500">
-		What you type here becomes part of {owner ? `${owner}'s` : "the meeting owner's"} notes of this meeting.
+		What you type here becomes part of {owner ? `${owner}'s` : "the meeting owner's"} notes of this meeting. A copy stays in this browser until the link expires.
 	</p>
 	<div class="flex gap-2">
 		{#if oncancel}

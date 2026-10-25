@@ -21,6 +21,15 @@
 // unknown, deleted or expired room is upgraded and closed at once with 4410, a full one with 4429.
 // A plain failure before the socket opened (1006, e.g. an older host or the network) is still
 // opaque; `probe`, when given, is asked after such a failure.
+//
+// Transports (phase 10): `connect` takes one URL (the host's WebSocket) or a list of transports
+// in order of preference, e.g. iroh to the owner's computer, then the host's WebSocket. Until a
+// transport has welcomed us, a failure moves on to the next one at once (an attempt with a
+// `budgetMs` that has not been welcomed by then counts as failed, while a later one remains);
+// after the last, the usual backoff and a new round from the first that may still answer (a
+// 4410/4401 rules a transport out). Once welcomed, that transport is kept: every reconnect goes
+// to it, under the usual rules. `since` is kept per transport: each is its own log with its own
+// seqs (the owner's room and a host mirror).
 
 export type RoomState = 'connecting' | 'live' | 'reconnecting' | 'ended' | 'gone' | 'full' | 'closed';
 
@@ -83,6 +92,27 @@ export interface RoomHandlers {
   /** `{"type":"error","code"}` from the host (frame_too_large, log_full, bad_frame, ...). */
   onError?(code: string): void;
   onState?(state: RoomState): void;
+  /** The transport being tried or used changed (its `kind`). */
+  onTransport?(kind: string): void;
+  /** Every transport failed in a round and none has ever welcomed us: waiting for the next round. */
+  onUnreachable?(): void;
+}
+
+/** One way to reach the room. */
+export interface RoomTransport {
+  /** 'iroh' | 'host': what the status line says. */
+  kind: string;
+  url: string;
+  /** The socket constructor; defaults to the client's. */
+  webSocket?: RoomSocketCtor;
+  /** Awaited before each attempt (loading the iroh wasm); a rejection fails the attempt. */
+  prepare?: () => Promise<unknown>;
+  /** Not welcomed this long after `prepare` (ms): try the next transport (only while one remains). */
+  budgetMs?: number;
+  /** Asked after an attempt failed before it opened, on the last transport of a round. */
+  probe?: () => Promise<'gone' | 'full' | null>;
+  /** Where this transport's log starts (a reconnect's `since`). */
+  since?: number;
 }
 
 export interface RoomOptions {
@@ -114,8 +144,6 @@ interface Pending {
 
 export class RoomClient {
   state: RoomState = 'connecting';
-  /** The highest seq seen: frames, the snapshot and our acks. */
-  since = 0;
   present = 0;
   ended = false;
   endedAt: number | null = null;
@@ -128,7 +156,18 @@ export class RoomClient {
 
   private readonly Socket: RoomSocketCtor;
   private readonly probe: RoomOptions['probe'];
-  private url = '';
+  private transports: RoomTransport[] = [];
+  /** Per transport: the highest seq seen. */
+  private sinces: number[] = [0];
+  /** The transport being tried or used. */
+  private cur = 0;
+  /** The transport that welcomed us: kept from then on. */
+  private stuck: number | null = null;
+  /** Transports that said the room is not there (4410/4401) before ever welcoming us. */
+  private dead = new Set<number>();
+  /** Bumped by every attempt: a prepare or probe that finishes late is ignored. */
+  private attempt = 0;
+  private budgetTimer: ReturnType<typeof setTimeout> | null = null;
   private token = '';
   private ws: RoomSocket | null = null;
   private joined = false;
@@ -153,28 +192,50 @@ export class RoomClient {
     this.probe = opts.probe;
   }
 
+  /** The highest seq seen on the current transport: frames, the snapshot and our acks. */
+  get since(): number {
+    return this.sinces[this.cur] ?? 0;
+  }
+  set since(v: number) {
+    this.sinces[this.cur] = v;
+  }
+
+  /** The kind of the transport being tried or used ('iroh', 'host'); null before connect. */
+  get transport(): string | null {
+    return this.transports[this.cur]?.kind ?? null;
+  }
+
   /** Is the room joined and writable right now? */
   get live(): boolean {
     return this.state === 'live' && this.joined && this.isOpen();
   }
 
-  connect(url: string, roomToken: string, since = 0): void {
+  /** Join through `target`: the room's WebSocket URL, or transports in order of preference. */
+  connect(target: string | RoomTransport[], roomToken: string, since = 0): void {
     if (this.wanted) return;
-    this.url = url;
+    const list: RoomTransport[] =
+      typeof target === 'string' ? [{ kind: 'host', url: target, probe: this.probe, since }] : target;
+    if (!list.length) return;
+    this.sinces = list.map((t, i) => Math.max(this.sinces[i] ?? 0, t.since ?? 0));
+    this.transports = list;
     this.token = roomToken;
-    this.since = Math.max(this.since, since);
+    this.dead.clear();
+    this.stuck = null;
+    this.cur = 0;
     this.wanted = true;
     this.retries = 0;
+    this.h.onTransport?.(list[0].kind);
     this.open();
   }
 
   /** Drop the socket (if any) and join again now, keeping `since`. */
   reconnect(): void {
-    if (!this.url || this.state === 'gone' || this.state === 'closed') return;
+    if (!this.transports.length || this.state === 'gone' || this.state === 'closed') return;
     this.wanted = true;
     this.clearTimers();
     this.drop(1000);
     this.retries = 0;
+    this.moveTo(this.stuck ?? this.firstLive() ?? this.cur);
     this.open();
   }
 
@@ -233,7 +294,44 @@ export class RoomClient {
 
   private open(): void {
     this.setState(this.everJoined ? 'reconnecting' : 'connecting');
-    const ws = new this.Socket(this.url);
+    const n = ++this.attempt;
+    const i = this.cur;
+    const t = this.transports[i];
+    this.ws = null;
+    this.joined = false;
+    this.opened = false;
+    if (!t.prepare) {
+      this.openSocket(t, n);
+      return;
+    }
+    let ready: Promise<unknown>;
+    try {
+      ready = t.prepare();
+    } catch (e) {
+      ready = Promise.reject(e);
+    }
+    const current = () => n === this.attempt && this.wanted && !this.ws;
+    ready.then(
+      () => {
+        if (current()) this.openSocket(t, n);
+      },
+      () => {
+        if (current()) this.closed(1006);
+      }
+    );
+  }
+
+  private openSocket(t: RoomTransport, n: number): void {
+    const Socket = t.webSocket ?? this.Socket;
+    let ws: RoomSocket;
+    try {
+      ws = new Socket(t.url);
+    } catch {
+      queueMicrotask(() => {
+        if (n === this.attempt && this.wanted && !this.ws) this.closed(1006);
+      });
+      return;
+    }
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
     this.joined = false;
@@ -263,6 +361,29 @@ export class RoomClient {
       this.closed(ev.code);
     };
     ws.onerror = () => {}; // a close follows
+    if (t.budgetMs && this.stuck === null && this.nextAfter(this.cur) !== null) {
+      this.budgetTimer = setTimeout(() => {
+        this.budgetTimer = null;
+        if (ws !== this.ws || this.joined) return;
+        this.drop(1000);
+        this.closed(1006);
+      }, t.budgetMs);
+    }
+  }
+
+  private nextAfter(i: number): number | null {
+    for (let j = i + 1; j < this.transports.length; j++) if (!this.dead.has(j)) return j;
+    return null;
+  }
+
+  private firstLive(): number | null {
+    return this.nextAfter(-1);
+  }
+
+  private moveTo(i: number): void {
+    if (i === this.cur) return;
+    this.cur = i;
+    this.h.onTransport?.(this.transports[i].kind);
   }
 
   private detach(ws: RoomSocket): void {
@@ -354,6 +475,9 @@ export class RoomClient {
 
   private welcome(w: Welcome): void {
     const asked = this.since;
+    this.stuck = this.cur;
+    if (this.budgetTimer) clearTimeout(this.budgetTimer);
+    this.budgetTimer = null;
     this.joined = true;
     this.everJoined = true;
     this.generation++;
@@ -424,7 +548,25 @@ export class RoomClient {
     this.catchUp = null;
     this.outstanding = [];
     if (!this.wanted) return;
-    if (code === ROOM_CLOSE.gone || code === ROOM_CLOSE.unauthorized) {
+    const i = this.cur;
+    const roaming = this.stuck === null;
+    const refused = code === ROOM_CLOSE.gone || code === ROOM_CLOSE.unauthorized;
+    if (roaming) {
+      // Not welcomed on this transport yet: the next one, now.
+      if (refused) this.dead.add(i);
+      const next = this.nextAfter(i);
+      if (next !== null) {
+        this.moveTo(next);
+        this.open();
+        return;
+      }
+    }
+    if (refused) {
+      // An earlier transport that only failed may still answer in the next round.
+      if (roaming && this.firstLive() !== null) {
+        this.retry(code);
+        return;
+      }
       this.wanted = false;
       this.queue = [];
       this.setState('gone');
@@ -442,15 +584,24 @@ export class RoomClient {
     }
     if (code === ROOM_CLOSE.tooLarge) this.keepBackoff = true;
     let full = code === ROOM_CLOSE.full;
-    if (!opened && !full && this.probe) {
+    const probe = this.transports[i]?.probe;
+    if (!opened && !full && probe) {
+      const n = this.attempt;
       let why: 'gone' | 'full' | null = null;
       try {
-        why = await this.probe();
+        why = await probe();
       } catch {
         why = null;
       }
-      if (!this.wanted || this.ws) return; // closed or reconnected meanwhile
+      if (!this.wanted || this.ws || n !== this.attempt) return; // closed or reconnected meanwhile
       if (why === 'gone') {
+        if (roaming) {
+          this.dead.add(i);
+          if (this.firstLive() !== null) {
+            this.retry(code);
+            return;
+          }
+        }
         this.wanted = false;
         this.queue = [];
         this.setState('gone');
@@ -459,6 +610,13 @@ export class RoomClient {
       full = why === 'full';
     }
     this.setState(full ? 'full' : this.everJoined ? 'reconnecting' : 'connecting');
+    this.retry(code);
+  }
+
+  /** Try again after the backoff: the kept transport, else a new round from the first that may answer. */
+  private retry(code: number): void {
+    if (this.stuck === null) this.h.onUnreachable?.();
+    this.moveTo(this.stuck ?? this.firstLive() ?? this.cur);
     // A lagged client rejoins at once: it was only too slow, not refused.
     const delay = code === ROOM_CLOSE.lagged ? 0 : RECONNECT_MS[Math.min(this.retries, RECONNECT_MS.length - 1)];
     if (code !== ROOM_CLOSE.lagged) this.retries++;
@@ -471,7 +629,9 @@ export class RoomClient {
   private clearTimers(): void {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.pingTimer) clearInterval(this.pingTimer);
+    if (this.budgetTimer) clearTimeout(this.budgetTimer);
     this.reconnectTimer = null;
     this.pingTimer = null;
+    this.budgetTimer = null;
   }
 }

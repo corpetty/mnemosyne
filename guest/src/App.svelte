@@ -1,6 +1,7 @@
 <script lang="ts">
-	// The guest notes page: /n/<room>#<key>. Reads the room and key from its own address and
-	// joins the room at once as a GuestDoc (reading needs no name). On a first visit the name card
+	// The guest notes page: /n/<room>#<key> (format 1) or #2.<room>.<key>.<endpoint>.<relay>
+	// (format 2, link.ts). Reads the room and key from its own address and joins the room at once
+	// as a GuestDoc (reading needs no name), through iroh and/or the host (transports.ts). On a first visit the name card
 	// (Name.svelte, kept in localStorage by identity.ts) comes up over the notes as soon as the
 	// meeting's details are known, so it can say whose notes these are; the editor stays read-only
 	// and nothing is announced until it is answered. Beside the notes: the agenda, and comments.
@@ -10,13 +11,15 @@
 	import { openMarkIds } from './comments';
 	import Comments from './Comments.svelte';
 	import { ensureWasm } from '$lib/notes/wasm.js';
-	import { FULL_MESSAGE, formatHostTime, formatMeetingDate, ownersNotes, peopleLine, statusPill, typingLine } from './display';
+	import { FULL_MESSAGE, connectingLine, formatHostTime, formatMeetingDate, ownersNotes, peopleLine, savedLine, statusPill, typingLine } from './display';
 	import { GuestDoc } from './doc';
-	import { ROOM_HEX_LEN, deriveKeys, keyFromFragment, type GuestKeys } from './format';
+	import { deriveKeys, type GuestKeys } from './format';
+	import { loadGuestWasm } from './guest-wasm';
 	import { Identity } from './identity';
+	import { parseLink, type GuestLink } from './link';
 	import Name from './Name.svelte';
 	import Notes from './Notes.svelte';
-	import { roomUrl } from './room';
+	import { transportsFor } from './transports';
 
 	type View =
 		| { kind: 'incomplete' }
@@ -39,11 +42,6 @@
 	/** Each open() supersedes the one before (a key pasted in while deriving). */
 	let attempt = 0;
 
-	function parseRoom(path: string): string | null {
-		const m = new RegExp(`^/n/([0-9a-f]{${ROOM_HEX_LEN}})/?$`).exec(path);
-		return m ? m[1] : null;
-	}
-
 	function leave() {
 		unsubscribe?.();
 		unsubscribe = null;
@@ -55,35 +53,34 @@
 	async function open() {
 		const n = ++attempt;
 		leave();
-		const room = parseRoom(window.location.pathname);
-		let key: Uint8Array;
-		try {
-			key = keyFromFragment(window.location.hash.replace(/^#/, ''));
-		} catch {
-			view = { kind: 'incomplete' };
-			return;
-		}
-		if (!room) {
+		const link = parseLink(window.location);
+		if (!link) {
 			view = { kind: 'incomplete' };
 			return;
 		}
 		view = { kind: 'connecting' };
 		let keys: GuestKeys;
 		try {
-			[keys] = await Promise.all([deriveKeys(key), ensureWasm()]);
+			[keys] = await Promise.all([deriveKeys(link.key), ensureWasm()]);
 		} catch {
 			if (n === attempt) view = { kind: 'unsupported' };
 			return;
 		}
 		if (n !== attempt) return;
-		join(room, keys);
+		join(link, keys);
 	}
 
 	/** Join the room now. Without a remembered name (a first visit) the name stays "" until the card is answered. */
-	function join(room: string, keys: GuestKeys) {
+	function join(link: GuestLink, keys: GuestKeys) {
 		draft = null;
 		focus = null;
-		const g = new GuestDoc({ room, keys, gid: identity.gid, name: identity.name, url: roomUrl(room) });
+		const g = new GuestDoc({
+			room: link.room,
+			keys,
+			gid: identity.gid,
+			name: identity.name,
+			transports: transportsFor(link, { loader: loadGuestWasm })
+		});
 		unsubscribe = g.subscribe(() => rev++);
 		guest = g;
 		view = { kind: 'joined' };
@@ -107,6 +104,7 @@
 		const g = guest;
 		return {
 			status: g?.status ?? 'connecting',
+			transport: g?.transport ?? null,
 			meta: g?.meta ?? null,
 			hasDoc: !!g?.doc,
 			others: g?.others ?? [],
@@ -114,6 +112,7 @@
 			you: g?.you.name ?? '',
 			readOnly: g?.readOnly ?? false,
 			expires: g?.expires ?? null,
+			savedAt: g?.savedAt ?? null,
 			dead: g ? g.status === 'ended' || g.status === 'gone' : false,
 			openIds: new Set(openMarkIds(g?.threads ?? []))
 		};
@@ -129,6 +128,7 @@
 	const typing = $derived(typingLine(snap.typing));
 	const you = $derived(snap.you);
 	const expiresText = $derived(formatHostTime(snap.expires));
+	const savedText = $derived(savedLine(snap.savedAt, owner));
 	/** A first visit: the room is open for reading but nobody has a name yet. */
 	const needName = $derived(!you && !snap.readOnly && !snap.dead);
 	/** May this page add, edit or delete comments? */
@@ -188,7 +188,7 @@
 	{:else if guest && !hasDoc && status === 'full'}
 		{@render message(FULL_MESSAGE, '', true)}
 	{:else if guest && !hasDoc && !(needName && meta)}
-		{@render message('Connecting…', '', false)}
+		{@render message(connectingLine(status, snap.transport, owner), '', false)}
 	{:else if guest}
 		<!-- The name card (first visit) sits over the notes; everything under it is inert. -->
 		<div inert={needName}>
@@ -226,7 +226,11 @@
 			</p>
 		</header>
 
-		{#if status === 'ended'}
+		{#if status === 'saved'}
+			<div class="mt-4 rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-400" role="status" data-testid="guest-saved">
+				{savedText}
+			</div>
+		{:else if status === 'ended'}
 			<div class="mt-4 rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-400" role="status">
 				These notes ended. You can still read and copy them{expiresText ? ` until ${expiresText}` : ''}.
 			</div>

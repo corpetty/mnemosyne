@@ -3,12 +3,18 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!-- For the static copy (GitHub Pages); our servers also send this policy as a header (a meta
+			tag cannot carry frame-ancestors). Add our own relay's origins to connect-src once it exists. -->
+		<meta
+			http-equiv="Content-Security-Policy"
+			content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' https://*.relay.n0.iroh.link wss://*.relay.n0.iroh.link; media-src blob:; img-src data: blob:; base-uri 'none'; form-action 'none'"
+		/>
 		<meta name="referrer" content="no-referrer" />
 		<meta name="robots" content="noindex, nofollow" />
 		<title>Mnemosyne</title>
 		<link rel="icon" href="data:," />
-		<script type="module" crossorigin src="/n/assets/index-CXuEL6q4.js"></script>
-		<link rel="stylesheet" crossorigin href="/n/assets/index-Hnv3hgb-.css">
+		<script type="module" crossorigin src="./assets/index-CltO8uau.js"></script>
+		<link rel="stylesheet" crossorigin href="./assets/index-Hnv3hgb-.css">
 	</head>
 	<body>
 		<div id="app"></div>

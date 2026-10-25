@@ -5,7 +5,7 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ["site/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "backend/mnemosyne/api/static/guest/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -31,7 +31,9 @@ jobs:
           mkdir _site
           cp -r site/index.html site/favicon.svg site/assets site/.nojekyll _site/
           test -f site/CNAME && cp site/CNAME _site/ || true
-          ls -la _site _site/assets
+          mkdir _site/n
+          cp -r backend/mnemosyne/api/static/guest/. _site/n/
+          ls -la _site _site/assets _site/n _site/n/assets
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

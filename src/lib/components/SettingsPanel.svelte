@@ -159,6 +159,8 @@
 				allow_publishing: v.allow_publishing,
 				allow_guest_notes: v.allow_guest_notes,
 				guest_host: v.guest_host,
+				guest_transport: v.guest_transport,
+				guest_page_url: v.guest_page_url,
 				guest_notes_end_hours: v.guest_notes_end_hours,
 				whisper_batch_size: v.whisper_batch_size,
 				parakeet_model: v.parakeet_model,
@@ -1366,6 +1368,21 @@
 								<option value={d}>{d === 365 ? '1 year' : `${d} days`}</option>
 							{/each}
 						</select>
+					</label>
+					<label class="col-span-2">
+						<span class={labelClass}>How guests reach the notes</span>
+						<select bind:value={form.guest_transport} disabled={locked('guest_transport')} class={inputClass}>
+							<option value="auto">Automatic (recommended)</option>
+							<option value="iroh">Straight to this computer (iroh)</option>
+							<option value="tunnel">A tunnel to this computer</option>
+							<option value="host">A publish host</option>
+						</select>
+						<span class="mt-1 block text-xs text-gray-500">Automatic connects guests straight to this computer, through a tunnel if that fails, or through the publish host.</span>
+					</label>
+					<label class="col-span-2">
+						<span class={labelClass}>Guest page address</span>
+						<input type="url" bind:value={form.guest_page_url} disabled={locked('guest_page_url')} placeholder="Blank: https://corpetty.github.io/mnemosyne/n/" class={inputClass} />
+						<span class="mt-1 block text-xs text-gray-500">Where the guest page is loaded from. It holds no notes: they arrive encrypted.</span>
 					</label>
 					<label class="col-span-2">
 						<span class={labelClass}>Guest notes host</span>
