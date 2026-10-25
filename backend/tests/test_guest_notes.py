@@ -15,7 +15,7 @@ from mnemosyne.services import guest_format as gf
 from mnemosyne.services import guest_notes, shared_notes
 from mnemosyne.services import publication_format as pf
 from tests import fake_link
-from tests.fake_guest_room import T_NOTES, T_PRESENCE, FakeRoomHost, GuestClient
+from tests.fake_guest_room import T_NOTES, T_PRESENCE, FakeRoomHost, GuestClient, routed
 from tests.fake_link import doc_frame
 
 pytestmark = pytest.mark.anyio
@@ -41,9 +41,11 @@ async def host(ctx, settings, sidecar):
     h = await FakeRoomHost().start()
     ctx.http_transport = h.transport()
     settings.publish_host = h.url
+    settings.guest_transport = "host"  # phase 9's rooms; iroh rooms are further down
     settings.local_speaker_name = "Corey"
     yield h
     await guest_notes.shutdown(ctx)
+    await ctx.rooms_link.stop()
     await h.close()
     hub = ctx.notes_hub
     while hub is not None and hub.tasks:
@@ -187,6 +189,7 @@ async def test_an_end_the_host_refuses_keeps_the_room_live(ctx, host):
 
 
 async def test_no_host_means_unavailable(ctx, settings, sidecar):
+    settings.guest_transport = "host"
     settings.publish_host = ""
     settings.guest_host = ""
     with pytest.raises(guest_notes.GuestNotesUnavailable, match="No host for guest notes"):
@@ -837,3 +840,289 @@ async def test_starting_a_recording_through_the_api_cancels_the_scheduled_end(
         assert ctx.repo.guest_room(sid)["auto_end_at"] == ""
     finally:
         ctx.active_recordings.pop(sid, None)
+
+
+# ---- iroh rooms on this computer (phase 10) ------------------------------------------------
+
+ENDPOINT = "a" * 64
+N0_RELAY = "https://use1-1.relay.n0.iroh.link./"
+
+
+@pytest.fixture
+async def iroh(ctx, settings, sidecar, monkeypatch):
+    """`guest_transport` auto with the rooms sidecar's loopback host played by a FakeRoomHost
+    (the fake sidecar's `listen` is its address) and no publish host."""
+    from mnemosyne.services import link as link_service
+
+    monkeypatch.setattr(link_service, "RESTART_DELAY", 0.01)
+    loop = await FakeRoomHost().start()
+    sidecar.config.update(listen=loop.url.removeprefix("http://"), endpoint_id=ENDPOINT)
+    sidecar.config["relay"] = N0_RELAY
+    sidecar.sync()
+    ctx.http_transport = routed(loop)
+    settings.guest_transport = "auto"
+    settings.publish_host = ""
+    settings.local_speaker_name = "Corey"
+    yield loop
+    await guest_notes.shutdown(ctx)
+    await ctx.rooms_link.stop()
+    await loop.close()
+    hub = ctx.notes_hub
+    while hub is not None and hub.tasks:
+        await asyncio.gather(*list(hub.tasks), return_exceptions=True)
+
+
+@pytest.fixture
+async def mirror(ctx, settings, iroh):
+    """A publish host beside the iroh room: the room is mirrored there."""
+    h = await FakeRoomHost().start()
+    ctx.http_transport = routed(iroh, h)
+    settings.publish_host = h.url
+    yield h
+    await guest_notes.shutdown(ctx)
+    await h.close()
+
+
+def room_ops(sidecar, op: str) -> list[dict]:
+    return [o for o in sidecar.ops if o["op"] == op]
+
+
+def notes_in(row: dict, room) -> list[tuple[str, str, bytes]]:
+    """(gid, name, frame) of the notes envelopes in a fake room's log."""
+    out = []
+    for _, env in room.log:
+        kind, plain = gf.unseal(row["key"], row["room"], env)
+        if kind is gf.Kind.NOTES:
+            out.append(gf.parse_notes(plain))
+    return out
+
+
+async def test_auto_opens_an_iroh_room_on_this_computer(ctx, iroh, sidecar):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, iroh, sid)
+    assert row["transport"] == "iroh" and row["endpoint_id"] == ENDPOINT
+    assert row["relay"] == N0_RELAY and row["mirror_host_url"] == ""
+    assert row["host_url"] == iroh.url == ctx.rooms_link.base_url
+    room_id, room = iroh.room()
+    assert room_id == row["room"] and room.room_token == row["room_token"]
+    # Made on the loopback host as on a publish host, with the sidecar's upload token.
+    assert [(c[0], c[1]) for c in iroh.calls[:2]] == [
+        ("PUT", f"/live/{room_id}"),
+        ("PUT", f"/live/{room_id}/snapshot"),
+    ]
+    token = ctx.rooms_link.upload_token
+    assert token and all(c[2].get("x-upload-token") == token for c in iroh.calls)
+    # Served without a relay asked for: the sidecar picks one, the row keeps it.
+    assert room_ops(sidecar, "room_start") == [{"op": "room_start", "room": room_id}]
+    assert iroh.joins == [(room_id, 0)]
+    key = gf.key_to_fragment(row["key"])
+    link = guest_notes.link(row)
+    assert link == (
+        f"{guest_notes.GUEST_PAGE_ORIGIN}#2.{room_id}.{key}.{ENDPOINT}.use1-1.relay.n0.iroh.link."
+    )
+    assert guest_notes.link(row, "https://pages.example/n/").startswith(
+        "https://pages.example/n/#2."
+    )
+    assert guest_notes.relay_kind(row["relay"]) == "n0"
+    # A guest arriving through the sidecar's proxy is in the loopback room like any other.
+    ana = await guest(iroh, row)
+    f = frame("g1", ["ins", 0, "from Ana\n"])
+    await ana.send(bytes([T_NOTES]) + gf.seal_notes(row["key"], row["room"], "abc", "Ana", f))
+    await until(lambda: [o for o in ctx.repo.notes_ops(sid) if o["author_id"] == "guest:abc"])
+    await until(lambda: ctx.repo.guest_room(sid)["last_seq"] >= 1)
+    assert ctx.repo.guest_room(sid)["mirror_last_seq"] == 0
+    await ana.close()
+
+
+def test_format_2_keeps_the_relay_host_and_port():
+    row = {
+        "room": "0123456789abcdef",
+        "key": bytes(range(32)),
+        "transport": "iroh",
+        "host_url": "http://127.0.0.1:5",
+        "endpoint_id": ENDPOINT,
+        "relay": "http://127.0.0.1:3340/",
+        "mirror_host_url": "",
+    }
+    key = gf.key_to_fragment(row["key"])
+    assert guest_notes.link(row, "https://x.example/n/") == (
+        f"https://x.example/n/#2.{row['room']}.{key}.{ENDPOINT}.127.0.0.1:3340"
+    )
+    assert guest_notes.relay_host("https://[::1]:8443") == "[::1]:8443"
+    assert guest_notes.served_from(row, "https://x.example/n/") == "https://x.example/n/"
+    row["mirror_host_url"] = "https://host.example"
+    assert guest_notes.link(row).startswith(f"https://host.example/n/{row['room']}#2.")
+    assert guest_notes.served_from(row) == "https://host.example/n/"
+    host_row = {**row, "transport": "host", "host_url": "https://host.example"}
+    assert guest_notes.link(host_row) == f"https://host.example/n/{row['room']}#{key}"
+
+
+async def test_a_mirrored_room_is_on_both_and_frames_cross_once(ctx, iroh, mirror):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, iroh, sid)
+    other = guest_notes.bridge_for(ctx, sid, guest_notes.MIRROR)
+    assert other is not None
+    await until(lambda: other.connected.is_set())
+    assert row["transport"] == "iroh" and row["mirror_host_url"] == mirror.url
+    # The same room (id, room token) on the mirror, with its own publisher token.
+    (m_id, m_room), (l_id, l_room) = mirror.room(), iroh.room()
+    assert m_id == l_id == row["room"] and m_room.room_token == l_room.room_token
+    assert m_room.token == row["mirror_token"] != row["token"] == l_room.token
+    assert not any("x-upload-token" in c[2] for c in mirror.calls)  # no publish_host_token
+    assert m_room.snapshot is not None and l_room.snapshot is not None
+    # The link names the mirror's page, so the guest page can fall back to its WebSocket.
+    key = gf.key_to_fragment(row["key"])
+    assert guest_notes.link(row) == (
+        f"{mirror.url}/n/{row['room']}#2.{row['room']}.{key}.{ENDPOINT}.use1-1.relay.n0.iroh.link."
+    )
+    # Ana is on iroh, Bob on the mirror.
+    ana = await guest(iroh, row)
+    bob = await guest(mirror, row)
+    fa = frame("ga", ["ins", 0, "from Ana\n"])
+    await ana.send(bytes([T_NOTES]) + gf.seal_notes(row["key"], row["room"], "abc", "Ana", fa))
+    got = await until(lambda: [p for k, p in opened(row, bob) if k is gf.Kind.NOTES])
+    assert got == [("", "Corey", fa)]  # sealed as the owner's side
+    fb = frame("gb", ["ins", 0, "from Bob\n"])
+    await bob.send(bytes([T_NOTES]) + gf.seal_notes(row["key"], row["room"], "def", "Bob", fb))
+    got = await until(lambda: [p for k, p in opened(row, ana) if k is gf.Kind.NOTES])
+    assert got == [("", "Corey", fb)]
+    await until(lambda: bridge.seq >= 2 and other.seq >= 2 and not bridge.unacked)
+    await until(lambda: not other.unacked)
+    await asyncio.sleep(0.1)
+    # No loop: each frame once in each room, accepted once, never back to its writer.
+    assert notes_in(row, l_room) == [("abc", "Ana", fa), ("", "Corey", fb)]
+    assert notes_in(row, m_room) == [("", "Corey", fa), ("def", "Bob", fb)]
+    authors = [o["author_id"] for o in ctx.repo.notes_ops(sid)]
+    assert authors.count("guest:abc") == 1 and authors.count("guest:def") == 1
+    assert [p for k, p in opened(row, ana) if k is gf.Kind.NOTES] == [("", "Corey", fb)]
+    stored = ctx.repo.guest_room(sid)
+    assert stored["last_seq"] == bridge.seq and stored["mirror_last_seq"] == other.seq
+    # Guests in either room are the meeting's guests.
+    for client, gid, name in ((ana, "abc", "Ana"), (bob, "def", "Bob")):
+        presence = gf.seal_json(
+            row["key"], row["room"], gf.Kind.PRESENCE, {"gid": gid, "name": name, "typing": False}
+        )
+        await client.send(bytes([T_PRESENCE]) + presence)
+    await until(lambda: len(guest_notes.guests_present(ctx, sid)) == 2)
+    assert sorted(guest_notes.guests_present(ctx, sid)) == ["Ana (guest)", "Bob (guest)"]
+    await ana.close()
+    await bob.close()
+
+
+async def test_stop_removes_both_rooms_and_stops_serving(ctx, iroh, mirror, sidecar):
+    sid = meeting(ctx)
+    row, _ = await started(ctx, iroh, sid)
+    stopped = await guest_notes.stop(ctx, sid, by="Corey")
+    assert guest_notes.state(stopped) == "stopped"
+    assert iroh.rooms[row["room"]].deleted and mirror.rooms[row["room"]].deleted
+    assert room_ops(sidecar, "room_stop") == [{"op": "room_stop", "room": row["room"]}]
+    assert guest_notes.bridges_of(ctx, sid) == []
+    # No room left to serve: the sidecar is stopped.
+    assert not ctx.rooms_link.active
+
+
+async def test_end_ends_both_and_keeps_serving_until_expiry(ctx, iroh, mirror, sidecar):
+    sid = meeting(ctx)
+    row, _ = await started(ctx, iroh, sid)
+    ended = await guest_notes.end(ctx, sid, by="Corey")
+    assert guest_notes.state(ended) == "ended"
+    assert iroh.rooms[row["room"]].ended and mirror.rooms[row["room"]].ended
+    assert guest_notes.bridges_of(ctx, sid) == []
+    # Readable over iroh until it expires.
+    assert ctx.rooms_link.active and room_ops(sidecar, "room_stop") == []
+    assert sid in ctx.guest_bridges.expiry
+
+
+async def test_new_link_on_an_iroh_room(ctx, iroh, sidecar):
+    sid = meeting(ctx)
+    row, _ = await started(ctx, iroh, sid)
+    fresh = await guest_notes.new_link(ctx, sid, by="Corey")
+    assert fresh["room"] != row["room"] and fresh["transport"] == "iroh"
+    assert room_ops(sidecar, "room_stop") == [{"op": "room_stop", "room": row["room"]}]
+    assert [o["room"] for o in room_ops(sidecar, "room_start")] == [row["room"], fresh["room"]]
+    assert len(sidecar.rooms_starts) == 1  # the sidecar was kept running in between
+
+
+async def test_resume_serves_the_room_again_with_its_relay(ctx, iroh, mirror, sidecar):
+    sid = meeting(ctx)
+    row, _ = await started(ctx, iroh, sid)
+    await guest_notes.shutdown(ctx)
+    await ctx.rooms_link.stop()  # the backend went away, and its sidecar with it
+    assert await guest_notes.resume(ctx) == 1
+    assert room_ops(sidecar, "room_start")[-1] == {
+        "op": "room_start",
+        "room": row["room"],
+        "relay": N0_RELAY,
+    }
+    assert len(sidecar.rooms_starts) == 2
+    for kind in (guest_notes.PRIMARY, guest_notes.MIRROR):
+        b = guest_notes.bridge_for(ctx, sid, kind)
+        assert b is not None
+        await until(lambda b=b: b.connected.is_set())
+    assert ctx.repo.guest_room(sid)["endpoint_id"] == ENDPOINT
+
+
+async def test_a_sidecar_restart_serves_the_live_rooms_again(ctx, iroh, sidecar):
+    sid = meeting(ctx)
+    row, _ = await started(ctx, iroh, sid)
+    other = meeting(ctx)
+    await guest_notes.start(ctx, other)
+    before = len(room_ops(sidecar, "room_start"))
+    ctx.rooms_link._proc.kill()  # a crash: it comes back serving nothing
+    await until(lambda: len(room_ops(sidecar, "room_start")) >= before + 2)
+    again = room_ops(sidecar, "room_start")[before:]
+    rooms = {row["room"], ctx.repo.guest_room(other)["room"]}
+    assert {o["room"] for o in again} == rooms and all(o["relay"] == N0_RELAY for o in again)
+    assert len(sidecar.rooms_starts) == 2
+
+
+async def test_iroh_refused_falls_back_to_the_publish_host_in_auto(ctx, iroh, settings, sidecar):
+    h = await FakeRoomHost().start()
+    try:
+        ctx.http_transport = routed(iroh, h)
+        settings.publish_host = h.url
+        sidecar.config["fail"] = {"room_start": "no relay reachable"}
+        sidecar.sync()
+        sid = meeting(ctx)
+        row = await guest_notes.start(ctx, sid)
+        assert row["transport"] == "host" and row["host_url"] == h.url
+        assert row["endpoint_id"] == "" and row["mirror_host_url"] == ""
+        assert guest_notes.link(row) == f"{h.url}/n/{row['room']}#{gf.key_to_fragment(row['key'])}"
+        assert h.room()[0] == row["room"]
+        assert iroh.rooms[row["room"]].deleted  # the half-made loopback room went again
+        assert not ctx.rooms_link.active  # nothing to serve
+        # iroh asked for explicitly: the refusal is the answer.
+        settings.guest_transport = "iroh"
+        with pytest.raises(guest_notes.GuestNotesError, match="no relay reachable"):
+            await guest_notes.new_link(ctx, sid)
+    finally:
+        await guest_notes.shutdown(ctx)
+        await h.close()
+
+
+async def test_no_iroh_and_no_host_is_unavailable(ctx, iroh, settings, sidecar):
+    sidecar.config["fail"] = {"room_start": "no relay reachable"}
+    sidecar.sync()
+    with pytest.raises(guest_notes.GuestNotesUnavailable, match="no publish host"):
+        await guest_notes.start(ctx, meeting(ctx))
+    assert not ctx.rooms_link.active
+
+
+async def test_a_sidecar_that_cannot_start(ctx, iroh, settings, sidecar):
+    del sidecar.config["listen"]  # it dies before its ready line
+    sidecar.sync()
+    settings.guest_transport = "iroh"
+    with pytest.raises(guest_notes.GuestNotesUnavailable, match="Guest rooms cannot run"):
+        await guest_notes.plan(ctx)
+    await ctx.rooms_link.stop()
+    settings.guest_transport = "auto"
+    with pytest.raises(guest_notes.GuestNotesUnavailable, match="no publish host is set"):
+        await guest_notes.plan(ctx)
+    await ctx.rooms_link.stop()
+    settings.publish_host = "https://host.example"
+    p = await guest_notes.plan(ctx)
+    assert (p.transport, p.host_url, p.mirror_host) == ("host", "https://host.example", "")
+    assert p.page_origin == guest_notes.GUEST_PAGE_ORIGIN
+    settings.guest_transport = "tunnel"
+    with pytest.raises(guest_notes.GuestNotesUnavailable, match="tunnel"):
+        await guest_notes.plan(ctx)

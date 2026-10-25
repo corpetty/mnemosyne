@@ -13,12 +13,13 @@ import pytest
 
 from mnemosyne import access
 from mnemosyne.api.app import create_app
+from mnemosyne.api.routes import guest_notes as guest_routes
 from mnemosyne.api.routes import publishing as publishing_routes
 from mnemosyne.models.session import Session
 from mnemosyne.services import guest_format as gf
 from mnemosyne.services import guest_notes, records, shared_notes, sharing
 from tests import fake_link
-from tests.fake_guest_room import FakeRoomHost
+from tests.fake_guest_room import FakeRoomHost, routed
 
 pytestmark = pytest.mark.anyio
 
@@ -47,6 +48,7 @@ def sealed(monkeypatch):
 
 async def _settle(ctx):
     await guest_notes.shutdown(ctx)
+    await ctx.rooms_link.stop()
     hub = ctx.notes_hub
     while hub is not None and hub.tasks:
         await asyncio.gather(*list(hub.tasks), return_exceptions=True)
@@ -57,6 +59,7 @@ async def host(ctx, settings, sidecar):
     h = await FakeRoomHost().start()
     ctx.http_transport = h.transport()
     settings.publish_host = h.url
+    settings.guest_transport = "host"  # phase 9's rooms; iroh rooms: `iroh_host` below
     settings.local_speaker_name = "Corey"
     yield h
     await _settle(ctx)
@@ -296,6 +299,32 @@ async def test_the_guest_page_is_open_and_allows_wasm(app, ctx, settings, guest_
         assert "wasm-unsafe-eval" not in viewer.headers["content-security-policy"]
 
 
+async def test_the_guest_csp_names_the_relays_and_the_index_is_served(
+    app, ctx, settings, guest_build
+):
+    settings.remote_relays = "https://relay.example.com:7443/relay, http://127.0.0.1:3340"
+    async with api(app) as c:
+        page = await c.get("/n/")
+        assert page.status_code == 200 and "<title>guest</title>" in page.text
+        # Relative asset URLs need the slash: /n is sent there.
+        bare = await c.get("/n", follow_redirects=False)
+        assert bare.status_code == 308 and bare.headers["location"] == "/n/"
+        csp = (await c.get("/n/abcdefghijklmnop")).headers["content-security-policy"]
+        for origin in (
+            "https://*.relay.n0.iroh.link",
+            "wss://*.relay.n0.iroh.link",
+            "https://relay.example.com:7443",
+            "wss://relay.example.com:7443",
+            "http://127.0.0.1:3340",
+            "ws://127.0.0.1:3340",
+        ):
+            assert origin in csp
+        asset = await c.get("/n/assets/page.js")
+        assert "wss://relay.example.com:7443" in asset.headers["content-security-policy"]
+        viewer = await c.get("/p/abcdefgh")
+        assert "relay" not in viewer.headers["content-security-policy"]
+
+
 async def test_the_guest_page_is_open_on_a_team_server(team, guest_build):
     app, *_ = team
     async with api(app) as c:  # no token at all
@@ -376,8 +405,9 @@ async def test_the_records_export_lists_the_room_never_its_secrets(app, ctx, hos
         "endpoint_id",
         "relay",
         "public_url",
+        "mirror_host",
     }
-    assert info["transport"] == "host"
+    assert info["transport"] == "host" and info["mirror_host"] == ""
     everything = b"".join(z.read(n) for n in z.namelist())
     for secret in (
         gf.key_to_fragment(row["key"]).encode(),
@@ -390,3 +420,83 @@ async def test_the_records_export_lists_the_room_never_its_secrets(app, ctx, hos
         assert secret not in everything
     assert b"guest_notes.json" in z.read("SHA256SUMS")
     assert "guest_notes.json" in z.read("README.txt").decode()
+
+
+# ---- iroh rooms (phase 10) ----------------------------------------------------------------
+
+ENDPOINT = "b" * 64
+N0_RELAY = "https://euw1-1.relay.n0.iroh.link./"
+
+
+@pytest.fixture
+async def iroh_host(ctx, settings, sidecar):
+    """auto: the rooms sidecar's loopback host is one FakeRoomHost, the mirror another."""
+    loop, mirror = await FakeRoomHost().start(), await FakeRoomHost().start()
+    sidecar.config.update(listen=loop.url.removeprefix("http://"), endpoint_id=ENDPOINT)
+    sidecar.config["relay"] = N0_RELAY
+    sidecar.sync()
+    ctx.http_transport = routed(loop, mirror)
+    settings.guest_transport = "auto"
+    settings.publish_host = mirror.url
+    settings.local_speaker_name = "Corey"
+    yield loop, mirror
+    await _settle(ctx)
+    await loop.close()
+    await mirror.close()
+
+
+async def test_an_iroh_room_through_the_api(app, ctx, iroh_host, sealed, sidecar):
+    loop, mirror = iroh_host
+    sid = meeting(ctx)
+    async with api(app) as c:
+        r = await c.put(url(sid))
+        assert r.status_code == 200, r.text
+        room = r.json()
+        row = ctx.repo.guest_room(sid)
+        key = gf.key_to_fragment(row["key"])
+        assert room["transport"] == "iroh" and room["relay"] == N0_RELAY
+        assert room["relay_kind"] == "n0" and room["mirror_host_url"] == mirror.url
+        assert room["page_origin"] == f"{mirror.url}/n/" and room["public_url"] == ""
+        assert room["url"] == (
+            f"{mirror.url}/n/{row['room']}#2.{row['room']}.{key}.{ENDPOINT}"
+            ".euw1-1.relay.n0.iroh.link."
+        )
+        assert loop.room()[0] == mirror.room()[0] == row["room"]
+        # Readers see how, not the link.
+        reader = access.Principal("u9", "Rita", access.REVIEWER)
+        token = access.current.set(reader)
+        try:
+            seen = guest_routes._model(ctx, row, ctx.repo.get(sid))
+        finally:
+            access.current.reset(token)
+        assert seen.url is None and seen.transport == "iroh"
+
+        r = await c.delete(url(sid))
+        assert r.status_code == 200 and r.json()["state"] == "stopped"
+        assert loop.rooms[row["room"]].deleted and mirror.rooms[row["room"]].deleted
+    assert {"op": "room_stop", "room": row["room"]} in sidecar.ops
+    assert not ctx.rooms_link.active
+
+
+async def test_an_iroh_room_without_a_mirror_names_the_page_origin(
+    app, ctx, iroh_host, settings, sealed
+):
+    settings.publish_host = ""
+    settings.guest_page_url = "https://pages.example/mnemosyne/n/"
+    sid = meeting(ctx)
+    async with api(app) as c:
+        room = (await c.put(url(sid))).json()
+    assert room["transport"] == "iroh" and room["mirror_host_url"] == ""
+    assert room["page_origin"] == "https://pages.example/mnemosyne/n/"
+    assert room["url"].startswith("https://pages.example/mnemosyne/n/#2.")
+
+
+async def test_no_iroh_and_no_host_is_409(app, ctx, iroh_host, settings, sidecar):
+    settings.publish_host = ""
+    sidecar.config["fail"] = {"room_start": "no relay reachable"}
+    sidecar.sync()
+    sid = meeting(ctx)
+    async with api(app) as c:
+        r = await c.put(url(sid))
+    assert r.status_code == 409 and "no relay reachable" in r.json()["detail"]
+    assert ctx.repo.guest_room(sid) is None

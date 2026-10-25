@@ -1,5 +1,6 @@
 """Guest notes (services/guest_notes.py): a meeting's live notes opened to people without the
-app, through a room on a publish host. The owner's API under /api/sessions/{id}/guest-notes.
+app, through a room on a publish host or on this computer over iroh (phase 10). The owner's API
+under /api/sessions/{id}/guest-notes.
 
 Who: anyone who can see the meeting reads the room's state; its link (which carries the key)
 only goes to the meeting's owner and admins, readers get `url: null` and no guest names. Starting,
@@ -35,8 +36,9 @@ def _by() -> str:
 def _model(ctx: AppContext, row: dict, session) -> GuestRoom:
     state = guest_notes.state(row)
     owner = access.can_write(session.owner_id)
+    origin = guest_notes.page_origin(ctx)
     return GuestRoom(
-        url=guest_notes.link(row) if owner and state != "stopped" else None,
+        url=guest_notes.link(row, origin) if owner and state != "stopped" else None,
         host_url=row["host_url"],
         state=state,
         created_at=row["created_at"],
@@ -49,7 +51,7 @@ def _model(ctx: AppContext, row: dict, session) -> GuestRoom:
         relay_kind=guest_notes.relay_kind(row.get("relay", "")),
         public_url=row.get("public_url", ""),
         mirror_host_url=row.get("mirror_host_url", ""),
-        page_origin=ctx.settings.guest_page_url,
+        page_origin=guest_notes.served_from(row, origin),
     )
 
 

@@ -228,8 +228,9 @@ One folder per meeting:
                      and by whom each version was published, what it showed, where it was
                      put, when it expired or was withdrawn. Never the links themselves
   guest_notes.json   the meeting's notes opened to guests (only for meetings that had it): the
-                     host, the room's id, when and by whom it was started, ended and stopped.
-                     Never the link, its key or the host token
+                     host, the room's id, how guests reached it (a publish host, or iroh to
+                     this computer with its relay and a mirror host), when and by whom it was
+                     started, ended and stopped. Never the link, its key or the host tokens
   audio/             the recordings (each channel and the mix), unencrypted
 
 deletions.json lists meetings and audio deleted in the period, with who, when and why.
@@ -381,6 +382,7 @@ def guest_notes_record(app: AppContext, session: Session) -> dict | None:
         "endpoint_id": row["endpoint_id"],
         "relay": row["relay"],
         "public_url": row["public_url"],
+        "mirror_host": row["mirror_host_url"],
     }
 
 

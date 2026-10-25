@@ -16,6 +16,7 @@ import contextlib
 import json
 import logging
 import os
+import secrets
 import shutil
 import uuid
 from collections.abc import Awaitable, Callable
@@ -50,6 +51,17 @@ def find_binary() -> str | None:
     return None
 
 
+def parse_relays(text: str) -> list[str]:
+    """The `remote_relays` setting (comma or space separated URLs); blank: n0's public relays."""
+    return [u for u in text.replace(",", " ").split() if u]
+
+
+def child_env() -> dict[str, str]:
+    """The sidecar's environment: ours without PUBLISH_*, the config of the publish host the
+    sidecar embeds (`rooms`); a publish host the user runs elsewhere must not leak into it."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("PUBLISH_")}
+
+
 def endpoint_id_from_ticket(ticket: str) -> str:
     """The endpoint id (64 hex characters) an endpoint ticket names: `endpoint` + lowercase
     base32 of a postcard value whose first byte is the variant (0) and then the 32-byte id."""
@@ -78,6 +90,11 @@ class LinkStatus:
 
 
 class LinkService:
+    """Supervises one `mnemosyne-link` process. This class runs `home`; RoomsLink (below) runs
+    `rooms` by overriding `_argv` and `_ready`."""
+
+    label = "Remote access"  # what errors call the sidecar
+
     def __init__(self, data_dir: Path, port: int, binary: str | None = None):
         self.data_dir = data_dir
         self.port = port
@@ -116,7 +133,7 @@ class LinkService:
         does not answer within REQUEST_TIMEOUT."""
         proc = self._proc
         if not self.status.running or proc is None or proc.stdin is None or proc.returncode:
-            raise LinkError("Remote access is not running")
+            raise LinkError(f"{self.label} is not running")
         request_id = uuid.uuid4().hex
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
@@ -126,11 +143,11 @@ class LinkService:
                 proc.stdin.write(line.encode())
                 await proc.stdin.drain()
             except (ConnectionError, OSError) as e:
-                raise LinkError("Remote access is not running") from e
+                raise LinkError(f"{self.label} is not running") from e
             try:
                 reply = await asyncio.wait_for(future, REQUEST_TIMEOUT)
             except TimeoutError as e:
-                raise LinkError(f"Remote access did not answer {op} in time") from e
+                raise LinkError(f"{self.label} did not answer {op} in time") from e
         finally:
             self._pending.pop(request_id, None)
         if not reply.get("ok"):
@@ -155,7 +172,7 @@ class LinkService:
 
     async def _kill(self) -> None:
         proc, self._proc = self._proc, None
-        self._fail_pending("Remote access stopped")
+        self._fail_pending(f"{self.label} stopped")
         if proc is not None and proc.returncode is None:
             proc.terminate()
             try:
@@ -184,18 +201,30 @@ class LinkService:
                 await self._kill()
             await asyncio.sleep(RESTART_DELAY)
 
-    async def _run(self, binary: str) -> None:
-        self._proc = await asyncio.create_subprocess_exec(
-            binary,
+    def _argv(self) -> list[str]:
+        """The arguments after the binary."""
+        return [
             "home",
             "--backend",
             f"127.0.0.1:{self.port}",
             "--data-dir",
             str(self.data_dir),
             *[arg for url in self.relays for arg in ("--relay", url)],
+        ]
+
+    def _ready(self, info: dict) -> LinkStatus:
+        """The status once the ready line (already parsed) has been read."""
+        logger.info("Remote access on, endpoint %s", info["endpoint_id"])
+        return LinkStatus(running=True, endpoint_id=info["endpoint_id"], ticket=info["ticket"])
+
+    async def _run(self, binary: str) -> None:
+        self._proc = await asyncio.create_subprocess_exec(
+            binary,
+            *self._argv(),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=child_env(),
         )
         stderr = asyncio.create_task(self._log_stderr(self._proc))
         try:
@@ -203,10 +232,7 @@ class LinkService:
             if not line:
                 raise RuntimeError("mnemosyne-link exited before it was ready")
             info = json.loads(line)
-            self.status = LinkStatus(
-                running=True, endpoint_id=info["endpoint_id"], ticket=info["ticket"]
-            )
-            logger.info("Remote access on, endpoint %s", info["endpoint_id"])
+            self.status = self._ready(info)
             for hook in self.on_ready:
                 task = asyncio.create_task(self._run_hook(hook))
                 self._hooks.add(task)
@@ -229,3 +255,132 @@ class LinkService:
     async def _log_stderr(proc: asyncio.subprocess.Process) -> None:
         while line := await proc.stderr.readline():
             logger.info("link: %s", line.decode(errors="replace").rstrip())
+
+
+def ensure_upload_token(path: Path) -> str:
+    """The token the rooms sidecar's embedded host wants in `X-Upload-Token`, in a 0600 file the
+    sidecar reads (it refuses a missing, empty or group/world-readable one). Created if absent,
+    reused otherwise; a file with looser permissions is tightened, an empty one refilled."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    token = ""
+    with contextlib.suppress(OSError):
+        token = path.read_text().strip()
+    if not token:
+        token = secrets.token_urlsafe(32)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(token + "\n")
+    path.chmod(0o600)
+    return token
+
+
+class RoomsLink(LinkService):
+    """`mnemosyne-link rooms`: the guest notes rooms (link/README.md). It embeds a publish host
+    on a loopback port (`listen`) that the guest notes service uploads to with `upload_token`,
+    and serves each room over iroh from one endpoint per room. Not tied to remote access.
+
+    `relays` (the `remote_relays` setting) is read when the process starts; a running one keeps
+    the relays it started with. Closing our end of its stdin would keep it serving; stopping it
+    closes every room but keeps their keys, so a restarted room has the same endpoint id."""
+
+    label = "Guest rooms"
+
+    def __init__(
+        self,
+        data_dir: Path,
+        guest_dir: Path,
+        viewer_dir: Path,
+        binary: str | None = None,
+    ):
+        super().__init__(data_dir, 0, binary)
+        self.guest_dir = guest_dir
+        self.viewer_dir = viewer_dir
+        self.rooms_dir = data_dir / "guest_rooms"
+        self.token_file = self.rooms_dir / "upload.token"
+        self.listen: str | None = None
+        self.relay_kind: str | None = None
+        # Called (in the background) when the sidecar is ready again after a crash: it serves no
+        # room until each is started again (services/guest_notes.py re-serves the live ones).
+        self.on_restart: list[Callable[[], Awaitable[None]]] = []
+        self.readies = 0  # ready lines since start()
+
+    @property
+    def upload_token(self) -> str:
+        return ensure_upload_token(self.token_file)
+
+    @property
+    def base_url(self) -> str | None:
+        """The embedded host, once the sidecar is ready."""
+        return f"http://{self.listen}" if self.listen and self.status.running else None
+
+    def _argv(self) -> list[str]:
+        ensure_upload_token(self.token_file)
+        return [
+            "rooms",
+            "--data-dir",
+            str(self.data_dir),
+            "--guest-dir",
+            str(self.guest_dir),
+            "--viewer-dir",
+            str(self.viewer_dir),
+            "--upload-token-file",
+            str(self.token_file),
+            *[arg for url in self.relays for arg in ("--relay", url)],
+        ]
+
+    def _ready(self, info: dict) -> LinkStatus:
+        self.listen = info["listen"]
+        self.relay_kind = info.get("relay_kind", "n0")
+        logger.info("Guest rooms on, host %s (%s relays)", self.listen, self.relay_kind)
+        self.readies += 1
+        if self.readies > 1:
+            for hook in self.on_restart:
+                task = asyncio.create_task(self._run_hook(hook))
+                self._hooks.add(task)
+                task.add_done_callback(self._hooks.discard)
+        return LinkStatus(running=True)
+
+    def start(self) -> None:
+        if self._task is not None and self._task.done():
+            self._task = None  # it gave up (no binary): a new start tries again
+        if self._task is None:
+            self.status = LinkStatus()
+            self.readies = 0
+        super().start()
+
+    async def stop(self) -> None:
+        await super().stop()
+        self.listen = self.relay_kind = None
+
+    async def wait_ready(self, timeout: float = START_TIMEOUT + 5) -> None:
+        """Wait for the ready line. Raises LinkError when the sidecar is missing or dies first."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while not self.status.running:
+            if self._task is None:
+                raise LinkError(f"{self.label} are not started")
+            if self.status.error:
+                raise LinkError(self.status.error)
+            if loop.time() > deadline:
+                raise LinkError(f"{self.label} did not start in time")
+            await asyncio.sleep(0.02)
+
+    @staticmethod
+    def _fields(reply: dict) -> dict:
+        return {k: v for k, v in reply.items() if k not in ("id", "op", "ok")}
+
+    async def room_start(self, room: str, relay: str | None = None) -> dict:
+        """Serve a room (16 hex) over iroh: `{endpoint_id, relay}`. A room already served is
+        returned unchanged."""
+        args = {"room": room}
+        if relay:
+            args["relay"] = relay
+        return self._fields(await self.request("room_start", **args))
+
+    async def room_stop(self, room: str) -> bool:
+        """Stop serving a room and delete its key (started again, it gets a new id)."""
+        return bool((await self.request("room_stop", room=room)).get("closed"))
+
+    async def room_list(self) -> list[dict]:
+        """The rooms being served: `[{room, endpoint_id, relay}]`."""
+        return list((await self.request("room_list")).get("rooms") or [])

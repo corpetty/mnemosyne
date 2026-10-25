@@ -20,7 +20,8 @@ ended/deleted) shared by two faces:
   is upgraded and then closed at once (a browser cannot see an HTTP status); an empty or
   unknown frame gets `{"type":"error","code":"bad_frame"}`. `joins` lists (room, since).
 
-`GuestClient` is a guest page's socket for tests: it records everything it receives.
+`GuestClient` is a guest page's socket for tests: it records everything it receives. `routed`
+puts several hosts behind one transport (an iroh room's loopback host and its mirror).
 """
 
 from __future__ import annotations
@@ -305,3 +306,14 @@ class GuestClient:
         await self.ws.close()
         if self._reader is not None:
             await asyncio.gather(self._reader, return_exceptions=True)
+
+
+def routed(*hosts: FakeRoomHost) -> httpx.MockTransport:
+    """One transport for several hosts (`ctx.http_transport`): each request goes to the host
+    on its port (an iroh room's loopback host beside a mirror host)."""
+    by_port = {httpx.URL(h.url).port: h for h in hosts}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return await by_port[request.url.port].handler(request)
+
+    return httpx.MockTransport(handler)
