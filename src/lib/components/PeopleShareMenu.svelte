@@ -85,7 +85,7 @@
 
 <svelte:window
 	onclick={(e) => {
-		if (open && root && !root.contains(e.target as Node)) open = false;
+		if (open && root && !e.composedPath().includes(root)) open = false;
 	}}
 	onkeydown={(e) => {
 		if (open && e.key === 'Escape') open = false;
