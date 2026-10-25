@@ -495,7 +495,7 @@ library sync, task links, Ask, semantic search, the digest or Obsidian (`shared_
 seeds Ada Lovelace's shared meeting only through `POST /api/demo/share` (the e2e spec calls it).
 
 
-Guest notes (unreleased, phase 9; design in the hashseq plan, build order and corrections in
+Guest notes (released as 0.24.0, phase 9; design in the hashseq plan, build order and corrections in
 docs/plans/2026-10-24-phase-9-tasks.md, use in docs/guest-notes.md): a link `https://<host>/n/<room>#<key>` for the
 people in a meeting to type into the live notes, comment on them and see the agenda; nothing else goes out. Sealed
 frames (services/guest_format.py, AES-GCM under HKDF keys from the fragment key, AAD `mnemosyne/guest/1|room|kind`)
