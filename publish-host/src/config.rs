@@ -65,6 +65,27 @@ pub struct Config {
     /// Hours a publication that never got a manifest (blobs only) is kept.
     #[arg(long, env = "PUBLISH_PENDING_HOURS", default_value_t = 24)]
     pub pending_hours: u64,
+    /// The built guest-notes page (`/n/<room>`): `index.html` plus its asset folders.
+    #[arg(long, env = "PUBLISH_GUEST_DIR", default_value = "./guest")]
+    pub guest_dir: PathBuf,
+    /// Largest sealed frame a guest-notes room accepts (a 2 MiB paste plus its envelope).
+    #[arg(long, env = "PUBLISH_ROOM_FRAME_MAX_BYTES", default_value_t = 2 * MIB + 1024)]
+    pub room_frame_max_bytes: u64,
+    /// Most a room's log may hold; the owner's snapshots prune it.
+    #[arg(long, env = "PUBLISH_ROOM_LOG_MAX_BYTES", default_value_t = 8 * MIB)]
+    pub room_log_max_bytes: u64,
+    /// Largest room snapshot.
+    #[arg(long, env = "PUBLISH_ROOM_SNAPSHOT_MAX_BYTES", default_value_t = 8 * MIB)]
+    pub room_snapshot_max_bytes: u64,
+    /// Furthest expiry a room may ask for, in days from now.
+    #[arg(long, env = "PUBLISH_ROOM_MAX_DAYS", default_value_t = 7)]
+    pub room_max_days: u64,
+    /// Hours a room that has not ended is kept after its last frame.
+    #[arg(long, env = "PUBLISH_ROOM_IDLE_HOURS", default_value_t = 24)]
+    pub room_idle_hours: u64,
+    /// Live connections one room accepts at once.
+    #[arg(long, env = "PUBLISH_ROOM_MAX_CONNECTIONS", default_value_t = 64)]
+    pub room_max_connections: usize,
 }
 
 impl Config {

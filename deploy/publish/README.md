@@ -108,6 +108,30 @@ Writes need `Authorization: Bearer <publisher token>`. Problems come back as JSO
 closed host), 409 version not rising or blobs missing (the body lists them), 413 too large,
 429 rate limited (with `Retry-After`), 507 store full.
 
+## Guest notes rooms
+
+A guest notes room is a meeting's live notes, shared with guests through a link
+(`https://<host>/n/<room>#<key>`). Several people edit the same notes at once, and each change
+is encrypted in the browser before it leaves. The key is in the part after `#`, which is never
+sent to a server, so the host cannot read the notes.
+
+- **Stores:** the sealed frames (encrypted edits), a sealed snapshot of the notes, and room
+  metadata: the room id, its start and end times, and sizes.
+- **Sees:** room ids, sizes, times, and the IP addresses of the people who connect. It never sees
+  text.
+- **Limits:** a frame is at most 2 MiB. The log and the snapshot are each at most 8 MiB. A room
+  takes at most 64 connections. A room lasts at most 7 days. It is deleted 24 hours after its
+  last frame, unless it is ended earlier with a later expiry.
+- **Guest page:** the files go in `./guest`, copied from `backend/mnemosyne/api/static/guest` in
+  the Mnemosyne repo, the same way the viewer goes in `./viewer`. The folder is mounted read-only
+  and needs no restart.
+- **WebSockets:** Caddy passes them through without extra configuration.
+
+If you run a public host for other people, tell them in your privacy notice: the host stores
+encrypted notes and their metadata (room ids, times, sizes), keeps them for up to 7 days after a
+room's last edit, and sees the IP addresses of the people who connect. The contents are encrypted
+on the guests' computers, and the key never reaches the host.
+
 ## Operating it
 
 - **Backups:** not needed for privacy, and a lost host only loses links (publishers can publish

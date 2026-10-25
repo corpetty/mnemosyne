@@ -6,4 +6,6 @@ pub mod clock;
 pub mod config;
 pub mod error;
 pub mod limiter;
+pub mod live;
+pub mod rooms;
 pub mod store;

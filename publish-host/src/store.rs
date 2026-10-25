@@ -97,7 +97,7 @@ pub struct Store {
 
 static TMP: AtomicU64 = AtomicU64::new(0);
 
-async fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) async fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let n = TMP.fetch_add(1, Ordering::Relaxed);
     let tmp = path.with_file_name(format!(".tmp-{}-{n}", std::process::id()));
     let mut f = fs::File::create(&tmp).await?;

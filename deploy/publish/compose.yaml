@@ -17,6 +17,8 @@ services:
       - data:/data
       # The built viewer (index.html and assets/), from the Mnemosyne repo; see README.md.
       - ./viewer:/viewer:ro
+      # The guest notes page (index.html and assets/) for /n/<room>, from the Mnemosyne repo; see README.md.
+      - ./guest:/guest:ro
     # Not published: only Caddy talks to it.
     expose:
       - "8080"

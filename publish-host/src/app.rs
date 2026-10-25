@@ -6,24 +6,32 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
+use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{ConnectInfo, Path as UrlPath, Request, State};
 use axum::http::header::{self, HeaderName, HeaderValue};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio_util::io::ReaderStream;
 
 use crate::clock::Clock;
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::limiter::Limiter;
+use crate::live::{self, Connection};
+use crate::rooms::{RoomMeta, RoomStore};
 use crate::store::{secrets_equal, sha256_hex, valid_id, valid_sha, Auth, Store};
 
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; \
 media-src blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+/// The viewer's policy, plus compiling the notes CRDT's WebAssembly. `connect-src 'self'` covers
+/// the same-origin `wss:` room socket.
+const GUEST_CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; \
+style-src 'self'; connect-src 'self'; media-src blob:; img-src data: blob:; base-uri 'none'; \
+form-action 'none'; frame-ancestors 'none'";
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 const MAX_REFS: usize = 256;
 
@@ -31,6 +39,8 @@ pub struct App {
     pub cfg: Arc<Config>,
     pub clock: Clock,
     pub store: Store,
+    /// Guest-notes rooms (live, sealed notes).
+    pub rooms: RoomStore,
     reads: Limiter,
     writes: Limiter,
 }
@@ -42,6 +52,7 @@ impl App {
         let cfg = Arc::new(cfg);
         Ok(Arc::new(App {
             store: Store::open(cfg.clone(), clock.clone()).await?,
+            rooms: RoomStore::open(cfg.clone(), clock.clone()).await?,
             reads: Limiter::new(cfg.read_burst, cfg.read_per_minute),
             writes: Limiter::new(cfg.write_burst, cfg.write_per_minute),
             cfg,
@@ -49,9 +60,14 @@ impl App {
         }))
     }
 
-    /// One sweep: expired publications, old tombstones, idle rate-limit entries.
+    /// One sweep: expired publications, expired or idle rooms, old tombstones, idle
+    /// rate-limit entries.
     pub async fn sweep(&self) {
         let stats = self.store.sweep().await;
+        let rooms = self.rooms.sweep(self.clock.now()).await;
+        if rooms != Default::default() {
+            tracing::info!("room sweep: {rooms:?}");
+        }
         self.reads.forget_idle(self.clock.now_ms());
         self.writes.forget_idle(self.clock.now_ms());
         if stats != Default::default() {
@@ -83,6 +99,14 @@ pub fn router(app: Shared) -> Router {
                 .delete(delete_publication),
         )
         .route("/pub/{id}/{sha}", get(get_blob).put(put_blob))
+        .route("/n/{room}", get(guest_index))
+        .route("/n/{dir}/{*rest}", get(guest_asset))
+        .route(
+            "/live/{room}",
+            get(live_socket).put(create_room).delete(delete_room),
+        )
+        .route("/live/{room}/snapshot", put(put_snapshot))
+        .route("/live/{room}/end", post(end_room))
         .layer(middleware::from_fn_with_state(app.clone(), rate_limit))
         .layer(middleware::map_response(security_headers))
         .with_state(app)
@@ -344,7 +368,197 @@ async fn delete_publication(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-// ---- the viewer ----
+// ---- guest-notes rooms ----
+
+fn room_json(meta: &RoomMeta) -> Value {
+    json!({
+        "created": meta.created,
+        "expires": meta.expires,
+        "ended_at": meta.ended_at,
+        "last_seq": meta.last_seq,
+        "snapshot_seq": (meta.snapshot_bytes > 0).then_some(meta.snapshot_seq),
+    })
+}
+
+/// Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's `days_from_civil`).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// `X-Room-Expires`: unix seconds, or an ISO 8601 / RFC 3339 time with a zone
+/// (`2026-10-31T12:00:00Z`, `2026-10-31T14:00:00.250+02:00`; fractions of a second are dropped).
+fn parse_expires(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
+        return s.parse().ok();
+    }
+    let b = s.as_bytes();
+    let num = |from: usize, len: usize| -> Option<i64> {
+        let part = s.get(from..from + len)?;
+        part.bytes()
+            .all(|c| c.is_ascii_digit())
+            .then(|| part.parse().ok())?
+    };
+    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b't' | b' ') {
+        return None;
+    }
+    if b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    let (y, mo, d) = (num(0, 4)?, num(5, 2)?, num(8, 2)?);
+    let (h, mi, sec) = (num(11, 2)?, num(14, 2)?, num(17, 2)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
+        return None;
+    }
+    let mut at = 19;
+    if b[at] == b'.' {
+        at += 1;
+        let digits = b[at..].iter().take_while(|c| c.is_ascii_digit()).count();
+        if digits == 0 {
+            return None;
+        }
+        at += digits;
+    }
+    let offset = match &s[at..] {
+        "Z" | "z" => 0,
+        zone => {
+            let sign = match zone.as_bytes().first()? {
+                b'+' => 1,
+                b'-' => -1,
+                _ => return None,
+            };
+            let (oh, om) = match zone.len() {
+                6 if zone.as_bytes()[3] == b':' => (num(at + 1, 2)?, num(at + 4, 2)?),
+                5 => (num(at + 1, 2)?, num(at + 3, 2)?),
+                _ => return None,
+            };
+            if oh > 23 || om > 59 {
+                return None;
+            }
+            sign * (oh * 3600 + om * 60)
+        }
+    };
+    let secs = days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + sec - offset;
+    u64::try_from(secs).ok()
+}
+
+fn header_expires(h: &HeaderMap) -> Result<Option<u64>, ApiError> {
+    match header_str(h, "x-room-expires") {
+        None => Ok(None),
+        Some(v) => parse_expires(v)
+            .map(Some)
+            .ok_or(ApiError::bad("bad_expires")),
+    }
+}
+
+/// `PUT /live/<room>`: creates the room (201), or moves its expiry (200). `X-Room-Token` is the
+/// room token guests will prove the link with (only its sha256 is kept); `X-Room-Expires` is
+/// unix seconds or an ISO 8601 time, clamped to `room_max_days` from now.
+async fn create_room(
+    State(app): State<Shared>,
+    UrlPath(room): UrlPath<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    check_id(&room)?;
+    let auth = auth_of(&app, &headers)?;
+    let token = header_str(&headers, "x-room-token")
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .ok_or(ApiError::bad("room_token_required"))?;
+    if token.len() > 256 {
+        return Err(ApiError::bad("bad_room_token"));
+    }
+    let expires = header_expires(&headers)?.ok_or(ApiError::bad("bad_expires"))?;
+    let (meta, created) = app
+        .rooms
+        .create(&room, &auth, &sha256_hex(token.as_bytes()), expires)
+        .await?;
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(room_json(&meta))).into_response())
+}
+
+/// `PUT /live/<room>/snapshot`: the owner's sealed fold covering frames up to `X-Room-Since`.
+async fn put_snapshot(
+    State(app): State<Shared>,
+    UrlPath(room): UrlPath<String>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, ApiError> {
+    check_id(&room)?;
+    let auth = auth_of(&app, &headers)?;
+    let since = header_u64(&headers, "x-room-since", "bad_since")?;
+    app.rooms.check_publisher(&room, &auth).await?;
+    let bytes = read_body(&headers, body, app.cfg.room_snapshot_max_bytes)
+        .await
+        .map_err(|mut e| {
+            if e.status == StatusCode::PAYLOAD_TOO_LARGE {
+                e.code = "snapshot_too_large";
+            }
+            e
+        })?;
+    app.rooms.put_snapshot(&room, &auth, &bytes, since).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// `POST /live/<room>/end`: read-only from now on, until `X-Room-Expires` (default: the
+/// current expiry).
+async fn end_room(
+    State(app): State<Shared>,
+    UrlPath(room): UrlPath<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    check_id(&room)?;
+    let auth = auth_of(&app, &headers)?;
+    let expires = match header_expires(&headers)? {
+        Some(e) => e,
+        None => app.rooms.check_publisher(&room, &auth).await?.expires,
+    };
+    let meta = app.rooms.end(&room, &auth, expires).await?;
+    Ok(Json(room_json(&meta)).into_response())
+}
+
+async fn delete_room(
+    State(app): State<Shared>,
+    UrlPath(room): UrlPath<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    check_id(&room)?;
+    let auth = auth_of(&app, &headers)?;
+    app.rooms.delete(&room, &auth).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// `GET /live/<room>`: the room's WebSocket (see `live` for the protocol). The connection is
+/// counted before the upgrade, so a full room (503) or a gone one (404/410) is refused as HTTP.
+async fn live_socket(
+    State(app): State<Shared>,
+    UrlPath(room): UrlPath<String>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, ApiError> {
+    check_id(&room)?;
+    let (id, _) = app.rooms.connect(&room).await?;
+    let conn = Connection::new(app.clone(), room, id);
+    // Frames a little over the cap still reach the store, which answers `frame_too_large`;
+    // the socket itself only refuses what is far beyond it.
+    let max = usize::try_from(app.cfg.room_frame_max_bytes)
+        .unwrap_or(usize::MAX)
+        .saturating_add(64 * 1024);
+    Ok(ws
+        .max_message_size(max)
+        .max_frame_size(max)
+        .on_upgrade(move |socket| live::run(socket, conn)))
+}
+
+// ---- static pages: the viewer and the guest page ----
 
 fn content_type(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
@@ -356,40 +570,33 @@ fn content_type(path: &Path) -> &'static str {
         "png" => "image/png",
         "ico" => "image/x-icon",
         "woff2" => "font/woff2",
+        "wasm" => "application/wasm",
         "txt" => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
 }
 
-fn viewer_response(path: &Path, bytes: Vec<u8>, cache: &str) -> Response {
+fn static_response(path: &Path, bytes: Vec<u8>, csp: &str, cache: &str) -> Response {
     let mut res = bytes.into_response();
     set(&mut res, header::CONTENT_TYPE, content_type(path));
-    set(&mut res, header::CONTENT_SECURITY_POLICY, CSP);
+    set(&mut res, header::CONTENT_SECURITY_POLICY, csp);
     set(&mut res, header::CACHE_CONTROL, cache);
     res
 }
 
-/// Any `/p/<something>` is the viewer: it reads the id and the key from its own address and
-/// shows "not found" itself, so the host never says which ids exist to someone without a link.
-async fn viewer_index(State(app): State<Shared>) -> Result<Response, ApiError> {
-    let path = app.cfg.viewer_dir.join("index.html");
+async fn static_index(root: &Path, csp: &str, missing: &'static str) -> Result<Response, ApiError> {
+    let path = root.join("index.html");
     match tokio::fs::read(&path).await {
-        Ok(bytes) => Ok(viewer_response(&path, bytes, "no-store")),
-        Err(_) => Err(ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "viewer_missing",
-        )),
+        Ok(bytes) => Ok(static_response(&path, bytes, csp, "no-store")),
+        Err(_) => Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, missing)),
     }
 }
 
-/// `/p/<dir>/<path>` serves `<viewer-dir>/<dir>/<path>` (the build's `assets/` folder).
-async fn viewer_asset(
-    State(app): State<Shared>,
-    UrlPath((dir, rest)): UrlPath<(String, String)>,
-) -> Result<Response, ApiError> {
+/// `<root>/<dir>/<rest>`, refusing anything that climbs out or names a hidden file.
+async fn static_asset(root: &Path, dir: &str, rest: &str, csp: &str) -> Result<Response, ApiError> {
     let not_found = || ApiError::new(StatusCode::NOT_FOUND, "not_found");
-    let mut path: PathBuf = app.cfg.viewer_dir.clone();
-    for part in Path::new(&dir).join(&rest).components() {
+    let mut path: PathBuf = root.to_path_buf();
+    for part in Path::new(dir).join(rest).components() {
         match part {
             Component::Normal(p)
                 if !p.to_string_lossy().starts_with('.') && !p.to_string_lossy().contains('\\') =>
@@ -400,5 +607,76 @@ async fn viewer_asset(
         }
     }
     let bytes = tokio::fs::read(&path).await.map_err(|_| not_found())?;
-    Ok(viewer_response(&path, bytes, "no-cache"))
+    Ok(static_response(&path, bytes, csp, "no-cache"))
+}
+
+/// Any `/p/<something>` is the viewer: it reads the id and the key from its own address and
+/// shows "not found" itself, so the host never says which ids exist to someone without a link.
+async fn viewer_index(State(app): State<Shared>) -> Result<Response, ApiError> {
+    static_index(&app.cfg.viewer_dir, CSP, "viewer_missing").await
+}
+
+/// `/p/<dir>/<path>` serves `<viewer-dir>/<dir>/<path>` (the build's `assets/` folder).
+async fn viewer_asset(
+    State(app): State<Shared>,
+    UrlPath((dir, rest)): UrlPath<(String, String)>,
+) -> Result<Response, ApiError> {
+    static_asset(&app.cfg.viewer_dir, &dir, &rest, CSP).await
+}
+
+/// `/n/<room>` is the guest page for any well-formed room id; like the viewer, it never says
+/// whether the room exists (the socket does, to those with the token).
+async fn guest_index(
+    State(app): State<Shared>,
+    UrlPath(room): UrlPath<String>,
+) -> Result<Response, ApiError> {
+    if !valid_id(&room) {
+        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found"));
+    }
+    static_index(&app.cfg.guest_dir, GUEST_CSP, "guest_missing").await
+}
+
+/// `/n/<dir>/<path>` serves `<guest-dir>/<dir>/<path>` (the build's `assets/`, wasm included).
+async fn guest_asset(
+    State(app): State<Shared>,
+    UrlPath((dir, rest)): UrlPath<(String, String)>,
+) -> Result<Response, ApiError> {
+    static_asset(&app.cfg.guest_dir, &dir, &rest, GUEST_CSP).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_expires;
+
+    #[test]
+    fn expires_as_seconds_or_iso() {
+        assert_eq!(parse_expires("1800000000"), Some(1_800_000_000));
+        assert_eq!(parse_expires(" 1800000000 "), Some(1_800_000_000));
+        assert_eq!(parse_expires("1970-01-01T00:00:00Z"), Some(0));
+        // 1_800_000_000 is 2027-01-15T08:00:00Z.
+        for s in [
+            "2027-01-15T08:00:00Z",
+            "2027-01-15T08:00:00+00:00",
+            "2027-01-15T08:00:00.123456+00:00",
+            "2027-01-15T10:00:00+02:00",
+            "2027-01-15T03:30:00-0430",
+            "2027-01-15 08:00:00z",
+        ] {
+            assert_eq!(parse_expires(s), Some(1_800_000_000), "{s}");
+        }
+        assert_eq!(parse_expires("2024-02-29T00:00:00Z"), Some(1_709_164_800));
+        for s in [
+            "",
+            "soon",
+            "-5",
+            "2027-01-15T08:00:00",
+            "2027-01-15T08:00Z",
+            "2027-13-15T08:00:00Z",
+            "2027-01-15T08:00:00.Z",
+            "2027-01-15T08:00:00+2:00",
+            "1969-12-31T23:59:59Z",
+        ] {
+            assert_eq!(parse_expires(s), None, "{s}");
+        }
+    }
 }
