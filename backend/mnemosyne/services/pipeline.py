@@ -22,6 +22,7 @@ from ..storage.crypto import plaintext_async
 from ..summarization.privacy import LOCAL_ONLY_ERROR, is_cloud, redact_transcript
 from ..summarization.prompts import (
     meeting_date_instructions,
+    notes_items_hint,
     open_tasks_hint,
     recorder_instructions,
 )
@@ -35,7 +36,7 @@ from ..transcription.glossary import (
 from . import history, live_flags
 from .copilot import agenda_hint, bookmark_hint, copilot_hint
 from .prefs import for_meeting
-from .tasks import add_live_todos, carry_over
+from .tasks import add_live_todos, carry_over, same_item
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -350,6 +351,29 @@ def transcribe_session(
     return run
 
 
+def drop_noted_items(data, noted) -> int:
+    """Remove from a new summary the action items that repeat one typed in the meeting's notes
+    (`noted`, Session.notes_items): the same wording (tasks.same_item) and the same owner, or
+    either without one. Those items already are the meeting's; listing them again would
+    double them in the task list. Returns how many were dropped."""
+    if not noted:
+        return 0
+
+    def same_owner(a: str | None, b: str | None) -> bool:
+        a, b = (a or "").strip().casefold(), (b or "").strip().casefold()
+        return not a or not b or a == b
+
+    kept = [
+        item
+        for item in data.action_items
+        if not any(same_item(item.text, n.text) and same_owner(item.owner, n.owner) for n in noted)
+    ]
+    dropped = len(data.action_items) - len(kept)
+    if dropped:
+        data.action_items = kept
+    return dropped
+
+
 def revise_hint(session: Session, instruction: str) -> str:
     """The current summary, hand edits and all, and what to change in it."""
     d = session.summary_data
@@ -453,9 +477,15 @@ def summarize_session(
         others = NOTES_ONLY if notes_only else notes_hint(session.external_notes)
         if others:
             instr = f"{instr}\n{others}".strip()
-        own_notes = shared_notes_hint(session.notes or "")
+        from .notes_chips import plain_notes
+
+        own_notes = shared_notes_hint(plain_notes(session.notes or ""))  # chips as their text
         if own_notes:
             instr = f"{instr}\n{own_notes}".strip()
+        # Action items typed in the notes are the meeting's already (services/notes_items.py).
+        typed = notes_items_hint([(n.text, n.owner) for n in session.notes_items])
+        if typed:
+            instr = f"{instr}\n{typed}".strip()
         from .assets import resources_hint
 
         shared = resources_hint(app, session_id)
@@ -516,6 +546,7 @@ def summarize_session(
             result["data"],
             mine_matcher(me_names, not_me) if me_names else None,
         )
+        drop_noted_items(result["data"], session.notes_items)
         # Topics renamed or merged by hand keep their new name (services/topics.py).
         from .topics import apply_aliases
 

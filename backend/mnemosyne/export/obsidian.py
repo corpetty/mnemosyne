@@ -51,6 +51,7 @@ class ObsidianExporter:
         known_notes: Callable[[], Collection[str]] | None = None,
         annex: Mapping[str, list[str]] | None = None,
         continued: Mapping[str, str] | None = None,
+        meeting_note: Callable[[str], tuple[str, str] | None] | None = None,
     ):
         self.vault_path = Path(vault_path)
         self.subfolder = subfolder
@@ -68,6 +69,9 @@ class ObsidianExporter:
         # Action item id -> the note of the later meeting with the same task: such items are
         # plain "continued in" bullets, only the latest mention is a checkbox (task_links.py).
         self.continued = continued
+        # Meeting id -> (note file name without .md, title) of a meeting already in the vault:
+        # the notes' meeting chips link to it (None: they are just the title).
+        self.meeting_note = meeting_note
 
     def render(self, session: Session, resources: list[str] | None = None) -> str:
         transcript = session.transcript
@@ -105,6 +109,8 @@ class ObsidianExporter:
             known_notes=known,
             annex=self.annex,
             continued=self.continued,
+            meeting_note=self.meeting_note,
+            notes_items=session.notes_items,
         )
         if self.redact:  # the summary, notes, action items and the rest
             from ..summarization.privacy import redact_identifiers

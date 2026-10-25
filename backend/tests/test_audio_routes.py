@@ -1,6 +1,9 @@
 """Recording start/stop with PipeWire and ffmpeg replaced by fakes."""
 
+import pytest
+
 from tests.conftest import drain_until_job, stop_and_finish
+from tests.test_parts import needs_ffmpeg, real_audio  # noqa: F401 (a fixture)
 
 
 def test_start_requires_devices(client, fake_pipewire):
@@ -100,3 +103,64 @@ def test_stop_answers_before_the_slow_part(client, ctx, fake_pipewire, monkeypat
         assert time.monotonic() < deadline, "the finish job never completed"
         time.sleep(0.1)
     assert client.get(f"/api/sessions/{sid}").json()["status"] == "created"
+
+
+# ---- the part clock (time chips in the notes, guests' META) ----------------------------------
+
+
+def _iso_seconds(iso: str) -> float:
+    from datetime import datetime
+
+    at = datetime.fromisoformat(iso)
+    assert at.utcoffset() is not None and at.utcoffset().total_seconds() == 0  # UTC
+    return at.timestamp()
+
+
+def test_the_first_recording_has_a_clock_at_part_0(client, ctx, fake_pipewire):
+    from mnemosyne.services.parts import recording_clock
+
+    started = client.post("/api/audio/start", json={"device_ids": [1]}).json()
+    sid = started["session_id"]
+    clock = started["clock"]
+    assert clock["part"] == 0 and clock["offset"] == 0.0
+    assert _iso_seconds(clock["started_at"]) == pytest.approx(
+        ctx.active_recordings[sid].started_at, abs=0.001
+    )
+    assert recording_clock(ctx, sid) == clock
+    (active,) = client.get("/api/audio/active").json()
+    assert active["clock"] == clock
+    stop_and_finish(client, sid, {"transcribe": False})
+    # Stopped: no clock, and nothing listed as recording.
+    assert recording_clock(ctx, sid) is None
+    assert client.get("/api/audio/active").json() == []
+
+
+@needs_ffmpeg
+@pytest.mark.usefixtures("real_audio")
+def test_a_restart_and_a_new_recording_are_new_parts_on_the_clock(client, ctx):
+    """The clock's part and offset are what the save at stop gives the part (add_part)."""
+    from mnemosyne.services.parts import recording_clock
+
+    started = client.post("/api/audio/start", json={"device_ids": [1]}).json()
+    sid = started["session_id"]
+    first = started["clock"]
+    # The capture is restarted: part 0 (5 s) is saved, part 1 starts where it ends.
+    res = client.post(f"/api/audio/restart/{sid}")
+    assert res.status_code == 200, res.text
+    second = res.json()["clock"]
+    assert second["part"] == 1 and second["offset"] == pytest.approx(5.0, abs=0.15)
+    assert _iso_seconds(second["started_at"]) >= _iso_seconds(first["started_at"])
+    assert client.get("/api/audio/active").json()[0]["clock"] == second
+    _, finish = stop_and_finish(client, sid, {"transcribe": False})
+    assert finish["status"] == "completed", finish["error"]
+    assert recording_clock(ctx, sid) is None
+    # Recording into the meeting again: part 2, after parts 0 and 1 (5 s + 2 s).
+    third = client.post("/api/audio/start", json={"device_ids": [1], "session_id": sid}).json()
+    assert third["clock"]["part"] == 2
+    assert third["clock"]["offset"] == pytest.approx(7.0, abs=0.2)
+    _, finish = stop_and_finish(client, sid, {"transcribe": False})
+    assert finish["status"] == "completed", finish["error"]
+    recordings = client.get(f"/api/sessions/{sid}").json()["recordings"]
+    saved = {r["part"]: r["offset"] for r in recordings}
+    assert saved[1] == pytest.approx(second["offset"], abs=0.01)
+    assert saved[2] == pytest.approx(third["clock"]["offset"], abs=0.01)

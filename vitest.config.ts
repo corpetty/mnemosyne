@@ -19,6 +19,7 @@ export default defineConfig({
     include: [
       'src/lib/notes/**/*.test.ts',
       'src/lib/stores/**/*.test.ts',
+      'src/lib/app/**/*.test.ts',
       'viewer/src/**/*.test.ts',
       'guest/src/**/*.test.ts'
     ]

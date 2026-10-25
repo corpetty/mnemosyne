@@ -164,3 +164,15 @@ async def test_get_meeting_lists_open_comment_threads(backend, ctx, seeded):
     assert "(on “We agreed on October.”)" in section.splitlines()[0]
     assert "\n  - " in section and "Yes, it is" in section
     assert "Old question" not in out
+
+
+@pytest.mark.anyio
+async def test_get_meeting_prints_the_notes_chips_as_text(backend, ctx, seeded):
+    ctx.sessions.update_notes(
+        seeded.id,
+        "At [01:05](mnemosyne:t/0/65) [@Bob](mnemosyne:person/Bob) said yes;"
+        " see [Kickoff](mnemosyne:meeting/0123456789ab) [site](https://example.com)",
+    )
+    out = await get_meeting(backend, seeded.id)
+    assert "## Notes\nAt 01:05 @Bob said yes; see Kickoff [site](https://example.com)" in out
+    assert "mnemosyne:" not in out

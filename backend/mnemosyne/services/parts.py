@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -137,6 +138,38 @@ async def add_part(
             old.unlink(missing_ok=True)
     logger.info("Session %s: part %d added at %.1f s", session_id, part, offset)
     return offset
+
+
+async def part_start(app: AppContext, session: Session, part: int) -> tuple[int, float]:
+    """(part, offset) that add_part will give a recording starting now as `part`: part 0, or a
+    meeting without its audio file, starts the timeline at 0; a later part starts where the
+    meeting's joined audio ends (measured once, here, at the start of the recording)."""
+    existing = Path(session.audio_file) if session.audio_file else None
+    if part == 0 or existing is None or not existing.is_file():
+        return 0, 0.0
+    try:
+        return part, await asyncio.to_thread(audio_seconds, existing, app.file_key)
+    except Exception:  # the save at stop measures again; this is only the live clock
+        logger.warning("Session %s: could not measure its audio", session.id, exc_info=True)
+        return part, max(offsets(session).values())
+
+
+def recording_clock(app: AppContext, session_id: str) -> dict | None:
+    """The part clock of the meeting's recording in progress: {part, offset, started_at} with
+    the part it records into, where that part starts on the meeting's timeline (seconds) and
+    when its capture started (UTC ISO). None while nothing records. A capture restart is a new
+    recording and so a new part (api/routes/audio.py `restart`)."""
+    recording = app.active_recordings.get(session_id)
+    if recording is None or not getattr(recording, "is_recording", False):
+        return None
+    # Set by begin_recording (part_start); a recording without it counts from its own part.
+    part, offset = recording.clock_start or (recording.part, 0.0)
+    started = datetime.fromtimestamp(recording.started_at, UTC)
+    return {
+        "part": part,
+        "offset": round(offset, 3),
+        "started_at": started.isoformat(timespec="milliseconds"),
+    }
 
 
 def match_speakers(

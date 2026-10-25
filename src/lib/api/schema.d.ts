@@ -2313,6 +2313,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/notes-items/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Notes Item
+         * @description Tick, star or date an action item from the meeting's notes (services/notes_items.py).
+         *     403 "Tick it in the notes" on a meeting someone shared with me; 409 when the notes could
+         *     not take the tick.
+         */
+        patch: operations["update_notes_item_api_sessions__session_id__notes_items__item_id__patch"];
+        trace?: never;
+    };
     "/api/sessions/{session_id}/peer-shares": {
         parameters: {
             query?: never;
@@ -4001,6 +4023,7 @@ export interface components {
          *     restarted, the backend may still be recording (api/app_watch.py).
          */
         ActiveRecording: {
+            clock: components["schemas"]["PartClock"] | null;
             /** Device Ids */
             device_ids: number[];
             /** Live */
@@ -4316,6 +4339,11 @@ export interface components {
             /** Issue Url */
             issue_url: string | null;
             /**
+             * Item Id
+             * @default
+             */
+            item_id: string;
+            /**
              * Mine
              * @default false
              */
@@ -4326,6 +4354,12 @@ export interface components {
             session_id: string;
             /** Session Name */
             session_name: string;
+            /**
+             * Source
+             * @default summary
+             * @enum {string}
+             */
+            source: "summary" | "notes";
             /**
              * Task Id
              * @default
@@ -5760,6 +5794,77 @@ export interface components {
             /** Text */
             text: string;
         };
+        /**
+         * NotesItem
+         * @description An action item typed in the meeting's live notes (phase 11): a task line with a person
+         *     chip (services/notes_items.py). `text`, `owner`, `at` and `done` are derived from the line
+         *     at each fold; `follow`, `due`, `issue_url` and `task_id` are state kept across folds. `id`
+         *     is 16 hex from the line id (task key `<session>:<id>`).
+         */
+        NotesItem: {
+            /** At */
+            at: number | null;
+            /**
+             * By
+             * @default
+             */
+            by: string;
+            /**
+             * Done
+             * @default false
+             */
+            done: boolean;
+            /** Due */
+            due: string | null;
+            /**
+             * Follow
+             * @default false
+             */
+            follow: boolean;
+            /**
+             * Id
+             * @default
+             */
+            id: string;
+            /** Issue Url */
+            issue_url: string | null;
+            /** Line */
+            line: string;
+            /**
+             * Live
+             * @default false
+             */
+            live: boolean;
+            /** Owner */
+            owner: string | null;
+            /**
+             * Source
+             * @default notes
+             * @constant
+             */
+            source: "notes";
+            /**
+             * Task Id
+             * @default
+             */
+            task_id: string;
+            /** Text */
+            text: string;
+        };
+        /**
+         * NotesItemUpdate
+         * @description What to change on an action item typed in the notes; fields left out stay. `done` and
+         *     `follow` need read access (done is written into the notes, as a tick there), `due` (null
+         *     clears it) write access. Text and owner change in the notes only.
+         */
+        NotesItemUpdate: {
+            /** Done */
+            done?: boolean | null;
+            /** Due */
+            due?: string | null;
+            /** Follow */
+            follow?: boolean | null;
+        };
         /** NotesRequest */
         NotesRequest: {
             /** Notes */
@@ -5964,6 +6069,19 @@ export interface components {
             kind: string;
             /** Urls */
             urls: string[];
+        };
+        /**
+         * PartClock
+         * @description Where a recording in progress is on its meeting's timeline (services/parts.py
+         *     `recording_clock`): time chips in the notes are (part, seconds since `started_at`).
+         */
+        PartClock: {
+            /** Offset */
+            offset: number;
+            /** Part */
+            part: number;
+            /** Started At */
+            started_at: string;
         };
         /**
          * Passage
@@ -6825,6 +6943,8 @@ export interface components {
              * @default
              */
             notes: string;
+            /** Notes Items */
+            notes_items: components["schemas"]["NotesItem"][];
             /**
              * Origin
              * @default
@@ -8000,6 +8120,7 @@ export interface components {
         };
         /** StartRecordingResponse */
         StartRecordingResponse: {
+            clock: components["schemas"]["PartClock"] | null;
             /** Live Job Id */
             live_job_id: string | null;
             /** Message */
@@ -8704,6 +8825,8 @@ export interface components {
             notes: string;
             /** Notes Doc */
             notes_doc: string | null;
+            /** Notes Items */
+            notes_items: components["schemas"]["NotesItem"][] | null;
             /** Origin */
             origin: string;
             /** Origin Audio */
@@ -8836,6 +8959,11 @@ export interface components {
             /** Issue Url */
             issue_url: string | null;
             /**
+             * Item Id
+             * @default
+             */
+            item_id: string;
+            /**
              * Mine
              * @default false
              */
@@ -8846,6 +8974,12 @@ export interface components {
             session_id: string;
             /** Session Name */
             session_name: string;
+            /**
+             * Source
+             * @default summary
+             * @enum {string}
+             */
+            source: "summary" | "notes";
             /** Text */
             text: string;
         };
@@ -8879,6 +9013,12 @@ export interface components {
             session_id: string;
             /** Session Name */
             session_name: string;
+            /**
+             * Source
+             * @default summary
+             * @enum {string}
+             */
+            source: "summary" | "notes";
             /** Text */
             text: string;
         };
@@ -13614,6 +13754,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_notes_item_api_sessions__session_id__notes_items__item_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotesItemUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskItem"];
                 };
             };
             /** @description Validation Error */
