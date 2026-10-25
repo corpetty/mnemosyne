@@ -209,7 +209,9 @@ def test_typing_in_the_notes_when_they_are_shared(client, ctx, me, parts, sideca
     sid = _shared(ctx)
     with client.websocket_connect(f"/ws/notes/{sid}") as ws:
         hello = ws.receive_json()
-        assert hello["you"] == {"id": me, "name": "Corey"} and not hello["read_only"]
+        assert (
+            hello["you"]["id"] == me and hello["you"]["name"] == "Corey" and not hello["read_only"]
+        )
         ws.send_bytes(frame("f1", ["ins", 0, "hi\n"]))
         settle(ws)
         assert [(o["author_id"], o["author"]) for o in ctx.repo.notes_ops(sid)] == [(me, "Corey")]

@@ -70,10 +70,16 @@ fn fold_applies_client_frames_to_a_snapshot() {
     assert_eq!(folded["comments"], json!({}));
     assert_eq!(folded["snapshot"], STANDARD.encode(b.snapshot()));
 
-    // Folding nothing more onto the snapshot changes nothing.
-    let again = reply(json!({
+    // The task line came in the first request frame.
+    assert_eq!(folded["tasks"][0]["frame"], json!(0));
+
+    // Folding nothing more onto the snapshot changes nothing, except that the task line now
+    // comes from the snapshot, not from a frame of this request.
+    let mut again = reply(json!({
         "op": "fold", "notes": NOTES, "snapshot": folded["snapshot"], "frames": [],
     }));
+    assert_eq!(again["tasks"][0]["frame"], Value::Null);
+    again["tasks"][0]["frame"] = json!(0);
     assert_eq!(again, folded);
 }
 
