@@ -185,6 +185,10 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   pytest suite OOM-killed the desktop app (2026-10-05), and CPU-heavy runs have frozen it. Locally
   run single test files, `pnpm check`, `cargo check`, ruff; leave the full suite, full e2e and
   builds to CI (push and watch the run, or a Release workflow_dispatch), or ask Corey first.
+- Tests never open a public tunnel: conftest's `no_tunnel` stubs services/tunnel.py (a test once opened a real
+  Cloudflare quick tunnel). Keep it that way.
+- Guest frames carry a full snapshot: 8 MiB + 64 KiB, in BOTH frame.rs copies (link/src/guest/frame.rs and
+  guest-wasm/src/frame.rs). They must match.
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.
@@ -510,6 +514,22 @@ ours, which does not run yet: 409 "No host for guest notes"), `guest_notes_end_h
 `allow_guest_notes` (team servers, owner or admin). Rules: the host never sees the key; owner-side frames (typing,
 copilot, phase 8) reach guests as the owner's; guest comments are ordinary comments (searchable, synced, in records);
 one room per meeting; a deleted meeting's room is deleted; refused for shared_from meetings and without the sidecar.
+
+Guest notes without a host (unreleased, phase 10; design in the hashseq plan, build order and corrections in
+docs/plans/2026-10-25-phase-10-tasks.md, use in docs/guest-notes.md): guest notes need no publish host. The rooms
+sidecar `mnemosyne-link rooms` (link/src/guest.rs; services/link.py `RoomsLink`, started on demand, NOT tied to remote
+access) embeds the publish host on a loopback port and gives each room its own guest iroh endpoint (ALPN
+`mnemosyne/guest/1`, one bi stream per guest, framed, proxied to the loopback WebSocket); room keys live in
+`<data_dir>/guest_rooms/keys` so a link survives restarts. services/guest_notes.py `plan` (setting `guest_transport`):
+auto = iroh, else tunnel (services/tunnel.py: Tailscale Funnel, else a Cloudflare quick tunnel, cloudflared fetched by
+services/downloads.py), else host; a configured publish host is also a MIRROR (a second Bridge, same room id and key).
+Link format 2: `https://<origin>/n/#2.<room>.<key>.<endpoint>.<relay host>`; the page tries iroh first, then the host's
+wss, with a `since` per transport. The page is served from GitHub Pages (`guest_page_url`; pages.yml adds the meta CSP
+to that copy only) and keeps a sealed copy in IndexedDB. guest-wasm/ (iroh in the browser, relay-only) is built ONLY by
+CI (no clang locally): after changing it, push, take the `guest-wasm-pkg` artifact of the guest-wasm job (`gh run
+download <run> -n guest-wasm-pkg -D guest/pkg`), commit guest/pkg, then `pnpm build:guest` and commit
+backend/mnemosyne/api/static/guest. The guest e2e uses `mnemosyne-link dev-relay` on 8038 (feature `dev-relay`, never
+in releases). The room stays up only while this computer is on (sleep inhibitor held while a room is live).
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

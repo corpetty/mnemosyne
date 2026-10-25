@@ -5,7 +5,8 @@ notes in a browser, types into them, comments on them and sees the agenda, with 
 account and no pairing. Nothing else from the meeting goes out: not the transcript, the summary,
 the audio, the action items, or comments on anything but the notes.
 
-For how it works inside, see "Guest notes (phase 9)" in [architecture.md](architecture.md). To
+For how it works inside, see "Guest notes (phase 9)" and its phase 10 paragraph in
+[architecture.md](architecture.md). To
 publish a finished meeting instead, see [publishing.md](publishing.md).
 
 ## Starting them
@@ -14,8 +15,12 @@ publish a finished meeting instead, see [publishing.md](publishing.md).
   the recording screen.
 - The panel shows the link. **Copy** it, or **Show QR code** for people in the room.
 - A line shows who is here; it updates as guests come and go.
-- If no host is available, the panel says so and offers Settings (see
-  [Where it is relayed](#where-it-is-relayed)).
+- Under the link the panel says how guests reach you: "Works while this computer is on", whether
+  that is through a free testing relay, your own relay, or a temporary Cloudflare or Tailscale
+  address, and "Also kept on <host> after the meeting" when a publish host holds a copy (see
+  [How guests reach the notes](#how-guests-reach-the-notes)).
+- If nothing can carry guest notes (no sidecar, no relay, no tunnel, no host), the panel says so
+  and offers Settings.
 
 You can start guest notes before, during or after the recording. One link exists per meeting at a
 time. Meetings shared with you by someone else cannot be opened to guests.
@@ -35,37 +40,79 @@ time. Meetings shared with you by someone else cannot be opened to guests.
 
 ## The link is the permission
 
-The link looks like `https://<host>/n/<room>#<key>`. Anyone who has it can type into the notes
-until you end them. The key is the part after `#`; browsers never send it to a server. Treat the
+The link looks like `https://<page>/n/#2.<room>.<key>.<computer>.<relay>` (older links,
+`https://<host>/n/<room>#<key>`, still work). Anyone who has it can type into the notes
+until you end them. Everything after `#` is the key and where to find your computer; browsers never send it to a
+server. Treat the
 link like the notes themselves, and send it only to the people in the meeting. If it went further
 than you meant, press **New link** (below).
 
-## Encryption, and what the host sees
+## How guests reach the notes
+
+By default there is nothing to set up. Which way is used follows `guest_transport` in Settings
+(`auto`, `iroh`, `tunnel` or `host`; `auto` is the default and tries them in this order):
+
+1. **Straight to this computer over iroh.** Guests' browsers connect to your computer through a
+   relay: n0's free testing relay until ours runs, or the relays you set in `remote_relays` (see
+   [remote-access.md](remote-access.md)). The panel says "Through a free testing relay" while n0's
+   are used; they are rate-limited and for testing, with no guarantees. Each room has its own
+   throwaway address on your computer, never the one your paired computers use.
+2. **A tunnel to this computer**, when iroh is not possible: Tailscale Funnel if Tailscale is
+   running, else a temporary Cloudflare address (`*.trycloudflare.com`, no account). The first
+   time, Mnemosyne downloads `cloudflared` and checks it against a pinned SHA-256. The tunnel
+   only reaches the guest notes, never the rest of the app, and closes with the last room.
+3. **A publish host** (`guest_host`, else `publish_host`; see
+   [deploy/publish/README.md](../deploy/publish/README.md)). It is the only way that keeps working
+   when your computer is off or asleep. With a host configured, the notes are also kept there
+   whichever way is used ("Also kept on ...") and the link names it; guests try your computer
+   first and fall back to the host.
+
+The guest page itself loads from GitHub Pages (or `guest_page_url`, if you host your own copy;
+a tunnel or a host serves it from its own address). The page is code only and holds no notes:
+everything arrives sealed through the relay, tunnel or host.
+
+**It works while this computer is on.** Over iroh or a tunnel nobody can type or read until your
+computer is online. The computer is kept from sleeping while guest notes are open (as it is while
+recording). Close the laptop and guests lose the connection; they reconnect when you are back.
+
+## What guests keep
+
+A guest's browser keeps the last copy of the notes it saw, sealed (still encrypted, opened with
+the key in the link each time), until the link expires. So a guest who already opened the link can
+reread the notes when your computer is off, without you. It is removed when the link expires, when
+the guest page learns the room is gone (you pressed **Stop sharing the notes** or **New link**), or
+when the key does not open it. The page's name card says that a copy stays in the browser.
+
+## Encryption, and what the relay, tunnel or host sees
 
 Every change, comment, name and snapshot is sealed with AES-256-GCM in your app or the guest's
-browser before it leaves, under keys derived from the link's key. The host relays and stores
+browser before it leaves, under keys derived from the link's key. Whatever carries it relays
 ciphertext and cannot merge or read it.
 
-The host can see room ids (random, not your meeting id), the sizes of what is sent, times, and the
-IP address of everyone who connects, as any web server does. It cannot see text, names, the title,
-the agenda or the key. It also cannot tell guests' edits from yours.
+- **A relay** (n0's, ours or yours) sees endpoint addresses, timing and the sizes of what is sent,
+  and the IP address of everyone who connects. It cannot see text, names, the title, the agenda or
+  the key.
+- **A Tailscale Funnel or Cloudflare address**: Cloudflare terminates the TLS connection, but what
+  it handles is only our ciphertext, plus addresses, timing and sizes. Tailscale sees the same
+  for a Funnel.
+- **A publish host** sees room ids (random, not your meeting id), sizes, times and IP addresses,
+  as any web server does.
+- GitHub Pages sees that the page was fetched, and by whom, as for any web page; the key is in the
+  `#` part and never sent.
 
-The trust note from publishing applies: the page that decrypts is code the host sends. Use a host
-you run for anything sensitive. The page is served under a strict content-security policy.
+None of them can tell guests' edits from yours.
 
-## Where it is relayed
+The trust note from publishing applies: the page that decrypts is code the page's host sends. Use
+your own `guest_page_url` and relay or host for anything sensitive. The page is served under a
+strict content-security policy that lists the relays it may talk to.
 
-Your computer is behind a router, so guests and you meet at a room on a host both can reach. Which
-one is chosen in this order:
+## Settings
 
-1. `guest_host` in Settings, if set.
-2. The publish host (`publish_host`), if set.
-3. Our public guest host. **It does not run yet**, so today guest notes need one of the first two.
-
-With none, starting answers "No host for guest notes". A host is the same small program that
-serves publications ([deploy/publish/README.md](../deploy/publish/README.md)); its operator sees
-only what is listed above. If your computer is offline, guests keep typing together through the
-room, and your app catches up when it is back.
+- `guest_transport`: `auto` (default), `iroh`, `tunnel` or `host`.
+- `guest_page_url`: where the guest page is loaded from. Blank is the copy on GitHub Pages.
+- `guest_host`: a publish host just for guest notes; else `publish_host` is used.
+- `remote_relays`: the relays for iroh, shared with remote access. Blank means n0's.
+- `guest_notes_end_hours`: see below.
 
 ## Ending them
 
@@ -74,7 +121,8 @@ room, and your app catches up when it is back.
   days after it was made.
 - **Automatically**: `guest_notes_end_hours` (default 12) after the recording stops. It never ends
   guest notes during a recording, and starting a new recording part cancels it.
-- **Stop sharing the notes**: deletes the room on the host at once. Open pages lose it.
+- **Stop sharing the notes**: deletes the room at once, on this computer and on the publish host
+  when it is mirrored there. Open pages lose it.
 - **New link**: deletes the room and makes a new one with a new key; the old link stops working.
   Use it when a link leaked or you want to remove someone.
 
@@ -109,13 +157,20 @@ meeting's owner or an admin can start them. See [team-server.md](team-server.md#
 
 ## Limits
 
-- One notes frame (a paste, say) is at most 2 MiB; the host's log and snapshot are each at most
-  8 MiB. An owner offline for a long time while guests type can fill the log; new edits are then
-  refused until you reconnect.
-- A room takes at most 64 connections at once.
-- A room lives at most 7 days.
-- Guests need a current browser. Safari must be 15.4 or newer (the page connects to its own host
-  only, which older Safari cannot do for WebSockets).
+- One notes frame (a paste, say) is at most 2 MiB; the room's log and snapshot are each at most
+  8 MiB. An owner offline for a long time while guests type through a host can fill the log; new
+  edits are then refused until you reconnect.
+- A room takes at most 64 connections at once, and a room lives at most 7 days.
+- Over iroh, one relay connection carries all guests: with n0's relays that is rate-limited, and
+  ten guests each loading a 1 MB snapshot take about ten seconds in all.
+- Presence (who is here, who is typing) is not shared between the guests who came through your
+  computer and those who came through a host.
+- A Cloudflare quick tunnel gets a new address every time it starts, so after a restart of the
+  app the old link's tunnel address is dead; the iroh part of the link keeps working, and the
+  panel shows the new link. Funnel addresses are stable.
+- Guests need a current browser. Safari and other WebKit browsers are the least tested with iroh;
+  they must be Safari 15.4 or newer, and a host path remains as the fallback.
+- A self-hosted relay needs a certificate from a public authority for browsers to accept it.
 - Guests cannot see the transcript or summary or tick action items, and one guest cannot be
   removed alone.
 - The notes need the link sidecar (`mnemosyne-link`); without it, guest notes are unavailable,
