@@ -1,0 +1,18 @@
+/* The app's look (Tailwind 4's default theme), but only the classes the guest page uses:
+   `source(none)` keeps Tailwind from scanning the whole repository, so the output depends on
+   guest/ (and the notes editor under src/lib/notes, once it is used) alone and rebuilds byte for
+   byte. src/app.css itself is not imported: it locks the page's scrolling for the app's panes. */
+@import 'tailwindcss' source(none);
+@source './';
+@source not './**/*.test.ts';
+@source '../../src/lib/notes';
+
+:root {
+	color-scheme: dark;
+}
+
+html,
+body {
+	background-color: var(--color-gray-950);
+	color: var(--color-gray-200);
+}

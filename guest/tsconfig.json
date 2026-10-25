@@ -1,0 +1,22 @@
+{
+	// The guest notes page is not part of the SvelteKit app, so the app's tsconfig (generated
+	// by svelte-kit sync) does not cover it. `pnpm check` runs svelte-check on this one too.
+	"compilerOptions": {
+		"target": "esnext",
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"lib": ["esnext", "DOM", "DOM.Iterable"],
+		"types": ["vite/client"],
+		"strict": true,
+		"noEmit": true,
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"skipLibCheck": true,
+		"allowJs": true,
+		"checkJs": true,
+		"resolveJsonModule": true,
+		"forceConsistentCasingInFileNames": true,
+		"paths": { "$lib/*": ["../src/lib/*"] }
+	},
+	"include": ["./**/*.ts", "./**/*.svelte"]
+}

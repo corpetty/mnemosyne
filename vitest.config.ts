@@ -19,7 +19,8 @@ export default defineConfig({
     include: [
       'src/lib/notes/**/*.test.ts',
       'src/lib/stores/**/*.test.ts',
-      'viewer/src/**/*.test.ts'
+      'viewer/src/**/*.test.ts',
+      'guest/src/**/*.test.ts'
     ]
   }
 });

@@ -1,0 +1,575 @@
+// @vitest-environment node
+// GuestDoc against an in-memory publish host speaking /live/<room> (publish-host/src/live.rs):
+// a log with seqs, an optional sealed snapshot, frames relayed to the others, acks to the sender.
+// Node, for crypto.subtle (jsdom has none); the wasm is loaded by the notes test harness.
+import { afterEach, describe, expect, it } from 'vitest';
+import { ORIGIN, WasmHashWeb, sameBytes } from '$lib/notes/test-harness.js';
+import { insertText, setLink } from '$lib/notes/commands.js';
+import { ARTIFACT_TAG, DELTA_TAG } from '$lib/notes/sync.js';
+import { DEBOUNCE_MS, GuestDoc, PRESENCE_TTL_MS, type GuestDocOptions } from './doc';
+import {
+  Kind,
+  b64urlEncode,
+  deriveKeys,
+  newKey,
+  newRoom,
+  sealJson,
+  sealNotes,
+  unseal,
+  unsealNotes,
+  type GuestKeys
+} from './format';
+import type { RoomSocket } from './room';
+
+const LONG_URL = 'https://example.com/long/enough/to/be/an/artifact';
+
+class HostSocket implements RoomSocket {
+  readyState = 0;
+  binaryType = '';
+  onopen: RoomSocket['onopen'] = null;
+  onmessage: RoomSocket['onmessage'] = null;
+  onclose: RoomSocket['onclose'] = null;
+  onerror: RoomSocket['onerror'] = null;
+  joined = false;
+  since = -1;
+
+  constructor(
+    public url: string,
+    private host: Host
+  ) {
+    host.sockets.push(this);
+    queueMicrotask(() => {
+      if (this.readyState !== 0) return;
+      this.readyState = 1;
+      this.onopen?.({});
+    });
+  }
+  send(data: string | Uint8Array): void {
+    if (this.readyState !== 1) throw new Error('socket not open');
+    const copy = typeof data === 'string' ? data : data.slice();
+    queueMicrotask(() => this.host.fromClient(this, copy));
+  }
+  close(code = 1000): void {
+    if (this.readyState >= 2) return;
+    this.readyState = 3;
+    queueMicrotask(() => this.onclose?.({ code }));
+  }
+  // host side
+  deliver(data: string | Uint8Array): void {
+    const d = typeof data === 'string' ? data : data.slice().buffer;
+    queueMicrotask(() => {
+      if (this.readyState === 1) this.onmessage?.({ data: d });
+    });
+  }
+  json(msg: object): void {
+    this.deliver(JSON.stringify(msg));
+  }
+  drop(code = 1006): void {
+    if (this.readyState >= 2) return;
+    this.readyState = 3;
+    this.joined = false;
+    queueMicrotask(() => this.onclose?.({ code }));
+  }
+}
+
+function tagged(tag: number, seq: number | null, env: Uint8Array): Uint8Array {
+  const head = seq === null ? 1 : 9;
+  const out = new Uint8Array(head + env.length);
+  out[0] = tag;
+  if (seq !== null) new DataView(out.buffer).setBigUint64(1, BigInt(seq), false);
+  out.set(env, head);
+  return out;
+}
+
+class Host {
+  sockets: HostSocket[] = [];
+  log: { seq: number; env: Uint8Array; from: HostSocket | null }[] = [];
+  seq = 0;
+  snapshot: { seq: number; env: Uint8Array } | null = null;
+  endedAt: number | null = null;
+  /** Frames from clients vanish (the network lost them). */
+  deaf = false;
+  /** Acks are not sent (the connection dies before they arrive). */
+  noAcks = false;
+  Socket: new (url: string) => HostSocket;
+
+  constructor(
+    public room: string,
+    public keys: GuestKeys
+  ) {
+    const host = this;
+    this.Socket = class extends HostSocket {
+      constructor(url: string) {
+        super(url, host);
+      }
+    };
+  }
+
+  static async create(): Promise<Host> {
+    return new Host(newRoom(), await deriveKeys(newKey()));
+  }
+
+  get live(): HostSocket[] {
+    return this.sockets.filter((s) => s.joined && s.readyState === 1);
+  }
+
+  fromClient(s: HostSocket, data: string | Uint8Array): void {
+    if (s.readyState !== 1) return;
+    if (typeof data === 'string') {
+      if (data === 'ping') return s.deliver('pong');
+      const msg = JSON.parse(data);
+      if (msg.type !== 'join' || msg.token !== this.keys.roomToken) return s.drop(4401);
+      this.join(s, msg.since);
+      return;
+    }
+    if (!s.joined) return s.drop(4401);
+    const env = data.slice(1);
+    if (data[0] === 0x01) {
+      if (this.endedAt !== null) return s.drop(4403);
+      if (this.deaf) return;
+      this.append(env, s);
+    } else if (data[0] === 0x02) {
+      for (const o of this.live) if (o !== s) o.deliver(tagged(0x02, null, env));
+    }
+  }
+
+  private join(s: HostSocket, since: number): void {
+    s.joined = true;
+    s.since = since;
+    const snap = this.snapshot && (since === 0 || since < this.snapshot.seq) ? this.snapshot : null;
+    s.json({
+      type: 'welcome',
+      seq: this.seq,
+      snapshot_seq: this.snapshot ? this.snapshot.seq : null,
+      ended: this.endedAt !== null,
+      ended_at: this.endedAt,
+      expires: 9999,
+      present: this.live.length
+    });
+    if (snap) s.deliver(tagged(0x03, snap.seq, snap.env));
+    const floor = Math.max(since, snap ? snap.seq : 0);
+    for (const f of this.log) if (f.seq > floor) s.deliver(tagged(0x01, f.seq, f.env));
+    for (const o of this.live) o.json({ type: 'count', present: this.live.length });
+  }
+
+  /** Log and relay; ack the sender. `from` null: the owner's bridge. */
+  append(env: Uint8Array, from: HostSocket | null): number {
+    const seq = ++this.seq;
+    this.log.push({ seq, env, from });
+    for (const o of this.live) {
+      if (o === from) {
+        if (!this.noAcks) o.json({ type: 'ack', seq });
+      } else o.deliver(tagged(0x01, seq, env));
+    }
+    return seq;
+  }
+
+  /** The owner posts a snapshot covering the log so far, which is pruned. */
+  async postSnapshot(obj: Record<string, unknown>): Promise<void> {
+    const env = await sealJson(this.keys, this.room, Kind.SNAPSHOT, { format: 1, threads: [], meta: {}, ...obj });
+    this.snapshot = { seq: this.seq, env };
+    this.log = this.log.filter((f) => f.seq > this.seq);
+  }
+
+  end(): void {
+    this.endedAt = 1234;
+    for (const o of this.live) o.json({ type: 'ended', ended_at: this.endedAt, expires: 5678 });
+  }
+
+  /** Raw notes frames a guest sent, in order. */
+  async framesFrom(gid: string): Promise<Uint8Array[]> {
+    const out: Uint8Array[] = [];
+    for (const f of this.log) {
+      if (f.env[0] !== Kind.NOTES) continue;
+      const n = await unsealNotes(this.keys, this.room, f.env);
+      if (n.gid === gid) out.push(n.frame);
+    }
+    return out;
+  }
+}
+
+const docs: GuestDoc[] = [];
+
+function guest(host: Host, name: string, opts: Partial<GuestDocOptions> = {}): GuestDoc {
+  const d = new GuestDoc({
+    room: host.room,
+    keys: host.keys,
+    gid: `g-${name}`,
+    name,
+    url: `ws://host/live/${host.room}?who=${name}`,
+    webSocket: host.Socket,
+    origin: ORIGIN,
+    ...opts
+  });
+  docs.push(d);
+  d.connect();
+  return d;
+}
+
+afterEach(() => {
+  for (const d of docs.splice(0)) d.destroy();
+});
+
+const tick = (ms = 2) => new Promise((r) => setTimeout(r, ms));
+
+function text(d: GuestDoc): string | null {
+  return d.doc ? d.doc.web.text(d.doc.obj) : null;
+}
+
+function append(d: GuestDoc, s: string): void {
+  d.applyLocal((doc) => insertText(doc, doc.web.textLen(doc.obj), s));
+}
+
+/** Until nothing moves: every doc idle, the log and every text unchanged for a few rounds. */
+async function settle(host: Host, ...ds: GuestDoc[]): Promise<void> {
+  let last = '';
+  let same = 0;
+  for (let i = 0; i < 400; i++) {
+    await tick();
+    await Promise.all(ds.map((d) => d.idle()));
+    const sig = JSON.stringify([host.seq, host.sockets.length, ds.map((d) => [d.status, text(d), d.version])]);
+    if (sig === last) {
+      if (++same >= 3) return;
+    } else same = 0;
+    last = sig;
+  }
+  throw new Error('did not settle');
+}
+
+function converged(...ds: GuestDoc[]): boolean {
+  const a = ds[0].doc!;
+  return ds.every((d) => d.doc !== null && sameBytes(d.doc.web.encode(), a.web.encode()) && text(d) === text(ds[0]));
+}
+
+/** The doc's joined socket (each test doc has its own URL). */
+function socketOf(host: Host, d: GuestDoc): HostSocket {
+  const s = host.live.filter((x) => x.url.endsWith(`?who=${d.you.name}`));
+  return s[s.length - 1];
+}
+
+describe('GuestDoc', () => {
+  it('two guests converge on concurrent edits through the room', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    const B = guest(host, 'Ben');
+    await settle(host, A, B);
+    expect(A.status).toBe('live');
+    expect(B.status).toBe('live');
+    expect(text(A)).toBe('');
+    // at the same time, at the same place
+    // (different texts: hashseq ids are content hashes, so identical concurrent inserts coincide)
+    append(A, 'ana says hi\n');
+    append(B, 'ben writes\n');
+    A.flush();
+    B.flush();
+    await settle(host, A, B);
+    expect(converged(A, B)).toBe(true);
+    expect(text(A)).toContain('ana says hi\n');
+    expect(text(A)).toContain('ben writes\n');
+    // the debounce sends without a flush
+    append(B, 'later\n');
+    await tick(DEBOUNCE_MS + 20);
+    await settle(host, A, B);
+    expect(text(A)).toContain('later\n');
+    expect(converged(A, B)).toBe(true);
+    // every frame carries its guest's id and name
+    expect((await host.framesFrom('g-Ana')).length).toBeGreaterThan(0);
+    expect((await host.framesFrom('g-Ben')).length).toBeGreaterThan(0);
+  });
+
+  it('a late joiner opens from the snapshot and the frames after it', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    const B = guest(host, 'Ben');
+    await settle(host, A, B);
+    append(A, 'one\n');
+    A.flush();
+    await settle(host, A, B);
+    append(B, 'two\n');
+    B.flush();
+    await settle(host, A, B);
+    // what the owner's bridge posts: the folded store, as the app's relay hello would send it
+    await host.postSnapshot({
+      notes: b64urlEncode(A.doc!.web.encode()),
+      frames: [],
+      origin: ORIGIN,
+      meta: { title: 'Weekly', date: '2026-10-24T10:00:00+02:00', owner: 'Olga', agenda: [{ text: 'Budget', covered: true }], ended: false, ended_at: '' },
+      threads: [{ root: { id: 'c1', parent_id: null, author: 'Olga', gid: '', text: 'hi', quote: 'one', mark: 'comment:c1' }, replies: [] }]
+    });
+    expect(host.log.length).toBe(0);
+    append(A, 'three\n');
+    A.flush();
+    await settle(host, A, B);
+    expect(host.log.length).toBeGreaterThan(0);
+    // no origin given: it comes with the snapshot
+    const C = guest(host, 'Cy', { origin: undefined });
+    await settle(host, A, B, C);
+    expect(C.status).toBe('live');
+    expect(converged(A, B, C)).toBe(true);
+    expect(C.meta?.title).toBe('Weekly');
+    expect(C.meta?.agenda).toEqual([{ text: 'Budget', covered: true }]);
+    expect(C.threads.map((t) => t.root.id)).toEqual(['c1']);
+    // and C's edits reach the others
+    append(C, 'four\n');
+    C.flush();
+    await settle(host, A, B, C);
+    expect(converged(A, B, C)).toBe(true);
+    expect(text(A)).toContain('four\n');
+  });
+
+  it('opens from a snapshot made of frames only, with the origin from META', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    await settle(host, A);
+    append(A, 'alpha\n');
+    A.applyLocal((doc) => setLink(doc, 0, 5, LONG_URL));
+    A.flush();
+    await settle(host, A);
+    const frames = await host.framesFrom('g-Ana');
+    expect(frames.some((f) => f[0] === ARTIFACT_TAG)).toBe(true);
+    expect(frames.some((f) => f[0] === DELTA_TAG)).toBe(true);
+    await host.postSnapshot({ notes: '', frames: frames.map(b64urlEncode) });
+    const B = guest(host, 'Ben', { origin: undefined });
+    await settle(host, A, B);
+    expect(B.doc).toBe(null); // the origin is not known yet
+    expect(B.status).toBe('live');
+    const meta = { title: 'T', date: '', owner: 'Olga', agenda: [], ended: false, ended_at: '', origin: ORIGIN };
+    host.append(await sealJson(host.keys, host.room, Kind.META, meta), null);
+    await settle(host, A, B);
+    expect(B.doc).not.toBe(null);
+    expect(converged(A, B)).toBe(true);
+    expect(B.meta?.owner).toBe('Olga');
+  });
+
+  it('edits made while disconnected are sent exactly once after the reconnect', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    const B = guest(host, 'Ben');
+    await settle(host, A, B);
+    append(A, 'before\n');
+    A.flush();
+    await settle(host, A, B);
+    const sentBefore = A.sentFrames;
+    const loggedBefore = (await host.framesFrom('g-Ana')).length;
+
+    socketOf(host, A).drop(1006);
+    await tick(5);
+    expect(A.status).toBe('reconnecting');
+    // typing goes on locally; nothing is sent or queued
+    append(A, 'offline one\n');
+    A.flush();
+    append(A, 'offline two\n');
+    A.applyLocal((doc) => setLink(doc, 0, 6, LONG_URL));
+    A.flush();
+    expect(A.sentFrames).toBe(sentBefore);
+    // meanwhile B types too
+    append(B, 'ben while ana was away\n');
+    B.flush();
+    await settle(host, B);
+
+    A.reconnect();
+    await settle(host, A, B);
+    expect(A.status).toBe('live');
+    expect(converged(A, B)).toBe(true);
+    expect(text(B)).toContain('offline one\n');
+    expect(text(B)).toContain('offline two\n');
+    expect(text(A)).toContain('ben while ana was away\n');
+    // one artifact (the link) and one delta with both offline edits; never B's ops sent back
+    const after = (await host.framesFrom('g-Ana')).slice(loggedBefore);
+    expect(after.map((f) => f[0])).toEqual([ARTIFACT_TAG, DELTA_TAG]);
+    expect(A.sentFrames - sentBefore).toBe(2);
+    // and nothing more later
+    await settle(host, A, B);
+    expect((await host.framesFrom('g-Ana')).length).toBe(loggedBefore + 2);
+  });
+
+  it('a frame the room logged but never acknowledged is not sent again', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    const B = guest(host, 'Ben');
+    await settle(host, A, B);
+    host.noAcks = true;
+    append(A, 'logged, ack lost\n');
+    A.applyLocal((doc) => setLink(doc, 0, 6, LONG_URL));
+    A.flush();
+    await settle(host, A, B);
+    const logged = (await host.framesFrom('g-Ana')).length;
+    expect(logged).toBe(2);
+    expect(A.room.since).toBeLessThan(host.seq);
+    host.noAcks = false;
+    socketOf(host, A).drop(1006);
+    await tick(5);
+    A.reconnect();
+    await settle(host, A, B);
+    expect(A.status).toBe('live');
+    expect(host.sockets[host.sockets.length - 1].since).toBeLessThan(host.seq);
+    expect((await host.framesFrom('g-Ana')).length).toBe(logged);
+    expect(A.room.since).toBe(host.seq);
+    expect(converged(A, B)).toBe(true);
+  });
+
+  it('a frame lost on the way is sent again after the reconnect, once', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    const B = guest(host, 'Ben');
+    await settle(host, A, B);
+    host.deaf = true;
+    append(A, 'lost on the way\n');
+    A.flush();
+    await settle(host, A, B);
+    expect(text(B)).toBe('');
+    host.deaf = false;
+    socketOf(host, A).drop(1006);
+    await tick(5);
+    A.reconnect();
+    await settle(host, A, B);
+    expect(text(B)).toBe('lost on the way\n');
+    expect((await host.framesFrom('g-Ana')).length).toBe(1);
+    expect(converged(A, B)).toBe(true);
+  });
+
+  it('an artifact the room already has is not sent again', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    await settle(host, A);
+    append(A, 'link\n');
+    A.applyLocal((doc) => setLink(doc, 0, 4, LONG_URL));
+    A.flush();
+    await settle(host, A);
+    const logged = (await host.framesFrom('g-Ana')).length;
+    socketOf(host, A).drop(1006);
+    await tick(5);
+    A.reconnect();
+    await settle(host, A);
+    expect(A.status).toBe('live');
+    expect((await host.framesFrom('g-Ana')).length).toBe(logged);
+  });
+
+  it('turns read-only when the room ends; a later visitor reads the ended notes', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    await settle(host, A);
+    append(A, 'final words\n');
+    A.flush();
+    await settle(host, A);
+    host.end();
+    await settle(host, A);
+    expect(A.status).toBe('ended');
+    expect(A.readOnly).toBe(true);
+    expect([A.endedAt, A.expires]).toEqual([1234, 5678]);
+    const sent = A.sentFrames;
+    expect(A.applyLocal((doc) => insertText(doc, 0, 'nope'))).toBe(undefined);
+    A.localChange();
+    A.flush();
+    await settle(host, A);
+    expect(A.sentFrames).toBe(sent);
+    expect(text(A)).toBe('final words\n');
+
+    const B = guest(host, 'Ben');
+    await settle(host, A, B);
+    expect(B.status).toBe('ended');
+    expect(B.readOnly).toBe(true);
+    expect(text(B)).toBe('final words\n');
+  });
+
+  it('shows who is here and who is typing; presence expires', async () => {
+    let now = 1_000_000;
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    const B = guest(host, 'Ben', { now: () => now });
+    await settle(host, A, B);
+    // everyone announces themselves on joining
+    expect(B.others.map((p) => p.name)).toEqual(['Ana']);
+    expect(B.present).toBe(2);
+    A.setTyping(true);
+    await settle(host, A, B);
+    expect(B.typing).toEqual(['Ana']);
+    A.setTyping(false);
+    await settle(host, A, B);
+    expect(B.typing).toEqual([]);
+    // the owner's bridge, gid ""
+    const env = await sealJson(host.keys, host.room, Kind.PRESENCE, { gid: '', name: 'Olga', typing: false });
+    for (const s of host.live) s.deliver(tagged(0x02, null, env));
+    await settle(host, A, B);
+    expect(B.others.map((p) => p.name)).toEqual(['Olga', 'Ana']);
+    now += PRESENCE_TTL_MS + 1;
+    expect(B.others).toEqual([]);
+  });
+
+  it('applies owner frames, threads, and skips envelopes it cannot open', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    await settle(host, A);
+    // the owner types: a frame from another store, gid ""
+    const owner = new WasmHashWeb();
+    const doc = { web: owner, obj: owner.createSeq(ORIGIN) };
+    insertText(doc, 0, 'owner here\n');
+    const delta = owner.takeDeltas();
+    host.append(await sealNotes(host.keys, host.room, '', 'Olga', delta), null);
+    host.append(
+      await sealJson(host.keys, host.room, Kind.COMMENT, {
+        op: 'threads',
+        threads: [{ root: { id: 'abc', author: 'Olga', text: 'see this' }, replies: [{ id: 'def', parent_id: 'abc', author: 'Ana (guest)', gid: 'g-Ana' }] }]
+      }),
+      null
+    );
+    // sealed for another room: ignored
+    const other = await Host.create();
+    host.append(await sealNotes(other.keys, other.room, '', 'x', delta), null);
+    await settle(host, A);
+    expect(text(A)).toBe('owner here\n');
+    expect(A.lastEdit?.name).toBe('Olga');
+    expect(A.threads[0].root.text).toBe('see this');
+    expect(A.threads[0].replies[0].gid).toBe('g-Ana');
+    expect(A.skipped).toBe(1);
+    // a comment op goes out sealed, with our gid and name
+    expect(await A.sendComment({ op: 'create', id: '0123456789ab', text: 'hello' })).toBe(true);
+    await settle(host, A);
+    const last = host.log[host.log.length - 1];
+    const { kind, plaintext } = await unseal(host.keys, host.room, last.env);
+    expect(kind).toBe(Kind.COMMENT);
+    expect(JSON.parse(new TextDecoder().decode(plaintext))).toEqual({
+      op: 'create',
+      id: '0123456789ab',
+      text: 'hello',
+      gid: 'g-Ana',
+      name: 'Ana'
+    });
+  });
+
+  it('synced resolves once the room acknowledged what was typed', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    await settle(host, A);
+    append(A, 'mark me\n');
+    await A.synced();
+    expect((await host.framesFrom('g-Ana')).length).toBe(1);
+    expect(A.room.since).toBe(host.seq);
+  });
+  it('a first visit reads the room without announcing itself or saying anything until it has a name', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    const B = guest(host, 'Ben', { gid: 'g-new', name: '' });
+    await settle(host, A, B);
+    // B reads, but nobody hears of B and B cannot comment
+    expect(B.status).toBe('live');
+    expect(B.others.map((p) => p.name)).toEqual(['Ana']);
+    expect(A.others).toEqual([]);
+    expect(await B.sendComment({ op: 'create', id: '0123456789ab', text: 'hi' })).toBe(false);
+    B.setName('Ben');
+    await settle(host, A, B);
+    expect(A.others.map((p) => p.name)).toEqual(['Ben']);
+    expect(await B.sendComment({ op: 'create', id: '0123456789ab', text: 'hi' })).toBe(true);
+  });
+
+  it('counts the catch-ups, one for each (re)connect', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana');
+    await settle(host, A);
+    expect(A.catchUps).toBe(1);
+    socketOf(host, A).drop();
+    A.reconnect();
+    await settle(host, A);
+    expect(A.catchUps).toBe(2);
+  });
+});
