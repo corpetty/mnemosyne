@@ -5,7 +5,7 @@
 	// (Name.svelte, kept in localStorage by identity.ts) comes up over the notes as soon as the
 	// meeting's details are known, so it can say whose notes these are; the editor stays read-only
 	// and nothing is announced until it is answered. Beside the notes: the agenda, and comments.
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import Agenda from './Agenda.svelte';
 	import type { Anchor } from './comments';
 	import { openMarkIds } from './comments';
@@ -16,11 +16,14 @@
 	import { deriveKeys, type GuestKeys } from './format';
 	import { loadGuestWasm } from './guest-wasm';
 	import { Identity } from './identity';
+	import { isNarrow, panelId, tabId, watchNarrow, type TabId } from './layout';
 	import { parseLink, type GuestLink } from './link';
 	import Name from './Name.svelte';
 	import Notes from './Notes.svelte';
 	import { peopleParts, whoOf } from './presence';
 	import { colorsFor } from '$lib/notes/ui/carets.js';
+	import { isCoarse } from '$lib/notes/ui/viewport.js';
+	import Tabs from './Tabs.svelte';
 	import { transportsFor } from './transports';
 
 	type View =
@@ -37,6 +40,12 @@
 	let rev = $state(0);
 	let changingName = $state(false);
 	let notes = $state<ReturnType<typeof Notes>>();
+	let comments = $state<ReturnType<typeof Comments>>();
+	/** Below Tailwind's `md` the notes, agenda and comments are tabs (Tabs.svelte); wider, columns. */
+	let narrow = $state(isNarrow());
+	let tab = $state<TabId>('notes');
+	/** The Comments tab's count: open threads, a comment just sent included. */
+	let openThreads = $state(0);
 	/** The selection being commented on, and the thread to bring into view (a click on its mark). */
 	let draft = $state<Anchor | null>(null);
 	let focus = $state<{ id: string; n: number } | null>(null);
@@ -96,8 +105,27 @@
 		changingName = false;
 	}
 
+	/**
+	 * A click on a highlight in the notes. On a touch screen the threads open in a sheet over the
+	 * notes; otherwise the first one is brought into the comments panel (its tab, when narrow).
+	 */
 	function openThread(ids: string[]) {
-		if (ids.length) focus = { id: ids[0], n: (focus?.n ?? 0) + 1 };
+		if (!ids.length) return;
+		if (isCoarse() && comments) {
+			comments.openSheet(ids);
+			return;
+		}
+		if (narrow) tab = 'comments';
+		focus = { id: ids[0], n: (focus?.n ?? 0) + 1 };
+	}
+
+	/** A thread's range in the notes: its tab first when the notes are not what is showing. */
+	async function showInNotes(id: string) {
+		if (narrow && tab !== 'notes') {
+			tab = 'notes';
+			await tick();
+		}
+		notes?.goTo(id);
 	}
 
 	// A snapshot of GuestDoc, taken again on each of its notifications (`rev`).
@@ -150,6 +178,11 @@
 		document.title = view.kind === 'joined' && hasDoc ? title : 'Mnemosyne';
 	});
 
+	// A selection to comment on (narrow, with a mouse): the compose box is in the Comments tab.
+	$effect(() => {
+		if (narrow && draft) tab = 'comments';
+	});
+
 	// Nothing to comment on once the notes are read-only.
 	$effect(() => {
 		if (!canAct) draft = null;
@@ -157,6 +190,7 @@
 
 	onMount(() => {
 		open();
+		const stopNarrow = watchNarrow((n) => (narrow = n));
 		// A key pasted in after the page opened.
 		const onHash = () => open();
 		// What was typed in the last moments goes out before the page goes away.
@@ -164,6 +198,7 @@
 		window.addEventListener('hashchange', onHash);
 		window.addEventListener('pagehide', onHide);
 		return () => {
+			stopNarrow();
 			window.removeEventListener('hashchange', onHash);
 			window.removeEventListener('pagehide', onHide);
 			leave();
@@ -254,8 +289,22 @@
 			</div>
 		{/if}
 
+		{#if narrow}
+			<div class="mt-4">
+				<Tabs bind:selected={tab} comments={openThreads} />
+			</div>
+		{/if}
+
 		<div class="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">
-			<section aria-label="Notes" class="min-w-0">
+			<!-- The editor stays mounted while another tab shows (hidden, not destroyed). -->
+			<section
+				id={panelId('notes')}
+				role={narrow ? 'tabpanel' : undefined}
+				aria-label={narrow ? undefined : 'Notes'}
+				aria-labelledby={narrow ? tabId('notes') : undefined}
+				hidden={narrow && tab !== 'notes'}
+				class="min-w-0"
+			>
 				<Notes
 					bind:this={notes}
 					{guest}
@@ -264,19 +313,34 @@
 					openIds={snap.openIds}
 					cancomment={canAct}
 					oncompose={(a) => (draft = a)}
+					onpost={(a, t) => (comments ? comments.post(a, t) : Promise.reject(new Error('Not ready')))}
 					onmark={openThread}
 				/>
 			</section>
-			<aside class="min-w-0 space-y-6" aria-label="Agenda and comments">
-				<Agenda items={meta?.agenda ?? []} />
+			<aside class={narrow ? 'contents' : 'min-w-0 space-y-6'} aria-label="Agenda and comments">
+				{#if narrow}
+					<div id={panelId('agenda')} role="tabpanel" aria-labelledby={tabId('agenda')} hidden={tab !== 'agenda'}>
+						{#if meta?.agenda?.length}
+							<Agenda items={meta.agenda} />
+						{:else}
+							<p class="text-sm text-gray-500" data-testid="guest-agenda-none">There is no agenda for this meeting.</p>
+						{/if}
+					</div>
+				{:else}
+					<Agenda items={meta?.agenda ?? []} />
+				{/if}
 				<Comments
+					bind:this={comments}
+					bind:openCount={openThreads}
+					phone={narrow}
+					visible={tab === 'comments'}
 					{guest}
 					{rev}
 					{canAct}
 					{draft}
 					{focus}
 					ondone={() => (draft = null)}
-					ongoto={(id) => notes?.goTo(id)}
+					ongoto={(id) => void showInNotes(id)}
 				/>
 			</aside>
 		</div>

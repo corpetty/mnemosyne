@@ -96,6 +96,8 @@
 			};
 		},
 		compose: (sel) => (draft = sel),
+		// The touch screens' comment sheet: the composer's post, on the sheet's selection.
+		postComment: (sel, text) => postComment(text, sel),
 		onMark: (ids) => showThreads(ids),
 		say: (message, level) => (level === 'error' ? toastState.error(message) : toastState.info(message)),
 		get presence() {
@@ -124,8 +126,7 @@
 		})
 	);
 
-	async function postComment(text: string) {
-		const d = draft;
+	async function postComment(text: string, d: CommentSelection | null = draft) {
 		const st = target();
 		if (!d || !st) return;
 		// The server marks the characters, so it must have them: what was typed last goes first,

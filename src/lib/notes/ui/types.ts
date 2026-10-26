@@ -77,6 +77,12 @@ export interface NotesHost {
   bindRemote(hooks: RemoteHooks): () => void;
   /** Start a comment on this selection. */
   compose(sel: CommentSelection): void;
+  /**
+   * Post a comment on this selection now: the touch screens' comment sheet (CommentSheet.svelte)
+   * writes the text itself and sends it here, the same way the page's composer posts. Rejects
+   * with a message for the person. Without it touch screens use `compose` too.
+   */
+  postComment?(sel: CommentSelection, text: string): Promise<void>;
   /** A click on a highlighted mark: the open threads on it, first one first. */
   onMark(ids: string[]): void;
   /** A message for the person (the app's toasts, the guest page's notice line). */

@@ -5,14 +5,19 @@
 	// comment marks painted from the open threads, the link prompt, Ctrl+Alt+M, the slim toolbar, the
 	// selection toolbar floating over a selection and our selection for live carets. Page-specific behaviour comes in through `host` (ui/types.ts);
 	// nothing here imports outside src/lib/notes, so the guest Vite entry bundles it.
+	// On touch screens (coarse pointer) the touch bar is the toolbar (no slim toolbar, no hint
+	// line), its buttons act on the last selection the editor had, Comment opens a sheet above the
+	// keyboard (CommentSheet.svelte, when the host can post: `postComment`), and the line being
+	// typed is kept above the bar.
 	import { onMount, tick, untrack, type Snippet } from 'svelte';
 	import { parseChip } from '../chips.js';
-	import { commentRange, commentSelection } from '../comments.js';
+	import { commentRange, commentSelection, type CommentSelection } from '../comments.js';
 	import { toggleTask } from '../commands.js';
 	import { PASTE_LIMIT } from '../editor/clipboard.js';
 	import '../editor/editor.css';
 	import { attachInput, type EditorInput, type LinkRequest } from '../editor/input.js';
-	import { createEditorView, type EditorView } from '../editor/view.js';
+	import { caretRect } from '../editor/rects.js';
+	import { createEditorView, restoredOffset, type EditState, type EditorView } from '../editor/view.js';
 	import { ensureTerminated, lineAt, spansOf, valuesAt, type Doc, type Line, type LineKind } from '../model.js';
 	import { UndoStack } from '../undo.js';
 	import CaretOverlay from './CaretOverlay.svelte';
@@ -20,6 +25,8 @@
 	import SelectionToolbar, { type SelectionActive, type SelectionMark } from './SelectionToolbar.svelte';
 	import SlimToolbar from './SlimToolbar.svelte';
 	import TouchBar from './TouchBar.svelte';
+	import CommentSheet from './CommentSheet.svelte';
+	import { caretScroll, isCoarse, scrollParent, watchCoarse } from './viewport.js';
 	import SlashMenu from './SlashMenu.svelte';
 	import type { NotesHost, SelectionIds, ToolbarActive } from './types.js';
 
@@ -184,6 +191,7 @@
 		refreshEmpty();
 		refreshUndo();
 		ctx = { doc, view, input: inp, undo, root, paint };
+		lastSel = null;
 		paint();
 		input = inp;
 		ready = true;
@@ -206,6 +214,8 @@
 			input = null;
 			ready = false;
 			linkReq = null;
+			lastSel = null;
+			sheet = null;
 		};
 	}
 
@@ -241,6 +251,7 @@
 			selNow();
 			updateBar();
 			slash?.reposition();
+			keepCaretVisible();
 		});
 	}
 
@@ -300,6 +311,7 @@
 			const node = sel?.anchorNode;
 			if (root && node && root.contains(node)) {
 				selected = !sel.isCollapsed;
+				remember();
 				slash?.recheck();
 				schedule();
 			} else if (sentSel !== null) schedule();
@@ -339,6 +351,22 @@
 		};
 		document.addEventListener('scroll', follow, true);
 		window.addEventListener('resize', follow);
+		// Touch screens: the keyboard coming up hides the bottom of the page; the caret follows.
+		const stopCoarse = watchCoarse((c) => (coarse = c));
+		const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+		const keyboard = () => {
+			if (coarse && touchFocus) schedule();
+		};
+		vv?.addEventListener('resize', keyboard);
+		// Focus kept the touch bar up by moving into it (boxFocusOut): leaving the bar for anywhere
+		// but the editor takes it down.
+		const barFocusOut = (e: FocusEvent) => {
+			if (!(e.target instanceof Node) || !touchBar?.contains(e.target)) return;
+			const to = e.relatedTarget;
+			if (to instanceof Node && (boxEl?.contains(to) || touchBar.contains(to))) return;
+			touchFocus = false;
+		};
+		document.addEventListener('focusout', barFocusOut, true);
 		const ro = typeof ResizeObserver === 'function' && boxEl ? new ResizeObserver(follow) : null;
 		if (ro && boxEl) ro.observe(boxEl);
 		return () => {
@@ -346,6 +374,9 @@
 			document.removeEventListener('keydown', onKey);
 			document.removeEventListener('scroll', follow, true);
 			window.removeEventListener('resize', follow);
+			stopCoarse();
+			vv?.removeEventListener('resize', keyboard);
+			document.removeEventListener('focusout', barFocusOut, true);
 			ro?.disconnect();
 			if (frame) cancelAnimationFrame(frame);
 			if (flashTimer) clearTimeout(flashTimer);
@@ -510,7 +541,9 @@
 		const to = e.relatedTarget;
 		if (to instanceof Node && boxEl?.contains(to)) return;
 		focusWithin = false;
-		touchFocus = false;
+		// A browser that still moves focus to a touch bar button: the bar stays for its action,
+		// which gives the editor its focus back.
+		if (!(to instanceof Node && touchBar?.contains(to))) touchFocus = false;
 		savedSel = null;
 		slash?.close();
 		schedule();
@@ -565,7 +598,146 @@
 			host.say('Select the text to comment on first', 'info');
 			return;
 		}
-		host.compose(picked);
+		if (coarse && host.postComment) openSheet(picked);
+		else host.compose(picked);
+	}
+
+	// ---- touch screens -------------------------------------------------------------------------------
+	// A tap on the touch bar must not cost the editor its selection, but a browser may still blur
+	// the editor or clear the selection on the way (see TouchBar.svelte). So the editor remembers
+	// its last selection as element ids (they survive remote edits, view.capture) whenever it
+	// changes, and the bar's actions run on that one when the live selection is gone.
+	let coarse = $state(isCoarse());
+	/** The editor's last selection while it was in the editor (selectionchange). */
+	let lastSel: EditState | null = null;
+	let touchBar = $state<ReturnType<typeof TouchBar>>();
+	/** The touch bar's height while it shows (the caret is kept above it). */
+	let touchHeight = $state(0);
+	/** The selection the comment sheet is writing on (null: no sheet). */
+	let sheet = $state.raw<CommentSelection | null>(null);
+	/** The editor's selection when the sheet opened, put back by Cancel. */
+	let sheetSel: EditState | null = null;
+
+	function remember() {
+		const s = ctx?.view.capture();
+		if (s) lastSel = s;
+	}
+
+	/** The live selection in the editor, else the remembered one (offsets now). */
+	function touchSelection(): { anchor: number; focus: number } | null {
+		const c = ctx;
+		if (!c) return null;
+		const live = c.view.getSelection();
+		if (live) return live;
+		return lastSel ? offsetsOf(lastSel) : null;
+	}
+
+	function offsetsOf(s: EditState): { anchor: number; focus: number } | null {
+		const c = ctx;
+		if (!c) return null;
+		return {
+			anchor: restoredOffset(c.doc, s.anchor, s.anchorOffset),
+			focus: restoredOffset(c.doc, s.focus, s.focusOffset)
+		};
+	}
+
+	/** Give the editor its focus and the remembered selection back when it lost them. */
+	function restoreTouch(s: EditState | null = lastSel): boolean {
+		const c = ctx;
+		if (!c) return false;
+		const focused = c.view.readOnly || c.root.contains(document.activeElement);
+		if (focused && c.view.getSelection()) return true;
+		const at = s ? offsetsOf(s) : null;
+		if (!at) return false;
+		if (!c.view.readOnly) c.root.focus({ preventScroll: true });
+		c.view.setSelection(at.anchor, at.focus);
+		return true;
+	}
+
+	/** A touch bar button: on the editor's selection, put back first when the tap took it. */
+	function touchRun(act: () => void) {
+		restoreTouch();
+		act();
+	}
+
+	function touchComment() {
+		const c = ctx;
+		if (!c || !canComment) return;
+		const sel = touchSelection();
+		const picked = sel ? commentSelection(c.doc, sel.anchor, sel.focus) : null;
+		if (!picked) {
+			host.say('Select the text to comment on first', 'info');
+			return;
+		}
+		if (host.postComment) openSheet(picked);
+		else {
+			restoreTouch();
+			host.compose(picked);
+		}
+	}
+
+	function openSheet(picked: CommentSelection) {
+		remember();
+		sheetSel = lastSel;
+		sheet = picked;
+		// Focus goes to the sheet's text box (a bar button holding it is removed with the bar, which
+		// fires no focusout): the editor is not being typed in any more.
+		touchFocus = false;
+	}
+
+	async function sheetSubmit(text: string) {
+		const s = sheet;
+		if (!s || !host.postComment) return;
+		try {
+			await host.postComment(s, text);
+		} catch (e) {
+			host.say(e instanceof Error ? e.message : 'Could not post the comment', 'error');
+			throw e;
+		}
+		if (sheet === s) {
+			sheet = null;
+			sheetSel = null;
+		}
+	}
+
+	/** Cancel or Escape: the sheet goes, the editor's selection comes back. */
+	function sheetCancel() {
+		const keep = sheetSel;
+		sheet = null;
+		sheetSel = null;
+		restoreTouch(keep);
+	}
+
+	/**
+	 * Touch screens, while typing: keep the caret above the touch bar (and below the visible top),
+	 * scrolling the page or the scrolling ancestor. Only a caret: a selection being dragged by its
+	 * handles is left alone.
+	 */
+	function keepCaretVisible() {
+		const c = ctx;
+		const box = boxEl;
+		if (!c || !box || !coarse || readOnly || !touchFocus || sheet) return;
+		const sel = c.view.getSelection();
+		if (!sel || sel.anchor !== sel.focus) return;
+		const r = caretRect(c.root, sel.focus, { left: 0, top: 0 });
+		if (!r || !(r.h > 0)) return;
+		const vv = window.visualViewport;
+		let top = vv ? vv.offsetTop : 0;
+		let bottom = top + (vv ? vv.height : window.innerHeight);
+		let bar = touchHeight;
+		const sp = scrollParent(box);
+		const page = !sp || sp === document.scrollingElement;
+		if (sp && !page) {
+			// An inner scroller: its own edges count, and the bar only where it covers it.
+			const b = sp.getBoundingClientRect();
+			bar = Math.max(0, bar - Math.max(0, bottom - b.bottom));
+			top = Math.max(top, b.top);
+			bottom = Math.min(bottom, b.bottom);
+		}
+		const dy = caretScroll({ top: r.y, bottom: r.y + r.h, viewTop: top, viewHeight: bottom - top, bar });
+		if (Math.abs(dy) < 1) return;
+		if (sp && !page) sp.scrollBy?.(0, dy);
+		else window.scrollBy?.(0, dy);
 	}
 
 	/**
@@ -678,14 +850,14 @@
 	{/snippet}
 	{#if beside}
 		<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-			{#if !readOnly || canComment}
+			{#if (!readOnly || canComment) && !coarse}
 				{@render toolbar()}
 			{:else}
 				<span></span>
 			{/if}
 			{@render beside()}
 		</div>
-	{:else}
+	{:else if !coarse}
 		{@render toolbar()}
 	{/if}
 
@@ -760,18 +932,23 @@
 		{/if}
 	</div>
 	<TouchBar
+		bind:this={touchBar}
 		{active}
-		visible={touchFocus || (readOnly && selected)}
+		visible={!sheet && (touchFocus || (readOnly && selected))}
 		{readOnly}
 		{canComment}
 		bind:shown={touchShown}
-		ontoggle={toggle}
-		onbullet={bulletButton}
-		ontask={toggleTaskList}
-		onslash={insertButton}
-		oncomment={startComment}
+		bind:height={touchHeight}
+		ontoggle={(kind) => touchRun(() => toggle(kind))}
+		onbullet={() => touchRun(bulletButton)}
+		ontask={() => touchRun(toggleTaskList)}
+		onslash={() => touchRun(insertButton)}
+		oncomment={touchComment}
 	/>
-	{#if !readOnly}
+	{#if sheet}
+		<CommentSheet quote={sheet.text} onsubmit={sheetSubmit} oncancel={sheetCancel} />
+	{/if}
+	{#if !readOnly && !coarse}
 		<p class="text-[11px] text-gray-600">{HINT}</p>
 	{/if}
 </div>
