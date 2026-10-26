@@ -5,7 +5,7 @@
 	// app's toasts, and the toolbar keeps Undo/Redo (phones have no Ctrl+Z).
 	import NotesEditor from '$lib/notes/ui/NotesEditor.svelte';
 	import type { NotesHost } from '$lib/notes/ui/types.js';
-	import type { Anchor } from './comments';
+	import { createOp, mintId, type Anchor } from './comments';
 	import type { GuestDoc } from './doc';
 	import { createGuestInserts } from './inserts';
 	import { createGuestPresence } from './presence';
@@ -17,6 +17,7 @@
 		openIds = new Set<string>(),
 		cancomment = false,
 		oncompose,
+		onpost,
 		onmark
 	}: {
 		guest: GuestDoc;
@@ -30,6 +31,12 @@
 		cancomment?: boolean;
 		/** The selection to comment on (its text and the ids of its first and last character). */
 		oncompose?: (anchor: Anchor) => void;
+		/**
+		 * Post a comment on a selection now (the touch screens' comment sheet). Without it the
+		 * comment goes straight to the room (sendComment); the comments panel shows it once the
+		 * owner's server has it.
+		 */
+		onpost?: (anchor: Anchor, text: string) => Promise<void>;
 		/** A click on a highlighted mark: the open threads on it, first one first. */
 		onmark?: (ids: string[]) => void;
 	} = $props();
@@ -82,6 +89,7 @@
 			};
 		},
 		compose: (sel) => oncompose?.({ text: sel.text, first: sel.first, last: sel.last }),
+		postComment: (sel, text) => post({ text: sel.text, first: sel.first, last: sel.last }, text),
 		onMark: (ids) => onmark?.(ids),
 		say,
 		get presence() {
@@ -91,6 +99,16 @@
 			return inserts;
 		}
 	};
+
+	/** A new thread on `anchor`, as the comments panel sends one; rejects when it did not go out. */
+	async function post(anchor: Anchor, text: string): Promise<void> {
+		if (onpost) return onpost(anchor, text);
+		const g = target();
+		// The bridge marks the characters from their ids, so it must have them: what was typed last goes first.
+		await g.synced();
+		if (!(await g.sendComment(createOp(mintId(), text, anchor))))
+			throw new Error('Not connected: the comment was not sent');
+	}
 
 	/** Scroll to comment `id`'s mark and flash it. False when no character carries it. */
 	export function goTo(id: string): boolean {

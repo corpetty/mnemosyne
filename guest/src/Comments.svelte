@@ -22,7 +22,9 @@
 		type ViewComment,
 		type ViewThread
 	} from './comments';
+	import Sheet from '$lib/notes/ui/Sheet.svelte';
 	import type { GuestDoc } from './doc';
+	import { panelId, tabId } from './layout';
 
 	let {
 		guest,
@@ -31,7 +33,10 @@
 		draft,
 		focus,
 		ondone,
-		ongoto
+		ongoto,
+		phone = false,
+		visible = true,
+		openCount = $bindable(0)
 	}: {
 		guest: GuestDoc;
 		/** Changes whenever `guest` notified a change (GuestDoc is not reactive itself). */
@@ -46,6 +51,12 @@
 		ondone: () => void;
 		/** Show this thread's mark in the notes. */
 		ongoto: (id: string) => void;
+		/** The phone layout: this panel is a tab's panel, and each thread gets "Show in notes". */
+		phone?: boolean;
+		/** Phone layout only: is this tab the selected one? */
+		visible?: boolean;
+		/** Out: the number of open threads, pending ones included (the tab's count). */
+		openCount?: number;
 	} = $props();
 
 	const pending = new PendingOps();
@@ -62,7 +73,10 @@
 		void pRev;
 		return orderThreads(withPending(guest.threads, pending.list, guest.you));
 	});
-	const openCount = $derived(shown.open.length);
+	const nOpen = $derived(shown.open.length);
+	$effect(() => {
+		openCount = nOpen;
+	});
 	const empty = $derived(shown.open.length + shown.resolved.length === 0);
 
 	// What a `threads` update shows is no longer pending.
@@ -91,6 +105,23 @@
 	function submit(op: GuestOp): void {
 		pending.add(op, new Date().toISOString());
 		bump();
+		void guest.sendComment(op);
+	}
+
+	/**
+	 * A new thread on `anchor` through the same pending path as the compose box below (shown at once as
+	 * "Sending…", sent again after a reconnect): the touch screens' comment sheet. Rejects when this
+	 * page may not comment.
+	 */
+	export async function post(anchor: Anchor, body: string): Promise<void> {
+		const t = body.trim();
+		if (!canAct) throw new Error('These notes cannot be commented on');
+		if (!t) return;
+		const op = createOp(mintId(), t, anchor);
+		pending.add(op, new Date().toISOString());
+		bump();
+		// The bridge marks the characters from their ids, so it must have them: what was typed last goes first.
+		await guest.synced();
 		void guest.sendComment(op);
 	}
 
@@ -196,12 +227,50 @@
 	});
 
 	function cardClick(e: MouseEvent, t: ViewThread) {
+		if (phone) return; // a tap while scrolling must not leave the tab: "Show in notes" does it
 		if (e.target instanceof Element && e.target.closest('button, textarea, a, input')) return;
 		if (!t.root.pending) ongoto(t.root.id);
 	}
 
+	// ---- a thread in a sheet (touch screens: a tap on its mark in the notes) ----------------------------
+	/** The roots of the threads the sheet shows (the open ones on the tapped highlight); null when closed. */
+	let sheetIds = $state<string[] | null>(null);
+	let sheetDrafts = $state<Record<string, string>>({});
+	const sheetThreads = $derived.by(() => {
+		const ids = sheetIds;
+		if (!ids) return [];
+		const all = [...shown.open, ...shown.resolved];
+		return ids.flatMap((id) => all.filter((t) => t.root.id === id && !t.root.deleted));
+	});
+
+	/** Does the last thread in the sheet take a reply (its row then also holds Close)? */
+	const lastCanReply = $derived.by(() => {
+		const r = sheetThreads.at(-1)?.root;
+		return !!r && canAct && !r.resolved && !r.pending && !r.deleted;
+	});
+
+	/** Show these threads (root ids, first first) in the bottom sheet. */
+	export function openSheet(ids: string[]): void {
+		if (!ids.length) return;
+		sheetIds = [...ids];
+	}
+	function closeSheet() {
+		sheetIds = null;
+	}
+	function sendSheetReply(t: ViewThread) {
+		const body = (sheetDrafts[t.root.id] ?? '').trim();
+		if (!body || !canAct) return;
+		submit(replyOp(mintId(), t.root.id, body));
+		sheetDrafts[t.root.id] = '';
+	}
+
 	const clip = (s: string) => s.replace(/\s+/g, ' ').trim();
-	const LINK = 'hover:text-gray-200';
+	/** Reply, Edit, Delete and the like: small muted text; on a phone the hit area grows (36 px tall, 8 px each side). */
+	const LINK = $derived(phone ? 'hover:text-gray-200 inline-flex min-h-9 items-center px-2 -mx-2' : 'hover:text-gray-200');
+	/** The gap in a row of such links: wide enough on a phone that neighbouring hit areas only touch. */
+	const ROW = $derived(phone ? 'gap-4' : 'gap-3');
+	/** Save / Send in the inline edit and reply boxes. */
+	const SMALL_PRIMARY = $derived(phone ? 'min-h-9 px-3' : 'px-2 py-0.5');
 </script>
 
 {#snippet who(c: ViewComment)}
@@ -229,12 +298,12 @@
 			aria-label="Edit your comment"
 			class="w-full resize-none rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-gray-200"
 		></textarea>
-		<div class="flex items-center gap-2 text-[11px]">
+		<div class="flex items-center {phone ? 'gap-4' : 'gap-2'} text-[11px]">
 			<button
 				type="button"
 				onclick={() => saveEdit(c)}
 				disabled={editText.trim() === ''}
-				class="rounded bg-blue-600 px-2 py-0.5 text-white hover:bg-blue-500 disabled:opacity-50">Save</button
+				class="rounded bg-blue-600 {SMALL_PRIMARY} text-white hover:bg-blue-500 disabled:opacity-50">Save</button
 			>
 			<button type="button" onclick={() => (editing = null)} class="text-gray-400 {LINK}">Cancel</button>
 		</div>
@@ -242,7 +311,7 @@
 		<p class="break-words whitespace-pre-wrap text-gray-200">{c.text}</p>
 	{/if}
 	{#if !c.deleted && editing !== c.id && actionable && !c.pending}
-		<div class="flex flex-wrap items-center gap-3 text-[11px] text-gray-500">
+		<div class="flex flex-wrap items-center {ROW} text-[11px] text-gray-500">
 			{#if isRoot}
 				<button type="button" class={LINK} onclick={() => startReply(t)}>Reply</button>
 			{/if}
@@ -297,6 +366,13 @@
 				{/each}
 			</div>
 		{/if}
+		{#if phone && r.quote && !r.deleted && !r.pending && !r.detached}
+			<button
+				type="button"
+				onclick={() => ongoto(r.id)}
+				class="min-h-10 rounded border border-gray-700 bg-gray-900 px-3 text-xs text-gray-300">Show in notes</button
+			>
+		{/if}
 		{#if replyingTo === r.id && actionable}
 			<!-- svelte-ignore a11y_autofocus -->
 			<textarea
@@ -308,12 +384,12 @@
 				aria-label="Reply"
 				class="w-full resize-none rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-gray-200 placeholder:text-gray-600"
 			></textarea>
-			<div class="flex items-center gap-2 text-[11px]">
+			<div class="flex items-center {phone ? 'gap-4' : 'gap-2'} text-[11px]">
 				<button
 					type="button"
 					onclick={() => sendReply(t)}
 					disabled={replyText.trim() === ''}
-					class="rounded bg-blue-600 px-2 py-0.5 text-white hover:bg-blue-500 disabled:opacity-50">Send</button
+					class="rounded bg-blue-600 {SMALL_PRIMARY} text-white hover:bg-blue-500 disabled:opacity-50">Send</button
 				>
 				<button type="button" onclick={() => (replyingTo = null)} class="text-gray-400 {LINK}">Cancel</button>
 			</div>
@@ -321,11 +397,12 @@
 	</div>
 {/snippet}
 
+{#snippet panel()}
 {#if draft || !empty || canAct}
 	<section bind:this={sectionEl} aria-labelledby="guest-comments-heading" data-testid="guest-comments">
 		<div class="flex items-baseline justify-between gap-2">
 			<h2 id="guest-comments-heading" class="text-sm font-semibold text-gray-300">Comments</h2>
-			{#if openCount}<span class="text-xs text-gray-500" data-testid="guest-comments-open">{openCount} open</span>{/if}
+			{#if nOpen}<span class="text-xs text-gray-500" data-testid="guest-comments-open">{nOpen} open</span>{/if}
 		</div>
 
 		{#if draft && canAct}
@@ -382,4 +459,83 @@
 			</div>
 		{/if}
 	</section>
+{:else if phone}
+	<p class="text-sm text-gray-500" data-testid="guest-comments-none">No comments yet.</p>
+{/if}
+{/snippet}
+
+{#if phone}
+	<div id={panelId('comments')} role="tabpanel" aria-labelledby={tabId('comments')} hidden={!visible}>
+		{@render panel()}
+	</div>
+{:else}
+	{@render panel()}
+{/if}
+
+{#snippet closeButton()}
+	<button type="button" onclick={closeSheet} class="min-h-10 rounded px-3 text-sm text-gray-400 hover:text-gray-200">Close</button>
+{/snippet}
+
+{#if sheetThreads.length}
+	<Sheet label="Comment thread" testid="thread-sheet" onclose={closeSheet}>
+		<div class="space-y-3 pb-1">
+			{#each sheetThreads as t, i (t.root.id)}
+				{@const r = t.root}
+				{@const canReply = canAct && !r.resolved && !r.pending && !r.deleted}
+				<div data-sheet-thread={r.id} class="space-y-2 text-sm">
+					{#if r.quote && !r.deleted}
+						<blockquote
+							data-testid="thread-sheet-quote"
+							class="line-clamp-2 border-l-2 border-yellow-500/60 pl-2 text-xs break-words text-gray-300"
+						>
+							{clip(r.quote)}
+						</blockquote>
+					{/if}
+					<div class="space-y-1">{@render entry(r, t, false, false)}</div>
+					{#if t.replies.length}
+						<div class="ml-3 space-y-2 border-l border-gray-700 pl-2">
+							{#each t.replies as c (c.id)}
+								<div class="space-y-1">{@render entry(c, t, false, false)}</div>
+							{/each}
+						</div>
+					{/if}
+					{#if r.resolved}
+						<p class="text-xs text-gray-500">Resolved</p>
+					{/if}
+					{#if canReply}
+						<textarea
+							value={sheetDrafts[r.id] ?? ''}
+							oninput={(e) => (sheetDrafts[r.id] = e.currentTarget.value)}
+							onkeydown={(e) => {
+								if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+									e.preventDefault();
+									sendSheetReply(t);
+								}
+							}}
+							rows="2"
+							placeholder="Reply"
+							aria-label="Reply"
+							class="w-full resize-none rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-base text-gray-200 placeholder:text-gray-600"
+						></textarea>
+						<div class="flex items-center justify-between gap-2">
+							{#if i === sheetThreads.length - 1}
+								{@render closeButton()}
+							{:else}
+								<span></span>
+							{/if}
+							<button
+								type="button"
+								onclick={() => sendSheetReply(t)}
+								disabled={(sheetDrafts[r.id] ?? '').trim() === ''}
+								class="min-h-10 rounded bg-blue-600 px-3 text-sm text-white disabled:opacity-40">Send</button
+							>
+						</div>
+					{/if}
+				</div>
+			{/each}
+			{#if !lastCanReply}
+				<div class="flex justify-end">{@render closeButton()}</div>
+			{/if}
+		</div>
+	</Sheet>
 {/if}

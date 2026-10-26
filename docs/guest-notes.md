@@ -48,6 +48,12 @@ time. Meetings shared with you by someone else cannot be opened to guests.
   text to guests: they cannot be clicked, and there are no meeting chips on this page.
 - **Presence**: who else is here and who is typing, and a state: Connecting, Live or Ended.
 
+On a phone (a screen narrower than 768 px) the page has three tabs, **Notes**, **Agenda** and **Comments** (with the
+number of open threads), so each fits the screen. While typing, a bar above the keyboard holds bold, italic, lists,
+tasks, **/** and **Comment**; the toolbar above the notes is hidden, and the line being typed stays above the keyboard.
+**Comment** opens a sheet above the keyboard with the selected text quoted. Tapping a highlight opens its thread in the
+same sheet to read and reply; **Show in notes** in the Comments tab goes back to the text.
+
 ## The link is the permission
 
 The link looks like `https://<page>/n/#2.<room>.<key>.<computer>.<relay>` (older links,
