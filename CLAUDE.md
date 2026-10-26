@@ -524,7 +524,7 @@ ours, which does not run yet: 409 "No host for guest notes"), `guest_notes_end_h
 copilot, phase 8) reach guests as the owner's; guest comments are ordinary comments (searchable, synced, in records);
 one room per meeting; a deleted meeting's room is deleted; refused for shared_from meetings and without the sidecar.
 
-Guest notes without a host (unreleased, phase 10; design in the hashseq plan, build order and corrections in
+Guest notes without a host (released as 0.25.0, phase 10; design in the hashseq plan, build order and corrections in
 docs/plans/2026-10-25-phase-10-tasks.md, use in docs/guest-notes.md): guest notes need no publish host. The rooms
 sidecar `mnemosyne-link rooms` (link/src/guest.rs; services/link.py `RoomsLink`, started on demand, NOT tied to remote
 access) embeds the publish host on a loopback port and gives each room its own guest iroh endpoint (ALPN
@@ -540,7 +540,7 @@ download <run> -n guest-wasm-pkg -D guest/pkg`), commit guest/pkg, then `pnpm bu
 backend/mnemosyne/api/static/guest. The guest e2e uses `mnemosyne-link dev-relay` on 8038 (feature `dev-relay`, never
 in releases). The room stays up only while this computer is on (sleep inhibitor held while a room is live).
 
-The notes editor, live (unreleased, phase 11; design in the hashseq plan, build order and corrections in
+The notes editor, live (released as 0.25.0, phase 11; design in the hashseq plan, build order and corrections in
 docs/plans/2026-10-25-phase-11-tasks.md): one editor for the desktop and the guest page, tools where the work is, live
 carets, chips, and action items typed in the notes. `src/lib/notes/ui/` (`NotesEditor.svelte`, slim, selection and
 touch toolbars, `/` `@` `[[` menu in slash.ts, `CaretOverlay.svelte`) is mounted by components/SharedNotes.svelte and
