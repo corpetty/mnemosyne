@@ -508,11 +508,12 @@ library sync, task links, Ask, semantic search, the digest or Obsidian (`shared_
 seeds Ada Lovelace's shared meeting only through `POST /api/demo/share` (the e2e spec calls it).
 
 Noise suppression (unreleased, docs/plans/2026-10-27-noise-suppression.md): DeepFilterNet's LADSPA
-plugin (pinned download) in a PipeWire filter-chain behind the echo canceller, in the same pw-cli
+plugin (pinned download) in a PipeWire filter-chain behind the echo canceller, in a pw-cli of its own
 (audio/noise_suppression.py; `noise_suppression`, `noise_suppression_db`). Our recordings take the
 pre-DeepFilterNet source `mnemosyne_aec_raw` unless `noise_suppression_record` (it raised Phonon's WER
 in noise on AMI); other apps get the clean mic. The plugin panics after 1 s of underruns, killing
-pw-cli: `EchoCancelManager._watch` falls back to plain echo cancellation.
+its pw-cli (never the canceller's, so recordings carry on): `EchoCancelManager._watch` loads a plain
+copy as the visible source. Keep the two processes apart.
 
 Guest notes (released as 0.24.0, phase 9; design in the hashseq plan, build order and corrections in
 docs/plans/2026-10-24-phase-9-tasks.md, use in docs/guest-notes.md): a link `https://<host>/n/<room>#<key>` for the

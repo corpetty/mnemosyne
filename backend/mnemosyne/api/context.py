@@ -599,8 +599,11 @@ class AppContext:
         from ..audio import noise_suppression as ns
         from ..audio.echo_cancel import SOURCE_NODE
 
-        running = self.echo.active and self.echo.denoise is not None and not self.echo.denoise_error
-        if not running or self.settings.noise_suppression_record:
+        if not (self.echo.active and self.echo.raw_source):
+            return {}
+        # The denoised audio only while DeepFilterNet runs: after a crash it is a copy of the
+        # internal source, which survives the next one.
+        if self.settings.noise_suppression_record and not self.echo.denoise_error:
             return {}
         return {SOURCE_NODE: ns.RAW_SOURCE_NODE}
 

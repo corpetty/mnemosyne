@@ -2,7 +2,7 @@
 
 Corey used NoiseTorch (RNNoise as a LADSPA plugin loaded through PulseAudio's `module-ladspa-sink`,
 with a voice-activation gate) until it stopped working on Fedora; EasyEffects' RNNoise does a worse
-job. We already hold a virtual mic in a `pw-cli` child (audio/echo_cancel.py), so the same child now
+job. We already hold a virtual mic in a `pw-cli` child (audio/echo_cancel.py), so a second child now
 loads PipeWire's filter-chain with DeepFilterNet's LADSPA plugin behind the WebRTC canceller:
 
     mic -> WebRTC AEC (mono, its own NS off) "mnemosyne_aec_raw" -> DeepFilterNet -> "mnemosyne_aec_source"
@@ -16,10 +16,15 @@ loads PipeWire's filter-chain with DeepFilterNet's LADSPA plugin behind the WebR
 - Settings `noise_suppression`, `noise_suppression_db` (the plugin's attenuation limit; 100 removes
   noise), `noise_suppression_record`. On the echo-cancel endpoint; a change while recording applies
   from the next recording, like the mic. UI: a row under Echo cancellation (DeviceSelector.svelte).
-- Fallbacks: the filter chain not coming up starts plain echo cancellation; the plugin ABORTS its
-  process (`panic!`) once its latency reaches 1 s of underruns (each underrun adds 10 ms and a 10 ms
-  frame of zeros; it recovers 10 ms per ~10 s of good runs), so `EchoCancelManager._watch` restarts
-  plain echo cancellation when that `pw-cli` dies. `reason` tells the UI.
+- Fallbacks: the filter chain not coming up puts a plain copy (filter-chain's builtin `copy`) behind
+  the canceller instead; the plugin ABORTS its process (`panic!`) once its latency reaches 1 s of
+  underruns (each underrun adds 10 ms and a 10 ms frame of zeros; it recovers 10 ms per ~10 s of good
+  runs). The chain therefore runs in its own `pw-cli`: a crash never touches the canceller or a
+  recording of `mnemosyne_aec_raw`, and `EchoCancelManager._watch` loads the copy as the visible
+  source. `reason` tells the UI. Checked on real PipeWire with test node names (2026-10-27): after a
+  SIGABRT of the chain the canceller and a recorder of the internal source ran on (the file kept
+  growing), and a recorder of the visible source was relinked by WirePlumber to the copy once it came
+  up (a gap of about a second, then the un-denoised audio).
 - The source is up whenever the backend runs (it is loaded at start), so with close-to-tray it is
   available to other apps all day. Starting Mnemosyne at login does not exist yet (possible next step).
 
@@ -58,6 +63,7 @@ Corey's mic with a hand-corrected transcript before ever recording the denoised 
 ## Not done
 
 - No in-app check of the UI (svelte-check only): the dev backend would fight the running app over
-  the node names. Tests use a fake pw-cli; the generated command was run once on real PipeWire.
+  the node names. Tests use a fake pw-cli; the DeepFilterNet command was run once on real PipeWire,
+  the two-process split and the copy with test node names.
 - aarch64 (DeepFilterNet ships a build; not pinned). The offline AppImage does not carry the plugin.
 - Start at login.

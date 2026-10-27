@@ -427,7 +427,7 @@ starts (device ids naming the echo-cancelled source are updated to its new node 
 reason when the module or `pw-cli` is missing, or the mic is the echo-cancelled source itself.
 
 Noise suppression (`noise_suppression` in the response) puts DeepFilterNet behind the canceller in
-the same `pw-cli` (`audio/noise_suppression.py`): the canceller's own source becomes the internal
+a `pw-cli` of its own (`audio/noise_suppression.py`): the canceller's own source becomes the internal
 `mnemosyne_aec_raw` (left out of `/api/devices`) and the visible source, still `mnemosyne_aec_source`,
 is "Mnemosyne: mic (clean)".
 
@@ -444,7 +444,8 @@ Other apps get the denoised mic either way. Turning it on first downloads the pl
 (53 MB, pinned SHA-256, into `models_dir`): `502` when that fails, `400` where it cannot run (not
 x86-64, no `libpipewire-module-filter-chain`). Changed while recording, `pending` is set and it applies
 when the next recording starts. When the noise suppressor does not start, or its `pw-cli` dies (it
-aborts after falling a second behind), echo cancellation carries on without it and `reason` says why.
+aborts after falling a second behind), the canceller keeps running, a plain copy of its audio is the
+visible source, and `reason` says why.
 
 ### `GET /api/encryption` · `POST /api/encryption/enable|disable|unlock`
 
