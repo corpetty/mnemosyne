@@ -7,9 +7,11 @@ reference signal, so nothing has to be rerouted. It exposes a virtual source
 module lives exactly as long as the child process; stopping it (or the
 backend exiting) removes the source again.
 
-With noise suppression (audio/noise_suppression.py) the same child also loads DeepFilterNet
-behind the canceller: the canceller's source is then the internal "mnemosyne_aec_raw" and the
-visible source, still "mnemosyne_aec_source", comes out of the noise suppressor.
+With noise suppression (audio/noise_suppression.py) a second child loads DeepFilterNet behind
+the canceller: the canceller's source is then the internal "mnemosyne_aec_raw" (what our
+recordings read) and the visible source, still "mnemosyne_aec_source", comes out of the noise
+suppressor. DeepFilterNet aborts its process when it falls behind; being its own child, that
+leaves the canceller and any recording of it alone, and a plain copy takes the visible source over.
 """
 
 from __future__ import annotations
@@ -60,29 +62,32 @@ def load_command(
     capture_name: str = CAPTURE_NODE,
     denoise: Denoise | None = None,
 ) -> str:
-    """pw-cli commands loading the module. With `mic` (a node.name) the capture side is pinned
+    """pw-cli command loading the module. With `mic` (a node.name) the capture side is pinned
     to that microphone and never moved; without it WirePlumber picks the default source.
     With `denoise` the canceller works in mono without WebRTC's own (milder) noise suppression
-    and DeepFilterNet's filter chain becomes `source_name`."""
+    and its source is the internal one the noise suppressor's chain (`chain_command`) reads."""
     mic = valid_mic(mic)
     target = f' target.object = "{mic}" node.dont-reconnect = true' if mic else ""
-    aec_source, aec_description, extra = source_name, description, ""
+    extra = ""
     if denoise is not None:
-        aec_source, aec_description = RAW_SOURCE_NODE, "Mnemosyne: echo canceller (internal)"
+        source_name, description = RAW_SOURCE_NODE, "Mnemosyne: echo canceller (internal)"
         extra = (
             "audio.channels = 1 audio.position = [ MONO ] "
             "aec.args = { webrtc.noise_suppression = false } "
         )
-    command = (
+    return (
         f"load-module libpipewire-module-echo-cancel {{ monitor.mode = true {extra}"
         f'capture.props = {{ node.name = "{capture_name}" '
         f'node.description = "Mnemosyne AEC capture"{target} }} '
-        f'source.props = {{ node.name = "{aec_source}" node.description = "{aec_description}" }} '
+        f'source.props = {{ node.name = "{source_name}" node.description = "{description}" }} '
         "}\n"
     )
-    if denoise is not None:
-        command += filter_chain_command(denoise, aec_source, source_name)
-    return command
+
+
+def chain_command(denoise: Denoise | None) -> str:
+    """pw-cli command for the visible source behind the canceller's internal one: DeepFilterNet,
+    or with None a plain copy (after the noise suppressor crashed)."""
+    return filter_chain_command(denoise, RAW_SOURCE_NODE, SOURCE_NODE)
 
 
 @dataclass
@@ -100,11 +105,16 @@ class EchoCancelStatus:
 class EchoCancelManager:
     def __init__(self, pw_cli: str = "pw-cli"):
         self.pw_cli = pw_cli
-        self._proc: asyncio.subprocess.Process | None = None
+        self._proc: asyncio.subprocess.Process | None = None  # the canceller
+        # The noise suppressor's chain (or the plain copy standing in for it), its own child.
+        self._chain: asyncio.subprocess.Process | None = None
         self.mic: str | None = None  # what the running module captures from
         # The noise suppressor asked for behind it; denoise_error when it did not start.
         self.denoise: Denoise | None = None
         self.denoise_error: str | None = None
+        # The running canceller's source is the internal one behind the chain (what recordings
+        # read, so a crashed noise suppressor never touches them).
+        self.raw_source = False
         self._watch_task: asyncio.Task | None = None
 
     # ---- capability ----------------------------------------------------
@@ -130,7 +140,8 @@ class EchoCancelManager:
     ) -> EchoCancelStatus:
         """Load the module capturing from `mic` (a node.name; None = the default source), with
         DeepFilterNet behind it when `denoise` is given. Already running otherwise: restart it.
-        When the noise suppressor does not come up, the canceller starts without it."""
+        When the noise suppressor does not come up, a plain copy of the canceller's audio is
+        the visible source instead."""
         mic = valid_mic(mic)
         ok, reason = self.supported()
         if not ok:
@@ -139,64 +150,105 @@ class EchoCancelManager:
             if mic == self.mic and denoise == self.denoise:
                 return await self.status()
             await self.stop()
+        self.mic, self.denoise, self.denoise_error = mic, denoise, None
+        if denoise is None:
+            return await self._load(mic)
         st = await self._load(mic, denoise)
-        error = None
-        if denoise is not None and not st.active:
+        if not st.active:  # the mono canceller did not come up: try it as it always ran
+            logger.warning("Echo cancellation for noise suppression did not start; plain")
+            self.denoise_error = "The noise suppressor did not start"
+            st = await self._load(mic)
+            st.denoise_error = self.denoise_error if st.active else None
+            return st
+        node = await self._load_chain(denoise)
+        if node is None:
             logger.warning("Noise suppression did not start; echo cancellation without it")
-            error = "The noise suppressor did not start"
-            st = await self._load(mic, None)
-        self.mic, self.denoise, self.denoise_error = mic, denoise, error
-        st.denoise_error = error if st.active else None
-        if st.denoise is not None and self._proc is not None:
-            self._watch_task = asyncio.create_task(self._watch(self._proc))
-        return st
+            self.denoise_error = "The noise suppressor did not start"
+            node = await self._load_chain(None)
+            if node is None:
+                await self.stop()
+                return EchoCancelStatus(True, "module loaded but no source appeared", False, None)
+            return EchoCancelStatus(True, None, True, node, mic, None, self.denoise_error)
+        assert self._chain is not None
+        self._watch_task = asyncio.create_task(self._watch(self._chain))
+        return EchoCancelStatus(True, None, True, node, mic, denoise)
 
-    async def _watch(self, proc: asyncio.subprocess.Process) -> None:
+    async def _watch(self, chain: asyncio.subprocess.Process) -> None:
         """DeepFilterNet aborts the process it runs in once it falls a second behind (a computer
-        too busy for it): bring the mic back without it, and say so."""
-        await proc.wait()
-        if proc is not self._proc:  # stopped or restarted on purpose
+        too busy for it). The canceller, in its own process, keeps running, and so does any
+        recording of it; a plain copy brings the visible source back, and the status says so."""
+        await chain.wait()
+        if chain is not self._chain or not self.active:  # stopped or restarted on purpose
             return
         logger.warning(
             "The noise suppressor's pw-cli exited (%s); echo cancellation without it",
-            proc.returncode,
+            chain.returncode,
         )
-        self._proc = None
-        mic, denoise = self.mic, self.denoise
-        await self._load(mic, None)
-        self.mic, self.denoise = mic, denoise  # what was asked: not retried until it changes
+        self._chain = None
+        # What was asked stays in self.denoise: not retried until it changes.
         self.denoise_error = "The noise suppressor stopped (the computer was too busy for it)"
+        if await self._load_chain(None) is None:
+            logger.warning("The plain copy behind the echo canceller did not start either")
 
-    async def _load(self, mic: str | None, denoise: Denoise | None) -> EchoCancelStatus:
-        logger.info(
-            "Loading PipeWire echo-cancel module (monitor mode, mic %s%s)",
-            mic or "default source",
-            f", DeepFilterNet {denoise.limit_db} dB" if denoise else "",
-        )
-        self._proc = await asyncio.create_subprocess_exec(
+    async def _spawn(self, command: str) -> asyncio.subprocess.Process:
+        proc = await asyncio.create_subprocess_exec(
             self.pw_cli,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        assert self._proc.stdin is not None
-        self._proc.stdin.write(load_command(mic=mic, denoise=denoise).encode())
-        self.mic = mic
-        await self._proc.stdin.drain()
-        # Give PipeWire a moment to create the nodes, then verify.
+        assert proc.stdin is not None
+        proc.stdin.write(command.encode())
+        await proc.stdin.drain()
+        return proc
+
+    async def _appears(self, node_name: str) -> int | None:
+        """Give PipeWire a moment to create the node, then verify."""
         for _ in range(20):
             await asyncio.sleep(0.1)
-            node = await asyncio.to_thread(find_source_node)
+            node = await asyncio.to_thread(find_source_node, node_name)
             if node is not None:
-                return EchoCancelStatus(True, None, True, node, mic, denoise)
+                return node
+        return None
+
+    async def _load(self, mic: str | None, denoise: Denoise | None = None) -> EchoCancelStatus:
+        """The canceller; with `denoise` in mono with the internal source, chain not loaded yet."""
+        logger.info(
+            "Loading PipeWire echo-cancel module (monitor mode, mic %s%s)",
+            mic or "default source",
+            f", DeepFilterNet {denoise.limit_db} dB behind it" if denoise else "",
+        )
+        self._proc = await self._spawn(load_command(mic=mic, denoise=denoise))
+        self.mic, self.raw_source = mic, denoise is not None
+        node = await self._appears(RAW_SOURCE_NODE if denoise else SOURCE_NODE)
+        if node is not None:
+            return EchoCancelStatus(True, None, True, node, mic, denoise)
         await self.stop()
         return EchoCancelStatus(True, "module loaded but no source appeared", False, None)
 
+    async def _load_chain(self, denoise: Denoise | None) -> int | None:
+        """The visible source behind the canceller: DeepFilterNet, or with None a plain copy.
+        Its node id, or None (and nothing left running) when it did not appear."""
+        self._chain = await self._spawn(chain_command(denoise))
+        node = await self._appears(SOURCE_NODE)
+        if node is None:
+            await self._end(self._chain)
+            self._chain = None
+        return node
+
     async def stop(self) -> None:
+        chain, self._chain = self._chain, None
         proc, self._proc = self._proc, None
-        if proc is None or proc.returncode is not None:
+        if chain is not None:
+            await self._end(chain)
+        if proc is not None and proc.returncode is None:
+            logger.info("Unloading PipeWire echo-cancel module")
+            await self._end(proc)
+
+    @staticmethod
+    async def _end(proc: asyncio.subprocess.Process) -> None:
+        if proc.returncode is not None:
             return
-        logger.info("Unloading PipeWire echo-cancel module")
         try:
             if proc.stdin:
                 proc.stdin.close()

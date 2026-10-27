@@ -7,7 +7,7 @@ import pytest
 
 from mnemosyne.audio import echo_cancel as ec
 from mnemosyne.audio import noise_suppression as ns
-from mnemosyne.audio.echo_cancel import EchoCancelManager, load_command
+from mnemosyne.audio.echo_cancel import EchoCancelManager, chain_command, load_command
 from mnemosyne.audio.noise_suppression import Denoise, filter_chain_command
 
 PLUGIN = Path("/data/models/libdeep_filter_ladspa-0.5.6.so")
@@ -17,13 +17,15 @@ def test_load_command_puts_deepfilternet_behind_the_canceller():
     plain = load_command()
     assert plain.count("load-module") == 1 and "filter-chain" not in plain
 
-    cmd = load_command(mic="alsa_input.mic", denoise=Denoise(PLUGIN, 40))
-    aec, chain = cmd.strip().split("\n")
-    # The canceller: mono, WebRTC's own noise suppression off, its source the internal one.
+    aec = load_command(mic="alsa_input.mic", denoise=Denoise(PLUGIN, 40))
+    # The canceller alone (the chain runs in its own pw-cli): mono, WebRTC's own noise
+    # suppression off, its source the internal one.
+    assert aec.count("load-module") == 1 and "filter-chain" not in aec
     assert "libpipewire-module-echo-cancel" in aec and 'target.object = "alsa_input.mic"' in aec
     assert "audio.position = [ MONO ]" in aec and "webrtc.noise_suppression = false" in aec
     assert 'node.name = "mnemosyne_aec_raw"' in aec and "mnemosyne_aec_source" not in aec
     # The noise suppressor reads it and is the source everyone records from.
+    chain = chain_command(Denoise(PLUGIN, 40))
     assert "libpipewire-module-filter-chain" in chain
     assert f'plugin = "{PLUGIN}" label = deep_filter_mono' in chain
     assert '"Attenuation Limit (dB)" = 40' in chain and "audio.rate = 48000" in chain
@@ -32,6 +34,14 @@ def test_load_command_puts_deepfilternet_behind_the_canceller():
     playback = chain[chain.index("playback.props") :]
     assert 'node.name = "mnemosyne_aec_source"' in playback
     assert "media.class = Audio/Source" in playback
+
+
+def test_the_stand_in_is_a_plain_copy():
+    copy = chain_command(None)
+    assert "type = builtin name = copy label = copy" in copy and "ladspa" not in copy
+    assert 'target.object = "mnemosyne_aec_raw"' in copy
+    assert 'node.name = "mnemosyne_aec_source"' in copy
+    assert '"Mnemosyne: mic (echo cancelled)"' in copy
 
 
 def test_filter_chain_command_clamps_and_refuses_odd_paths():
@@ -49,7 +59,7 @@ def test_the_internal_source_is_never_a_mic():
 @pytest.fixture
 def fake_pwcli(tmp_path, monkeypatch):
     """A stand-in pw-cli that records what it was told. The source "appears" unless the last
-    thing loaded was a filter chain and `chain_fails` is set."""
+    thing loaded was DeepFilterNet and `chain_fails` is set."""
     log = tmp_path / "pwcli.log"
     log.touch()
     script = tmp_path / "pw-cli"
@@ -63,7 +73,7 @@ def fake_pwcli(tmp_path, monkeypatch):
 
     def find(node_name=ec.SOURCE_NODE):
         lines = log.read_text().strip().splitlines()
-        if state["chain_fails"] and lines and "filter-chain" in lines[-1]:
+        if state["chain_fails"] and lines and "deep_filter" in lines[-1]:
             return None
         return 146
 
@@ -76,15 +86,21 @@ async def test_manager_runs_and_restarts_with_noise_suppression(fake_pwcli):
     script, log, _ = fake_pwcli
     m = EchoCancelManager(pw_cli=str(script))
     await m.start("alsa_input.mic")
+    assert m._chain is None and not m.raw_source
     st = await m.start("alsa_input.mic", Denoise(PLUGIN, 100))  # turned on: restarted
     assert st.active and st.denoise == Denoise(PLUGIN, 100) and st.denoise_error is None
-    first = m._proc
+    # Two processes: the canceller and DeepFilterNet's chain.
+    assert m._chain is not None and m._chain is not m._proc and m.raw_source
+    first, first_chain = m._proc, m._chain
     await m.start("alsa_input.mic", Denoise(PLUGIN, 100))  # the same: left alone
     assert m._proc is first
     assert (await m.status()).denoise == Denoise(PLUGIN, 100)
     await m.start("alsa_input.mic", Denoise(PLUGIN, 18))  # another strength: restarted
     assert m._proc is not first and log.read_text().count("filter-chain") == 2
+    assert first.returncode is not None and first_chain.returncode is not None
+    chain = m._chain
     await m.stop()
+    assert chain.returncode is not None and not m.active
 
 
 @pytest.mark.anyio
@@ -94,6 +110,8 @@ async def test_manager_falls_back_to_plain_echo_cancellation(fake_pwcli):
     m = EchoCancelManager(pw_cli=str(script))
     st = await m.start(None, Denoise(PLUGIN))
     assert st.active and st.denoise is None and "did not start" in st.denoise_error
+    # The canceller stays as it came up; a plain copy is the visible source.
+    assert m.raw_source and "label = copy" in log.read_text().strip().splitlines()[-1]
     status = await m.status()
     assert status.active and status.denoise is None and status.denoise_error
     # Asked again for the same: not tried over and over.
@@ -177,20 +195,23 @@ def test_api_change_while_recording_waits(client, ctx, fake_pwcli, fake_pipewire
 
 
 @pytest.mark.anyio
-async def test_a_crashed_noise_suppressor_leaves_plain_echo_cancellation(fake_pwcli):
+async def test_a_crashed_noise_suppressor_leaves_the_canceller_running(fake_pwcli):
     import asyncio
 
     script, log, _ = fake_pwcli
     m = EchoCancelManager(pw_cli=str(script))
     await m.start(None, Denoise(PLUGIN))
-    m._proc.kill()  # DeepFilterNet's panic takes pw-cli down with it
+    aec = m._proc
+    m._chain.kill()  # DeepFilterNet's panic takes its own pw-cli down, nothing else
     for _ in range(50):
         await asyncio.sleep(0.1)
-        if m.denoise_error:
+        if m.denoise_error and m._chain is not None:
             break
     st = await m.status()
     assert st.active and st.denoise is None and "too busy" in st.denoise_error
-    assert "filter-chain" not in log.read_text().strip().splitlines()[-1]
+    # The canceller (and the internal source recordings read) never stopped.
+    assert m._proc is aec and aec.returncode is None and m.raw_source
+    assert "label = copy" in log.read_text().strip().splitlines()[-1]
     first = m._proc
     await m.start(None, Denoise(PLUGIN))  # not retried on its own
     assert m._proc is first
@@ -214,6 +235,9 @@ def test_recordings_take_the_mic_from_before_deepfilternet(client, ctx, fake_pwc
         "/api/audio/echo-cancel", json={"enabled": True, "noise_suppression_record": True}
     ).json()
     assert body["noise_suppression"]["record"] and ctx.recording_targets() == {}
+    # After a crash the visible source is only a copy: recordings take the internal one.
+    ctx.echo.denoise_error = "The noise suppressor stopped (the computer was too busy for it)"
+    assert ctx.recording_targets() == {"mnemosyne_aec_source": "mnemosyne_aec_raw"}
 
 
 @pytest.mark.anyio
