@@ -41,7 +41,7 @@ audio is never in it either, except a short clip for each quote you choose to at
 | --- | --- | --- |
 | **This computer** | Anyone who can reach this computer's web address (below) | Served by the app while it runs. Expires after 90 days by default (`publish_default_expiry_days`), or never. |
 | **A file** | Whoever you give the file to | One `.html` file with the viewer and the encrypted copy inside; works offline, no server. Not a publication: nothing to update or unpublish, never expires. Optional password. |
-| **A publish host** | Anyone with the link | An always-on server you or your team run ([running your own](#running-your-own-publish-host)). Appears in the dialog once `publish_host` is set. Must expire, at most 365 days. |
+| **A publish host** | Anyone with the link | An always-on server you or your team run ([running your own](#running-your-own-publish-host)). Mnemosyne's own server (`notes.petty.services`) is the default and is preselected as "Mnemosyne's server" while `use_our_servers` is on; your own appears once `publish_host` is set. Must expire, at most 365 days. |
 
 **This computer: who can reach it.** The link's address depends on how others can reach your
 machine, and the dialog says which case you are in (`local_reach`):
@@ -131,6 +131,15 @@ changed; the chain shows when. A records export has `publications.json` per publ
 published which version when, what it showed (parts, names, whether identifiers were hidden, the
 number of quotes and clips), where it went, and when it ended. **The key and token are never in
 it.** A legal hold does not stop publishing. A file export is logged and sealed the same way.
+
+## Mnemosyne's server
+
+With no `publish_host`, the dialog offers Mnemosyne's server and preselects it (90 days by default). It
+holds the same ciphertext any host does and has the same limits plus a per-client write budget of 200 MiB
+per rolling 24 hours (429 `write_budget`). Operator, what is kept and for how long:
+[privacy notice](https://notes.petty.services/privacy), run from [deploy/ours/](../deploy/ours/README.md).
+The upload token for your own host is never sent to it. Turn **Use Mnemosyne's servers** off in Settings
+and a meeting can be published only from this computer or as a file, unless you set `publish_host`.
 
 ## Running your own publish host
 

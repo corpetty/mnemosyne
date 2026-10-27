@@ -67,7 +67,7 @@ outside the database, so they are checked even while encrypted meetings are lock
   `remote_access` setting on, the backend runs `mnemosyne-link home` (the `link/` crate, found via
   `MNEMOSYNE_LINK_BIN`, `PATH`, or a build in `link/target`), restarting it if it dies, and again
   when `remote_relays` changes (comma-separated iroh-relay URLs, passed as `--relay`; blank means
-  n0's public relays; see deploy/relay/). It accepts
+  Mnemosyne's relay while `use_our_servers` is on, else none, never n0's; see deploy/relay/, deploy/ours/). It accepts
   iroh connections from paired computers only (re-reading `paired_devices.json`, so removal takes
   effect at once) and forwards each stream to this backend on `127.0.0.1`.
 
@@ -805,7 +805,7 @@ list; everyone else of the meeting becomes "Person N" everywhere), `names`
 timeline seconds, or seconds into `part`; the transcript lines whose middle is inside), `where`
 (`local|host`) and `expires_days` (`null` = never, only for `local`; at most 365 on a host).
 `GET …/defaults` gives the live publication's selection, else the defaults (`publish_default_expiry_days`,
-host when `publish_host` is set), plus `local_reach` (`team|phone_url|this_device`: who could open a
+host when `publish_host` is set or `use_our_servers` is on: ours), plus `local_reach` (`team|phone_url|this_device`: who could open a
 link to this computer) and `local_url` (the base such a link uses; `""` for `this_device`, where only
 127.0.0.1 works). `POST …/preview` returns the unsealed manifest, a quote's clip as
 `{preview_url, seconds, mime}` (`/api/audio/file/{id}#t=start,end`). `PUT` starts a `publish` job
@@ -850,7 +850,7 @@ answer has `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`;
 
 Opens the meeting's live notes to people who have no Mnemosyne: a link to a page in their browser, through a
 room on a host that cannot read it (services/guest_notes.py, guest/). The host is `guest_host`, else
-`publish_host`; with neither, starting answers `409 "No host for guest notes…"`. All five answer a `GuestRoom`:
+`publish_host`, else Mnemosyne's (`use_our_servers`); with none, starting answers `409 "No host for guest notes…"`. All five answer a `GuestRoom`:
 `{ url, host_url, state: "live"|"ended"|"stopped", created_at, ended_at, expires_at, started_by, guests_present }`.
 
 - `GET` the room (live or ended), or `null` with `200` when the meeting has none or it was stopped (it is not a

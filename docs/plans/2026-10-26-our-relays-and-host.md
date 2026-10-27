@@ -1,6 +1,6 @@
 # Our relay and guest notes host
 
-Status: proposal, 2026-10-26, nothing built. Drafted against main at 0.25.1. Asked for by Corey: stop
+Status: built 2026-10-26 on branch our-relay-and-host, unreleased; the servers are not up yet (DNS and ports are Corey's), so the health workflow's schedule is off. Drafted against main at 0.25.1. Asked for by Corey: stop
 depending on n0's testing relays. Decided by Corey (2026-10-26): run it on his own high-availability
 server on his enterprise line for now; one relay; no migration for already paired computers (he is the
 only user and re-pairs); guest notes are copied to our host by default, so we can see some usage; our
@@ -113,3 +113,12 @@ plan runs both on one machine of Corey's and makes the app use them by default.
 ## Open questions for Corey
 
 None left: the domain is petty.services (Corey, 2026-10-26).
+
+## Found while building
+
+- Computers paired under n0 remember n0's relays; with no migration they must be paired again (docs/remote-access.md says so).
+- `use_our_servers` is a tri-state (None = automatic) so team servers and the cloud-models-off posture start with it off while an explicit choice still wins; the API shows the effective value.
+- The upload token is only sent to the configured `publish_host`, never to ours (services/guest_notes.py `_upload_token`).
+- With no relay at all (`use_our_servers` off, `remote_relays` blank) `rooms` refuses iroh rooms (`relay_kind` "none") and `home --no-relay` still serves the local network.
+- Tests must not reach *.petty.services: conftest `no_our_servers`, `use_our_servers=False` in the settings fixture, and the e2e backend sets it false.
+- `deploy/ours/test/smoke.sh` edits /etc/hosts for a test CA and refuses to run outside CI.

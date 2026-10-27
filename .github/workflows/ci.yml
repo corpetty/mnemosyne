@@ -313,3 +313,24 @@ jobs:
       - run: cargo clippy --locked --all-targets --manifest-path publish-host/Cargo.toml -- -D warnings
       # In process against a fixture viewer folder: no built viewer, network or ports needed.
       - run: cargo test --locked --manifest-path publish-host/Cargo.toml
+
+  ours:
+    name: Our relay and host (deploy/ours)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: link
+      # The sidecar's `relay-check` is the last check of the smoke test.
+      - name: Build the link sidecar (debug is fast enough)
+        run: cargo build --locked --manifest-path link/Cargo.toml
+      # The real compose files (relay, publish host built from publish-host/, Caddy) with a
+      # throwaway CA instead of Let's Encrypt and /etc/hosts instead of public DNS.
+      # See deploy/ours/test/compose.test.yaml.
+      - name: Bring the stack up and check it
+        run: deploy/ours/test/smoke.sh
+        env:
+          MNEMOSYNE_LINK_BIN: ${{ github.workspace }}/link/target/debug/mnemosyne-link

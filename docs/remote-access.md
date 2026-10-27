@@ -5,7 +5,7 @@ today is [Tailscale](https://tailscale.com): the backend stays on `127.0.0.1`, n
 the internet, and phones get an HTTPS address, which lets the phone page record inside the browser.
 
 Mnemosyne's own remote access (below, experimental) needs no Tailscale: an end-to-end encrypted
-iroh connection that only paired computers can open, through n0's relays or your own.
+iroh connection that only paired computers can open, through Mnemosyne's relay (`relay.petty.services`) or your own.
 
 ## What you need
 
@@ -83,15 +83,24 @@ listens; it does not announce itself on networks it visits.
 ### Relays
 
 Relays are the fallback away from home. They only pass along packets they cannot read, and only
-until the two machines find a direct path. By default Mnemosyne uses n0's free public relays, which are rate-limited and meant for
-testing. To use your own, run the open-source iroh-relay server (a ready config and compose file are
+until the two machines find a direct path. By default Mnemosyne uses its own relay, `https://relay.petty.services`, run from
+[deploy/ours/](../deploy/ours/README.md); n0's public relays are never a default. It sees endpoint
+addresses, timing and sizes, and the IP address of whoever connects, never what is sent; the
+[privacy notice](https://notes.petty.services/privacy) says what is kept (counts only, logs for about 7 days).
+Whether it is used follows **Use Mnemosyne's servers** in Settings (`use_our_servers`): automatic means on,
+except on team servers and with cloud models off. With it off and `remote_relays` blank there is no relay at
+all: paired computers connect directly or on the same network (mDNS), and remote access works only when
+they can reach each other that way. A relay you set in `remote_relays` always wins. To use your own, run the open-source iroh-relay server (a ready config and compose file are
 in [deploy/relay/](../deploy/relay/README.md)), put its address in **Relays** under Remote access on
 the home machine, and pair your computers again. Computers follow the home machine's relays; they
-have no relay setting of their own. With your own relays, n0 is not involved at all.
+have no relay setting of their own. With your own relays, neither n0 nor Mnemosyne's is involved.
+
+**Computers paired before this need pairing again.** There is no migration: a pairing made under n0's
+relays remembers them, so pair each computer again (Pair a computer) to have it follow the current relay.
 
 The relays in `remote_relays` also carry [guest notes](guest-notes.md): guests' browsers reach this
 computer through them. A browser only connects to a relay with a certificate from a public
-authority, so a self-hosted relay used for guest notes needs one (Let's Encrypt, as in
+authority (Mnemosyne's relay has one), so a self-hosted relay used for guest notes needs one (Let's Encrypt, as in
 [deploy/relay/](../deploy/relay/README.md)).
 
 ### From a terminal
