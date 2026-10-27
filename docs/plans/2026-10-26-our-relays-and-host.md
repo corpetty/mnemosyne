@@ -21,14 +21,16 @@ plan runs both on one machine of Corey's and makes the app use them by default.
 
 - **One machine, two addresses**: Corey's high-availability server on his enterprise line, which has
   two free static public addresses (Corey, 2026-10-26): one for the relay, one for the host, each
-  with its own DNS name on a domain of his: `relay.<domain>` and `notes.<domain>`. Docker compose, one
+  with its own DNS name on petty.services, the domain of Corey's S corp consultancy, which runs
+  them (Corey, 2026-10-26):
+  `relay.petty.services` and `notes.petty.services`. Docker compose, one
   file (deploy/ours/compose.yaml) reusing the two existing setups, each service bound to its address.
 - **The relay**: iroh-relay 1.3.0 (the version the app's iroh speaks), open to any iroh endpoint
   (browsers and sidecars use random endpoint ids, so there is nothing to allowlist), the existing
   limits: 20 new connections a second (burst 100), 1 MB/s per client. Most remote-access and sync
   traffic goes direct after the first packets; the relay carries guests' browsers (they are
   relay-only) and what cannot go direct.
-- **The host**: publish-host at `notes.<domain>`: hosted publications (`/p/`, `/pub/`), guest rooms
+- **The host**: publish-host at `notes.petty.services`: hosted publications (`/p/`, `/pub/`), guest rooms
   (`/n/`, `/live/`), the viewer and the guest page. Open writes as designed (first write claims an id,
   per-IP rate limits), quota 10 GiB to start, publications 90 days by default in the app and at most
   365, rooms at most 7 days. New: a per-client daily write budget (`--write-bytes-per-day`, 200 MiB per
@@ -46,14 +48,14 @@ plan runs both on one machine of Corey's and makes the app use them by default.
   connections, frames relayed, publications created and opened, bytes stored; iroh-relay has its own
   (connected clients, bytes). Counts only, no per-room or per-person records; read over SSH. Caddy and
   iroh-relay logs keep IP addresses for 7 days at most (log rotation). No analytics, no third-party
-  scripts. A short privacy notice at `https://notes.<domain>/privacy`, linked from Settings and the guest
+  scripts. A short privacy notice at `https://notes.petty.services/privacy`, naming the consultancy as the operator, linked from Settings and the guest
   page footer, says what the server sees (encrypted payloads, ids, sizes, times, IP addresses) and that
   guest notes are copied there by default.
 
 ## Operating it
 
-- **deploy/ours/**: compose.yaml (iroh-relay, publish-host, Caddy), the Caddyfile for `notes.<domain>`,
-  iroh-relay.toml for `relay.<domain>`, `.env.example` (domain, the two addresses, quota), a README with
+- **deploy/ours/**: compose.yaml (iroh-relay, publish-host, Caddy), the Caddyfile for `notes.petty.services`,
+  iroh-relay.toml for `relay.petty.services`, `.env.example` (domain, the two addresses, quota), a README with
   the exact steps: DNS records (A for each name, AAAA if the line has IPv6), the line's firewall
   (relay address: 80/tcp, 443/tcp, 7842/udp; host address: 80/tcp, 443/tcp+udp), first start, checks.
   The machine, the domain and the line are Corey's; nothing here creates paid resources.
@@ -73,8 +75,8 @@ plan runs both on one machine of Corey's and makes the app use them by default.
 
 ## App changes
 
-- **One module for our servers** (services/ours.py): `OUR_RELAYS = ["https://relay.<domain>"]`,
-  `OUR_HOST = "https://notes.<domain>"`, read by services/link.py, guest_notes.py, publishing and the CSP
+- **One module for our servers** (services/ours.py): `OUR_RELAYS = ["https://relay.petty.services"]`,
+  `OUR_HOST = "https://notes.petty.services"`, read by services/link.py, guest_notes.py, publishing and the CSP
   builders (publishing.py `guest_csp`, pages.yml, publish-host defaults). A setting **Use Mnemosyne's
   servers** (`use_our_servers`): on by default; off on team servers and when `cloud_models` is off (the
   local-only posture); off means only what you configured yourself, and what needs a server says so.
@@ -101,7 +103,7 @@ plan runs both on one machine of Corey's and makes the app use them by default.
 
 ## Order
 
-1. Corey: the domain, its two DNS records, the ports on the two addresses.
+1. Corey: the two DNS records (relay. and notes.petty.services, one free address each), the ports.
 2. deploy/ours/ files and README; bring the services up; health workflow green.
 3. publish-host write budget and counters; CSP lists; services/ours.py and `use_our_servers`.
 4. The default switch for remote access, guest notes (mirror on) and publishing (preselected), menu
@@ -110,4 +112,4 @@ plan runs both on one machine of Corey's and makes the app use them by default.
 
 ## Open questions for Corey
 
-- The domain (and the two names, if not `relay.` and `notes.`).
+None left: the domain is petty.services (Corey, 2026-10-26).
