@@ -11,6 +11,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from pydantic import Field
 
 from ...audio.capture import (
     is_browser,
@@ -316,9 +317,11 @@ async def begin_recording(
             browser.labels,
         )
     else:
-        device_ids = await _apply_echo_mic(ctx, device_ids)
+        device_ids = await _apply_echo_config(ctx, device_ids)
         try:
-            recording = await start_recording(device_ids, output_dir)
+            recording = await start_recording(
+                device_ids, output_dir, targets=ctx.recording_targets()
+            )
         except (RuntimeError, FileNotFoundError) as e:
             raise HTTPException(status_code=503, detail=f"Could not start recording: {e}") from e
     if not recording.processes:
@@ -528,7 +531,7 @@ async def restart(session_id: str, ctx: AppContext = Depends(get_ctx)):
         logger.warning("Session %s: saving before the restart failed: %s", session_id, saved.error)
     if ctx.settings.echo_cancel and not ctx.echo.active:  # it may be what went away
         try:
-            await ctx.echo.start(_wanted_mic(ctx))
+            await ctx.echo.start(_wanted_mic(ctx), ctx.echo_denoise())
         except Exception as e:
             logger.warning("Echo canceller not restarted: %s", e)
     try:
@@ -933,6 +936,20 @@ async def _import_part(ctx: AppContext, session_id: str, file, original: Path, t
 # ---- echo cancellation ---------------------------------------------------------
 
 
+class NoiseSuppressionStatus(ApiModel):
+    supported: bool
+    reason: str | None  # why it cannot run here, or why it did not start
+    enabled: bool  # the persisted setting
+    active: bool  # running behind the echo canceller now
+    db: int  # how far noise is turned down (the setting)
+    # Our recordings take the denoised audio too (off: the echo-cancelled audio before it).
+    record: bool
+    downloaded: bool
+    download_mb: int  # the plugin's size
+    # Changed while recording: used from the next recording on.
+    pending: bool
+
+
 class EchoCancelResponse(ApiModel):
     supported: bool
     reason: str | None
@@ -943,12 +960,18 @@ class EchoCancelResponse(ApiModel):
     mic_description: str | None  # its display name, None when not connected or default
     # A different mic was chosen while recording: used from the next recording on.
     pending_mic: str | None
+    # DeepFilterNet behind the canceller (audio/noise_suppression.py).
+    noise_suppression: NoiseSuppressionStatus
 
 
 class EchoCancelRequest(ApiModel):
     enabled: bool
     # Microphone node.name to capture from; "" = the default source; omitted = keep the saved one.
     mic: str | None = None
+    # Noise suppression on or off (turning it on downloads the plugin); omitted = keep.
+    noise_suppression: bool | None = None
+    noise_suppression_db: int | None = Field(default=None, ge=1, le=100)
+    noise_suppression_record: bool | None = None
 
 
 def _wanted_mic(ctx: AppContext) -> str | None:
@@ -956,6 +979,8 @@ def _wanted_mic(ctx: AppContext) -> str | None:
 
 
 async def _echo_response(ctx: AppContext) -> EchoCancelResponse:
+    from ...audio import noise_suppression as ns
+
     st = await ctx.echo.status()
     description = None
     if st.mic:
@@ -965,6 +990,7 @@ async def _echo_response(ctx: AppContext) -> EchoCancelResponse:
         except Exception:
             logger.debug("Could not list devices for the echo canceller's mic", exc_info=True)
     pending = _wanted_mic(ctx) if st.active and _wanted_mic(ctx) != st.mic else None
+    ns_ok, ns_reason = ns.supported()
     return EchoCancelResponse(
         supported=st.supported,
         reason=st.reason,
@@ -974,20 +1000,34 @@ async def _echo_response(ctx: AppContext) -> EchoCancelResponse:
         mic=st.mic,
         mic_description=description,
         pending_mic=pending,
+        noise_suppression=NoiseSuppressionStatus(
+            supported=ns_ok,
+            reason=ns_reason or st.denoise_error,
+            enabled=ctx.settings.noise_suppression,
+            active=st.denoise is not None,
+            db=ctx.settings.noise_suppression_db,
+            record=ctx.settings.noise_suppression_record,
+            downloaded=ns.plugin_path(ctx.settings.models_dir) is not None,
+            download_mb=round(ns.PLUGIN.size / 1_000_000),
+            pending=st.active and ctx.echo.denoise != ctx.echo_denoise(),
+        ),
     )
 
 
-async def _apply_echo_mic(ctx: AppContext, device_ids: list[int]) -> list[int]:
-    """Before a recording starts: restart the echo canceller on a mic chosen since it last
-    started (never mid-recording). The echo-cancelled source gets a new node id when it
-    restarts, so the requested device ids are updated to match."""
+async def _apply_echo_config(ctx: AppContext, device_ids: list[int]) -> list[int]:
+    """Before a recording starts: restart the echo canceller on a mic or noise suppression
+    chosen since it last started (never mid-recording). The echo-cancelled source gets a new
+    node id when it restarts, so the requested device ids are updated to match."""
     from ...audio.echo_cancel import find_source_node
 
-    if not (ctx.echo.active and ctx.settings.echo_cancel) or ctx.echo.mic == _wanted_mic(ctx):
+    if not (ctx.echo.active and ctx.settings.echo_cancel):
+        return device_ids
+    denoise = ctx.echo_denoise()
+    if ctx.echo.mic == _wanted_mic(ctx) and ctx.echo.denoise == denoise:
         return device_ids
     old_id = find_source_node()
     try:
-        st = await ctx.echo.start(_wanted_mic(ctx))
+        st = await ctx.echo.start(_wanted_mic(ctx), denoise)
     except ValueError as e:
         logger.warning("%s", e)
         return device_ids
@@ -1003,23 +1043,42 @@ async def echo_cancel_status(ctx: AppContext = Depends(get_ctx)):
 
 @router.post("/echo-cancel", response_model=EchoCancelResponse)
 async def echo_cancel_set(request: EchoCancelRequest, ctx: AppContext = Depends(get_ctx)):
-    """Load or unload the PipeWire echo-cancel module and remember the choice."""
+    """Load or unload the PipeWire echo-cancel module (with DeepFilterNet behind it when noise
+    suppression is on) and remember the choices. Turning noise suppression on downloads the
+    plugin first if it is not there."""
+    from ...audio import noise_suppression as ns
     from ...audio.echo_cancel import valid_mic
     from ...config import save_settings
+    from ...services.downloads import DownloadError
 
     if request.mic is not None:
         try:
             valid_mic(request.mic)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+    if request.noise_suppression:
+        ok, reason = ns.supported()
+        if not ok:
+            raise HTTPException(status_code=400, detail=reason)
+        try:
+            await asyncio.to_thread(ns.fetch_plugin, ctx.settings.models_dir)
+        except DownloadError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
     changed = False
-    if request.mic is not None and request.mic != ctx.settings.echo_cancel_mic:
-        ctx.settings.echo_cancel_mic = request.mic
-        changed = True
+    wanted = {
+        "echo_cancel_mic": request.mic,
+        "noise_suppression": request.noise_suppression,
+        "noise_suppression_db": request.noise_suppression_db,
+        "noise_suppression_record": request.noise_suppression_record,
+    }
+    for key, value in wanted.items():
+        if value is not None and value != getattr(ctx.settings, key):
+            setattr(ctx.settings, key, value)
+            changed = True
     if request.enabled:
-        # A new mic while recording waits for the next recording (see _apply_echo_mic).
+        # A change while recording waits for the next recording (see _apply_echo_config).
         if not (ctx.echo.active and ctx.active_recordings):
-            st = await ctx.echo.start(_wanted_mic(ctx))
+            st = await ctx.echo.start(_wanted_mic(ctx), ctx.echo_denoise())
             if not st.active:
                 raise HTTPException(
                     status_code=400, detail=st.reason or "Could not start echo cancellation"

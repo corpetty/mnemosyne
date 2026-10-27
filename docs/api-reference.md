@@ -426,6 +426,26 @@ except while recording: then `pending_mic` is set and the restart happens when t
 starts (device ids naming the echo-cancelled source are updated to its new node id). `400` with a
 reason when the module or `pw-cli` is missing, or the mic is the echo-cancelled source itself.
 
+Noise suppression (`noise_suppression` in the response) puts DeepFilterNet behind the canceller in
+the same `pw-cli` (`audio/noise_suppression.py`): the canceller's own source becomes the internal
+`mnemosyne_aec_raw` (left out of `/api/devices`) and the visible source, still `mnemosyne_aec_source`,
+is "Mnemosyne: mic (clean)".
+
+```json
+"noise_suppression": { "supported": true, "reason": null, "enabled": true, "active": true,
+  "db": 100, "downloaded": true, "download_mb": 53, "pending": false }
+```
+
+`POST` also takes `noise_suppression` (bool), `noise_suppression_db` (1-100, how far noise is
+turned down; 100 removes it) and `noise_suppression_record` (bool), all optional and persisted.
+Unless `record` is on, Mnemosyne's own recordings of the clean mic take `mnemosyne_aec_raw` (the
+echo-cancelled audio before DeepFilterNet): it never lowered Phonon's WER on AMI and often raised it.
+Other apps get the denoised mic either way. Turning it on first downloads the plugin
+(53 MB, pinned SHA-256, into `models_dir`): `502` when that fails, `400` where it cannot run (not
+x86-64, no `libpipewire-module-filter-chain`). Changed while recording, `pending` is set and it applies
+when the next recording starts. When the noise suppressor does not start, or its `pw-cli` dies (it
+aborts after falling a second behind), echo cancellation carries on without it and `reason` says why.
+
 ### `GET /api/encryption` · `POST /api/encryption/enable|disable|unlock`
 
 Encryption at rest (opt-in). `GET` → `{enabled, locked}`. `POST …/enable` (no body; `409` while

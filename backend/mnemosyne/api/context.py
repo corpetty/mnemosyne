@@ -583,12 +583,34 @@ class AppContext:
         except Exception:
             logger.warning("Task links: reconcile failed", exc_info=True)
 
+    def echo_denoise(self):
+        """The noise suppressor the echo canceller should run with: None when it is off, or
+        its plugin is not downloaded (turning it on downloads it) or cannot run here."""
+        from ..audio import noise_suppression as ns
+
+        if not self.settings.noise_suppression or not ns.supported()[0]:
+            return None
+        plugin = ns.plugin_path(self.settings.models_dir)
+        return ns.Denoise(plugin, self.settings.noise_suppression_db) if plugin else None
+
+    def recording_targets(self) -> dict[str, str]:
+        """Nodes our recordings take in place of the chosen device: the noise-suppressed mic is
+        recorded from before DeepFilterNet unless `noise_suppression_record` is on."""
+        from ..audio import noise_suppression as ns
+        from ..audio.echo_cancel import SOURCE_NODE
+
+        running = self.echo.active and self.echo.denoise is not None and not self.echo.denoise_error
+        if not running or self.settings.noise_suppression_record:
+            return {}
+        return {SOURCE_NODE: ns.RAW_SOURCE_NODE}
+
     async def _start_echo(self) -> None:
+        denoise = self.echo_denoise()
         try:
-            status = await self.echo.start(self.settings.echo_cancel_mic or None)
+            status = await self.echo.start(self.settings.echo_cancel_mic or None, denoise)
         except ValueError as e:  # a bad saved mic: fall back to the default source
             logger.warning("%s", e)
-            status = await self.echo.start()
+            status = await self.echo.start(None, denoise)
         if not status.active:
             logger.warning("Echo cancellation not started: %s", status.reason)
 
