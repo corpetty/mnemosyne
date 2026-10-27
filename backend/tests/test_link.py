@@ -95,7 +95,13 @@ def test_relays_setting_restarts_the_sidecar(client, ctx, tmp_path, monkeypatch)
         raise AssertionError("sidecar did not start")
 
     client.put("/api/settings", json={"remote_access": True})
-    assert "--relay" not in started_with()  # blank: n0's public relays
+    args = started_with()  # blank, and Mnemosyne's servers off (the test settings): no relay
+    assert "--no-relay" in args and "--relay" not in args
+    argv_file.unlink()
+    client.put("/api/settings", json={"use_our_servers": True})  # blank means ours
+    args = started_with()
+    assert args[args.index("--relay") :] == ["--relay", "https://relay.petty.services"]
+    assert "--no-relay" not in args
     argv_file.unlink()
     relays = "https://relay-eu.example.org, https://relay-us.example.org"
     client.put("/api/settings", json={"remote_relays": relays})

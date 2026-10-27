@@ -130,7 +130,9 @@
 		<div class="space-y-0.5 text-xs text-gray-500">
 			{#if room.transport === 'iroh'}
 				<p>Works while this computer is on.</p>
-				{#if room.relay_kind === 'n0'}
+				{#if room.relay_kind === 'ours'}
+					<p>Through Mnemosyne's relay.</p>
+				{:else if room.relay_kind === 'n0'}
 					<p class="text-amber-300">Through a free testing relay.</p>
 				{:else if room.relay_kind === 'custom'}
 					<p>Through your relay {hostOf(room.relay)}.</p>
@@ -140,7 +142,11 @@
 				<p>{room.public_url.endsWith('.trycloudflare.com') ? 'Through a temporary Cloudflare address.' : 'Through your Tailscale address.'}</p>
 			{/if}
 			{#if room.mirror_host_url}
-				<p>Also kept on {hostOf(room.mirror_host_url)} after the meeting.</p>
+				<p>
+					{hostOf(room.mirror_host_url) === 'notes.petty.services'
+						? "Also kept on Mnemosyne's server after the meeting."
+						: `Also kept on ${hostOf(room.mirror_host_url)} after the meeting.`}
+				</p>
 			{/if}
 		</div>
 	{/if}
