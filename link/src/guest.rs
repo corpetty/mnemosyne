@@ -216,6 +216,9 @@ impl GuestRooms {
                 return Ok(r.info(room));
             }
         }
+        if self.opts.relays == Relays::Off {
+            bail!("guest rooms need a relay");
+        }
         let relay = match relay {
             Some(relay) => relay,
             None => pick_relay_with(&self.opts.relays, |b| (self.adjust)(b)).await?,

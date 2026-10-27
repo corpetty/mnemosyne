@@ -44,6 +44,21 @@ pub struct Config {
     /// Total store size; writes answer 507 when it is full.
     #[arg(long, env = "PUBLISH_QUOTA_BYTES", default_value_t = 10 * 1024 * MIB)]
     pub quota_bytes: u64,
+    /// Most bytes one client address (an IPv6 /64) may upload per rolling 24 hours, across
+    /// publications (manifests and blobs) and guest rooms (frames and snapshots); over it,
+    /// writes answer 429 `write_budget` with `Retry-After`, and a room socket gets an error
+    /// message and a 4429 close. 0 turns the budget off.
+    #[arg(long, env = "PUBLISH_WRITE_BYTES_PER_DAY", default_value_t = 200 * MIB)]
+    pub write_bytes_per_day: u64,
+    /// Where to serve usage counters (Prometheus text, `GET /metrics`), e.g. `127.0.0.1:9091`.
+    /// Empty (the default) serves none. A separate listener: the public one never has `/metrics`.
+    #[arg(
+        long,
+        env = "PUBLISH_METRICS_LISTEN",
+        default_value = "",
+        value_parser = parse_metrics_listen
+    )]
+    pub metrics_listen: String,
     /// Writes allowed at once per client address (token bucket size).
     #[arg(long, env = "PUBLISH_WRITE_BURST", default_value_t = 20)]
     pub write_burst: u32,
@@ -98,6 +113,16 @@ pub struct Config {
     pub relay_origins: Vec<String>,
 }
 
+/// Empty, or an address and port.
+fn parse_metrics_listen(raw: &str) -> Result<String, String> {
+    let s = raw.trim();
+    if s.is_empty() || s.parse::<SocketAddr>().is_ok() {
+        Ok(s.to_string())
+    } else {
+        Err(format!("not an address and port: {raw:?}"))
+    }
+}
+
 /// `https://relay.example.com:443/relay` or `relay.example.com` becomes `relay.example.com[:443]`;
 /// an `http://` origin (a loopback dev relay) keeps its scheme: `http://127.0.0.1:8038`.
 /// Only characters of a host name or address are accepted, so nothing can break out of the header.
@@ -124,8 +149,18 @@ fn parse_relay_origin(raw: &str) -> Result<String, String> {
 }
 
 impl Config {
-    /// Defaults, as if no flag or variable was given (for tests and embedding).
+    /// The metrics listener's address, if one is asked for.
+    pub fn metrics_addr(&self) -> Option<SocketAddr> {
+        self.metrics_listen.trim().parse().ok()
+    }
+
+    /// Defaults, as if no flag or variable was given (for tests and embedding), except that the
+    /// daily write budget is off: an embedded host (the link sidecar's loopback host) sees all
+    /// its guests as one client address, and a test sets the budget when it tests it. The
+    /// metrics listener is off by default anyway. The binary parses its real command line.
     pub fn defaults() -> Config {
-        Config::parse_from(["mnemosyne-publish-host"])
+        let mut cfg = Config::parse_from(["mnemosyne-publish-host"]);
+        cfg.write_bytes_per_day = 0;
+        cfg
     }
 }

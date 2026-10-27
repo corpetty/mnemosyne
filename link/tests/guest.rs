@@ -276,12 +276,24 @@ async fn the_endpoint_id_survives_a_restart_until_stopped() {
     let opts = GuestOptions {
         data_dir: dir.path().to_path_buf(),
         host,
-        relays: Relays::Off,
+        relays: Relays::Custom(vec![relay.clone()]),
     };
 
-    // No relay configured and none given: refused.
+    // No relay configured (`--no-relay`): refused, even when the caller names one (a link made
+    // earlier must not be served through a relay we were told not to use).
+    let off = GuestRooms::with_adjust(
+        GuestOptions {
+            relays: Relays::Off,
+            ..opts.clone()
+        },
+        adjust(),
+    );
+    assert!(off.start(ROOM, None).await.is_err());
+    let err = off.start(ROOM, Some(relay.clone())).await.unwrap_err();
+    assert!(err.to_string().contains("need a relay"), "{err:#}");
+    assert!(off.list().await.is_empty());
+
     let first = GuestRooms::with_adjust(opts.clone(), adjust());
-    assert!(first.start(ROOM, None).await.is_err());
     assert!(first
         .start("not-a-room", Some(relay.clone()))
         .await
@@ -502,6 +514,75 @@ async fn rooms_binary_needs_a_private_token_file() {
     stdout.read_line(&mut line).unwrap();
     let reply: Value = serde_json::from_str(&line).unwrap();
     assert_eq!(reply["ok"], false, "{reply}");
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+/// `rooms --no-relay`: the loopback host runs (a tunnel can front it), the ready line says
+/// "none", and no room is served over iroh, with or without a relay named by the caller.
+#[tokio::test]
+async fn rooms_binary_without_a_relay_keeps_the_host_but_serves_no_room() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::{Command, Stdio};
+
+    let dir = tempfile::tempdir().unwrap();
+    let token_file = dir.path().join("upload.token");
+    std::fs::write(&token_file, format!("{UPLOAD}\n")).unwrap();
+    std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mnemosyne-link"))
+        .arg("rooms")
+        .arg("--data-dir")
+        .arg(dir.path())
+        .arg("--guest-dir")
+        .arg(dir.path().join("guest"))
+        .arg("--viewer-dir")
+        .arg(dir.path().join("viewer"))
+        .arg("--upload-token-file")
+        .arg(&token_file)
+        .arg("--no-relay")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    let ready: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(ready["relay_kind"], "none", "{ready}");
+    let listen: SocketAddr = ready["listen"].as_str().unwrap().parse().unwrap();
+    assert!(listen.ip().is_loopback());
+    let (status, _) = request(listen, "GET", "/health", &[], b"").await.unwrap();
+    assert_eq!(status, 200);
+    // A tunnel room lives on the host without any iroh endpoint.
+    create_room(listen, ROOM).await;
+
+    let mut stdin = child.stdin.take().unwrap();
+    for (id, extra) in [
+        ("a", json!({})),
+        ("b", json!({"relay": "https://relay.example.org"})),
+    ] {
+        let mut req = json!({"id": id, "op": "room_start", "room": ROOM});
+        req.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        writeln!(stdin, "{req}").unwrap();
+        line.clear();
+        stdout.read_line(&mut line).unwrap();
+        let reply: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert!(
+            reply["error"].as_str().unwrap().contains("need a relay"),
+            "{reply}"
+        );
+    }
+    writeln!(stdin, "{}", json!({"id": "l", "op": "room_list"})).unwrap();
+    line.clear();
+    stdout.read_line(&mut line).unwrap();
+    let reply: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(reply["rooms"], json!([]), "{reply}");
 
     child.kill().ok();
     child.wait().ok();

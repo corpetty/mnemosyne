@@ -1,0 +1,35 @@
+# Test override for deploy/ours/compose.yaml, used by smoke.sh (CI job "Our relay and host").
+# The production files are used as they are; this only swaps what needs the public internet:
+#
+#   - the relay reads a certificate from the test CA (cert_mode = "Manual") instead of asking
+#     Let's Encrypt;
+#   - Caddy serves a certificate from the same CA instead of asking Let's Encrypt;
+#   - the viewer, guest page, relay config and Caddyfile come from ./work, which smoke.sh fills
+#     (the configs are the production ones with only the TLS lines changed).
+#
+# Published ports are NOT overridden: smoke.sh sets RELAY_ADDR=127.0.0.2 and HOST_ADDR=127.0.0.1,
+# so the production port lines are what gets tested. Paths are relative to deploy/ours (the
+# first -f file's folder). Do not run this by hand: smoke.sh writes /etc/hosts.
+#
+#   RELAY_ADDR=127.0.0.2 HOST_ADDR=127.0.0.1 PUBLISH_DOMAIN=notes.petty.services \
+#     docker compose -f compose.yaml -f test/compose.test.yaml config
+
+services:
+  relay:
+    volumes: !override
+      - ./test/work/iroh-relay.toml:/etc/iroh-relay.toml:ro
+      - ./test/work/certs/relay:/certs:ro
+
+  publish:
+    volumes: !override
+      - data:/data
+      - ./test/work/viewer:/viewer:ro
+      - ./test/work/guest:/guest:ro
+
+  caddy:
+    volumes: !override
+      - ./test/work/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./site:/srv/site:ro
+      - ./test/work/certs/notes:/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
