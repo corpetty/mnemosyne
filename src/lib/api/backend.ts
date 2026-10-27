@@ -720,9 +720,18 @@ export async function getEchoCancel(): Promise<EchoCancelStatus> {
   return request('/api/audio/echo-cancel');
 }
 
-/** `mic`: the microphone's node name to cancel echo on ("" = the default source; omitted = keep). */
-export async function setEchoCancel(enabled: boolean, mic?: string): Promise<EchoCancelStatus> {
-  return request('/api/audio/echo-cancel', { method: 'POST', body: JSON.stringify({ enabled, mic }) });
+/** `mic`: the microphone's node name to cancel echo on ("" = the default source; omitted = keep).
+ * `noise`: DeepFilterNet behind it, and how far it turns noise down in dB (omitted = keep);
+ * turning it on downloads the plugin first, so that call can take a while. */
+export async function setEchoCancel(
+  enabled: boolean,
+  mic?: string,
+  noise?: { noise_suppression?: boolean; noise_suppression_db?: number; noise_suppression_record?: boolean },
+): Promise<EchoCancelStatus> {
+  return request('/api/audio/echo-cancel', {
+    method: 'POST',
+    body: JSON.stringify({ enabled, mic, ...noise }),
+  });
 }
 
 // Ask across meetings

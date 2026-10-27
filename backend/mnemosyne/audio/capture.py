@@ -7,6 +7,7 @@ WebSocket that receives its audio writes the same kind of growing WAV file. Ever
 """
 
 import asyncio
+import dataclasses
 import json
 import struct
 import subprocess
@@ -163,6 +164,8 @@ def list_devices() -> list[AudioDevice]:
             continue
 
         node_name = props.get("node.name", "")
+        if node_name == "mnemosyne_aec_raw":  # inside the noise-suppressed mic, not for recording
+            continue
         is_monitor = ".monitor" in node_name or "Monitor" in props.get("node.description", "")
 
         devices.append(
@@ -212,11 +215,13 @@ async def start_recording(
     sample_rate: int = 48000,
     channels: int = 1,
     format: str = "s16",
+    targets: dict[str, str] | None = None,
 ) -> RecordingSession:
     """Start recording from one or more PipeWire devices.
 
     For sink devices (outputs), we automatically use their monitor source
-    to capture system audio.
+    to capture system audio. `targets` records another node in place of a device's
+    ({node.name: node.name}): the noise-suppressed mic is recorded from before the suppressor.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     session_id = str(uuid.uuid4())[:8]
@@ -232,6 +237,8 @@ async def start_recording(
         output_path = output_dir / f"{session_id}_device_{device_id}.wav"
 
         # Build pw-record command
+        if targets and device.name in targets:
+            device = dataclasses.replace(device, name=targets[device.name])
         cmd = build_record_command(device, output_path, sample_rate, channels, format)
 
         # Nothing reads pw-record's output: a pipe would fill up with its warnings over a long

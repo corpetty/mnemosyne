@@ -263,6 +263,15 @@ a virtual sink. The module's virtual source shows up in the device list flagged 
 the UI selects it in place of raw mics when the user turns it on. Because the module belongs to our
 child process, stopping the backend removes it; the `echo_cancel` setting re-enables it on start.
 
+With `noise_suppression` the same child also loads `libpipewire-module-filter-chain` running
+DeepFilterNet's LADSPA plugin (`audio/noise_suppression.py`, downloaded once into `models_dir`):
+mic -> WebRTC AEC (mono, WebRTC's own noise suppression off, source `mnemosyne_aec_raw`) ->
+DeepFilterNet -> `mnemosyne_aec_source`. Its capture side is passive, so PipeWire suspends the chain
+while nobody records from the source. Frames it hears only noise in come out as digital silence.
+It is for other apps (calls): our own recordings of the source take `mnemosyne_aec_raw` instead
+(`AppContext.recording_targets`, `start_recording(targets=)`) unless `noise_suppression_record` is
+on, because denoising raised transcription errors on AMI (docs/plans/2026-10-27-noise-suppression.md).
+
 ### Server mode
 
 The frontend keeps its backend URL and token in `localStorage` (`stores/connection.svelte.ts`) and

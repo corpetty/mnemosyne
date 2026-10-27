@@ -68,7 +68,8 @@
 					}
 					if (!audioState.selectedDeviceIds.has(aec.id)) audioState.toggleDevice(aec.id);
 				}
-				toastState.success('Echo cancellation on: use "Mnemosyne: mic (echo cancelled)"');
+				const name = echo.noise_suppression.active ? 'Mnemosyne: mic (clean)' : 'Mnemosyne: mic (echo cancelled)';
+				toastState.success(`Echo cancellation on: use "${name}"`);
 			} else {
 				toastState.info('Echo cancellation off');
 			}
@@ -89,6 +90,30 @@
 			toastState.error(e instanceof Error ? e.message : 'Could not change the microphone');
 		} finally {
 			toggling = false;
+		}
+	}
+
+	// DeepFilterNet behind the echo canceller: how far it turns noise down (dB).
+	const NOISE_LEVELS = [
+		{ db: 100, label: 'Remove noise' },
+		{ db: 24, label: 'Turn noise down' },
+	];
+	let noiseBusy = $state<'download' | 'change' | null>(null);
+
+	async function changeNoise(change: { noise_suppression?: boolean; noise_suppression_db?: number; noise_suppression_record?: boolean }) {
+		if (!echo) return;
+		noiseBusy = change.noise_suppression && !echo.noise_suppression.downloaded ? 'download' : 'change';
+		try {
+			echo = await setEchoCancel(true, undefined, change);
+			await audioState.loadDevices(); // the source is new when it restarts
+			const ns = echo.noise_suppression;
+			if (ns.pending) toastState.info('Noise suppression changes from the next recording');
+			else if (change.noise_suppression !== undefined)
+				toastState.info(ns.active ? 'Noise suppression on' : ns.enabled ? (ns.reason ?? 'Noise suppression did not start') : 'Noise suppression off');
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not change noise suppression');
+		} finally {
+			noiseBusy = null;
 		}
 	}
 
@@ -130,6 +155,50 @@
 			{echo.active ? 'On' : 'Enable'}
 		</button>
 	</div>
+	{#if echo.active && echo.noise_suppression.supported}
+		{@const ns = echo.noise_suppression}
+		<div class="flex items-center justify-between gap-3 rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2">
+			<div class="text-xs text-gray-400">
+				<span class="font-medium text-gray-300">Noise suppression</span>
+				<span class="text-gray-600"> · DeepFilterNet takes keyboard, fan and room noise out of the same mic</span>
+				{#if ns.enabled && !ns.active && ns.reason}
+					<p class="text-[11px] text-amber-400/80">{ns.reason}</p>
+				{:else if !ns.downloaded}
+					<p class="text-[11px] text-gray-600">Turning it on downloads it once ({ns.download_mb} MB)</p>
+				{/if}
+				{#if ns.enabled}
+					<label class="mt-1 flex items-center gap-1.5 text-[11px] text-gray-500">
+						<input
+							type="checkbox"
+							checked={ns.record}
+							disabled={noiseBusy !== null}
+							onchange={(e) => changeNoise({ noise_suppression_record: (e.currentTarget as HTMLInputElement).checked })}
+						/>
+						Record it denoised too (off: Mnemosyne records the mic before it, which transcribes better)
+					</label>
+				{/if}
+			</div>
+			{#if ns.enabled}
+				<select
+					value={ns.db}
+					onchange={(e) => changeNoise({ noise_suppression_db: Number((e.currentTarget as HTMLSelectElement).value) })}
+					disabled={noiseBusy !== null}
+					aria-label="How much noise to take out"
+					class="shrink-0 bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-200"
+				>
+					{#each NOISE_LEVELS as level (level.db)}<option value={level.db}>{level.label}</option>{/each}
+					{#if !NOISE_LEVELS.some((l) => l.db === ns.db)}<option value={ns.db}>{ns.db} dB</option>{/if}
+				</select>
+			{/if}
+			<button
+				onclick={() => changeNoise({ noise_suppression: !ns.enabled })}
+				disabled={noiseBusy !== null}
+				class="shrink-0 px-3 py-1 text-xs rounded border transition-colors disabled:opacity-50 {ns.active ? 'bg-green-900/40 border-green-700 text-green-300' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}"
+			>
+				{noiseBusy === 'download' ? 'Downloading…' : ns.enabled ? (ns.active ? 'On' : ns.pending ? 'Next recording' : 'On (not running)') : 'Enable'}
+			</button>
+		</div>
+	{/if}
 {:else if echo && !echo.supported}
 	<p class="text-[11px] text-gray-600">Echo cancellation unavailable: {echo.reason}</p>
 {/if}

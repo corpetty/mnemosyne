@@ -113,6 +113,11 @@ def test_devices_flag_echo_cancelled_source(monkeypatch):
                 }
             },
         },
+        {  # the canceller's own source inside the noise-suppressed mic: not offered
+            "id": 4,
+            "type": "PipeWire:Interface:Node",
+            "info": {"props": {"media.class": "Audio/Source", "node.name": "mnemosyne_aec_raw"}},
+        },
     ]
     import json
 

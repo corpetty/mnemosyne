@@ -130,6 +130,14 @@ class Settings(BaseSettings):
     echo_cancel: bool = False
     # Microphone (PipeWire node.name) the echo canceller captures from; blank = default source.
     echo_cancel_mic: str = ""
+    # DeepFilterNet behind the echo canceller (audio/noise_suppression.py), and how far it turns
+    # noise down in dB (its attenuation limit; 100 removes it).
+    noise_suppression: bool = False
+    noise_suppression_db: int = 100
+    # Our own recordings of that mic take the echo-cancelled audio from BEFORE DeepFilterNet
+    # unless this is on: on AMI it never lowered Phonon's WER and often raised it (quiet speech
+    # cut, noise-only frames zeroed). Other apps (calls) get the denoised mic either way.
+    noise_suppression_record: bool = False
     # Drop mic segments that repeat what came out of the speakers (no headphones).
     echo_dedup: bool = True
     echo_similarity: float = 0.8
