@@ -69,19 +69,24 @@ By default there is nothing to set up. Which way is used follows `guest_transpor
 (`auto`, `iroh`, `tunnel` or `host`; `auto` is the default and tries them in this order):
 
 1. **Straight to this computer over iroh.** Guests' browsers connect to your computer through a
-   relay: n0's free testing relay until ours runs, or the relays you set in `remote_relays` (see
-   [remote-access.md](remote-access.md)). The panel says "Through a free testing relay" while n0's
-   are used; they are rate-limited and for testing, with no guarantees. Each room has its own
+   relay: Mnemosyne's (`relay.petty.services`) or the relays you set in `remote_relays` (see
+   [remote-access.md](remote-access.md)); n0's are never used. The menu says "Through Mnemosyne's relay"
+   (`relay_kind` "ours"; "custom" for yours; "none" when there is no relay, in which case no iroh room is
+   started and a tunnel is used). Each room has its own
    throwaway address on your computer, never the one your paired computers use.
 2. **A tunnel to this computer**, when iroh is not possible: Tailscale Funnel if Tailscale is
    running, else a temporary Cloudflare address (`*.trycloudflare.com`, no account). The first
    time, Mnemosyne downloads `cloudflared` and checks it against a pinned SHA-256. The tunnel
    only reaches the guest notes, never the rest of the app, and closes with the last room.
-3. **A publish host** (`guest_host`, else `publish_host`; see
+3. **A publish host** (`guest_host`, else `publish_host`, else Mnemosyne's host `notes.petty.services` while
+   `use_our_servers` is on; see
    [deploy/publish/README.md](../deploy/publish/README.md)). It is the only way that keeps working
    when your computer is off or asleep. With a host configured, the notes are also kept there
    whichever way is used ("Also kept on ...") and the link names it; guests try your computer
-   first and fall back to the host.
+   first and fall back to the host. By default that is Mnemosyne's host: the menu says "Also kept on
+   Mnemosyne's server after the meeting", and the sealed notes stay there until the room ends. It sees only
+   ciphertext ([privacy notice](https://notes.petty.services/privacy)). The upload token you set for your own
+   publish host is never sent to Mnemosyne's.
 
 The guest page itself loads from GitHub Pages (or `guest_page_url`, if you host your own copy;
 a tunnel or a host serves it from its own address). The page is code only and holds no notes:
@@ -126,8 +131,9 @@ strict content-security policy that lists the relays it may talk to.
 
 - `guest_transport`: `auto` (default), `iroh`, `tunnel` or `host`.
 - `guest_page_url`: where the guest page is loaded from. Blank is the copy on GitHub Pages.
-- `guest_host`: a publish host just for guest notes; else `publish_host` is used.
-- `remote_relays`: the relays for iroh, shared with remote access. Blank means n0's.
+- `guest_host`: a publish host just for guest notes; else `publish_host`, else Mnemosyne's host.
+- `use_our_servers`: Settings, "Use Mnemosyne's servers" (Publishing). Automatic is on, except on team servers and with cloud models off; a value you set wins. Off removes the relay and host defaults: guest notes then use a tunnel, or your own relay and host.
+- `remote_relays`: the relays for iroh, shared with remote access. Blank means Mnemosyne's relay (or none, with `use_our_servers` off).
 - `guest_notes_end_hours`: see below.
 
 ## Ending them
@@ -177,7 +183,7 @@ meeting's owner or an admin can start them. See [team-server.md](team-server.md#
   8 MiB. An owner offline for a long time while guests type through a host can fill the log; new
   edits are then refused until you reconnect.
 - A room takes at most 64 connections at once, and a room lives at most 7 days.
-- Over iroh, one relay connection carries all guests: with n0's relays that is rate-limited, and
+- Over iroh, one relay connection carries all guests: relays rate-limit, and
   ten guests each loading a 1 MB snapshot take about ten seconds in all.
 - Menus open on single typed characters. Some Android keyboards send a whole word at once, so
   typing `@` inside a word or after a suggestion may not open the mention list; use the **＋ Insert**

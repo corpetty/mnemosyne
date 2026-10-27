@@ -1,0 +1,78 @@
+name: Our relay and host health
+
+# Watches relay.petty.services (iroh relay) and notes.petty.services (publish host).
+# Read-only: nothing is written to production.
+
+on:
+  workflow_dispatch:
+  # TODO: turn on once relay/notes.petty.services are up.
+  # schedule:
+  #   - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ours-health
+  cancel-in-progress: false
+
+jobs:
+  health:
+    name: Relay and host answer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELAY: https://relay.petty.services
+      HOST: https://notes.petty.services
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: relay_health
+        name: Relay /healthz
+        run: curl -fsS --max-time 20 "$RELAY/healthz"
+      - id: host_health
+        name: Host /health
+        if: ${{ !cancelled() }}
+        run: curl -fsS --max-time 20 "$HOST/health"
+      - id: host_pages
+        name: Host serves the guest page and the privacy page
+        if: ${{ !cancelled() }}
+        run: |
+          curl -fsS --max-time 20 -o /dev/null "$HOST/n/"
+          curl -fsS --max-time 20 -o /dev/null "$HOST/privacy"
+      - uses: dtolnay/rust-toolchain@stable
+        if: ${{ !cancelled() }}
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ !cancelled() }}
+        with:
+          workspaces: link
+      - id: build
+        name: Build the link sidecar
+        if: ${{ !cancelled() }}
+        run: cargo build --release --manifest-path link/Cargo.toml
+      - id: relay_check
+        name: Two endpoints talk through the relay
+        if: ${{ !cancelled() }}
+        run: link/target/release/mnemosyne-link relay-check --relay "$RELAY"
+      - name: Open or update the ours-down issue
+        if: ${{ failure() }}
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh label create ours-down --color B60205 \
+            --description "relay.petty.services or notes.petty.services is not answering" 2>/dev/null || true
+          body="The health check failed: $run_url"
+          existing=$(gh issue list --label ours-down --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing: $run_url"
+          else
+            gh issue create --label ours-down \
+              --title "Our relay or notes host is down" --body "$body"
+          fi
+      - name: Close the ours-down issue
+        if: ${{ success() }}
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          for n in $(gh issue list --label ours-down --state open --json number --jq '.[].number'); do
+            gh issue close "$n" --comment "Both answer again: $run_url"
+          done
