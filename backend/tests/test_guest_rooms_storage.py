@@ -176,4 +176,5 @@ def test_relay_kind():
 
     assert gn.relay_kind("") == "none"
     assert gn.relay_kind("https://euw1-1.relay.n0.iroh.link") == "n0"
+    assert gn.relay_kind("https://relay.petty.services") == "ours"
     assert gn.relay_kind("https://relay.example.org") == "custom"

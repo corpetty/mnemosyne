@@ -49,6 +49,8 @@ function defaults(extra: Partial<PublicationDefaults> = {}): PublicationDefaults
 		expires_days: 90,
 		local_reach: 'this_device',
 		local_url: '',
+		host_url: '',
+		host_is_ours: false,
 		...extra
 	};
 }

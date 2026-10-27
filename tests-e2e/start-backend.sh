@@ -15,6 +15,8 @@ auto_summarize = false
 setup_complete = ${E2E_SETUP_COMPLETE:-true}
 obsidian_vault_path = "$data/vault"
 backup_dir = "$data/backups"
+# Never Mnemosyne's real relay or host (services/ours.py) from a browser test.
+use_our_servers = false
 guest_host = "http://127.0.0.1:8028"
 # Phase 10: guest rooms over iroh through the plain-HTTP dev relay (start-relay.sh). The phase 9
 # spec keeps the host transport; the iroh spec switches it per test through the settings API.

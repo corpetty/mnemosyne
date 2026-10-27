@@ -2,9 +2,10 @@
 people in a meeting type into its live notes from a browser, with no install or account.
 
 The notes stay where they are (services/shared_notes.py, the meeting's document and relay). A
-room on a publish host (`guest_host`, else `publish_host`, else ours) is the meeting point: the
-host relays and logs sealed envelopes it cannot read (services/guest_format.py). The owner's
-backend is the bridge between the two, one asyncio task per live room (`Bridge`):
+room on a publish host (`guest_host`, else `publish_host`, else Mnemosyne's, services/ours.py) is
+the meeting point: the host relays and logs sealed envelopes it cannot read
+(services/guest_format.py). The owner's backend is the bridge between the two, one asyncio task
+per live room (`Bridge`):
 
 - a hidden member of the notes room (`shared_notes.attach`) catches every frame written here
   (the owner's typing, the copilot, a contact's, the server's comment marks) and sends it to the
@@ -65,7 +66,7 @@ from urllib.parse import urlsplit
 
 from .. import access
 from ..models.comment import Comment, CommentCreate
-from . import comments, history, shared_notes
+from . import comments, history, ours, shared_notes
 from . import guest_format as gf
 from . import publication_format as pf
 from . import tunnel as tunnels
@@ -77,9 +78,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Our public guest host, once it runs ("" until then: guest notes need a configured host).
-OUR_GUEST_HOST = ""
-OUR_RELAY_HOST = ""  # our own iroh relay's host, once it exists (blank = none)
 # Where the guest page of an iroh link is served from when no host mirrors the room
 # (`guest_page_url` overrides it): GitHub Pages, from this repo.
 GUEST_PAGE_ORIGIN = "https://corpetty.github.io/mnemosyne/n/"
@@ -135,11 +133,9 @@ class GuestNotesUnavailable(GuestNotesError):
 
 def configured_host(app: AppContext) -> str:
     """The publish host rooms are made (or mirrored) on: `guest_host`, else `publish_host`,
-    else ours; "" when there is none. http(s) only (http for a host on this machine in tests
-    and e2e)."""
-    st = app.settings
-    url = (st.guest_host or "").strip() or (st.publish_host or "").strip() or OUR_GUEST_HOST
-    url = url.rstrip("/")
+    else Mnemosyne's (`use_our_servers`, services/ours.py); "" when there is none. http(s) only
+    (http for a host on this machine in tests and e2e)."""
+    url = ours.guest_host(app.settings)
     if not url:
         return ""
     parts = urlsplit(url)
@@ -207,15 +203,30 @@ async def plan(app: AppContext) -> Plan:
       with its reason when it cannot start;
     - auto: iroh when the sidecar starts (`start` falls back to a tunnel, then to the host, when
       the room cannot be served), else the configured host (a tunnel fronts the sidecar's loopback
-      host, so it cannot work without the sidecar either), else GuestNotesUnavailable.
-    An iroh or tunnel room is mirrored on the configured host whenever there is one."""
+      host, so it cannot work without the sidecar either), else GuestNotesUnavailable. Without
+      a relay (Mnemosyne's servers off and none configured) there is no iroh: a tunnel.
+    An iroh or tunnel room is mirrored on the guest host whenever there is one: by default
+    Mnemosyne's (`use_our_servers`)."""
     mode = app.settings.guest_transport
     origin = page_origin(app)
     if mode == "host":
         return Plan("host", host_url(app), "", origin)
     mirror = configured_host(app)
+    if mode == "iroh" and not ours.relays(app.settings):
+        raise GuestNotesUnavailable(
+            "Guest notes over iroh need a relay: turn on Mnemosyne's servers in Settings "
+            "or set a relay"
+        )
     if mode == "tunnel":
         rooms = await _rooms(app)
+        assert rooms.base_url is not None
+        return Plan("tunnel", rooms.base_url, mirror, origin)
+    if not ours.relays(app.settings):  # auto without a relay: browsers cannot reach iroh
+        try:
+            rooms = await _rooms(app)
+        except GuestNotesUnavailable as e:
+            logger.info("Guest notes: no rooms sidecar (%s), trying a publish host", e)
+            return _host_plan(app, str(e))
         assert rooms.base_url is not None
         return Plan("tunnel", rooms.base_url, mirror, origin)
     try:
@@ -2232,7 +2243,7 @@ def relay_kind(relay: str) -> str:
     host = host.rstrip(".")  # n0 relay URLs end in a dot (fully qualified hosts)
     if not host:
         return "none"
-    if OUR_RELAY_HOST and host == OUR_RELAY_HOST:
+    if host in ours.relay_hostnames():
         return "ours"
     if host.endswith(".relay.n0.iroh.link"):
         return "n0"

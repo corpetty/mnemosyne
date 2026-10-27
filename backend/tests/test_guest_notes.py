@@ -1156,6 +1156,7 @@ async def iroh(ctx, settings, sidecar, monkeypatch):
     sidecar.sync()
     ctx.http_transport = routed(loop)
     settings.guest_transport = "auto"
+    settings.remote_relays = N0_RELAY  # a relay is configured (blank + ours off = no iroh)
     settings.publish_host = ""
     settings.local_speaker_name = "Corey"
     yield loop

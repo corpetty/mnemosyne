@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { onExternalClick } from '$lib/app/externalLink.js';
+	const PRIVACY_URL = 'https://notes.petty.services/privacy';
 	import { backendMediaUrl } from '$lib/api/backend.js';
 	import { copyText } from '$lib/app/clipboard.js';
 	import {
@@ -54,7 +56,9 @@
 	const targets = $derived<[Target, string][]>([
 		['local', 'This computer'],
 		['file', 'A file'],
-		...(pub.publishHost ? [['host', 'Publish host'] as [Target, string]] : [])
+		...(pub.publishHost || pub.defaults?.host_url
+			? [['host', pub.defaults?.host_is_ours ? "Mnemosyne's server" : 'Publish host'] as [Target, string]]
+			: [])
 	]);
 
 	function close() {
@@ -242,6 +246,11 @@
 							</p>
 						{:else if pub.target === 'local' && pub.defaults?.local_url}
 							<p class="mt-1.5 text-xs text-gray-500">Opens for anyone who can reach {pub.defaults.local_url}.</p>
+						{:else if pub.target === 'host' && pub.defaults?.host_is_ours}
+							<p class="mt-1.5 text-xs text-gray-500">
+								Kept encrypted on Mnemosyne's server; the key stays in the link.
+								<a href={PRIVACY_URL} onclick={onExternalClick} target="_blank" rel="noopener noreferrer" class="text-gray-500 underline hover:text-gray-300">Privacy notice</a>
+							</p>
 						{:else if pub.target === 'file'}
 							<label class="mt-2 block max-w-xs">
 								<span class="mb-1 block text-xs text-gray-500">Password (optional, at least 8 characters)</span>

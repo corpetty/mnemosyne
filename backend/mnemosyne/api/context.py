@@ -19,9 +19,10 @@ from ..config import Settings
 from ..events import EventBus
 from ..jobs import JobManager
 from ..search.index import VectorIndex
+from ..services import ours
 from ..services.awake import KeepAwake
 from ..services.calendar_service import CalendarService, calendar_source
-from ..services.link import LinkService, RoomsLink, parse_relays
+from ..services.link import LinkService, RoomsLink
 from ..services.meeting_types import available_types
 from ..services.model_service import ModelService
 from ..services.pairing import PairingService
@@ -308,7 +309,7 @@ class AppContext:
         return self.jobs.submit("supervision_scan", run)
 
     async def apply_remote_access(self) -> None:
-        relays = parse_relays(self.settings.remote_relays)
+        relays = ours.relays(self.settings)
         if self.link.active and (not self.settings.remote_access or relays != self.link.relays):
             await self.link.stop()
         self.link.relays = relays
@@ -321,7 +322,7 @@ class AppContext:
         keeps the relays it started with."""
         link = self.rooms_link
         if not link.active or link._task.done():
-            link.relays = parse_relays(self.settings.remote_relays)
+            link.relays = ours.relays(self.settings)
             link.start()
         await link.wait_ready()
         return link

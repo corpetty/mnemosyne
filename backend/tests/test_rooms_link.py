@@ -84,13 +84,19 @@ async def test_starts_with_the_right_arguments(tmp_path, fake):
     assert link.listen is None and not link.status.running
 
 
-async def test_no_relay_argument_without_settings(tmp_path, fake):
+async def test_no_relay_argument_without_relays(tmp_path, fake):
+    """No relay configured: `--no-relay` (never n0's), and the sidecar's ready line says "none"
+    (the loopback host runs, no room is served over iroh)."""
     link = make(tmp_path)
+    fake.config.update(relay_kind="none")
+    fake.sync()
     link.start()
     await link.wait_ready()
     try:
-        assert link.relay_kind == "n0"
-        assert "--relay" not in fake.rooms_starts[0]["argv"]
+        assert link.relay_kind == "none"
+        assert link.base_url is not None
+        argv = fake.rooms_starts[0]["argv"]
+        assert argv[-1] == "--no-relay" and "--relay" not in argv
     finally:
         await link.stop()
 

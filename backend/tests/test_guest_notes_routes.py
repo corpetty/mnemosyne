@@ -313,6 +313,8 @@ async def test_the_guest_csp_names_the_relays_and_the_index_is_served(
         for origin in (
             "https://*.relay.n0.iroh.link",
             "wss://*.relay.n0.iroh.link",
+            "https://relay.petty.services",
+            "wss://relay.petty.services",
             "https://relay.example.com:7443",
             "wss://relay.example.com:7443",
             "http://127.0.0.1:3340",
@@ -437,6 +439,7 @@ async def iroh_host(ctx, settings, sidecar):
     sidecar.sync()
     ctx.http_transport = routed(loop, mirror)
     settings.guest_transport = "auto"
+    settings.remote_relays = N0_RELAY  # a relay is configured (blank + ours off = no iroh)
     settings.publish_host = mirror.url
     settings.local_speaker_name = "Corey"
     yield loop, mirror

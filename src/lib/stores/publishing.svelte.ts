@@ -207,7 +207,7 @@ export class PublishingState {
 			const { local_reach: _r, local_url: _u, ...sel } = defaults;
 			const pending = this.pending[id] ?? [];
 			delete this.pending[id];
-			this.target = sel.where === 'host' && this.publishHost ? 'host' : 'local';
+			this.target = sel.where === 'host' && (this.publishHost || defaults.host_url) ? 'host' : 'local';
 			this.selection = {
 				...sel,
 				title: sel.title || session.name,

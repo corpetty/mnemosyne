@@ -18,7 +18,14 @@ ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
 # Every setting as it is sent to the UI (secrets blanked); derived from Settings so the
 # generated TypeScript type follows new fields automatically.
 _VALUES = {
-    name: ((str, ...) if name == "data_dir" else (field.annotation, ...))
+    name: (
+        (str, ...)
+        if name == "data_dir"
+        # the effective value (Settings.public_dict), never "automatic"
+        else (bool, ...)
+        if name == "use_our_servers"
+        else (field.annotation, ...)
+    )
     for name, field in Settings.model_fields.items()
 }
 SettingsValues = create_model("SettingsValues", __base__=ApiModel, **_VALUES)

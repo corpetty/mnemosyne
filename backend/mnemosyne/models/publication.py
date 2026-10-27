@@ -54,6 +54,10 @@ class PublicationDefaults(PublicationSelection):
 
     local_reach: LocalReach
     local_url: str  # the base such a link would use; "" for this_device
+    # The publish host a "host" publication would go to ("" none: Mnemosyne's servers are off
+    # and none is set) and whether it is Mnemosyne's own (services/ours.py).
+    host_url: str
+    host_is_ours: bool
 
 
 class Publication(ApiModel):

@@ -4,9 +4,10 @@
 The sidecar holds this machine's iroh key (<data_dir>/link.key), accepts end-to-end encrypted
 connections from computers paired as "desktop" devices (services/pairing.py, which it reads
 from paired_devices.json), and forwards them to this backend on 127.0.0.1. Devices elsewhere
-reach it through relays when a direct connection is not possible: n0's public ones, or those in
-the `remote_relays` setting (iroh-relay servers we or the user run). Relays only see encrypted
-packets. On start it prints one JSON line: its endpoint id and ticket.
+reach it through relays when a direct connection is not possible: those in the `remote_relays`
+setting (iroh-relay servers the user runs), else Mnemosyne's own (services/ours.py), else none
+(`--no-relay`: direct connections only). n0's public relays are never used. Relays only see
+encrypted packets. On start it prints one JSON line: its endpoint id and ticket.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import backend_dir
+from .ours import parse_relays  # noqa: F401 - re-exported: callers import it from here
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +53,12 @@ def find_binary() -> str | None:
     return None
 
 
-def parse_relays(text: str) -> list[str]:
-    """The `remote_relays` setting (comma or space separated URLs); blank: n0's public relays."""
-    return [u for u in text.replace(",", " ").split() if u]
+def relay_args(relays: list[str]) -> list[str]:
+    """The sidecar's relay arguments: `--relay URL` for each, or `--no-relay` for none (it would
+    use n0's public relays if given nothing)."""
+    if not relays:
+        return ["--no-relay"]
+    return [arg for url in relays for arg in ("--relay", url)]
 
 
 def child_env() -> dict[str, str]:
@@ -99,7 +104,7 @@ class LinkService:
         self.data_dir = data_dir
         self.port = port
         self.binary = binary
-        self.relays: list[str] = []  # blank: n0's public relays
+        self.relays: list[str] = []  # services/ours.py relays(); none: no relay at all
         self.status = LinkStatus()
         self._proc: asyncio.subprocess.Process | None = None
         self._task: asyncio.Task | None = None
@@ -209,7 +214,7 @@ class LinkService:
             f"127.0.0.1:{self.port}",
             "--data-dir",
             str(self.data_dir),
-            *[arg for url in self.relays for arg in ("--relay", url)],
+            *relay_args(self.relays),
         ]
 
     def _ready(self, info: dict) -> LinkStatus:
@@ -279,7 +284,7 @@ class RoomsLink(LinkService):
     on a loopback port (`listen`) that the guest notes service uploads to with `upload_token`,
     and serves each room over iroh from one endpoint per room. Not tied to remote access.
 
-    `relays` (the `remote_relays` setting) is read when the process starts; a running one keeps
+    `relays` (services/ours.py `relays()`) is read when the process starts; a running one keeps
     the relays it started with. Closing our end of its stdin would keep it serving; stopping it
     closes every room but keeps their keys, so a restarted room has the same endpoint id."""
 
@@ -325,12 +330,12 @@ class RoomsLink(LinkService):
             str(self.viewer_dir),
             "--upload-token-file",
             str(self.token_file),
-            *[arg for url in self.relays for arg in ("--relay", url)],
+            *relay_args(self.relays),
         ]
 
     def _ready(self, info: dict) -> LinkStatus:
         self.listen = info["listen"]
-        self.relay_kind = info.get("relay_kind", "n0")
+        self.relay_kind = info.get("relay_kind", "none")
         logger.info("Guest rooms on, host %s (%s relays)", self.listen, self.relay_kind)
         self.readies += 1
         if self.readies > 1:

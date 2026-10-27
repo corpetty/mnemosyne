@@ -40,7 +40,8 @@ jobs:
           p = "_site/n/index.html"
           s = open(p, encoding="utf-8").read()
           csp = ("default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
-                 "connect-src 'self' https://*.relay.n0.iroh.link wss://*.relay.n0.iroh.link; "
+                 "connect-src 'self' https://*.relay.n0.iroh.link wss://*.relay.n0.iroh.link "
+                 "https://relay.petty.services wss://relay.petty.services; "
                  "media-src blob:; img-src data: blob:; base-uri 'none'; form-action 'none'")
           meta = '<meta http-equiv="Content-Security-Policy" content="' + csp + '">'
           assert s.count("<head>") == 1

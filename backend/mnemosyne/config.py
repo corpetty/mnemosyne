@@ -280,12 +280,20 @@ class Settings(BaseSettings):
     # can reach this backend from anywhere over an end-to-end encrypted iroh connection.
     remote_access: bool = False
     # Relays for remote access, comma-separated (e.g. https://relay.example.org, an iroh-relay
-    # you run). Blank: n0's free public relays. Paired computers follow home's choice.
+    # you run). Blank: Mnemosyne's relay while use_our_servers is on, else none (direct and
+    # local-network connections only; n0's public relays are never used). Paired computers
+    # follow home's choice.
     remote_relays: str = ""
+    # Use Mnemosyne's servers (services/ours.py) for what is not configured: its relay for
+    # remote access, sync, contacts and guest notes; its host for publishing and as a mirror of
+    # guest notes. None = automatic: on, except on a team server and with cloud_models off
+    # (resolve_use_our_servers). The API shows the effective value.
+    use_our_servers: bool | None = None
     # Publishing a meeting (services/publishing.py, docs/plans/2026-10-12-hashseq-collaboration.md
     # phase 7): a curated, encrypted copy readers open with a link. publish_host: the address of
-    # a publish host (publish-host/, e.g. https://pub.example.org); blank = none, so meetings can
-    # only be published from this computer. publish_host_token: the upload token a closed host
+    # a publish host (publish-host/, e.g. https://pub.example.org); blank = Mnemosyne's host
+    # while use_our_servers is on, else none, so meetings can only be published from this
+    # computer. publish_host_token: the upload token a closed host
     # asks for (X-Upload-Token); blank for an open host.
     publish_host: str = ""
     publish_host_token: str = ""
@@ -295,9 +303,9 @@ class Settings(BaseSettings):
     # How long a new publication stays up, in days (a publish host keeps one at most 365).
     publish_default_expiry_days: int = 90
     # Guest notes (phase 9): a live notes room outsiders join with a link. guest_host: a publish
-    # host that serves rooms; blank = publish_host, else ours once it runs. Team servers: off
-    # until an admin turns allow_guest_notes on. guest_notes_end_hours: how long after the
-    # recording stops a room is ended.
+    # host that serves rooms; blank = publish_host, else Mnemosyne's host (use_our_servers).
+    # Team servers: off until an admin turns allow_guest_notes on. guest_notes_end_hours: how
+    # long after the recording stops a room is ended.
     guest_host: str = ""
     allow_guest_notes: bool = False
     guest_notes_end_hours: int = 12
@@ -499,7 +507,23 @@ class Settings(BaseSettings):
         data = self.model_dump(mode="json")
         for name in SECRET_FIELDS:
             data[name] = ""
+        data["use_our_servers"] = self.our_servers  # the effective value, not "automatic"
         return data
+
+    @property
+    def our_servers(self) -> bool:
+        """`use_our_servers` as it takes effect."""
+        return resolve_use_our_servers(
+            self.use_our_servers, team_mode=self.team_mode, cloud_models=self.cloud_models
+        )
+
+
+def resolve_use_our_servers(value: bool | None, *, team_mode: bool, cloud_models: bool) -> bool:
+    """Whether Mnemosyne's servers (services/ours.py) are used: what was set, else on, except on
+    a team server (meetings stay on it) and with cloud models off (the local-only posture)."""
+    if value is not None:
+        return value
+    return not team_mode and cloud_models
 
 
 CONFIG_VERSION = 1
