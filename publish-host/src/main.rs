@@ -17,6 +17,11 @@ async fn main() -> std::io::Result<()> {
     app.sweep().await;
     spawn_sweeper(app.clone());
 
+    if let Some(addr) = app.cfg.metrics_addr() {
+        let metrics = tokio::net::TcpListener::bind(addr).await?;
+        tracing::info!("metrics on http://{addr}/metrics");
+        tokio::spawn(mnemosyne_publish_host::metrics::serve(metrics, app.clone()));
+    }
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!("publish host listening on {listen}");
     axum::serve(

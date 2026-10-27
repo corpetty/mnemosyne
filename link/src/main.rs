@@ -39,14 +39,20 @@ enum Command {
         /// the relays in home's ticket, so they need no setting of their own.
         #[arg(long = "relay")]
         relays: Vec<String>,
-        /// Only accept direct connections on this machine (no relays).
+        /// Use no relay at all: only direct connections, which still work on the local network
+        /// (home keeps announcing itself by mDNS). Without it, n0's public relays are used when
+        /// no `--relay` is given.
         #[arg(long)]
         no_relay: bool,
+        /// Do not announce this machine on the local network either (full isolation: with
+        /// `--no-relay`, nothing can reach home but a device that has its direct addresses).
+        #[arg(long)]
+        no_lan: bool,
     },
     /// Serve guest-notes rooms over iroh, proxied to an embedded host on loopback.
     ///
-    /// Prints one ready line `{"listen": "127.0.0.1:<port>", "relay_kind": "n0"|"custom"}` (the
-    /// loopback host), then stdin takes control commands (JSON lines: room_start, room_stop,
+    /// Prints one ready line `{"listen": "127.0.0.1:<port>", "relay_kind": "n0"|"custom"|"none"}`
+    /// (the loopback host; "none" with `--no-relay`: no room is served over iroh), then stdin takes control commands (JSON lines: room_start, room_stop,
     /// room_list; see the README), each answered by one JSON line on stdout. Closing stdin keeps
     /// serving.
     Rooms {
@@ -66,6 +72,10 @@ enum Command {
         /// A relay to use instead of n0's public ones (repeat for several: one is picked).
         #[arg(long = "relay")]
         relays: Vec<String>,
+        /// Use no relay: the loopback host still runs (a tunnel can front it), but `room_start`
+        /// is refused, since a room's iroh endpoint needs a relay. Never falls back to n0's.
+        #[arg(long)]
+        no_relay: bool,
     },
     /// Pair this machine with a home backend using an invite from its Settings.
     Pair {
@@ -91,6 +101,16 @@ enum Command {
         listen: SocketAddr,
         #[arg(long)]
         no_relay: bool,
+    },
+    /// Check that a relay carries traffic: two throwaway endpoints talk through it.
+    ///
+    /// Prints `{"ok":true,"relay":...,"ms":N}` and exits 0, or `{"ok":false,"error":...}` and
+    /// exits 1.
+    RelayCheck {
+        #[arg(long)]
+        relay: String,
+        #[arg(long, default_value_t = 20)]
+        timeout_secs: u64,
     },
     /// Dev only: a plain-HTTP iroh relay for the browser tests (feature `dev-relay`).
     #[cfg(feature = "dev-relay")]
@@ -228,6 +248,7 @@ async fn main() -> Result<()> {
             data_dir,
             relays,
             no_relay,
+            no_lan,
         } => {
             let key = load_or_create_key(&data_dir.join("link.key"))?;
             let relays = if no_relay {
@@ -236,8 +257,8 @@ async fn main() -> Result<()> {
                 Relays::from_urls(&relays)?
             };
             // Home announces itself on the local network so paired computers there connect
-            // directly, without any relay.
-            let lan = if no_relay { Lan::Off } else { Lan::Advertise };
+            // directly, without any relay (also with `--no-relay`).
+            let lan = home_lan(no_lan);
             let endpoint = bind_with(key, &relays, lan, |b| b).await?;
             if relays != Relays::Off
                 && tokio::time::timeout(Duration::from_secs(10), endpoint.online())
@@ -274,9 +295,14 @@ async fn main() -> Result<()> {
             viewer_dir,
             upload_token_file,
             relays,
+            no_relay,
         } => {
             let upload_token = read_secret(&upload_token_file)?;
-            let relays = Relays::from_urls(&relays)?;
+            let relays = if no_relay {
+                Relays::Off
+            } else {
+                Relays::from_urls(&relays)?
+            };
             let relay_origins = match &relays {
                 Relays::Custom(urls) => urls.iter().filter_map(relay_origin).collect(),
                 _ => Vec::new(),
@@ -289,7 +315,11 @@ async fn main() -> Result<()> {
                 relay_origins,
             })
             .await?;
-            let relay_kind = if relays == Relays::N0 { "n0" } else { "custom" };
+            let relay_kind = match relays {
+                Relays::N0 => "n0",
+                Relays::Off => "none",
+                Relays::Custom(_) => "custom",
+            };
             print_json(serde_json::json!({
                 "listen": listen.to_string(),
                 "relay_kind": relay_kind,
@@ -306,6 +336,38 @@ async fn main() -> Result<()> {
             ));
             shutdown().await;
             rooms.close_all().await;
+        }
+        Command::RelayCheck {
+            relay,
+            timeout_secs,
+        } => {
+            use mnemosyne_link::relay_check::{check, extra_roots_from_env, trust_extra_roots};
+            // MNEMOSYNE_RELAY_CA: a PEM file of extra trusted roots (a relay behind a private CA).
+            let roots = match extra_roots_from_env() {
+                Ok(roots) => roots,
+                Err(e) => {
+                    print_json(serde_json::json!({"ok": false, "error": format!("{e:#}")}));
+                    std::process::exit(1);
+                }
+            };
+            let outcome = match roots {
+                Some(roots) => {
+                    check(
+                        &relay,
+                        Duration::from_secs(timeout_secs),
+                        trust_extra_roots(roots),
+                    )
+                    .await
+                }
+                None => check(&relay, Duration::from_secs(timeout_secs), |b| b).await,
+            };
+            match outcome {
+                Ok(ms) => print_json(serde_json::json!({"ok": true, "relay": relay, "ms": ms})),
+                Err(e) => {
+                    print_json(serde_json::json!({"ok": false, "error": format!("{e:#}")}));
+                    std::process::exit(1);
+                }
+            }
         }
         #[cfg(feature = "dev-relay")]
         Command::DevRelay { listen } => {
@@ -365,6 +427,15 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// How home uses the local network: announced unless `--no-lan`.
+fn home_lan(no_lan: bool) -> Lan {
+    if no_lan {
+        Lan::Off
+    } else {
+        Lan::Advertise
+    }
 }
 
 /// A secret from a file only its owner can read (trimmed; refused when empty).
@@ -431,4 +502,28 @@ async fn shutdown() {
     }
     #[cfg(not(unix))]
     tokio::signal::ctrl_c().await.ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `--no-relay` must not turn the local network off: only `--no-lan` does.
+    #[test]
+    fn home_announces_on_the_lan_unless_no_lan() {
+        assert_eq!(home_lan(false), Lan::Advertise);
+        assert_eq!(home_lan(true), Lan::Off);
+    }
+
+    #[test]
+    fn no_relay_does_not_imply_no_lan() {
+        let cli = Cli::try_parse_from(["mnemosyne-link", "home", "--data-dir", "/x", "--no-relay"])
+            .unwrap();
+        match cli.command {
+            Command::Home {
+                no_relay, no_lan, ..
+            } => assert!(no_relay && home_lan(no_lan) == Lan::Advertise),
+            _ => panic!("not home"),
+        }
+    }
 }

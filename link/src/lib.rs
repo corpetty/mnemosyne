@@ -17,6 +17,7 @@
 pub mod guest;
 pub mod host;
 pub mod notes;
+pub mod relay_check;
 
 use std::{
     collections::HashMap,

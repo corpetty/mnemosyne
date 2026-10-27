@@ -11,6 +11,7 @@ use mnemosyne_publish_host::app::{router, App, Shared};
 use mnemosyne_publish_host::clock::Clock;
 use mnemosyne_publish_host::config::Config;
 use serde_json::{json, Value};
+use std::sync::atomic::Ordering::Relaxed;
 use tempfile::TempDir;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::{self, Message};
@@ -1104,4 +1105,148 @@ async fn the_guest_page_is_served_with_its_own_policy() {
         (r.status, r.code().as_str()),
         (StatusCode::SERVICE_UNAVAILABLE, "guest_missing")
     );
+}
+
+// ---- the daily write budget and the counters ----
+
+#[tokio::test]
+async fn the_write_budget_covers_frames_and_snapshots_of_one_client() {
+    // Behind a trusted proxy, an HTTP request without the header and a WebSocket from the
+    // same socket address are one client: 127.0.0.1 (the test's own); a snapshot says so.
+    let h = host_with(|c| {
+        c.trust_proxy = true;
+        c.write_bytes_per_day = 500;
+        c.room_idle_hours = 72;
+    })
+    .await;
+    // Created for three days, so it outlives the window rolling over below.
+    let bearer = format!("Bearer {TOKEN}");
+    let expires = (T0 + 3 * DAY).to_string();
+    let r = h
+        .create_with(
+            ROOM,
+            &[
+                ("authorization", &bearer),
+                ("x-room-token", ROOM_TOKEN),
+                ("x-room-expires", &expires),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let (mut ws, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    assert_eq!(append(&mut ws, &[7u8; 200]).await, 1);
+
+    assert_eq!(snap(&h, 200).await.status, StatusCode::NO_CONTENT);
+    let refused = snap(&h, 200).await;
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(refused.code(), "write_budget");
+    assert!(refused.header("retry-after").parse::<u64>().unwrap() > 0);
+
+    // The frame is refused the way a full log is: an error message, then a close.
+    send_bin(&mut ws, tagged(0x01, &[8u8; 200])).await;
+    let err = next(&mut ws).await.json();
+    assert_eq!(
+        (err["type"].as_str(), err["code"].as_str()),
+        (Some("error"), Some("write_budget"))
+    );
+    assert!(err["retry_after"].as_u64().unwrap() > 0, "{err}");
+    assert_eq!(
+        next(&mut ws).await,
+        Got::Closed(4429, "write_budget".into())
+    );
+    // Not logged, not relayed; the same client's reads of the room still work.
+    assert_eq!(
+        h.app
+            .rooms
+            .check_guest(ROOM, ROOM_TOKEN)
+            .await
+            .unwrap()
+            .last_seq,
+        1
+    );
+    assert_eq!(h.app.metrics.frames_relayed.load(Relaxed), 1);
+    assert_eq!(h.app.metrics.budget_refusals.load(Relaxed), 2);
+    let (_ws2, welcome) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    assert_eq!(welcome["seq"], 1);
+
+    // A day later the client may write again.
+    h.clock.advance(DAY + 1_000);
+    h.app.sweep().await;
+    let (mut ws3, _) = h.join(ROOM, ROOM_TOKEN, 1).await;
+    assert_eq!(append(&mut ws3, &[1u8; 200]).await, 2);
+}
+
+#[tokio::test]
+async fn presence_and_a_zero_budget_cost_nothing() {
+    let h = host_with(|c| c.write_bytes_per_day = 0).await;
+    h.create(ROOM).await;
+    let (mut ws, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    for _ in 0..5 {
+        append(&mut ws, &vec![1u8; 100_000]).await;
+    }
+    assert_eq!(h.app.metrics.budget_refusals.load(Relaxed), 0);
+
+    // With a budget, presence is relayed without being charged.
+    let h = host_with(|c| c.write_bytes_per_day = 100).await;
+    h.create(ROOM).await;
+    let (mut ws, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    for _ in 0..5 {
+        send_bin(&mut ws, tagged(0x02, &[5u8; 50])).await;
+    }
+    assert_eq!(append(&mut ws, &[1u8; 100]).await, 1);
+    assert_eq!(h.app.metrics.budget_refusals.load(Relaxed), 0);
+}
+
+#[tokio::test]
+async fn counters_count_rooms_joins_and_frames() {
+    let h = host().await;
+    let m = &h.app.metrics;
+    h.create(ROOM).await;
+    // Moving the expiry of an existing room is not a new room.
+    h.create(ROOM).await;
+    assert_eq!(m.rooms_created.load(Relaxed), 1);
+
+    // A refused join (wrong token, unknown room) is not counted; accepted ones are.
+    let mut bad = h.open(ROOM).await;
+    send_join(&mut bad, "wrong", 0).await;
+    assert!(matches!(next(&mut bad).await, Got::Closed(4401, _)));
+    let (mut a, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    let (mut b, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    assert_eq!(m.guest_connections.load(Relaxed), 2);
+
+    // Frames: counted once when accepted, whoever listens; presence and refused ones are not.
+    append(&mut a, b"one").await;
+    append(&mut a, b"two").await;
+    // The other guest hears both (they are not acks, so nothing is counted twice).
+    assert!(matches!(next(&mut b).await, Got::Bin(_)));
+    assert!(matches!(next(&mut b).await, Got::Bin(_)));
+    send_bin(&mut a, tagged(0x02, b"caret")).await;
+    send_bin(&mut a, tagged(0x01, b"")).await;
+    assert_eq!(next_but_counts(&mut a).await.json()["code"], "bad_frame");
+    assert_eq!(m.frames_relayed.load(Relaxed), 2);
+    assert_eq!(m.budget_refusals.load(Relaxed), 0);
+    let text = m.render(0);
+    assert!(
+        text.contains("mnemosyne_publish_rooms_created_total 1\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("mnemosyne_publish_guest_connections_total 2\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("mnemosyne_publish_frames_relayed_total 2\n"),
+        "{text}"
+    );
+}
+
+/// The owner's snapshot of `bytes` bytes covering frame 1, from client 127.0.0.1.
+async fn snap(h: &Host, bytes: usize) -> Reply {
+    h.owner(
+        "PUT",
+        &format!("/live/{ROOM}/snapshot"),
+        &[("x-room-since", "1"), ("x-forwarded-for", "127.0.0.1")],
+        &vec![9u8; bytes],
+    )
+    .await
 }

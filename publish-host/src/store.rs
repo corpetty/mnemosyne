@@ -251,6 +251,12 @@ impl Store {
         Self::authorize(self.load(id).await?.as_ref(), auth)
     }
 
+    /// Whether `id` has a stored manifest (not unpublished, not expired).
+    pub async fn is_published(&self, id: &str) -> bool {
+        let _guard = self.used.read().await;
+        matches!(self.load(id).await, Ok(Some(m)) if m.manifest_sha.is_some())
+    }
+
     pub async fn get_manifest(&self, id: &str) -> Result<(Meta, Vec<u8>), ApiError> {
         let _guard = self.used.read().await;
         let meta = self.load(id).await?.ok_or_else(not_found)?;

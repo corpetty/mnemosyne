@@ -1,0 +1,28 @@
+# TLS for the host (Let's Encrypt, automatic). See README.md in this folder.
+{
+	# Access logs go to stdout as JSON; Docker's json-file rotation (compose.yaml) is what
+	# makes them roll over, so IP addresses stay at most about 7 days.
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$PUBLISH_DOMAIN} {
+	# The privacy notice: a static page, nothing dynamic.
+	handle /privacy {
+		root * /srv/site
+		rewrite * /privacy.html
+		file_server
+	}
+
+	handle {
+		# A little over the largest blob (20 MiB); the host enforces its own limits as well.
+		request_body {
+			max_size 21MB
+		}
+		# Caddy puts the client's address in X-Forwarded-For (replacing any the client sent),
+		# which the host trusts because PUBLISH_TRUST_PROXY is set.
+		reverse_proxy publish:8080
+	}
+}

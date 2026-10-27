@@ -5,21 +5,12 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Mutex;
 
+use crate::budget::client_key;
+
 pub struct Limiter {
     burst: f64,
     per_ms: f64,
     buckets: Mutex<HashMap<IpAddr, (f64, u64)>>,
-}
-
-fn client_key(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V6(v6) => {
-            let mut o = v6.octets();
-            o[8..].fill(0);
-            IpAddr::from(o)
-        }
-        v4 => v4,
-    }
 }
 
 impl Limiter {

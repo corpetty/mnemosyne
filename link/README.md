@@ -44,7 +44,11 @@ Everything runs on home's own endpoint (`link.key`), so a peer sees the same end
 - `dial` serves the peer on a new loopback port: each TCP connection there is tunnelled to the
   peer's backend, as `connect` does. Dialing a peer again returns the listener it already has.
   Home's relays are not changed by a dial: the peer's relay and direct addresses come from its
-  ticket, and mDNS finds it on the local network when home was started with relays.
+  ticket, and mDNS finds it on the local network, also when home was started with `--no-relay` (no relay at all;
+`--no-lan` stops the announcement too, for full isolation).
+
+`mnemosyne-link relay-check --relay URL` reads `MNEMOSYNE_RELAY_CA`, a PEM file of CA certificates to
+trust besides the built-in web roots (a relay behind a private CA, e.g. the deploy smoke test).
 - `hangup` closes that listener and the connection under it (open tunnels are cut).
 - `pair` is the `pair` command from home's endpoint. `peer`, when given, is passed unchanged to the
   other backend's `POST /api/pairing/redeem` body as `peer`, so it can dial this machine back.
@@ -54,12 +58,13 @@ Everything runs on home's own endpoint (`link.key`), so a peer sees the same end
 
 ## Guest rooms (`rooms`)
 
-`mnemosyne-link rooms --data-dir D --guest-dir G --viewer-dir V --upload-token-file F [--relay URL]...`
+`mnemosyne-link rooms --data-dir D --guest-dir G --viewer-dir V --upload-token-file F [--relay URL]... [--no-relay]`
 serves guest-notes rooms over iroh without remote access being on (`src/guest.rs`). It starts the
 embedded publish host on `127.0.0.1:<port>` (`src/host.rs`, data under `D/guest_rooms/host`); only
 the token in `F` creates rooms there (`X-Upload-Token`). `F` must exist, be non-empty and not be
 world-readable, or the command exits with an error. The ready line is
-`{"listen": "127.0.0.1:<port>", "relay_kind": "n0"|"custom"}` ("custom" when `--relay` is given),
+`{"listen": "127.0.0.1:<port>", "relay_kind": "n0"|"custom"|"none"}` ("custom" when `--relay` is given, "none" with `--no-relay`: the loopback host
+runs so a tunnel can front it, but `room_start` is always an error, "guest rooms need a relay"),
 then stdin takes the commands below with the same reply rules as `home` (`id`, `op`, `ok`,
 `error`). Closing stdin stops nothing; SIGTERM closes every room endpoint and keeps their keys.
 

@@ -25,6 +25,10 @@
 //!   without an answer, since the next caret supersedes it).
 //!   A frame is acknowledged with `{"type":"ack","seq":n}`, sent in seq order with the frames
 //!   relayed to this connection (a client that saw the ack for n has every frame up to n).
+//!   Over the client's daily write budget (`write_bytes_per_day`, counted per client address
+//!   across every upload) a logged frame is refused with `{"type":"error","code":"write_budget",
+//!   "retry_after":<seconds>}` and a close 4429, the code of "try again later" (the guest page
+//!   retries it with backoff); the frame is not logged or relayed.
 //!   Refusals: ended room → close 4403; over the frame cap or a full log → `{"type":"error",
 //!   "code":"frame_too_large"|"log_full"}` then close 4413; an empty or unknown frame →
 //!   `{"type":"error","code":"bad_frame"}` (the connection stays).
@@ -41,8 +45,9 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{interval_at, timeout, Instant, MissedTickBehavior};
 
-use crate::app::Shared;
+use crate::app::{ClientIp, Shared};
 use crate::error::ApiError;
+use crate::metrics::Metrics;
 use crate::rooms::{Event, Joined};
 
 pub const JOIN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -71,6 +76,8 @@ pub const CLOSE_LAGGED: u16 = 4409;
 pub const CLOSE_GONE: u16 = 4410;
 pub const CLOSE_TOO_LARGE: u16 = 4413;
 pub const CLOSE_FULL: u16 = 4429;
+/// Over the daily write budget: the same "try again later" code as a full room.
+pub const CLOSE_BUDGET: u16 = CLOSE_FULL;
 
 /// A connection counted into its room; counted out when dropped, however the socket ends (or
 /// if the upgrade never happens).
@@ -78,11 +85,18 @@ pub struct Connection {
     app: Shared,
     room: String,
     id: u64,
+    /// The client address the write budget is charged to.
+    client: ClientIp,
 }
 
 impl Connection {
-    pub fn new(app: Shared, room: String, id: u64) -> Connection {
-        Connection { app, room, id }
+    pub fn new(app: Shared, room: String, id: u64, client: ClientIp) -> Connection {
+        Connection {
+            app,
+            room,
+            id,
+            client,
+        }
     }
 }
 
@@ -259,6 +273,7 @@ async fn serve(socket: &mut WebSocket, conn: &Connection) -> Step {
         .await
         .map_err(|e| join_refused(&e))?;
 
+    Metrics::inc(&conn.app.metrics.guest_connections);
     send_json(
         socket,
         json!({
@@ -351,7 +366,25 @@ async fn incoming(
         Message::Text(t) if t.as_str() == "ping" => send(socket, Message::text("pong")).await,
         Message::Binary(b) => {
             let result = match b.split_first() {
-                Some((&KIND_FRAME, env)) => rooms.append(&conn.room, conn.id, env).await.map(drop),
+                Some((&KIND_FRAME, env)) => {
+                    if let Err(e) = conn.app.charge_write(conn.client, env.len() as u64) {
+                        send_json(
+                            socket,
+                            json!({
+                                "type": "error",
+                                "code": e.code,
+                                "retry_after": e.retry_after,
+                            }),
+                        )
+                        .await?;
+                        return Err(Stop::Close(CLOSE_BUDGET, e.code));
+                    }
+                    let appended = rooms.append(&conn.room, conn.id, env).await.map(drop);
+                    if appended.is_ok() {
+                        Metrics::inc(&conn.app.metrics.frames_relayed);
+                    }
+                    appended
+                }
                 Some((&KIND_PRESENCE, _)) if !bucket.allow(StdInstant::now()) => return Ok(()),
                 Some((&KIND_PRESENCE, env)) => rooms.presence(&conn.room, conn.id, env).await,
                 _ => Err(ApiError::bad("bad_frame")),

@@ -1,0 +1,86 @@
+# Mnemosyne's own relay and guest notes / publish host (petty.services).
+# cp .env.example .env, edit it, then:  docker compose up -d --build
+# See README.md in this folder.
+#
+# Two public addresses on one machine: RELAY_ADDR for the relay, HOST_ADDR for the host. Every
+# published port is bound to its own address, so the two never compete for 80 or 443.
+#
+# Images are pinned by tag. When deploying, pin them by digest too
+# (`docker compose pull && docker compose images --format json`, then image: name@sha256:...).
+
+x-logging: &logging
+  # Logs hold IP addresses. json-file rotation keeps about 5 x 10 MB per service, which is
+  # roughly 7 days of normal traffic here. If you see more traffic, lower max-size so the files
+  # still roll over within 7 days (the privacy notice promises 7 days at most).
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  relay:
+    image: n0computer/iroh-relay:v1.3.0
+    command: ["--config-path", "/etc/iroh-relay.toml"]
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      - "${RELAY_ADDR:?set RELAY_ADDR in .env}:80:80/tcp"
+      - "${RELAY_ADDR}:443:443/tcp"
+      - "${RELAY_ADDR}:7842:7842/udp"   # QUIC address discovery: helps devices find a direct path
+    volumes:
+      - ./iroh-relay.toml:/etc/iroh-relay.toml:ro
+      - relay-certs:/var/lib/iroh-relay/certs
+    # Metrics are on 127.0.0.1:9090 inside the container and not published; see README.md.
+
+  publish:
+    build: ../../publish-host
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      # Caddy below is the only thing that reaches this container, so its X-Forwarded-For is the
+      # client address the rate limits are keyed on.
+      PUBLISH_TRUST_PROXY: "true"
+      # Empty: an open host (decided for this one). Set it to accept new publications only from
+      # people who know it.
+      PUBLISH_UPLOAD_TOKEN: "${PUBLISH_UPLOAD_TOKEN:-}"
+      PUBLISH_QUOTA_BYTES: "${PUBLISH_QUOTA_BYTES:-10737418240}"
+      PUBLISH_MAX_DAYS: "${PUBLISH_MAX_DAYS:-365}"
+      # Per client (IP or IPv6 /64) bytes written a day, so one client cannot fill the quota.
+      PUBLISH_WRITE_BYTES_PER_DAY: "${PUBLISH_WRITE_BYTES_PER_DAY:-209715200}"
+      # Our relay is allowed in the guest page's Content-Security-Policy (n0's always are).
+      PUBLISH_RELAY_ORIGINS: "${PUBLISH_RELAY_ORIGINS:-relay.petty.services}"
+      # Usage counters (counts only), on the container's loopback: see README.md, "Usage".
+      PUBLISH_METRICS_LISTEN: "127.0.0.1:9091"
+    volumes:
+      - data:/data
+      # The built viewer and guest page, from the Mnemosyne repo; update.sh keeps them current.
+      - ./viewer:/viewer:ro
+      - ./guest:/guest:ro
+    # Not published: only Caddy talks to it. The metrics port stays on the container's
+    # loopback too (see publish-host/README and README.md here).
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      - "${HOST_ADDR:?set HOST_ADDR in .env}:80:80/tcp"
+      - "${HOST_ADDR}:443:443/tcp"
+      - "${HOST_ADDR}:443:443/udp"   # HTTP/3
+    environment:
+      PUBLISH_DOMAIN: "${PUBLISH_DOMAIN:?set PUBLISH_DOMAIN in .env}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./site:/srv/site:ro            # privacy.html
+      - caddy-data:/data               # certificates
+      - caddy-config:/config
+    depends_on:
+      - publish
+
+volumes:
+  relay-certs:
+  data:
+  caddy-data:
+  caddy-config:

@@ -1,4 +1,4 @@
-//! The HTTP side: routes, headers, rate limits and the sweeper.
+//! The HTTP side: routes, headers, rate limits, the daily write budget (`charge_write`) and the sweeper.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Component, Path, PathBuf};
@@ -13,15 +13,18 @@ use axum::http::{HeaderMap, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
+use axum::Extension;
 use axum::{Json, Router};
 use serde_json::{json, Value};
 use tokio_util::io::ReaderStream;
 
+use crate::budget::WriteBudget;
 use crate::clock::Clock;
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::limiter::Limiter;
 use crate::live::{self, Connection};
+use crate::metrics::Metrics;
 use crate::rooms::{RoomMeta, RoomStore};
 use crate::store::{secrets_equal, sha256_hex, valid_id, valid_sha, Auth, Store};
 
@@ -61,9 +64,21 @@ pub struct App {
     pub store: Store,
     /// Guest-notes rooms (live, sealed notes).
     pub rooms: RoomStore,
+    /// Usage counters (see `metrics.rs`); served only by the metrics listener.
+    pub metrics: Metrics,
     reads: Limiter,
     writes: Limiter,
+    budget: WriteBudget,
 }
+
+/// The client address the rate limits use (the proxy's view when `trust_proxy` is set), put
+/// into the request's extensions by the `rate_limit` middleware for handlers that charge the
+/// daily write budget.
+#[derive(Clone, Copy, Debug)]
+pub struct ClientIp(pub IpAddr);
+
+/// The write budget's window.
+const BUDGET_WINDOW_MS: u64 = 24 * 60 * 60 * 1000;
 
 pub type Shared = Arc<App>;
 
@@ -75,6 +90,8 @@ impl App {
             rooms: RoomStore::open(cfg.clone(), clock.clone()).await?,
             reads: Limiter::new(cfg.read_burst, cfg.read_per_minute),
             writes: Limiter::new(cfg.write_burst, cfg.write_per_minute),
+            budget: WriteBudget::new(cfg.write_bytes_per_day, BUDGET_WINDOW_MS),
+            metrics: Metrics::default(),
             cfg,
             clock,
         }))
@@ -90,9 +107,27 @@ impl App {
         }
         self.reads.forget_idle(self.clock.now_ms());
         self.writes.forget_idle(self.clock.now_ms());
+        self.budget.forget_idle(self.clock.now_ms());
         if stats != Default::default() {
             tracing::info!("sweep: {stats:?}");
         }
+    }
+}
+
+impl App {
+    /// Counts `bytes` of an upload against the client's daily write budget. Over it: 429
+    /// `write_budget` with `Retry-After` (seconds until enough of the client's older writes leave
+    /// the window), and a budget refusal counted. What was received counts even if the write then
+    /// fails (a conflict, a bad hash), since it was sent either way.
+    pub fn charge_write(&self, client: ClientIp, bytes: u64) -> Result<(), ApiError> {
+        self.budget
+            .charge(client.0, bytes, self.clock.now_ms())
+            .map_err(|secs| {
+                Metrics::inc(&self.metrics.budget_refusals);
+                let mut e = ApiError::new(StatusCode::TOO_MANY_REQUESTS, "write_budget");
+                e.retry_after = Some(secs);
+                e
+            })
     }
 }
 
@@ -166,7 +201,9 @@ fn client_ip(app: &App, req: &Request) -> IpAddr {
         .map_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED), |c| c.0.ip())
 }
 
-async fn rate_limit(State(app): State<Shared>, req: Request, next: Next) -> Response {
+async fn rate_limit(State(app): State<Shared>, mut req: Request, next: Next) -> Response {
+    let ip = client_ip(&app, &req);
+    req.extensions_mut().insert(ClientIp(ip));
     if req.uri().path() == "/health" {
         return next.run(req).await;
     }
@@ -175,7 +212,7 @@ async fn rate_limit(State(app): State<Shared>, req: Request, next: Next) -> Resp
     } else {
         &app.writes
     };
-    match limiter.take(client_ip(&app, &req), app.clock.now_ms()) {
+    match limiter.take(ip, app.clock.now_ms()) {
         Ok(()) => next.run(req).await,
         Err(secs) => {
             let mut e = ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
@@ -266,6 +303,7 @@ async fn get_manifest(
 ) -> Result<Response, ApiError> {
     check_id(&id)?;
     let (meta, bytes) = app.store.get_manifest(&id).await?;
+    Metrics::inc(&app.metrics.publications_opened);
     let sha = meta.manifest_sha.unwrap_or_default();
     let mut res = if etag_matches(&headers, &sha) {
         StatusCode::NOT_MODIFIED.into_response()
@@ -306,6 +344,7 @@ async fn get_blob(
 
 async fn put_blob(
     State(app): State<Shared>,
+    Extension(client): Extension<ClientIp>,
     UrlPath((id, sha)): UrlPath<(String, String)>,
     headers: HeaderMap,
     body: Body,
@@ -315,6 +354,7 @@ async fn put_blob(
     let auth = auth_of(&app, &headers)?;
     app.store.check_writer(&id, &auth).await?;
     let bytes = read_body(&headers, body, app.cfg.blob_max_bytes).await?;
+    app.charge_write(client, bytes.len() as u64)?;
     if sha256_hex(&bytes) != sha {
         return Err(ApiError::bad("sha256_mismatch"));
     }
@@ -329,6 +369,7 @@ async fn put_blob(
 
 async fn put_manifest(
     State(app): State<Shared>,
+    Extension(client): Extension<ClientIp>,
     UrlPath(id): UrlPath<String>,
     headers: HeaderMap,
     body: Body,
@@ -366,10 +407,15 @@ async fn put_manifest(
     if manifest.is_empty() {
         return Err(ApiError::bad("empty_manifest"));
     }
+    app.charge_write(client, manifest.len() as u64)?;
+    let first = !app.store.is_published(&id).await;
     let meta = app
         .store
         .put_manifest(&id, &manifest, version, expires, &refs, &auth)
         .await?;
+    if first {
+        Metrics::inc(&app.metrics.publications_created);
+    }
     Ok(Json(json!({
         "version": meta.version,
         "expires": meta.expires,
@@ -499,6 +545,9 @@ async fn create_room(
         .rooms
         .create(&room, &auth, &sha256_hex(token.as_bytes()), expires)
         .await?;
+    if created {
+        Metrics::inc(&app.metrics.rooms_created);
+    }
     let status = if created {
         StatusCode::CREATED
     } else {
@@ -510,6 +559,7 @@ async fn create_room(
 /// `PUT /live/<room>/snapshot`: the owner's sealed fold covering frames up to `X-Room-Since`.
 async fn put_snapshot(
     State(app): State<Shared>,
+    Extension(client): Extension<ClientIp>,
     UrlPath(room): UrlPath<String>,
     headers: HeaderMap,
     body: Body,
@@ -526,6 +576,7 @@ async fn put_snapshot(
             }
             e
         })?;
+    app.charge_write(client, bytes.len() as u64)?;
     app.rooms.put_snapshot(&room, &auth, &bytes, since).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -564,6 +615,7 @@ async fn delete_room(
 /// status; only a malformed room id is refused as HTTP 400.
 async fn live_socket(
     State(app): State<Shared>,
+    Extension(client): Extension<ClientIp>,
     UrlPath(room): UrlPath<String>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
@@ -585,7 +637,7 @@ async fn live_socket(
                 .on_upgrade(move |socket| live::refuse(socket, code, reason)));
         }
     };
-    let conn = Connection::new(app.clone(), room, id);
+    let conn = Connection::new(app.clone(), room, id, client);
     // Frames a little over the cap still reach the store, which answers `frame_too_large`;
     // the socket itself only refuses what is far beyond it.
     Ok(ws

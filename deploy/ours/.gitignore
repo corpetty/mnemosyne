@@ -1,0 +1,5 @@
+.env
+guest/
+viewer/
+.update-tag
+.update.*
