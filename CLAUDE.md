@@ -507,7 +507,7 @@ with only the chosen parts (services/shares.py), `/api/share/changes` and signed
 library sync, task links, Ask, semantic search, the digest or Obsidian (`shared_in_*`). Demo mode
 seeds Ada Lovelace's shared meeting only through `POST /api/demo/share` (the e2e spec calls it).
 
-Noise suppression (unreleased, docs/plans/2026-10-27-noise-suppression.md): DeepFilterNet's LADSPA
+Noise suppression (released as 0.26.0, docs/plans/2026-10-27-noise-suppression.md): DeepFilterNet's LADSPA
 plugin (pinned download) in a PipeWire filter-chain behind the echo canceller, in a pw-cli of its own
 (audio/noise_suppression.py; `noise_suppression`, `noise_suppression_db`). Our recordings take the
 pre-DeepFilterNet source `mnemosyne_aec_raw` unless `noise_suppression_record` (it raised Phonon's WER
