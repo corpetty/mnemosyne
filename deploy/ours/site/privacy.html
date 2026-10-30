@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Privacy notice - Mnemosyne servers</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fdfdfb; --fg: #1f2328; --muted: #59636e; --line: #d8dee4; --link: #0b5cad; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14171a; --fg: #e6e8ea; --muted: #9aa4ad; --line: #30363d; --link: #6cb2f5; }
+  }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, sans-serif; margin: 0; }
+  main { max-width: 42rem; margin: 0 auto; padding: 2rem 16px 4rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.1rem; margin: 2rem 0 .5rem; border-top: 1px solid var(--line); padding-top: 1.25rem; }
+  p, li { margin: .5rem 0; }
+  ul { padding-left: 1.25rem; }
+  .muted { color: var(--muted); font-size: .9rem; }
+  a { color: var(--link); }
+</style>
+</head>
+<body>
+<main>
+<h1>Privacy notice</h1>
+<p class="muted">For relay.petty.services and notes.petty.services. Last updated 2026-10-26.</p>
+
+<p>These two servers are run for Mnemosyne, the meeting recorder, by petty.services, the
+consultancy of Corey Petty. They exist so that Mnemosyne's guest notes and published meeting pages
+work without anyone depending on a third party's test servers.</p>
+
+<h2>What the servers can read</h2>
+<p>Nothing you write. Guest notes and published meetings are encrypted on the sender's computer
+before they leave it. The key is in the part of the link after the <code>#</code>, which your
+browser never sends to a server. The relay only forwards encrypted packets between devices and stores nothing.</p>
+
+<h2>What the servers see</h2>
+<ul>
+  <li>The encrypted data itself, which we cannot decrypt.</li>
+  <li>Room and publication ids (random), sizes, and times.</li>
+  <li>The IP address of every device that connects, like any website.</li>
+</ul>
+
+<h2>What we keep</h2>
+<ul>
+  <li><strong>IP addresses</strong> sit in the web server and relay logs for at most 7 days,
+  then the logs are deleted automatically.</li>
+  <li><strong>Counts only:</strong> we count how many rooms, guest connections, publications and
+  bytes there are, to see whether the service is used and to keep it within its limits. These
+  numbers are not tied to any person or link.</li>
+  <li>No analytics, no cookies, no third-party scripts, no advertising. The pages on this server
+  load nothing from anywhere else.</li>
+</ul>
+
+<h2>Guest notes</h2>
+<p>By default Mnemosyne also copies a meeting's guest notes (encrypted) to this server, so that
+the link keeps working if the host's computer is off. A room is deleted 24 hours after its last
+edit, and after 7 days at the latest. The person who started the room can end it earlier.</p>
+
+<h2>Published meetings</h2>
+<p>A published page expires on a date its publisher chooses: 90 days by default, one year at most.
+Then it is deleted. The publisher can unpublish it at any time, which deletes it at once. A copy
+someone already opened cannot be recalled.</p>
+
+<h2>Contact</h2>
+<p>Questions, or something to take down: <a href="mailto:ops@petty.services">ops@petty.services</a>.</p>
+</main>
+</body>
+</html>

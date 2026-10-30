@@ -32,7 +32,13 @@ def settings(tmp_path, monkeypatch) -> Settings:
     # Model downloads are watched in this cache (services/model_downloads.py): not the real one.
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hf"))
     # backup_dir: never the real ~/Documents/Mnemosyne backups
-    return Settings(data_dir=tmp_path / "data", backup_dir=str(tmp_path / "backups"))
+    # use_our_servers off: no test publishes to, mirrors on or dials Mnemosyne's real servers
+    # (services/ours.py); the tests of that opt in, and `no_our_servers` refuses the name anyway.
+    return Settings(
+        data_dir=tmp_path / "data",
+        backup_dir=str(tmp_path / "backups"),
+        use_our_servers=False,
+    )
 
 
 @pytest.fixture
@@ -89,6 +95,22 @@ def no_tunnel(monkeypatch):
         raise tunnel.TunnelError("no tunnel in tests")
 
     monkeypatch.setattr(tunnel, "open_tunnel", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_our_servers(monkeypatch):
+    """Never reach Mnemosyne's real relay or host (petty.services) from a test: the name does
+    not resolve. Tests of the defaults (services/ours.py) use a fake transport."""
+    import socket
+
+    real = socket.getaddrinfo
+
+    def getaddrinfo(host, *args, **kwargs):
+        if isinstance(host, str) and host.rstrip(".").lower().endswith("petty.services"):
+            raise socket.gaierror(socket.EAI_NONAME, "petty.services is not reachable in tests")
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
 
 
 @pytest.fixture(autouse=True)

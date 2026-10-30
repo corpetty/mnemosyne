@@ -22,8 +22,7 @@ from ...models.publication import (
     PublicationListItem,
     PublicationSelection,
 )
-from ...services import publication_file, publishing
-from ...services.link import parse_relays
+from ...services import ours, publication_file, publishing
 from ..context import AppContext, get_ctx
 
 router = APIRouter(tags=["publishing"])
@@ -60,10 +59,12 @@ def relay_host(url: str) -> tuple[str, str] | None:
 
 
 def guest_csp(settings: Any) -> str:
-    """GUEST_CSP with the iroh relays in connect-src: n0's and those of `remote_relays`
-    (https/wss each; http/ws for a plain-http relay, as the e2e tests use on loopback)."""
+    """GUEST_CSP with the iroh relays in connect-src: Mnemosyne's and n0's (always, so links
+    made by any version keep working) and those of `remote_relays` (https/wss each; http/ws for
+    a plain-http relay, as the e2e tests use on loopback)."""
     origins = [f"https://{N0_RELAYS}", f"wss://{N0_RELAYS}"]
-    for url in parse_relays(getattr(settings, "remote_relays", "") or ""):
+    configured = ours.parse_relays(getattr(settings, "remote_relays", "") or "")
+    for url in [*ours.OUR_RELAYS, *configured]:
         parsed = relay_host(url)
         if parsed is None:
             continue

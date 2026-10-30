@@ -301,6 +301,7 @@ async fn home_binary_takes_commands_on_stdin() {
         .args([
             "home",
             "--no-relay",
+            "--no-lan",
             "--backend",
             &backend.to_string(),
             "--data-dir",

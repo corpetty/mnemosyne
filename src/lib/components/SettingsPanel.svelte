@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onExternalClick } from '$lib/app/externalLink.js';
 	import { deleteSpeakerProfile, getSettings, getSystemInfo, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
 	import { loadAutoRecordSettings, openSetup, refreshMe } from '$lib/app/controller.svelte.js';
 	import { updateState } from '$lib/stores/update.svelte.js';
@@ -104,6 +105,11 @@
 		location.reload();
 	}
 	let secrets = $state<Record<SecretKey, string>>(emptySecrets());
+	// The effective value; sent only after the person changes it (the backend keeps "automatic" otherwise).
+	let useOurServers = $state(true);
+	let ourTouched = $state(false);
+	const blankHost = $derived(useOurServers ? "Blank: Mnemosyne's host" : 'Blank: none');
+	const blankRelay = $derived(useOurServers ? "Blank: Mnemosyne's relay" : 'Blank: none');
 
 	const WHISPER_MODELS = ['tiny', 'base', 'small', 'medium', 'medium.en', 'large-v2', 'large-v3', 'large-v3-turbo'];
 	const COMPUTE_TYPES = ['float16', 'int8', 'float32'];
@@ -119,6 +125,8 @@
 			settings = await getSettings();
 			system = await getSystemInfo().catch(() => null);
 			const v = settings.values;
+			useOurServers = v.use_our_servers;
+			ourTouched = false;
 			form = {
 				phone_url: v.phone_url,
 				remote_access: v.remote_access,
@@ -254,6 +262,8 @@
 		error = '';
 		try {
 			const update: SettingsUpdate = { ...form };
+			// Only an explicit choice is sent: saving must not freeze the automatic value.
+			if (ourTouched) update.use_our_servers = useOurServers;
 			for (const key of SECRET_KEYS) {
 				if (secrets[key] !== '') update[key] = secrets[key];
 			}
@@ -1347,10 +1357,20 @@
 					A published meeting is a chosen part of it, encrypted, that others open with a link (from this computer or a publish
 					host) or as one file. The key is in the link: a host only ever stores encrypted data.
 				</p>
+				<div class="mb-3">
+					<label class="flex items-center gap-2 text-sm text-gray-300">
+						<input type="checkbox" bind:checked={useOurServers} onchange={() => (ourTouched = true)} disabled={locked('use_our_servers')} class="rounded border-gray-600 bg-gray-800" />
+						Use Mnemosyne's servers
+					</label>
+					<span class="mt-1 block text-xs text-gray-500">
+						Our relay (relay.petty.services) connects your devices and guests' browsers, and our host (notes.petty.services) keeps guest notes and published meetings, all end-to-end encrypted. Off: only the relays and host you set below.
+						<a href="https://notes.petty.services/privacy" onclick={onExternalClick} target="_blank" rel="noopener noreferrer" class="underline hover:text-gray-300">Privacy notice</a>
+					</span>
+				</div>
 				<div class="grid grid-cols-2 gap-3">
 					<label class="col-span-2">
 						<span class={labelClass}>Publish host (blank: none, links are served by this computer)</span>
-						<input type="url" bind:value={form.publish_host} disabled={locked('publish_host')} placeholder="https://pub.example.org" class={inputClass} />
+						<input type="url" bind:value={form.publish_host} disabled={locked('publish_host')} placeholder={blankHost} class={inputClass} />
 					</label>
 					<label class="col-span-2">
 						<span class={labelClass}>Upload token{#if settings.secrets_set.publish_host_token}<span class="text-green-500 ml-1">set</span>{/if}</span>
@@ -1386,7 +1406,7 @@
 					</label>
 					<label class="col-span-2">
 						<span class={labelClass}>Guest notes host</span>
-						<input type="url" bind:value={form.guest_host} disabled={locked('guest_host')} placeholder="Blank: the publish host above" class={inputClass} />
+						<input type="url" bind:value={form.guest_host} disabled={locked('guest_host')} placeholder={form.publish_host ? "Blank: the publish host above" : blankHost} class={inputClass} />
 						<span class="mt-1 block text-xs text-gray-500">Where guests' notes are relayed, encrypted. Blank uses the publish host.</span>
 					</label>
 					<label>
@@ -1448,7 +1468,7 @@
 				{#if form.remote_access}
 					<label class="block max-w-md mt-2 ml-6">
 						<span class={labelClass}>Relays (comma-separated)</span>
-						<input type="text" bind:value={form.remote_relays} disabled={locked('remote_relays')} placeholder="blank: n0's free public relays" class={inputClass} />
+						<input type="text" bind:value={form.remote_relays} disabled={locked('remote_relays')} placeholder={blankRelay} class={inputClass} />
 						<span class="text-xs text-gray-600">iroh-relay servers you run, e.g. <code>https://relay.example.org</code> (docs/remote-access.md). Paired computers follow this; after changing it, pair them again.</span>
 					</label>
 				{/if}

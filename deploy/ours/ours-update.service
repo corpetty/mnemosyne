@@ -1,0 +1,11 @@
+[Unit]
+Description=Fetch the latest Mnemosyne guest page and viewer for the notes host
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Edit User= and the paths to match where this folder lives on the server.
+User=mnemosyne
+WorkingDirectory=/opt/mnemosyne/deploy/ours
+ExecStart=/opt/mnemosyne/deploy/ours/update.sh

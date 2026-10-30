@@ -41,7 +41,7 @@ from ..models.publication import (
     QuoteSpan,
 )
 from ..models.session import Session
-from . import clips, history
+from . import clips, history, ours
 from . import publication_format as pf
 from .notes_chips import plain_notes
 from .origin import audio_elsewhere, device_name, is_foreign
@@ -191,7 +191,14 @@ def defaults(app: AppContext, session: Session) -> PublicationDefaults:
     else:
         sel = default_selection(app, session)
     reach, url = local_reach(app)
-    return PublicationDefaults(**sel.model_dump(), local_reach=reach, local_url=url)
+    host = host_url(app)
+    return PublicationDefaults(
+        **sel.model_dump(),
+        local_reach=reach,
+        local_url=url,
+        host_url=host,
+        host_is_ours=ours.is_our_host(host),
+    )
 
 
 def default_selection(app: AppContext, session: Session) -> PublicationSelection:
@@ -199,7 +206,7 @@ def default_selection(app: AppContext, session: Session) -> PublicationSelection
     return PublicationSelection(
         title=session.name,
         attendees=meeting_people(session),
-        where="host" if st.publish_host.strip() else "local",
+        where="host" if ours.publish_host(st) else "local",
         expires_days=st.publish_default_expiry_days,
     )
 
@@ -564,7 +571,9 @@ async def _host(
     import httpx
 
     hdrs = {**({"Authorization": f"Bearer {token}"} if token else {}), **(headers or {})}
-    if app.settings.publish_host_token:
+    configured = app.settings.publish_host.strip().rstrip("/")
+    # the upload token belongs to the publish host the person set, never to Mnemosyne's
+    if app.settings.publish_host_token and configured and url.startswith(configured):
         hdrs["X-Upload-Token"] = app.settings.publish_host_token
     if content is not None:
         hdrs["Content-Type"] = "application/octet-stream"
@@ -764,7 +773,9 @@ def _expiry(app: AppContext, sel: PublicationSelection, now: datetime) -> dateti
 
 
 def host_url(app: AppContext) -> str:
-    return app.settings.publish_host.strip().rstrip("/")
+    """The publish host: `publish_host`, else Mnemosyne's while `use_our_servers` is on
+    (services/ours.py); "" when there is none."""
+    return ours.publish_host(app.settings)
 
 
 def check_request(app: AppContext, session: Session, sel: PublicationSelection) -> None:
@@ -778,7 +789,9 @@ def check_request(app: AppContext, session: Session, sel: PublicationSelection) 
     if live is not None and (why := served_elsewhere_message(app, live)):
         raise HTTPException(409, why)
     if sel.where == "host" and not host_url(app):
-        raise PublishError("No publish host is set (Settings → publish host)")
+        raise PublishError(
+            "No publish host is set (Settings → publish host), and Mnemosyne's servers are off"
+        )
     _expiry(app, sel, _now())
     if any(q.with_clip for q in sel.quotes) and is_foreign(session):
         row = app.repo.live_publication(session.id)
@@ -841,7 +854,9 @@ async def publish(
     expires_at = _expiry(app, sel, now)
     target_host = host_url(app) if sel.where == "host" else ""
     if sel.where == "host" and not target_host:
-        raise PublishError("No publish host is set (Settings → publish host)")
+        raise PublishError(
+            "No publish host is set (Settings → publish host), and Mnemosyne's servers are off"
+        )
     old_host = row["host_url"] if row["place"] == "host" and row["version"] else ""
     folder = pub_dir(app, pub_id)
     blobs_dir = folder / "blobs"

@@ -49,8 +49,8 @@ program ([`publish-host/`](../../publish-host)) behind [Caddy](https://caddyserv
    `https://publish.example.org/p/anything` shows the viewer ("not found" until a link is real).
 6. In Mnemosyne, Settings, put `https://publish.example.org` in **Publish host**
    (`publish_host`), and the upload token if you set one. Until a host is configured, a meeting
-   can be published from this computer or as a file. Like the relay, a blank `publish_host`
-   means "no hosted publishing".
+   can be published from this computer or as a file. A blank `publish_host` means Mnemosyne's host
+   (`deploy/ours/`) while `use_our_servers` is on, else no hosted publishing.
 
 ### Behind a proxy you already run
 
@@ -125,7 +125,7 @@ sent to a server, so the host cannot read the notes.
 - **Guest page:** the files go in `./guest`, copied from `backend/mnemosyne/api/static/guest` in
   the Mnemosyne repo, the same way the viewer goes in `./viewer`. The folder is mounted read-only
   and needs no restart.
-- **Relays:** the guest page connects to iroh relays; n0's public ones are always allowed in its
+- **Relays:** the guest page connects to iroh relays; n0's public ones and `relay.petty.services` are always allowed in its
   Content-Security-Policy, and `PUBLISH_RELAY_ORIGINS` (comma separated hosts) adds your own. An entry
   starting with `http://` is kept as written (for a loopback dev relay, as in the e2e tests); a bare
   host becomes `https://` and `wss://`.

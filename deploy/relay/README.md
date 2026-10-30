@@ -2,8 +2,8 @@
 
 Mnemosyne's remote access (docs/remote-access.md) connects a paired computer to your home
 machine over an end-to-end encrypted iroh connection. When the two cannot reach each other
-directly, a relay passes the encrypted packets along. By default that is n0's free public
-relays, which are rate-limited and meant for testing. This folder runs your own: the open-source
+directly, a relay passes the encrypted packets along. By default that is Mnemosyne's own
+relay (`deploy/ours/`). This folder runs your own: the open-source
 [iroh-relay](https://github.com/n0-computer/iroh/tree/main/iroh-relay) server, and nothing else.
 
 - **Open, no accounts.** Any iroh endpoint may use it. There is no token, sign-up or extra
@@ -40,7 +40,7 @@ relays, which are rate-limited and meant for testing. This folder runs your own:
 6. Pair your computers again (Pair a computer): they learn the relay from the new invite and need
    no setting of their own.
 
-From then on n0 is not involved at all: not for relaying, and not for looking up where your home
+From then on neither n0 nor Mnemosyne's relay is involved: not for relaying, and not for looking up where your home
 machine is.
 
 ## Tuning

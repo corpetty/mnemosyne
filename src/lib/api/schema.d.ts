@@ -6357,6 +6357,10 @@ export interface components {
              * @default true
              */
             hide_identifiers: boolean;
+            /** Host Is Ours */
+            host_is_ours: boolean;
+            /** Host Url */
+            host_url: string;
             /**
              * Local Reach
              * @enum {string}
@@ -7442,6 +7446,8 @@ export interface components {
             transcriber?: string | null;
             /** Unload Models After Minutes */
             unload_models_after_minutes?: number | null;
+            /** Use Our Servers */
+            use_our_servers?: boolean | null;
             /** Vllm Url */
             vllm_url?: string | null;
             /** Web Dir */
@@ -7754,6 +7760,8 @@ export interface components {
             transcriber: string;
             /** Unload Models After Minutes */
             unload_models_after_minutes: number;
+            /** Use Our Servers */
+            use_our_servers: boolean;
             /** Vllm Url */
             vllm_url: string;
             /** Web Dir */

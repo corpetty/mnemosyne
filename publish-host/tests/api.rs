@@ -7,8 +7,10 @@ use axum::Router;
 use mnemosyne_publish_host::app::{router, App, Shared};
 use mnemosyne_publish_host::clock::Clock;
 use mnemosyne_publish_host::config::Config;
+use mnemosyne_publish_host::metrics::metrics_router;
 use mnemosyne_publish_host::store::sha256_hex;
 use serde_json::Value;
+use std::sync::atomic::Ordering::Relaxed;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -920,4 +922,270 @@ fn relay_origin_keeps_http_scheme() {
         c.relay_origins,
         ["http://127.0.0.1:8038", "relay.example.org", "plain.host"]
     );
+}
+
+// ---- the daily write budget ----
+
+/// A blob PUT from `ip` (as the trusted proxy saw it) of `len` bytes of `fill`.
+async fn blob_from(h: &Host, ip: &str, id: &str, fill: u8, len: usize) -> Reply {
+    let data = vec![fill; len];
+    let req = Request::put(format!("/pub/{id}/{}", sha256_hex(&data)))
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .header("x-forwarded-for", ip)
+        .body(Body::from(data))
+        .unwrap();
+    h.send(req).await
+}
+
+async fn manifest_from(
+    h: &Host,
+    ip: &str,
+    id: &str,
+    len: usize,
+    version: u64,
+    blobs: &[u8],
+) -> Reply {
+    let shas: Vec<String> = blobs.iter().map(|b| sha256_hex(&vec![*b; 400])).collect();
+    let req = Request::put(format!("/pub/{id}"))
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .header("x-forwarded-for", ip)
+        .header("x-pub-version", version.to_string())
+        .header("x-pub-expires", (T0 + 90 * DAY).to_string())
+        .header("x-pub-blobs", shas.join(","))
+        .body(Body::from(vec![b'm'; len]))
+        .unwrap();
+    h.send(req).await
+}
+
+#[tokio::test]
+async fn the_write_budget_spans_blobs_and_manifests_per_client_and_rolls_over() {
+    let h = host_with(|c| {
+        c.trust_proxy = true;
+        c.write_bytes_per_day = 1000;
+    })
+    .await;
+    let me = "203.0.113.5";
+    assert_eq!(
+        blob_from(&h, me, ID, 1, 400).await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        blob_from(&h, me, ID, 2, 400).await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        manifest_from(&h, me, ID, 150, 1, &[1, 2]).await.status,
+        StatusCode::OK
+    );
+    // 950 of 1000 are used: 100 more do not fit, 50 do.
+    let refused = blob_from(&h, me, ID, 3, 100).await;
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(refused.json()["error"], "write_budget");
+    let wait: u64 = refused.header("retry-after").parse().unwrap();
+    assert!((86_300..=86_400 + 900).contains(&wait), "{wait}");
+    assert_eq!(h.app.metrics.budget_refusals.load(Relaxed), 1);
+    // The refused blob was not stored.
+    assert!(!h.blob_path(ID, &[3u8; 100]).exists());
+    assert_eq!(
+        blob_from(&h, me, ID, 4, 50).await.status,
+        StatusCode::CREATED
+    );
+    // Reads and deletes are free; so is another client; so is the same /64 of another family.
+    assert_eq!(h.get(&format!("/pub/{ID}")).await.status, StatusCode::OK);
+    assert_eq!(
+        blob_from(&h, "203.0.113.6", OTHER_ID, 1, 1000).await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        manifest_from(&h, "203.0.113.6", OTHER_ID, 1, 1, &[])
+            .await
+            .status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // A day later (plus the slot's slack) the window has rolled over; the sweeper forgets idle clients.
+    h.clock.advance(DAY + 1_000);
+    h.app.sweep().await;
+    assert_eq!(
+        manifest_from(&h, me, ID, 900, 2, &[1, 2]).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(h.app.metrics.budget_refusals.load(Relaxed), 2);
+}
+
+#[tokio::test]
+async fn an_ipv6_client_shares_its_budget_across_its_slash_64() {
+    let h = host_with(|c| {
+        c.trust_proxy = true;
+        c.write_bytes_per_day = 500;
+    })
+    .await;
+    assert_eq!(
+        blob_from(&h, "2001:db8:1:2::1", ID, 1, 400).await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        blob_from(&h, "2001:db8:1:2:aaaa::7", ID, 2, 400)
+            .await
+            .status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        blob_from(&h, "2001:db8:1:3::1", OTHER_ID, 2, 400)
+            .await
+            .status,
+        StatusCode::CREATED
+    );
+}
+
+#[tokio::test]
+async fn zero_turns_the_write_budget_off_and_the_default_is_200_mib() {
+    let h = host_with(|c| {
+        c.trust_proxy = true;
+        c.write_bytes_per_day = 0;
+    })
+    .await;
+    for fill in 0..5u8 {
+        assert_eq!(
+            blob_from(&h, "203.0.113.5", ID, fill, 20_000).await.status,
+            StatusCode::CREATED
+        );
+    }
+    assert_eq!(h.app.metrics.budget_refusals.load(Relaxed), 0);
+    use clap::Parser;
+    let cli = Config::parse_from(["mnemosyne-publish-host"]);
+    assert_eq!(cli.write_bytes_per_day, 209_715_200);
+    assert_eq!(cli.metrics_listen, "");
+    assert_eq!(cli.metrics_addr(), None);
+    // The embedding default has no budget.
+    assert_eq!(Config::defaults().write_bytes_per_day, 0);
+    let flag = Config::parse_from([
+        "mnemosyne-publish-host",
+        "--write-bytes-per-day",
+        "5",
+        "--metrics-listen",
+        "127.0.0.1:9091",
+    ]);
+    assert_eq!(flag.write_bytes_per_day, 5);
+    assert_eq!(flag.metrics_addr(), Some("127.0.0.1:9091".parse().unwrap()));
+    assert!(
+        Config::try_parse_from(["mnemosyne-publish-host", "--metrics-listen", "nope"]).is_err()
+    );
+}
+
+// ---- usage counters ----
+
+#[tokio::test]
+async fn counters_count_publications_created_and_opened_and_the_metrics_text_says_so() {
+    let h = host().await;
+    let m = &h.app.metrics;
+    assert_eq!(
+        h.get(&format!("/pub/{ID}")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    h.put_blob(b"clip").await;
+    h.put_manifest(b"v1", 1, &[b"clip"]).await;
+    // A second version, a conflicting write and another owner's refused one create nothing.
+    h.put_manifest(b"v2", 2, &[b"clip"]).await;
+    h.put_manifest(b"v2", 2, &[b"clip"]).await;
+    h.put_manifest_as(ID, "someone-else", b"x", 3, T0 + DAY, &[])
+        .await;
+    assert_eq!(m.publications_created.load(Relaxed), 1);
+    h.put_manifest_as(OTHER_ID, TOKEN, b"other", 1, T0 + DAY, &[])
+        .await;
+    assert_eq!(m.publications_created.load(Relaxed), 2);
+
+    // Opened: manifest reads that answered (a 304 too); not a miss, a blob or the viewer.
+    let uri = format!("/pub/{ID}");
+    let first = h.get(&uri).await;
+    assert_eq!(first.status, StatusCode::OK);
+    let etag = first.header("etag").to_string();
+    assert_eq!(
+        h.get_with(&uri, "if-none-match", &etag).await.status,
+        StatusCode::NOT_MODIFIED
+    );
+    h.get("/pub/ffffffffffffffff").await;
+    h.get(&format!("/pub/{ID}/{}", sha256_hex(b"clip"))).await;
+    h.get(&format!("/p/{ID}")).await;
+    assert_eq!(m.publications_opened.load(Relaxed), 2);
+
+    let text = m.render(h.app.store.used_bytes().await);
+    let stored = h.app.store.used_bytes().await;
+    assert!(stored > 0);
+    for line in [
+        "mnemosyne_publish_publications_created_total 2",
+        "mnemosyne_publish_publications_opened_total 2",
+        "mnemosyne_publish_rooms_created_total 0",
+        "mnemosyne_publish_guest_connections_total 0",
+        "mnemosyne_publish_frames_relayed_total 0",
+        "mnemosyne_publish_budget_refusals_total 0",
+        &format!("mnemosyne_publish_stored_bytes {stored}"),
+        "# TYPE mnemosyne_publish_stored_bytes gauge",
+        "# TYPE mnemosyne_publish_frames_relayed_total counter",
+    ] {
+        assert!(
+            text.lines().any(|l| l == line),
+            "missing {line:?} in\n{text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn metrics_are_only_on_their_own_listener() {
+    let h = host().await;
+    h.put_blob(b"clip").await;
+    // The public router has no /metrics, whatever the method.
+    for uri in ["/metrics", "/metrics/", "/pub/metrics"] {
+        assert_ne!(h.get(uri).await.status, StatusCode::OK, "{uri}");
+    }
+    let post = h
+        .send(Request::post("/metrics").body(Body::empty()).unwrap())
+        .await;
+    assert_ne!(post.status, StatusCode::OK);
+
+    // The metrics router answers /metrics and nothing else.
+    let res = metrics_router(h.app.clone())
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers()["content-type"],
+        "text/plain; version=0.0.4; charset=utf-8"
+    );
+    for uri in [
+        "/",
+        "/health",
+        "/pub/0123456789abcdef",
+        "/live/0123456789abcdef",
+    ] {
+        let res = metrics_router(h.app.clone())
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "{uri}");
+    }
+
+    // And over a real socket, as `main` serves it.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(mnemosyne_publish_host::metrics::serve(
+        listener,
+        h.app.clone(),
+    ));
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    tcp.write_all(b"GET /metrics HTTP/1.0\r\nHost: x\r\n\r\n")
+        .await
+        .unwrap();
+    let mut out = String::new();
+    tcp.read_to_string(&mut out).await.unwrap();
+    assert!(
+        out.starts_with("HTTP/1.0 200") || out.starts_with("HTTP/1.1 200"),
+        "{out}"
+    );
+    assert!(
+        out.contains("mnemosyne_publish_publications_created_total 0"),
+        "{out}"
+    );
+    assert!(out.contains("mnemosyne_publish_stored_bytes 4"), "{out}");
 }
