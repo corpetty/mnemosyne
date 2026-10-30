@@ -44,6 +44,9 @@ THRESHOLD = 1.0
 SHORT_THRESHOLD = 0.9
 SHORT_SECONDS = 300
 SAMPLE_RATE = 16000
+# TitaNet's export has a fixed 12288-frame mask: over 122.88 s it fails with "Attempting to
+# broadcast an axis" (a long monologue did). A minute says all there is to say about a voice.
+EMBEDDING_SECONDS = 60
 
 
 def model_files(folder: Path, progress=None) -> tuple[Path, Path]:
@@ -136,6 +139,7 @@ class OnnxDiarizer:
         for s, e, _ in mine:
             if e - s < 0.5:
                 continue
+            e = min(e, s + EMBEDDING_SECONDS)
             stream = self._extractor.create_stream()
             stream.accept_waveform(
                 SAMPLE_RATE, samples[int(s * SAMPLE_RATE) : int(e * SAMPLE_RATE)]

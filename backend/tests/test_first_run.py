@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from mnemosyne.transcription import registry
-from mnemosyne.transcription.diarizers.onnx import merge_small_clusters
+from mnemosyne.transcription.diarizers.onnx import OnnxDiarizer, merge_small_clusters
 from tests.conftest import drain_until_job
 
 
@@ -58,6 +58,32 @@ def test_small_clusters_join_the_closest_speaker():
     assert [k for *_, k in merged] == [0, 1, 1, 0]
     # Nothing small: unchanged.
     assert merge_small_clusters(turns[:2], {0: a, 1: b}.get) == turns[:2]
+
+
+def test_a_long_monologue_fits_the_embedding_model(tmp_path):
+    """TitaNet's export fails on more than 122.88 s (12288 frames) in one clip."""
+    clips = []
+
+    class Stream:
+        def accept_waveform(self, rate, samples):
+            clips.append(len(samples) / rate)
+
+        def input_finished(self):
+            pass
+
+    class Extractor:
+        def create_stream(self):
+            return Stream()
+
+        def compute(self, stream):
+            return [1.0, 0.0]
+
+    diarizer = OnnxDiarizer(tmp_path)
+    diarizer._extractor = Extractor()
+    samples = np.zeros(16000 * 300, dtype=np.float32)
+    vector = diarizer._centroid(samples, [(10.0, 138.2, 0), (140.0, 150.0, 0)], 0)
+    assert vector is not None
+    assert clips == [60.0, 10.0]
 
 
 def test_the_sample_meeting_is_imported_credited_and_transcribed(client, ctx, fake_engine):
