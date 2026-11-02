@@ -572,7 +572,7 @@ derived at every fold-result site from the sidecar's new `tasks` list; they are 
 (notes-core/src/api.rs). Tests: backend test_notes_items / test_notes_chips, Vitest chips/slash/carets/placement,
 tests-e2e/notes-items.spec.ts; harness at /dev/notes-editor.
 
-Our servers (unreleased; design and decisions in docs/plans/2026-10-26-our-relays-and-host.md, use in
+Our servers (released as 0.27.0; design and decisions in docs/plans/2026-10-26-our-relays-and-host.md, use in
 docs/remote-access.md, guest-notes.md, publishing.md): Mnemosyne runs its own iroh relay `relay.petty.services` and
 publish host `notes.petty.services` (petty.services, Corey's consultancy), from deploy/ours/ (compose on two
 addresses, Caddy + Let's Encrypt, privacy notice at /privacy, update.sh + hourly timer pulling each release's guest page
