@@ -14,7 +14,7 @@ https_bind_addr = "[::]:443"
 hostname = "relay.petty.services"
 cert_mode = "LetsEncrypt"
 cert_dir = "/var/lib/iroh-relay/certs"
-contact = "ops@petty.services"   # Let's Encrypt expiry notices (confirm this mailbox exists)
+contact = "corey@petty.services"   # Let's Encrypt expiry notices
 
 [limits]
 # New connections per second, and the burst allowed above that.

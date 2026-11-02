@@ -185,7 +185,6 @@ The guest page and viewer need none of this: the timer does it.
 ## Fill in before it is live
 
 - `RELAY_ADDR` and `HOST_ADDR` in `.env`.
-- `ops@petty.services` in `iroh-relay.toml` (Let's Encrypt contact) and `site/privacy.html`: confirm the mailbox exists.
 - `User=` and the paths in `ours-update.service`.
 - Optionally `PUBLISH_UPLOAD_TOKEN`: empty is an open host, as decided; the write budget
   (`PUBLISH_WRITE_BYTES_PER_DAY`, 200 MiB per client) and the 10 GiB quota bound it.
