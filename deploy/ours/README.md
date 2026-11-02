@@ -115,9 +115,15 @@ docker compose up -d
 docker compose logs -f relay caddy
 ```
 
-If a certificate keeps failing, stop the service before the limit is reached (`docker compose stop relay
-caddy`): it retries on its own. `RELAY_LOG=info` in `.env` shows more, client addresses included, so put
-it back afterwards.
+A real failure on the relay reads `ERROR acme: ... error: Order(...)`, and on Caddy `tls.obtain` with
+level `error`. If one keeps coming, stop the service before the limit is reached (`docker compose stop
+relay caddy`): it retries on its own, and stays stopped across reboots until the next `up`.
+`RELAY_LOG=info` in `.env` shows more, client addresses included, so put it back afterwards.
+
+Ignore the relay's `TLS[acme] handshake` errors (`NoCipherSuitesInCommon`, `Tls12NotOffered`, `Connection
+reset by peer`) and `Connection did not reach established state`. Those are other machines failing to
+connect, mostly scanners: a new certificate is public within seconds. They carry no addresses.
+`docker compose stop` takes 10 seconds for the relay and shows exit 137, because it ignores SIGTERM.
 
 ## Checks
 
