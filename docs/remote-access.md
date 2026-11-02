@@ -86,7 +86,7 @@ Relays are the fallback away from home. They only pass along packets they cannot
 until the two machines find a direct path. By default Mnemosyne uses its own relay, `https://relay.petty.services`, run from
 [deploy/ours/](../deploy/ours/README.md); n0's public relays are never a default. It sees endpoint
 addresses, timing and sizes, and the IP address of whoever connects, never what is sent; the
-[privacy notice](https://notes.petty.services/privacy) says what is kept (counts only, logs for about 7 days).
+[privacy notice](https://notes.petty.services/privacy) says what is kept (counts only, no client addresses in logs).
 Whether it is used follows **Use Mnemosyne's servers** in Settings (`use_our_servers`): automatic means on,
 except on team servers and with cloud models off. With it off and `remote_relays` blank there is no relay at
 all: paired computers connect directly or on the same network (mDNS), and remote access works only when

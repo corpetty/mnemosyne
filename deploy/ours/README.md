@@ -8,18 +8,48 @@ This folder runs the servers Mnemosyne uses by default (design: `docs/plans/2026
 - **`notes.petty.services`**: publish-host behind Caddy (`deploy/publish/`): hosted publications (`/p/`, `/pub/`),
   guest notes rooms (`/n/`, `/live/`), the viewer and guest page, and the privacy notice at `/privacy`.
 
-Both run on one machine with two static public IPv4 addresses, one per name. Operator: petty.services.
+Both run on one machine with two addresses, one per name. Operator: petty.services.
 Read `deploy/relay/README.md` and `deploy/publish/README.md` for what each part does and sees.
 
 ## What you need
 
-- A machine with Docker and the compose plugin, `curl`, GNU `tar` and `rsync` (for the update script).
-- Two static public IPv4 addresses on it: `RELAY_ADDR` and `HOST_ADDR`.
+- A machine with rootful Docker and the compose plugin, `curl`, GNU `tar` and `rsync` (for the update
+  script). Rootless Docker or Podman hides client addresses behind a proxy, and the rate limits and
+  QUIC address discovery need them.
+- Two static public IPv4 addresses, and two addresses on the machine for `RELAY_ADDR` and `HOST_ADDR`:
+  the public ones if the machine holds them, else the LAN ones (next section).
 - The repo cloned on it (compose builds the host from `../../publish-host`).
+
+### Behind a router
+
+Forward each public address to its own LAN address, with the ports from "Firewall" below. The machine
+holds both, and neither may move, so reserve them on the router or keep them out of its DHCP pool. To
+add the second one on Ubuntu, in `/etc/netplan/60-ours.yaml`, with `eno1` the interface's id in your
+existing netplan file:
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    eno1:
+      addresses: [<second LAN address>/24]
+```
+
+```bash
+sudo chmod 600 /etc/netplan/60-ours.yaml
+sudo netplan try      # reverts by itself unless you confirm, in case it cuts your SSH session
+ip -4 -br addr show eno1
+```
+
+Other services on the machine are fine as long as nothing listens on 80, 443 or 7842 on all addresses
+(`sudo ss -ltnup | grep -E ':(80|443|7842)\b'`); listening on another specific address is no conflict.
+Inside the network, point both names at the LAN addresses with a local DNS record on the router, or
+test from outside: looping back through the router's public address is unreliable.
 
 ## DNS
 
-Plain A records, no CNAMEs, a low TTL (300) while you set up:
+Plain A records, no CNAMEs, a low TTL (300) while you set up. On Cloudflare, **DNS only** (the grey
+cloud): through the proxy UDP never arrives and the relay's Let's Encrypt validation fails.
 
 | Name | Type | Value |
 | --- | --- | --- |
@@ -28,7 +58,11 @@ Plain A records, no CNAMEs, a low TTL (300) while you set up:
 
 Add an AAAA record for a name only if the line gives that address its own IPv6 address and the
 firewall below is open for it too. Without AAAA, only IPv4 is used, which is fine. Let's Encrypt needs
-the A records to be right before the first start.
+the A records to be right before the first start. This must print your addresses, not Cloudflare's:
+
+```bash
+dig +short @1.1.1.1 relay.petty.services notes.petty.services
+```
 
 ## Firewall
 
@@ -49,14 +83,41 @@ rules on the line's firewall (or in the `DOCKER-USER` chain).
 
 ## First start
 
+Let's Encrypt allows 5 failed validations per name per hour, and the relay retries within seconds. So
+check the path first, and start the relay and Caddy only once it works.
+
 ```bash
 cd deploy/ours
-cp .env.example .env        # set RELAY_ADDR and HOST_ADDR to the two public addresses
+cp .env.example .env        # set RELAY_ADDR and HOST_ADDR
 ./update.sh                 # fetches the guest page and viewer of the latest release into ./guest, ./viewer
-docker compose up -d --build
+docker compose up -d --build publish     # publishes no port, so this exposes nothing
 ```
 
-The first start asks Let's Encrypt for both certificates; give it a minute.
+Open the firewall or the router's rules, then check each path with a throwaway listener on the
+machine:
+
+```bash
+sudo python3 -m http.server 443 --bind <RELAY_ADDR>
+```
+
+and from **outside the network** (a phone on mobile data, another server):
+
+```bash
+curl -m 5 -I http://relay.petty.services:443/
+```
+
+Any HTTP answer means DNS, the router and the machine's firewall all let it through. Stop the listener
+and repeat with `<HOST_ADDR>` and `notes.petty.services`. Then start the rest; certificates usually take
+under a minute:
+
+```bash
+docker compose up -d
+docker compose logs -f relay caddy
+```
+
+If a certificate keeps failing, stop the service before the limit is reached (`docker compose stop relay
+caddy`): it retries on its own. `RELAY_LOG=info` in `.env` shows more, client addresses included, so put
+it back afterwards.
 
 ## Checks
 
@@ -102,10 +163,11 @@ purpose.
 
 ## Logs
 
-`docker compose logs relay|publish|caddy`. The logs hold IP addresses, and the privacy notice promises at
-most 7 days. `compose.yaml` makes Docker rotate each service's log at 10 MB, keeping 5 files; at normal
-traffic that rolls over well inside 7 days. If a service logs more than about 7 MB a day, lower `max-size`
-(and check `docker inspect --format '{{.LogPath}}' <container>`; the oldest line must be under 7 days old).
+`docker compose logs relay|publish|caddy`. They hold no client addresses, and the privacy notice says so:
+Caddy has no access log and drops `http.log.error`, iroh-relay logs at `warn` (its connection spans carry
+the address from `info`), and publish-host logs none. Client addresses stay in memory, for the rate limits
+and the write budget. Keep it that way when debugging: `RELAY_LOG=info` or a `log` directive in the
+Caddyfile changes it. `compose.yaml` makes Docker rotate each service's log at 10 MB, keeping 5 files.
 
 ## Updating
 

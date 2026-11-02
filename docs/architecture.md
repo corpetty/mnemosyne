@@ -461,7 +461,7 @@ Storage and serving:
 `relay.petty.services`, else none (never n0's); `publish_host()` / `guest_host()` = the setting, else
 `notes.petty.services`, else "". `use_our_servers` (None = automatic) is on unless a team server or cloud
 models off; an explicit value wins and `GET /api/settings` shows the effective one. They run from
-`deploy/ours/` (compose on two public addresses, Caddy with Let's Encrypt, the privacy notice at `/privacy`,
+`deploy/ours/` (compose on two addresses, Caddy with Let's Encrypt, the privacy notice at `/privacy`,
 `update.sh` on an hourly systemd timer for each release's guest page and viewer, logs kept ~7 days, Prometheus
 counts on loopback: relay 9090, publish-host 9091 via `--metrics-listen`). publish-host has
 `--write-bytes-per-day` (200 MiB per client, rolling 24 h; 429 `write_budget`, rooms send an error then close
