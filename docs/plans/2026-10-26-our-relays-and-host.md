@@ -1,6 +1,6 @@
 # Our relay and guest notes host
 
-Status: built 2026-10-26 on branch our-relay-and-host, unreleased; the servers are not up yet (DNS and ports set 2026-11-02, router rules paused until they run), so the health workflow's schedule is off. Drafted against main at 0.25.1. Asked for by Corey: stop
+Status: built 2026-10-26, on main and unreleased; the servers are up since 2026-11-02 and the health workflow runs every 15 minutes. Drafted against main at 0.25.1. Asked for by Corey: stop
 depending on n0's testing relays. Decided by Corey (2026-10-26): run it on his own high-availability
 server on his enterprise line for now; one relay; no migration for already paired computers (he is the
 only user and re-pairs); guest notes are copied to our host by default, so we can see some usage; our

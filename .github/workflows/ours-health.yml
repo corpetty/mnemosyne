@@ -5,9 +5,8 @@ name: Our relay and host health
 
 on:
   workflow_dispatch:
-  # TODO: turn on once relay/notes.petty.services are up.
-  # schedule:
-  #   - cron: "*/15 * * * *"
+  schedule:
+    - cron: "*/15 * * * *"
 
 permissions:
   contents: read
