@@ -1,6 +1,6 @@
 # Our relay and guest notes host
 
-Status: built 2026-10-26 on branch our-relay-and-host, unreleased; the servers are not up yet (DNS and ports are Corey's), so the health workflow's schedule is off. Drafted against main at 0.25.1. Asked for by Corey: stop
+Status: built 2026-10-26 on branch our-relay-and-host, unreleased; the servers are not up yet (DNS and ports set 2026-11-02, router rules paused until they run), so the health workflow's schedule is off. Drafted against main at 0.25.1. Asked for by Corey: stop
 depending on n0's testing relays. Decided by Corey (2026-10-26): run it on his own high-availability
 server on his enterprise line for now; one relay; no migration for already paired computers (he is the
 only user and re-pairs); guest notes are copied to our host by default, so we can see some usage; our
@@ -39,15 +39,18 @@ plan runs both on one machine of Corey's and makes the app use them by default.
   Let's Encrypt, exactly as deploy/relay/) and 7842/udp (QUIC address discovery, which helps devices
   find a direct path); the host's address has 80/tcp and 443/tcp (+443/udp for HTTP/3) for Caddy. Each
   container publishes only on its own address (`<address>:443:443` in compose), so the two never
-  compete for a port and neither needs a proxy in front of the other.
+  compete for a port and neither needs a proxy in front of the other. The machine sits behind Corey's
+  router, so those are two LAN addresses the router forwards the public ones to; the public ones stay
+  out of the repo.
 - **The guest page stays on GitHub Pages** (`https://corpetty.github.io/mnemosyne/n/`, static, survives an
   outage at home) and is also served by our host. Its CSP lists our relay next to n0's, which stay
   allowed so older links keep working (pages.yml, `guest_csp`, publish-host's defaults).
 - **Usage we can see, and nothing more**: the host already knows how many rooms and publications exist.
   publish-host gains a few counters on its local metrics port (127.0.0.1 only): rooms created, guest
   connections, frames relayed, publications created and opened, bytes stored; iroh-relay has its own
-  (connected clients, bytes). Counts only, no per-room or per-person records; read over SSH. Caddy and
-  iroh-relay logs keep IP addresses for 7 days at most (log rotation). No analytics, no third-party
+  (connected clients, bytes). Counts only, no per-room or per-person records; read over SSH. Logs keep no
+  client addresses: Caddy has no access log and drops `http.log.error`, iroh-relay logs at `warn` (size
+  rotation could not promise a number of days). No analytics, no third-party
   scripts. A short privacy notice at `https://notes.petty.services/privacy`, naming the consultancy as the operator, linked from Settings and the guest
   page footer, says what the server sees (encrypted payloads, ids, sizes, times, IP addresses) and that
   guest notes are copied there by default.
@@ -121,4 +124,6 @@ None left: the domain is petty.services (Corey, 2026-10-26).
 - The upload token is only sent to the configured `publish_host`, never to ours (services/guest_notes.py `_upload_token`).
 - With no relay at all (`use_our_servers` off, `remote_relays` blank) `rooms` refuses iroh rooms (`relay_kind` "none") and `home --no-relay` still serves the local network.
 - Tests must not reach *.petty.services: conftest `no_our_servers`, `use_our_servers=False` in the settings fixture, and the e2e backend sets it false.
+- The relay retries a failed certificate within seconds and Let's Encrypt allows 5 failures per name per
+  hour, so deploy/ours/README.md checks the path with a throwaway listener before the first start.
 - `deploy/ours/test/smoke.sh` edits /etc/hosts for a test CA and refuses to run outside CI.

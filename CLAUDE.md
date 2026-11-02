@@ -567,9 +567,9 @@ tests-e2e/notes-items.spec.ts; harness at /dev/notes-editor.
 
 Our servers (unreleased; design and decisions in docs/plans/2026-10-26-our-relays-and-host.md, use in
 docs/remote-access.md, guest-notes.md, publishing.md): Mnemosyne runs its own iroh relay `relay.petty.services` and
-publish host `notes.petty.services` (petty.services, Corey's consultancy), from deploy/ours/ (compose on two public
+publish host `notes.petty.services` (petty.services, Corey's consultancy), from deploy/ours/ (compose on two
 addresses, Caddy + Let's Encrypt, privacy notice at /privacy, update.sh + hourly timer pulling each release's guest page
-and viewer, ~7 days of logs, Prometheus counts on loopback). n0's relays are no longer a default anywhere.
+and viewer, no client addresses in logs, Prometheus counts on loopback). n0's relays are no longer a default anywhere.
 services/ours.py resolves relays and hosts: blank `remote_relays` = ours, blank `publish_host`/`guest_host` = ours, else
 none; `use_our_servers` (None = automatic: on, except team servers and `cloud_models` off; an explicit value wins; GET
 shows the effective one). Guest notes: iroh through our relay plus the mirror on our host by default; `relay_kind`

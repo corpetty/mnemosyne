@@ -1,10 +1,8 @@
 # TLS for the host (Let's Encrypt, automatic). See README.md in this folder.
 {
-	# Access logs go to stdout as JSON; Docker's json-file rotation (compose.yaml) is what
-	# makes them roll over, so IP addresses stay at most about 7 days.
+	# No client addresses in the logs: no site has an access log, and this one carries them too.
 	log {
-		output stdout
-		format json
+		exclude http.log.error
 	}
 }
 

@@ -2,16 +2,15 @@
 # cp .env.example .env, edit it, then:  docker compose up -d --build
 # See README.md in this folder.
 #
-# Two public addresses on one machine: RELAY_ADDR for the relay, HOST_ADDR for the host. Every
-# published port is bound to its own address, so the two never compete for 80 or 443.
+# Two addresses on one machine: RELAY_ADDR for the relay, HOST_ADDR for the host. Each is a public
+# address on the machine, or behind a router the LAN address the router forwards a public one to.
+# Every published port is bound to its own address, so the two never compete for 80 or 443.
 #
 # Images are pinned by tag. When deploying, pin them by digest too
 # (`docker compose pull && docker compose images --format json`, then image: name@sha256:...).
 
 x-logging: &logging
-  # Logs hold IP addresses. json-file rotation keeps about 5 x 10 MB per service, which is
-  # roughly 7 days of normal traffic here. If you see more traffic, lower max-size so the files
-  # still roll over within 7 days (the privacy notice promises 7 days at most).
+  # Logs hold no client addresses (see README.md, "Logs"); this only bounds their size.
   driver: json-file
   options:
     max-size: "10m"
@@ -23,6 +22,9 @@ services:
     command: ["--config-path", "/etc/iroh-relay.toml"]
     restart: unless-stopped
     logging: *logging
+    environment:
+      # warn logs no client addresses; info does (its connection spans), for debugging only.
+      RUST_LOG: "${RELAY_LOG:-warn}"
     ports:
       - "${RELAY_ADDR:?set RELAY_ADDR in .env}:80:80/tcp"
       - "${RELAY_ADDR}:443:443/tcp"

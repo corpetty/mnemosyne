@@ -23,7 +23,7 @@
 <body>
 <main>
 <h1>Privacy notice</h1>
-<p class="muted">For relay.petty.services and notes.petty.services. Last updated 2026-10-26.</p>
+<p class="muted">For relay.petty.services and notes.petty.services. Last updated 2026-11-02.</p>
 
 <p>These two servers are run for Mnemosyne, the meeting recorder, by petty.services, the
 consultancy of Corey Petty. They exist so that Mnemosyne's guest notes and published meeting pages
@@ -43,8 +43,8 @@ browser never sends to a server. The relay only forwards encrypted packets betwe
 
 <h2>What we keep</h2>
 <ul>
-  <li><strong>IP addresses</strong> sit in the web server and relay logs for at most 7 days,
-  then the logs are deleted automatically.</li>
+  <li><strong>IP addresses</strong> are not written to logs or to disk. They stay in memory while
+  the servers need them to apply rate limits and write limits.</li>
   <li><strong>Counts only:</strong> we count how many rooms, guest connections, publications and
   bytes there are, to see whether the service is used and to keep it within its limits. These
   numbers are not tied to any person or link.</li>
