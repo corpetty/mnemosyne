@@ -152,7 +152,8 @@ def transcribe_session(
                 ctx.update(message)
                 ctx.emit({"type": "status", "session_id": session_id, "message": message})
 
-            engine = await app.models.ensure_loaded(on_download=downloading)
+            # Ours, or a paired computer's (`transcribe_on`, services/peer_compute.py).
+            engine = await app.models.job_engine(on_download=downloading)
 
             ctx.update("Transcribing...")
             ctx.emit({"type": "status", "session_id": session_id, "message": "Transcribing..."})

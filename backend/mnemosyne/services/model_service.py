@@ -67,6 +67,9 @@ class ModelService:
         self.last_used = time.monotonic()  # for unloading idle models (unload_if_idle)
         # One load at a time: setup's prepare job and a first transcription may both ask.
         self._load_lock = asyncio.Lock()
+        # An engine on another computer for final transcriptions (services/peer_compute.py
+        # remote_engine, set by AppContext), given how to load ours instead; None: ours.
+        self.remote: Callable[..., TranscriptionEngine | None] | None = None
 
     @property
     def loaded(self) -> bool:
@@ -165,6 +168,21 @@ class ModelService:
             self._live_stream = build_live_stream_model(self.settings)
             self._live_stream_built = True
         return self._live_stream
+
+    async def job_engine(
+        self, on_download: Callable[[int, int], None] | None = None
+    ) -> TranscriptionEngine:
+        """The engine for a final transcription: a paired computer's when `transcribe_on`
+        names one (with ours, loaded on demand, as its fallback), else ours, loaded."""
+
+        async def ours() -> TranscriptionEngine:
+            return await self.ensure_loaded(on_download)
+
+        remote = self.remote(ours) if self.remote is not None else None
+        if remote is not None:
+            self.touch()
+            return remote
+        return await ours()
 
     async def ensure_loaded(
         self, on_download: Callable[[int, int], None] | None = None

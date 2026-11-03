@@ -585,6 +585,16 @@ gained `--write-bytes-per-day` (200 MiB per client, 429 `write_budget`, rooms cl
 `rooms --no-relay`, `home --no-relay` (mDNS stays), `home --no-lan`, `relay-check --relay` (`MNEMOSYNE_RELAY_CA`). No
 migration: computers paired under n0 are paired again. CI: job "Our relay and host (deploy/ours)" and ours-health.yml.
 
+Paired computers' models (unreleased): a library-sync peer lends its LLMs and transcription engine
+(services/peer_compute.py, api/routes/compute.py; only a sync peer's DESKTOP token, never on a team
+server). Borrowing: provider `peer:<sync id>` per peer (summarization/peer.py, models
+`<provider>/<model>`, `SummarizationService.peer_source`, `local_providers` vs `providers`), and
+`transcribe_on` + `transcribe_on_fallback` (transcription/peer.py `PeerEngine`, picked by
+`ModelService.job_engine`: upload, poll, fall back to our engine). Lending: only `LENT` providers
+(never cloud, never `peer:`, so a peer provider is never cloud for local-only meetings), a
+`peer_transcribe` job sharing the `transcribe` limit, audio in the crypto scratch folder until the
+job ends. Live transcription stays local. Tests: tests/test_peer_compute.py (two apps via ASGITransport).
+
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
 Frontend package manager: pnpm is pinned via `packageManager` (corepack). If `pnpm` complains

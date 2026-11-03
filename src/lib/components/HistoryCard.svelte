@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { providerLabel } from '$lib/app/providers.js';
 	import { getHistory, recoverSession } from '$lib/api/backend.js';
 	import { audioReason } from '$lib/app/access.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -156,11 +157,11 @@
 			case 'transcribe_failed':
 				return `Transcription failed: ${d.error}`;
 			case 'summarized':
-				return `${d.revised ? `Revised (“${d.revised}”)` : 'Summarized'} with ${d.provider}${d.model ? `/${d.model}` : ''}`;
+				return `${d.revised ? `Revised (“${d.revised}”)` : 'Summarized'} with ${providerLabel(String(d.provider))}${d.model ? `/${d.model}` : ''}`;
 			case 'summary_merged': {
 				const n = (d.dropped_kept as number) ?? 0;
 				return (
-					`${d.revised ? `Revised (“${d.revised}”)` : 'Summarized again'} with ${d.provider}${d.model ? `/${d.model}` : ''}; your ${d.kept} edit${d.kept === 1 ? '' : 's'} kept` +
+					`${d.revised ? `Revised (“${d.revised}”)` : 'Summarized again'} with ${providerLabel(String(d.provider))}${d.model ? `/${d.model}` : ''}; your ${d.kept} edit${d.kept === 1 ? '' : 's'} kept` +
 					((d.both as number) > 0 ? ` (${d.both} changed on both sides: worth a look)` : '') +
 					(n > 0 ? `; ${n} item${n === 1 ? '' : 's'} the new summary dropped stayed because you had changed them` : '')
 				);

@@ -30,6 +30,7 @@
 	import RecordsSettings from './RecordsSettings.svelte';
 	import PublicationsList from './PublicationsList.svelte';
 	import { publishingState } from '$lib/stores/publishing.svelte.js';
+	import { syncState } from '$lib/stores/sync.svelte.js';
 	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile, SystemInfo } from '$lib/types/index.js';
 
 	// a team server: settings belong to its admins (members and reviewers only read them).
@@ -133,6 +134,8 @@
 				remote_relays: v.remote_relays,
 				transcriber: v.transcriber,
 				diarizer: v.diarizer,
+				transcribe_on: v.transcribe_on,
+				transcribe_on_fallback: v.transcribe_on_fallback,
 				language: v.language,
 				max_speakers: v.max_speakers,
 				local_speaker_name: v.local_speaker_name,
@@ -231,6 +234,8 @@
 			};
 			providers = await listModels();
 			voices = await listSpeakers();
+			void syncState.load(); // the paired computers, for "Transcribe on"
+
 			updateState.probe();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load settings';
@@ -767,6 +772,36 @@
 			<!-- Transcription -->
 			<section>
 				<h3 class="text-lg font-semibold text-gray-200 mb-3">Transcription</h3>
+				{#if syncState.peers.length > 0 || form.transcribe_on}
+					<div class="grid grid-cols-2 gap-3 mb-3">
+						<label>
+							<span class={labelClass}>Transcribe on</span>
+							<select bind:value={form.transcribe_on} disabled={locked('transcribe_on')} class={inputClass}>
+								<option value="">This computer</option>
+								{#each syncState.peers as p}<option value={p.id}>{p.name} (paired computer)</option>{/each}
+								{#if form.transcribe_on && !syncState.peers.some((p) => p.id === form.transcribe_on)}
+									<option value={form.transcribe_on}>A computer no longer paired (this one is used)</option>
+								{/if}
+							</select>
+							<span class="text-xs text-gray-500">
+								{#if form.transcribe_on}
+									The audio goes to that computer through the sync connection, is transcribed with its transcriber and diarizer, and is deleted there after. Live transcription while recording stays here.
+								{:else}
+									Send final transcriptions to a computer paired in Connection → Library sync, to use its GPU and models.
+								{/if}
+							</span>
+						</label>
+						{#if form.transcribe_on}
+							<label class="flex items-center gap-2 self-start mt-6">
+								<input type="checkbox" bind:checked={form.transcribe_on_fallback} disabled={locked('transcribe_on_fallback')} class="rounded border-gray-600 bg-gray-800" />
+								<span class="text-sm text-gray-300">When it cannot be reached, transcribe on this computer</span>
+							</label>
+						{/if}
+					</div>
+					{#if form.transcribe_on}
+						<p class="text-xs text-gray-500 mb-2">The engines below are for this computer: live transcription, and transcription here when the other one cannot.</p>
+					{/if}
+				{/if}
 				<div class="grid grid-cols-2 gap-3">
 					<label>
 						<span class={labelClass}>Transcriber</span>
@@ -997,7 +1032,7 @@
 					<label>
 						<span class={labelClass}>Default provider</span>
 						<select bind:value={form.default_provider} disabled={locked('default_provider')} class={inputClass}>
-							{#each providers as p}<option value={p.provider}>{p.provider}</option>{/each}
+							{#each providers as p}<option value={p.provider}>{p.label}</option>{/each}
 							{#if !providers.some((p) => p.provider === form.default_provider)}
 								<option value={form.default_provider}>{form.default_provider}</option>
 							{/if}
@@ -1071,7 +1106,7 @@
 					{#each providers as p}
 						<div class="bg-gray-900 border border-gray-700 rounded-lg p-3">
 							<div class="flex items-center justify-between mb-1">
-								<span class="text-sm font-medium text-gray-200 capitalize">{p.provider}</span>
+								<span class="text-sm font-medium text-gray-200 {p.provider === p.label ? 'capitalize' : ''}">{p.label}</span>
 								<span class="text-xs px-2 py-0.5 rounded {p.models.length > 0 ? 'bg-green-900 text-green-300' : 'bg-gray-800 text-gray-500'}">
 									{p.models.length} model{p.models.length !== 1 ? 's' : ''}
 								</span>

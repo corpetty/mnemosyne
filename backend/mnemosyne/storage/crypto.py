@@ -272,6 +272,12 @@ def _scratch_dir() -> Path:
     return root
 
 
+def scratch_dir() -> Path:
+    """A private folder for plaintext audio that must not outlive this backend (removed at the
+    next start when it crashes): audio another computer sent to be transcribed here, too."""
+    return _scratch_dir()
+
+
 def clean_scratch() -> None:
     """Remove plaintext copies left behind by backends that crashed (called at startup)."""
     import shutil

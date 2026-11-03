@@ -61,7 +61,7 @@ async def test_service_rejects_provider_with_no_models():
 
 def test_models_endpoint_lists_providers(client, fake_provider):
     assert client.get("/api/models").json() == [
-        {"provider": "fake", "models": ["fake-model-a", "fake-model-b"]}
+        {"provider": "fake", "label": "fake", "models": ["fake-model-a", "fake-model-b"]}
     ]
 
 

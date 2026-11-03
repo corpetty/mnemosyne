@@ -208,6 +208,12 @@ class Settings(BaseSettings):
     remote_stt_url: str = ""  # e.g. http://127.0.0.1:8484/v1
     remote_stt_model: str = "whisper-1"
     remote_stt_api_key: str = ""
+    # Final transcriptions on another of your computers paired for library sync, with its
+    # engine and GPU: its sync id (services/peer_compute.py), blank = this computer. Live
+    # transcription while recording stays here.
+    transcribe_on: str = ""
+    # When that computer cannot be reached, or fails, transcribe here instead (off: the job fails).
+    transcribe_on_fallback: bool = True
 
     # pyannote diarizer; its embedding model also serves voice profiles under nemotron
     diarization_model: str = "pyannote/speaker-diarization-community-1"

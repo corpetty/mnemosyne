@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { providerLabel } from '$lib/app/providers.js';
 	import { getSettings, saveAskNote } from '$lib/api/backend.js';
 	import { askState } from '$lib/stores/ask.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
@@ -176,7 +177,7 @@
 				</div>
 			{/if}
 			{#if ask.model}
-				<p class="text-[10px] text-gray-700">{ask.provider}/{ask.model}</p>
+				<p class="text-[10px] text-gray-700">{providerLabel(ask.provider)}/{ask.model}</p>
 			{/if}
 		</article>
 	{/each}

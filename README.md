@@ -36,6 +36,7 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Speakers that stick**: rename a speaker once and the app remembers the voice, labelling that person automatically in future meetings
 - **Level meters and a capture self-test**: see every source's level while recording, check a mic before a call, and verify that system audio is really captured from your output (it plays a short tone and checks it arrives)
 - **Echo cancellation** with one click: PipeWire's WebRTC canceller is loaded on demand and exposed as a virtual mic, so no headphones are needed, with optional DeepFilterNet noise suppression behind it
+- **Your other computers' models**: a laptop paired for library sync can summarize with the desktop's Ollama, vLLM or built-in models and send its final transcriptions to the desktop's engine and GPU, falling back to its own when the desktop is off
 - **Server mode**: point the app at a backend on another machine (with a bearer token) and work with its sessions
 - **Team server**: one machine for a group, opened in Chrome or Edge with nothing to install; everyone signs in with an invite link and has their own meetings, reviewers read everyone's, admins manage people; start one from the desktop app with "Share this computer with my team" (docs/team-server.md)
 - **Recording in the browser**: the microphone and a call's audio (a shared tab or screen) sent to the server as they are recorded, with an optional consent prompt kept in the meeting's history

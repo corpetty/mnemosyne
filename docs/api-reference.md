@@ -1629,6 +1629,34 @@ start, every 30 s, on a poke and after the sidecar dials the peers again; local 
 peers. Meetings from before sync count their revisions under this computer's sync id from the
 first start on.
 
+## Paired computers' models (`/api/compute`)
+
+A computer paired for library sync lends its LLMs and its transcription engine to the person's
+other computers (services/peer_compute.py). Only a sync peer's DESKTOP token is accepted (403
+for anything else, the admin token included; 409 on a team server).
+
+- `GET /api/compute/models` → `{providers: [{provider, models, max_chars}]}`: the lent providers
+  (`vllm`, `ollama`, `local`; never `openai`/`anthropic`, never another computer's), the default
+  provider and model first. `max_chars`: transcript characters per request (0 = no limit).
+- `POST /api/compute/complete` `{provider, model, system, user, think}` → `{text, provider,
+  model}`. Blank provider: the default when lent, else the first lent; blank model: the
+  provider's default or first. 400 for a provider not lent, 502 when it failed here.
+- `POST /api/compute/transcribe` (multipart: `spec` JSON `{sources: [{kind, speaker_label}],
+  language, min_speakers, max_speakers, echo_dedup, echo_similarity, mic_speech_gate}` and one
+  `files` part per source) → `{id}`. Runs a `peer_transcribe` job (no session; it waits for this
+  computer's `transcribe` jobs). The audio is kept in the backend's scratch folder until the job
+  ends.
+- `GET /api/compute/transcribe/{id}` → `{id, state, message, progress, engine, error, result}`;
+  `state` is `queued`, `running`, `done`, `failed` or `cancelled`. When done, `result` is
+  `{segments: [TranscriptSegment + source], embeddings, dropped_echo, dropped_noise}`.
+- `DELETE /api/compute/transcribe/{id}`: stop it and forget the result. Only the computer that
+  sent it sees a task.
+
+On the borrowing side, each sync peer is a provider `peer:<sync id>` in `GET /api/models`
+(`label` "<name> (paired computer)", models `<provider>/<model>`), and the setting `transcribe_on`
+(a sync id) sends final transcriptions there, with `transcribe_on_fallback` (default on) to
+transcribe here when it cannot.
+
 ## WebSocket
 
 ### `ws://127.0.0.1:8008/ws`

@@ -88,6 +88,11 @@ class JobManager:
             kind: asyncio.Semaphore(n) for kind, n in (concurrency or {}).items()
         }
 
+    def share_limit(self, kind: str, with_kind: str) -> None:
+        """Jobs of `kind` count against `with_kind`'s limit (one GPU pipeline for both)."""
+        if with_kind in self._limits:
+            self._limits[kind] = self._limits[with_kind]
+
     # ---- public API ----------------------------------------------------
 
     def submit(self, kind: str, runner: JobRunner, session_id: str | None = None) -> Job:

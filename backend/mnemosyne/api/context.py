@@ -103,9 +103,20 @@ class AppContext:
     share_pull: Any = None  # services/share_pull.py SharePuller: meetings contacts share with us
     share_push: Any = None  # services/share_push.py SharePusher: what I did on them, sent back
     person: Any = None  # services/person.py PersonKeys: this person's signing key
+    # services/peer_compute.py: transcriptions run here for the paired computers, and the
+    # `peer:<id>` LLM providers that reach theirs.
+    compute_host: Any = None
+    peer_providers: Any = None
 
     def __post_init__(self) -> None:
+        from ..services import peer_compute
+
         self.summarizer.name_source = self.known_names
+        self.compute_host = peer_compute.ComputeHost(self)
+        self.peer_providers = peer_compute.PeerProviders(self)
+        self.summarizer.peer_source = self.peer_providers
+        self.models.remote = lambda ours: peer_compute.remote_engine(self, ours)
+        self.jobs.share_limit("peer_transcribe", "transcribe")
         self.sessions.type_source = lambda: available_types(self.settings)
         self.sessions.is_recording = lambda sid: sid in self.active_recordings
         self.repo.on_new_session = self._new_session
@@ -280,6 +291,7 @@ class AppContext:
             self.submit_supervision_scan()
         self.summarizer = SummarizationService(settings)
         self.summarizer.name_source = self.known_names
+        self.summarizer.peer_source = self.peer_providers
         self.speakers.threshold = settings.speaker_match_threshold
         if (settings.semantic_search, settings.embedding_model) != (
             self.index.enabled,

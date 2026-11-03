@@ -575,6 +575,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/compute/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete
+         * @description One chat turn with one of this computer's lent providers.
+         */
+        post: operations["complete_api_compute_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/compute/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lent Models
+         * @description The providers and models this computer lends, its default first.
+         */
+        get: operations["lent_models_api_compute_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/compute/transcribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transcribe
+         * @description Transcribe (and diarize) audio for the calling computer with this computer's engine.
+         *     `spec` is JSON: {sources: [{kind, speaker_label}], language, min_speakers, ...}, one source
+         *     per file in order. Answers at once; GET /api/compute/transcribe/{id} tells how it goes.
+         */
+        post: operations["transcribe_api_compute_transcribe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/compute/transcribe/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Transcribe Status */
+        get: operations["transcribe_status_api_compute_transcribe__task_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Transcribe Cancel
+         * @description Stop it (when it still runs) and forget it with its result.
+         */
+        delete: operations["transcribe_cancel_api_compute_transcribe__task_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/contacts": {
         parameters: {
             query?: never;
@@ -4254,6 +4337,13 @@ export interface components {
              */
             transcribe: boolean;
         };
+        /** Body_transcribe_api_compute_transcribe_post */
+        Body_transcribe_api_compute_transcribe_post: {
+            /** Files */
+            files: string[];
+            /** Spec */
+            spec: string;
+        };
         /** Body_upload_api_sessions__session_id__external_notes_file_post */
         Body_upload_api_sessions__session_id__external_notes_file_post: {
             /**
@@ -4713,6 +4803,37 @@ export interface components {
         };
         /** CommentUpdate */
         CommentUpdate: {
+            /** Text */
+            text: string;
+        };
+        /** CompleteRequest */
+        CompleteRequest: {
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /** System */
+            system: string;
+            /**
+             * Think
+             * @default true
+             */
+            think: boolean;
+            /** User */
+            user: string;
+        };
+        /** CompleteResponse */
+        CompleteResponse: {
+            /** Model */
+            model: string;
+            /** Provider */
+            provider: string;
             /** Text */
             text: string;
         };
@@ -5556,6 +5677,20 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** LentModels */
+        LentModels: {
+            /** Providers */
+            providers: components["schemas"]["LentProvider"][];
+        };
+        /** LentProvider */
+        LentProvider: {
+            /** Max Chars */
+            max_chars: number;
+            /** Models */
+            models: string[];
+            /** Provider */
+            provider: string;
+        };
         /** Level */
         Level: {
             /** Peak Db */
@@ -6275,6 +6410,8 @@ export interface components {
         };
         /** ProviderModels */
         ProviderModels: {
+            /** Label */
+            label: string;
             /** Models */
             models: string[];
             /** Provider */
@@ -7442,6 +7579,10 @@ export interface components {
             topic_aliases?: {
                 [key: string]: string;
             } | null;
+            /** Transcribe On */
+            transcribe_on?: string | null;
+            /** Transcribe On Fallback */
+            transcribe_on_fallback?: boolean | null;
             /** Transcriber */
             transcriber?: string | null;
             /** Unload Models After Minutes */
@@ -7756,6 +7897,10 @@ export interface components {
             topic_aliases: {
                 [key: string]: string;
             };
+            /** Transcribe On */
+            transcribe_on: string;
+            /** Transcribe On Fallback */
+            transcribe_on_fallback: boolean;
             /** Transcriber */
             transcriber: string;
             /** Unload Models After Minutes */
@@ -9269,6 +9414,30 @@ export interface components {
             /** Ok */
             ok: boolean;
         };
+        /** TranscribeStarted */
+        TranscribeStarted: {
+            /** Id */
+            id: string;
+        };
+        /** TranscribeStatus */
+        TranscribeStatus: {
+            /** Engine */
+            engine: string;
+            /** Error */
+            error: string | null;
+            /** Id */
+            id: string;
+            /** Message */
+            message: string;
+            /** Progress */
+            progress: number | null;
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            } | null;
+            /** State */
+            state: string;
+        };
         /** TranscriptSegment */
         "TranscriptSegment-Input": {
             /** End */
@@ -10508,6 +10677,154 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DesktopCalendar"][];
+                };
+            };
+        };
+    };
+    complete_api_compute_complete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lent_models_api_compute_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LentModels"];
+                };
+            };
+        };
+    };
+    transcribe_api_compute_transcribe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_transcribe_api_compute_transcribe_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscribeStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transcribe_status_api_compute_transcribe__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscribeStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transcribe_cancel_api_compute_transcribe__task_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

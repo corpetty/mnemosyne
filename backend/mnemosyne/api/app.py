@@ -18,6 +18,7 @@ from .routes.bookmarks import router as bookmarks_router
 from .routes.calendar import router as calendar_router
 from .routes.clips import router as clips_router
 from .routes.comments import router as comments_router
+from .routes.compute import router as compute_router
 from .routes.contacts import router as contacts_router
 from .routes.demo import router as demo_router
 from .routes.devices import router as devices_router
@@ -130,6 +131,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(contacts_router)
     app.include_router(demo_router)
     app.include_router(sync_router)
+    app.include_router(compute_router)
     app.include_router(users_router)
     app.include_router(system_router)
     app.include_router(storage_router)

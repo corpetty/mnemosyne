@@ -6,6 +6,7 @@
 </script>
 
 <script lang="ts">
+	import { providerLabel } from '$lib/app/providers.js';
 	import { copyText } from '$lib/app/clipboard.js';
 	import { listModels, listSummaryStyles, summarizeSession, getSettings, getSystemInfo } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -752,7 +753,7 @@
 			<SummaryComments ongoto={goToBlock} bind:filter={commentsFilter} />
 			{#if data}
 				<p class="text-[11px] text-gray-600">
-					{data.style} summary{#if data.provider} · {data.provider}/{data.model}{/if}{#if data.edited_at} · edited {new Date(data.edited_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}{#if data.edited_by} by {data.edited_by}{/if}{/if}
+					{data.style} summary{#if data.provider} · {providerLabel(data.provider)}/{data.model}{/if}{#if data.edited_at} · edited {new Date(data.edited_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}{#if data.edited_by} by {data.edited_by}{/if}{/if}
 				</p>
 				{#if hubspot && mine}<HubSpotCard />{/if}
 				{#if mine}
@@ -838,7 +839,7 @@
 		</select>
 		<select bind:value={selectedProvider} onchange={handleProviderChange} class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200">
 			{#each providers as p}
-				<option value={p.provider}>{p.provider}</option>
+				<option value={p.provider}>{p.label}</option>
 			{/each}
 		</select>
 		<select bind:value={selectedModel} class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 min-w-[200px]">

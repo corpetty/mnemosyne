@@ -127,6 +127,26 @@ They then connect directly on the same network and through the relays elsewhere,
 other's changes every half minute and right after a change. Removing a computer stops the sync;
 what was already synced stays on both. Sync is not available in team mode.
 
+### Use the other computer's models
+
+A computer paired for sync can also do the heavy work for this one, for example a desktop with a
+GPU and a local inference server for a laptop:
+
+- **Summaries and the other LLM work** (copilot, Ask, the glossary pass, digests): each paired
+  computer is a provider, shown as "<name> (paired computer)". Its models are the other
+  computer's Ollama, vLLM and built-in models, written `<provider>/<model>`. Pick it as the
+  default provider (Settings, Summaries) or for one summary. The other computer never lends its
+  OpenAI or Anthropic keys, so meetings marked local-only can use it too. Leave the model blank to
+  use the other computer's default model.
+- **Final transcriptions**: Settings, Transcription, Transcribe on. The audio of each part goes to
+  that computer through the sync connection, is transcribed and diarized there with its engine
+  (in turn with its own transcriptions), and is deleted there when the job ends. This computer's
+  language, speaker count and echo settings apply. Live transcription while recording stays on
+  this computer. When the other computer cannot be reached or fails, this one transcribes the
+  meeting itself, unless you turn that off (then the job fails and says why).
+
+Both need remote access on, on both computers, as for sync.
+
 ## Troubleshooting
 
 - **"This phone is not paired"**: the phone was removed, its browser data was cleared, or the address
