@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { providerLabel } from '$lib/app/providers.js';
 	import { copyText } from '$lib/app/clipboard.js';
 	import { digestState } from '$lib/stores/digest.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
@@ -150,7 +151,7 @@
 			</header>
 			<Markdown text={linkMeetings(current)} {onAnchor} />
 			<p class="text-[10px] text-gray-700">
-				{current.provider}/{current.model}{#if current.path} · saved to {current.path}{/if}
+				{providerLabel(current.provider)}/{current.model}{#if current.path} · saved to {current.path}{/if}
 			</p>
 		</article>
 	{:else if digestState.loaded && !pending}
