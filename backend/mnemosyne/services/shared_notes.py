@@ -15,6 +15,11 @@ The other writers (the notes route, combining meetings) go through `set_markdown
 broadcast like a client's. A meeting with notes but no document is seeded that way (author
 "seed") on its first join or write, only on the machine that recorded it.
 
+The backend's own lines (the copilot's, the summary's: docs/plans/2026-11-04-summaries-in-notes.md)
+are written by `edit_blocking`: a fold and a `set_text` against the same state, with line refs
+(services/notes_sections.py), so typing that arrives meanwhile merges by the CRDT. Every fold
+result's refs are stored beside the snapshot; `AFTER_FOLD` hooks see every fold result.
+
 Without a sidecar (`available()` False) nothing here runs: joins hear `unavailable`, and the
 notes route writes `Session.notes` as before.
 
@@ -34,6 +39,7 @@ import secrets
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -56,6 +62,17 @@ LAST_EDIT_EVERY = 15.0  # a `last_edit` message at most this often for the same 
 CARET_EVERY = 0.1  # a `caret` message at most this often for the same member (the last one wins)
 DOC_TIMEOUT = 60.0
 SEED_AUTHOR, API_AUTHOR = "seed", "api"
+# The backend's own writers of ref'd lines (`edit_blocking`), shown as the last to edit.
+COPILOT_AUTHOR, SUMMARY_AUTHOR = "Copilot", "Summary"
+
+# Called after every fold result of a meeting is stored (this machine's folds and writes, and
+# library sync's union or adoption), with the meeting's lock held and `Session.notes` written:
+# hook(app, session_id, reply, seqs, author). `reply` is the sidecar's answer (`markdown`,
+# `tasks`, `refs`...), `seqs` the request's frames (a task's `frame` indexes them; [] for sync),
+# `author` who made what the request itself did (None for a fold). A hook that raises is
+# logged; the others still run.
+AfterFold = Callable[["AppContext", str, dict, list[int], str | None], None]
+AFTER_FOLD: list[AfterFold] = []
 
 # Close codes for a refused frame (a read-only connection: 4403, as in HTTP; a deleted
 # meeting: 4404).
@@ -310,6 +327,40 @@ def marks_of(reply: dict) -> tuple[str | None, dict | None]:
     return plain, ranges
 
 
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def refs_of(reply: dict) -> list[dict] | None:
+    """The line refs of a sidecar answer, as stored beside the snapshot: the `refs` entries
+    {"line": hex, "ref": str, "index": int, "md_line": int} in document order (malformed ones
+    dropped). None from a sidecar that does not report them."""
+    refs = reply.get("refs")
+    if not isinstance(refs, list):
+        return None
+    return [
+        {"line": r["line"], "ref": r["ref"], "index": r["index"], "md_line": r["md_line"]}
+        for r in refs
+        if isinstance(r, dict)
+        and isinstance(r.get("line"), str)
+        and isinstance(r.get("ref"), str)
+        and r["ref"]
+        and _is_int(r.get("index"))
+        and _is_int(r.get("md_line"))
+    ]
+
+
+def _after_fold(
+    app: AppContext, session_id: str, reply: dict, seqs: list[int], author: str | None = None
+) -> None:
+    """Run the AFTER_FOLD hooks for a stored fold result. Never raises."""
+    for hook in list(AFTER_FOLD):
+        try:
+            hook(app, session_id, reply, seqs, author)
+        except Exception:
+            logger.warning("A notes fold hook failed for %s", session_id, exc_info=True)
+
+
 def _write_notes(app: AppContext, session_id: str, markdown: str) -> bool:
     """Session.notes = the document's markdown, unless it is that already."""
     with unrestricted():
@@ -363,14 +414,19 @@ def _fold_locked(app: AppContext, session_id: str, binary: str) -> bool:
         _warn_once(f"fold:{session_id}", "Could not fold the notes of %s: %s", session_id, e)
         return False
     try:
-        app.repo.store_notes_fold(session_id, folded, ops[-1][0], markdown, *marks_of(reply))
+        app.repo.store_notes_fold(
+            session_id, folded, ops[-1][0], markdown, *marks_of(reply), refs=refs_of(reply)
+        )
     except Exception:  # sqlite3's or sqlcipher3's IntegrityError: deleted meanwhile?
         if app.repo.notes_source(session_id) is not None:
             raise
         return False
-    _derive_items(app, session_id, reply, [seq for seq, _ in ops])
+    seqs = [seq for seq, _ in ops]
+    _derive_items(app, session_id, reply, seqs)
     notes_media.seen(app, session_id, reply.get("media"))
-    return _write_notes(app, session_id, markdown)
+    wrote = _write_notes(app, session_id, markdown)
+    _after_fold(app, session_id, reply, seqs)
+    return wrote
 
 
 def _derive_items(
@@ -423,11 +479,12 @@ def _catch_up_locked(
     except (KeyError, TypeError, ValueError) as e:
         raise NotesDocError(f"unreadable set_text reply: {e}") from e
     if not frames:  # the same document, spelled otherwise: the notes take its spelling
-        app.repo.set_notes_markdown(session_id, rendered)
+        app.repo.set_notes_markdown(session_id, rendered, refs_of(reply))
         return [], _write_notes(app, session_id, rendered)
     seqs = app.repo.append_notes_ops(session_id, frames, "", API_AUTHOR, True)
     # Caught up even if the fold below fails: a second catch-up would insert the text again.
-    app.repo.set_notes_markdown(session_id, text)
+    # (The refs are for the fold's markdown, not this text: unknown until it.)
+    app.repo.set_notes_markdown(session_id, text, None)
     wrote = _fold_locked(app, session_id, binary)
     return list(zip(seqs, frames, strict=True)), wrote
 
@@ -459,17 +516,42 @@ def _set_text_blocking(
         except (KeyError, TypeError, ValueError) as e:
             raise NotesDocError(f"unreadable set_text reply: {e}") from e
         seqs = app.repo.append_notes_ops(session_id, frames, author_id, author, last_edit)
-        if not seqs or seqs[0] == last + 1:
-            # Nothing came in meanwhile: the reply's snapshot is the whole log.
-            app.repo.store_notes_fold(
-                session_id, folded, seqs[-1] if seqs else last, rendered, *marks_of(reply)
-            )
-            _derive_items(app, session_id, reply, [seq for seq, _ in ops], author)
-            notes_media.seen(app, session_id, reply.get("media"))
-            _write_notes(app, session_id, rendered)
-        else:
-            _fold_locked(app, session_id, binary)
+        _store_written(app, session_id, binary, reply, folded, rendered, seqs, ops, last, author)
         return list(zip(seqs, frames, strict=True))
+
+
+def _store_written(
+    app: AppContext,
+    session_id: str,
+    binary: str,
+    reply: dict,
+    folded: bytes,
+    rendered: str,
+    seqs: list[int],
+    ops: list[tuple[int, bytes]],
+    last: int,
+    author: str | None,
+) -> None:
+    """After a write by the sidecar (the meeting's lock held): its frames were appended as
+    `seqs` to a log that ended at `last` when `ops` were read. Nothing came in meanwhile: the
+    reply is the fold of the whole log and is stored as such (items, media, notes, hooks).
+    Else the log is folded again, with what came in."""
+    if seqs and seqs[0] != last + 1:
+        _fold_locked(app, session_id, binary)
+        return
+    app.repo.store_notes_fold(
+        session_id,
+        folded,
+        seqs[-1] if seqs else last,
+        rendered,
+        *marks_of(reply),
+        refs=refs_of(reply),
+    )
+    request_seqs = [seq for seq, _ in ops]
+    _derive_items(app, session_id, reply, request_seqs, author)
+    notes_media.seen(app, session_id, reply.get("media"))
+    _write_notes(app, session_id, rendered)
+    _after_fold(app, session_id, reply, request_seqs, author)
 
 
 def mark_comment_blocking(
@@ -512,14 +594,7 @@ def mark_comment_blocking(
         seqs = app.repo.append_notes_ops(session_id, frames, author_id, author, False)
         if not seqs:
             return []
-        if seqs[0] == last + 1:
-            # Nothing came in meanwhile: the reply's snapshot is the whole log.
-            app.repo.store_notes_fold(session_id, folded, seqs[-1], rendered, *marks_of(reply))
-            _derive_items(app, session_id, reply, [seq for seq, _ in ops])
-            notes_media.seen(app, session_id, reply.get("media"))
-            _write_notes(app, session_id, rendered)
-        else:
-            _fold_locked(app, session_id, binary)
+        _store_written(app, session_id, binary, reply, folded, rendered, seqs, ops, last, None)
         return list(zip(seqs, frames, strict=True))
 
 
@@ -563,14 +638,7 @@ def set_kind_blocking(
         seqs = app.repo.append_notes_ops(session_id, frames, author_id, author, False)
         if not seqs:
             return []
-        if seqs[0] == last + 1:
-            # Nothing came in meanwhile: the reply's snapshot is the whole log.
-            app.repo.store_notes_fold(session_id, folded, seqs[-1], rendered, *marks_of(reply))
-            _derive_items(app, session_id, reply, [seq for seq, _ in ops], author)
-            notes_media.seen(app, session_id, reply.get("media"))
-            _write_notes(app, session_id, rendered)
-        else:
-            _fold_locked(app, session_id, binary)
+        _store_written(app, session_id, binary, reply, folded, rendered, seqs, ops, last, author)
         out = list(zip(seqs, frames, strict=True))
     _on_loop(app, _deliver, app, session_id, out, None)
     return out
@@ -646,6 +714,80 @@ def set_markdown_blocking(
     if frames:
         _on_loop(app, _announce_edit, app, session_id, author, None)
     return True
+
+
+# compose(markdown, refs, tasks) -> (new markdown, {"<line of the new markdown>": ref | ""})
+# or None: see edit_blocking.
+Compose = Callable[[str, list[dict], list[dict]], tuple[str, dict[str, str]] | None]
+
+
+def edit_blocking(
+    app: AppContext, session_id: str, compose: Compose, author: str
+) -> list[tuple[int, bytes]]:
+    """The backend's own change to the document (COPILOT_AUTHOR's lines, SUMMARY_AUTHOR's
+    section; services/notes_sections.py composes them). Under the meeting's lock: the document
+    is seeded or caught up first (as for a join), then the state is read ONCE and folded for
+    its markdown, refs (`refs_of`) and tasks; `compose(markdown, refs, tasks)` gives the whole
+    new markdown with only its lines changed and the refs to set by line of it (a value sets,
+    "" clears, a line without a key keeps what the diff leaves it), or None for no change; and
+    `set_text` runs against the SAME snapshot and frames with those `refs`, so frames typed
+    meanwhile (appended after the read) merge with it by the CRDT instead of being undone. The
+    frames are logged as `author` (shown as the last to edit), stored like the notes route's
+    (items, media, `Session.notes`, AFTER_FOLD), sent to the meeting's connections and
+    announced. Returns them as (seq, frame)s: [] when compose said None or nothing changed, or
+    the meeting waits for its document from library sync. From a thread, never the event loop.
+    Raises NotesDocError (no sidecar, a failing run)."""
+    binary = _binary()
+    if binary is None:
+        raise NotesDocError("mnemosyne-link not found")
+    if needs_doc_from_sync(app, session_id):
+        return []
+    out: list[tuple[int, bytes]] = []
+    with hub(app).lock(session_id):
+        seeded = seed_blocking(app, session_id)
+        caught = [] if seeded else _catch_up_locked(app, session_id, binary)[0]
+        snapshot, ops, last = _state(app, session_id)
+        request = {
+            "notes": notes_origin(session_id),
+            "snapshot": snapshot,
+            "frames": [_b64(f) for _, f in ops],
+        }
+        state = _run_doc(binary, {"op": "fold", **request})
+        try:
+            markdown = str(state["markdown"])
+        except KeyError as e:
+            raise NotesDocError(f"unreadable fold reply: {e}") from e
+        tasks = state.get("tasks")
+        change = compose(markdown, refs_of(state) or [], tasks if isinstance(tasks, list) else [])
+        if change is not None:
+            new_markdown, refs = change
+            reply = _run_doc(
+                binary,
+                {
+                    "op": "set_text",
+                    **request,
+                    "markdown": new_markdown,
+                    "refs": {str(k): str(v) for k, v in refs.items()},
+                },
+            )
+            try:
+                frames = [_unb64(f) for f in reply["frames"]]
+                folded = _unb64(reply["snapshot"])
+                rendered = str(reply["markdown"])
+            except (KeyError, TypeError, ValueError) as e:
+                raise NotesDocError(f"unreadable set_text reply: {e}") from e
+            seqs = app.repo.append_notes_ops(session_id, frames, "", author, True)
+            _store_written(
+                app, session_id, binary, reply, folded, rendered, seqs, ops, last, author
+            )
+            out = list(zip(seqs, frames, strict=True))
+    if seeded or caught or out:
+        _on_loop(app, _deliver, app, session_id, seeded + caught + out, None)
+    if caught:
+        _on_loop(app, _announce_edit, app, session_id, API_AUTHOR, None)
+    if out:
+        _on_loop(app, _announce_edit, app, session_id, author, None)
+    return out
 
 
 # ---- on the event loop ---------------------------------------------------------------------

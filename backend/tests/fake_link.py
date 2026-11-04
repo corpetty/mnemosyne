@@ -31,26 +31,36 @@ every run fail (stderr, exit 1).
 
 Toy frames: `0xDE` + the UTF-8 JSON `{"id": str, "ops": [op, ...]}` (build one with
 `doc_frame(id, *ops)`), where an op is `["set", text]`, `["ins", pos, text]`, `["del", pos, n]`,
-`["comment", comment_id, start, end]` (end null = detached) or `["kind", line, "task"|
-"task_done"]` (line = index of the text's line; flips its `- [ ] ` / `- [x] ` box).
+`["comment", comment_id, start, end]` (end null = detached), `["kind", line, "task"|
+"task_done"]` (line = index of the text's line; flips its `- [ ] ` / `- [x] ` box) or `["ref",
+line, value]` (sets that line's ref; "" clears it). A `set` may carry the text it was made
+against and refs: `["set", text, base, {"<line of text>": ref | ""}]`; replayed on a text that
+is not `base` (a frame came in between), it is a three-way merge by lines, so both stay, as the
+real CRDT keeps them. Refs belong to lines and follow them through every change: lines are
+matched old to new with difflib (equal ones, and a replaced block pairwise, as a reworded
+line keeps its terminator); a deleted line's ref is gone.
 `0xAF` + bytes is an artifact frame: accepted and kept, nothing more. A frame whose id was seen
 before is skipped. The text is
 every frame's ops replayed in order; markdown = the text as is, plain = the text with U+001F as
 a tab. A snapshot is the base64 JSON `{"frames": [...], "artifacts": [...]}`; merge is the union
 (the shared prefix of the frame lists, then the rest ordered by frame id, so it converges in either
 order) and answers `frames`: what the first snapshot lacked, 0xAF artifacts then one 0xDE toy frame
-per new frame. set_text emits one `set` frame
-(id = sha256 of the old text and the new markdown, 16 hex) or `[]` when the text is equal.
+per new frame. set_text emits one `["set", markdown, old text(, refs)]` frame (id = sha256 of
+the old text and the new markdown, and the ops when `refs` were asked for; 16 hex), one frame of
+`ref` ops when only refs change, or `[]` when nothing does. Its `refs` are as notes-core's
+(keys = lines of the request's markdown; a blank line or one past the end is ignored).
 mark_comment takes `first`/`last` as decimal character positions (the toy's "element ids"; a
 position past the end of the text, or not a number, is "no such character") and emits one
 `["comment", id, first, last + 1]` frame (id `mark-<comment>`).
 Every answer has `tasks` from the markdown's `- [ ] ` / `- [x] ` lines, as notes-core's: `line` is
 the line's index (0-based, among all the text's lines) as 64 hex characters, `text` the line
 after the box with `[label](url)` links reduced to their label, `links` those as `[start, end,
-url]` in code points of `text`, `frame` null. `set_kind` takes that `line` and a `kind` and emits
-one `["kind", line, kind]` frame (id `kind-<line>-<kind>-<8 hex of the old text's sha256>`),
-`[]` when the line already shows it; an index past the last line is "no such character", a line
-that is not a task is "not a task".
+url]` in code points of `text`, `frame` null, `ref` the line's ref or null. Every answer has
+`refs` too: `[{"line", "ref", "index", "md_line"}]` by line, `line` as a task's, `index` =
+`md_line` = the line's index (the toy's markdown is its text). `set_kind` takes that `line` and a
+`kind` and emits one `["kind", line, kind]` frame (id `kind-<line>-<kind>-<8 hex of the old
+text's sha256>`), `[]` when the line already shows it; an index past the last line is "no such
+character", a line that is not a task is "not a task".
 Every answer also has `media`: the values of the text's `![caption](mnemosyne:image/<value>)` lines,
 distinct, in order (unchecked: notes-core reports only valid ones, the backend checks again); such
 lines stay in the markdown as they are."""
@@ -141,7 +151,7 @@ if sys.argv[1:2] == ["rooms"]:
 
 DOC = r"""
 if sys.argv[1:] == ["notes", "doc"]:
-    import base64, hashlib
+    import base64, difflib, hashlib
 
     request = json.load(sys.stdin)
     log = os.environ.get("FAKE_NOTES_DOC_LOG")
@@ -190,13 +200,70 @@ if sys.argv[1:] == ["notes", "doc"]:
     def with_box(line, kind):
         return BOX.sub("- [x] " if kind == "task_done" else "- [ ] ", line, count=1)
 
+    # Old line index -> new line index for the lines that stayed (equal) or were reworded (a
+    # replaced block, pairwise): what keeps a line's ref, as notes-core's terminators do.
+    def line_map(old, new):
+        a, b = old.split("\n"), new.split("\n")
+        out = {}
+        sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag in ("equal", "replace"):
+                for k in range(min(i2 - i1, j2 - j1)):
+                    out[i1 + k] = j1 + k
+        return out
+
+    def reanchor(refs, old, new):
+        if old == new or not refs:
+            return refs
+        moved = line_map(old, new)
+        return {moved[i]: v for i, v in refs.items() if i in moved}
+
+    # A three-way merge by lines; both sides' edits kept (mine first where they meet).
+    def merge3(base, mine, theirs):
+        b = base.split("\n")
+        edits = []
+        for side in (mine.split("\n"), theirs.split("\n")):
+            sm = difflib.SequenceMatcher(None, b, side, autojunk=False)
+            edits += [(i1, i2, side[j1:j2]) for tag, i1, i2, j1, j2 in sm.get_opcodes()
+                      if tag != "equal"]
+        edits.sort(key=lambda e: (e[0], e[1]))
+        out, pos, last = [], 0, None
+        for i1, i2, new in edits:
+            if (i1, i2, new) == last:
+                continue
+            last = (i1, i2, new)
+            out += new if i1 < pos else b[pos:i1] + new
+            pos = max(pos, i2)
+        return "\n".join(out + b[pos:])
+
+    def set_refs(refs, wanted, lines):
+        for n, value in wanted:
+            if 0 <= n < lines:
+                if value:
+                    refs[n] = value
+                else:
+                    refs.pop(n, None)
+
     def replay(state):
-        text, comments = "", {}
+        text, comments, refs = "", {}, {}
         for frame in state["frames"]:
             for op in frame["ops"]:
+                old = text
                 if op[0] == "set":
-                    text = op[1]
-                elif op[0] == "ins":
+                    md = op[1]
+                    base = op[2] if len(op) > 2 else text
+                    text = md if base == text else merge3(base, text, md)
+                    refs = reanchor(refs, old, text)
+                    wanted = op[3] if len(op) > 3 else {}
+                    to_text = line_map(md, text) if text != md else None
+                    set_refs(
+                        refs,
+                        [((int(n) if to_text is None else to_text.get(int(n), -1)), v)
+                         for n, v in wanted.items()],
+                        len(text.split("\n")),
+                    )
+                    continue
+                if op[0] == "ins":
                     text = text[: op[1]] + op[2] + text[op[1] :]
                 elif op[0] == "del":
                     text = text[: op[1]] + text[op[1] + op[2] :]
@@ -207,9 +274,12 @@ if sys.argv[1:] == ["notes", "doc"]:
                     if op[1] < len(lines) and BOX.match(lines[op[1]]):
                         lines[op[1]] = with_box(lines[op[1]], op[2])
                     text = "\n".join(lines)
-        return text, comments
+                elif op[0] == "ref":
+                    set_refs(refs, [(op[1], op[2])], len(text.split("\n")))
+                refs = reanchor(refs, old, text)
+        return text, comments, refs
 
-    def tasks_of(text):
+    def tasks_of(text, refs):
         out = []
         for i, line in enumerate(text.split("\n")):
             box = BOX.match(line)
@@ -224,7 +294,7 @@ if sys.argv[1:] == ["notes", "doc"]:
                 at = m.end()
             plain += body[at:]
             out.append({"line": format(i, "064x"), "done": box.group(1) != " ", "text": plain,
-                        "links": links, "frame": None})
+                        "links": links, "frame": None, "ref": refs.get(i)})
         return out
 
     IMAGE = re.compile(r"^!\[(?:[^\]\\\n]|\\.)*\]\(mnemosyne:image/([^)\s]+)\)$")
@@ -238,10 +308,14 @@ if sys.argv[1:] == ["notes", "doc"]:
         return out
 
     def answer(state, **extra):
-        text, comments = replay(state)
+        text, comments, refs = replay(state)
         snapshot = base64.b64encode(json.dumps(state, sort_keys=True).encode()).decode()
+        n_lines = len(text.split("\n"))
+        listed = [{"line": format(i, "064x"), "ref": refs[i], "index": i, "md_line": i}
+                  for i in sorted(refs) if i < n_lines]
         out = {"snapshot": snapshot, "markdown": text, "plain": text.replace("\x1f", "\t"),
-               "comments": comments, "tasks": tasks_of(text), "media": media_of(text)}
+               "comments": comments, "tasks": tasks_of(text, refs), "media": media_of(text),
+               "refs": listed}
         out.update(extra)
         print(json.dumps(out))
         sys.exit(0)
@@ -256,19 +330,33 @@ if sys.argv[1:] == ["notes", "doc"]:
     elif op == "set_text":
         state = load(request.get("snapshot"))
         add(state, request.get("frames", []))
-        old, _ = replay(state)
+        old, _, old_refs = replay(state)
         md = request["markdown"]
+        md_lines = md.split("\n")
+        wanted = {}
+        for key, value in (request.get("refs") or {}).items():
+            if not key.isdigit() or not isinstance(value, str):
+                fail(f"refs: {key!r} is not a line number")
+            # Keys that start no line are ignored (a blank line, past the end).
+            if int(key) < len(md_lines) and md_lines[int(key)].strip():
+                wanted[str(int(key))] = value
         if md == old:
-            answer(state, frames=[])
-        fid = hashlib.sha256((old + "\0" + md).encode()).hexdigest()[:16]
-        frame = {"id": fid, "ops": [["set", md]]}
+            ops = [["ref", int(n), v] for n, v in sorted(wanted.items(), key=lambda kv: int(kv[0]))
+                   if (old_refs.get(int(n)) or "") != v]
+            if not ops:
+                answer(state, frames=[])
+        else:
+            ops = [["set", md, old] + ([wanted] if wanted else [])]
+        extra = "\0" + json.dumps(ops, sort_keys=True) if wanted else ""
+        fid = hashlib.sha256((old + "\0" + md + extra).encode()).hexdigest()[:16]
+        frame = {"id": fid, "ops": ops}
         state["frames"].append(frame)
         raw = b"\xde" + json.dumps(frame).encode()
         answer(state, frames=[base64.b64encode(raw).decode()])
     elif op == "mark_comment":
         state = load(request.get("snapshot"))
         add(state, request.get("frames", []))
-        text, _ = replay(state)
+        text, _, _ = replay(state)
         found = {}
         for what in ("first", "last"):
             raw = request.get(what)
@@ -291,7 +379,7 @@ if sys.argv[1:] == ["notes", "doc"]:
     elif op == "set_kind":
         state = load(request.get("snapshot"))
         add(state, request.get("frames", []))
-        text, _ = replay(state)
+        text, _, _ = replay(state)
         kind = request.get("kind")
         if kind not in ("task", "task_done"):
             fail("kind: expected task or task_done")
