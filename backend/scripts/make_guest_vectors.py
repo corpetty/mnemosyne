@@ -10,6 +10,7 @@ implementations cannot drift apart.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -24,6 +25,8 @@ GID = "g-3f9a1c2e"
 NAME = "Zoë Müller 🎉"
 DELTA = bytes([0xDE]) + b"\x01\x02delta frame bytes for the test vectors \xf0\x9f\x93\x9d"
 ARTIFACT = bytes([0xAF]) + b"artifact frame: https://example.org/a-long-link-over-14-bytes"
+MEDIA = bytes((i * 7 + 3) % 256 for i in range(1000))  # 1000 bytes of a fixed pattern
+MEDIA_SHA = hashlib.sha256(MEDIA).hexdigest()
 
 JSON_SAMPLES: dict[str, tuple[gf.Kind, dict]] = {
     "snapshot": (
@@ -73,13 +76,16 @@ NONCES = {
     "comment": bytes(range(0x50, 0x5C)),
     "meta": bytes(range(0x60, 0x6C)),
     "presence": bytes(range(0x70, 0x7C)),
+    "media": bytes(range(0x80, 0x8C)),
 }
 
 
-def _entry(kind: gf.Kind, plaintext: bytes, nonce: bytes, envelope: bytes, **extra) -> dict:
+def _entry(
+    kind: gf.Kind, plaintext: bytes, nonce: bytes, envelope: bytes, sha: str | None = None, **extra
+) -> dict:
     return {
         "kind": int(kind),
-        "aad": gf.aad(ROOM, kind).decode(),
+        "aad": gf.aad(ROOM, kind, sha).decode(),
         "nonce_hex": nonce.hex(),
         **extra,
         "plaintext_hex": plaintext.hex(),
@@ -110,12 +116,22 @@ def build() -> dict:
         plain = gf.canonical_json(obj)
         env = gf.seal_json(KEY, ROOM, kind, obj, NONCES[label])
         samples[label] = _entry(kind, plain, NONCES[label], env, json=plain.decode())
+    samples["media"] = _entry(
+        gf.Kind.MEDIA,
+        MEDIA,
+        NONCES["media"],
+        gf.seal_media(KEY, ROOM, MEDIA_SHA, MEDIA, NONCES["media"]),
+        MEDIA_SHA,
+        sha256=MEDIA_SHA,
+        name=gf.media_name(KEY, MEDIA_SHA),
+    )
     return {
         "format": gf.FORMAT,
         "key_b64url": gf.key_to_fragment(KEY),
         "room": ROOM,
         "frames_key_hex": gf.frames_key(KEY).hex(),
         "room_token": gf.room_token(KEY),
+        "media_name_key_hex": gf.media_name_key(KEY).hex(),
         "samples": samples,
     }
 

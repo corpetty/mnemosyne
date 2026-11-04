@@ -1,5 +1,6 @@
 """The guest-notes wire format (services/guest_format.py) and its test vectors."""
 
+import hashlib
 import importlib.util
 import json
 import re
@@ -125,7 +126,7 @@ def test_wrong_key_room_and_tampering():
     for kind_byte in (2, 3, 4, 5):  # another valid kind: the AAD no longer matches
         with pytest.raises(gf.GuestFormatError):
             gf.unseal(KEY, ROOM, bytes([kind_byte]) + env[1:])
-    for bad_kind in (0, 6, 255):
+    for bad_kind in (0, 7, 255):
         with pytest.raises(gf.GuestFormatError):
             gf.unseal(KEY, ROOM, bytes([bad_kind]) + env[1:])
     flipped = bytearray(env)
@@ -180,6 +181,7 @@ def test_padding_hides_lengths_within_a_block():
     assert snaps == {overhead + 4096}
     assert len(gf.seal(KEY, ROOM, gf.Kind.SNAPSHOT, b"x" * 4093)) == overhead + 8192
     assert gf.block_for(gf.Kind.SNAPSHOT) == 4096 and gf.block_for(gf.Kind.COMMENT) == 256
+    assert gf.block_for(gf.Kind.MEDIA) == gf.MEDIA_BLOCK == 65536
 
 
 def test_empty_plaintext_and_large_frame():
@@ -257,15 +259,25 @@ def test_vectors_open(vec):
         "comment",
         "meta",
         "presence",
+        "media",
     }
+    assert gf.media_name_key(key).hex() == vec["media_name_key_hex"]
     for label, s in vec["samples"].items():
         env = pf.b64url_decode(s["envelope_b64url"])
         assert env[0] == s["kind"] and env[1:13].hex() == s["nonce_hex"]
-        assert gf.aad(room, s["kind"]).decode() == s["aad"]
-        kind, plain = gf.unseal(key, room, env)
+        sha = s.get("sha256")
+        assert gf.aad(room, s["kind"], sha).decode() == s["aad"]
+        kind, plain = gf.unseal(key, room, env, sha)
         assert kind == s["kind"] and plain.hex() == s["plaintext_hex"], label
         assert len(pf.pad(plain, gf.block_for(kind))) == s["padded_length"]
-        if "frame_hex" in s:
+        if sha is not None:
+            assert hashlib.sha256(plain).hexdigest() == sha
+            assert s["padded_length"] == gf.MEDIA_BLOCK and len(plain) == 1000
+            assert gf.media_name(key, sha) == s["name"]
+            assert gf.unseal_media(key, room, sha, env) == plain
+            nonce = bytes.fromhex(s["nonce_hex"])
+            assert gf.seal_media(key, room, sha, plain, nonce) == env
+        elif "frame_hex" in s:
             assert gf.parse_notes(plain) == (s["gid"], s["name"], bytes.fromhex(s["frame_hex"]))
             assert gf.seal_notes(
                 key, room, s["gid"], s["name"], bytes.fromhex(s["frame_hex"]),
@@ -287,3 +299,96 @@ def test_vectors_reproduce(vec):
     assert json.dumps(mod.build(), indent=2, ensure_ascii=False) + "\n" == VECTORS.read_text(
         encoding="utf-8"
     )
+
+
+# ---- media ----
+
+IMAGE = bytes((i * 31 + 7) % 256 for i in range(5000))
+IMAGE_SHA = hashlib.sha256(IMAGE).hexdigest()
+
+
+def test_media_round_trip_and_padding():
+    env = gf.seal_media(KEY, ROOM, IMAGE_SHA, IMAGE)
+    assert env[0] == gf.Kind.MEDIA
+    assert len(env) == 1 + 12 + 65536 + 16  # one 64 KiB block
+    assert gf.unseal_media(KEY, ROOM, IMAGE_SHA, env) == IMAGE
+    assert gf.unseal(KEY, ROOM, env, IMAGE_SHA) == (gf.Kind.MEDIA, IMAGE)
+    big = bytes(60_000)
+    assert len(gf.seal_media(KEY, ROOM, hashlib.sha256(big).hexdigest(), big)) == len(env)
+    huge = b"\x01" * 70_000  # 4 + 70000 needs two blocks
+    assert len(gf.seal_media(KEY, ROOM, hashlib.sha256(huge).hexdigest(), huge)) == len(env) + 65536
+
+
+def test_media_size_limit():
+    at_limit = b"\x07" * gf.MEDIA_MAX
+    env = gf.seal_media(KEY, ROOM, hashlib.sha256(at_limit).hexdigest(), at_limit)
+    assert gf.unseal_media(KEY, ROOM, hashlib.sha256(at_limit).hexdigest(), env) == at_limit
+    over = b"\x07" * (gf.MEDIA_MAX + 1)
+    with pytest.raises(gf.GuestFormatError, match="at most"):
+        gf.seal_media(KEY, ROOM, hashlib.sha256(over).hexdigest(), over)
+
+
+def test_media_sha_rules():
+    with pytest.raises(gf.GuestFormatError):
+        gf.aad(ROOM, gf.Kind.MEDIA)
+    with pytest.raises(gf.GuestFormatError):
+        gf.aad(ROOM, gf.Kind.NOTES, IMAGE_SHA)
+    with pytest.raises(gf.GuestFormatError):
+        gf.seal(KEY, ROOM, gf.Kind.NOTES, b"x", sha=IMAGE_SHA)
+    with pytest.raises(gf.GuestFormatError):
+        gf.seal(KEY, ROOM, gf.Kind.MEDIA, IMAGE)
+    assert gf.aad(ROOM, gf.Kind.MEDIA, IMAGE_SHA) == (
+        f"mnemosyne/guest/1|{ROOM}|6|{IMAGE_SHA}".encode()
+    )
+    for bad in ("", "abc", IMAGE_SHA.upper(), IMAGE_SHA[:-1], IMAGE_SHA + "0", "g" * 64):
+        with pytest.raises(gf.GuestFormatError):
+            gf.aad(ROOM, gf.Kind.MEDIA, bad)
+        with pytest.raises(gf.GuestFormatError):
+            gf.media_name(KEY, bad)
+    with pytest.raises(gf.GuestFormatError, match="match"):
+        gf.seal_media(KEY, ROOM, hashlib.sha256(b"other").hexdigest(), IMAGE)
+
+
+def test_media_refusals():
+    env = gf.seal_media(KEY, ROOM, IMAGE_SHA, IMAGE)
+    other = hashlib.sha256(b"other").hexdigest()
+    with pytest.raises(gf.GuestFormatError):  # another blob's sha is in the AAD
+        gf.unseal_media(KEY, ROOM, other, env)
+    with pytest.raises(gf.GuestFormatError):  # no sha
+        gf.unseal(KEY, ROOM, env)
+    with pytest.raises(gf.GuestFormatError):
+        gf.unseal_media(KEY, OTHER_ROOM, IMAGE_SHA, env)
+    with pytest.raises(gf.GuestFormatError):
+        gf.unseal_media(bytes(range(1, 33)), ROOM, IMAGE_SHA, env)
+    with pytest.raises(gf.GuestFormatError):
+        gf.unseal_media(KEY, ROOM, IMAGE_SHA, bytes([gf.Kind.NOTES]) + env[1:])
+    with pytest.raises(gf.GuestFormatError):
+        gf.unseal_media(KEY, ROOM, IMAGE_SHA, b"")
+    flipped = bytearray(env)
+    flipped[100] ^= 1
+    with pytest.raises(gf.GuestFormatError):
+        gf.unseal_media(KEY, ROOM, IMAGE_SHA, bytes(flipped))
+    # a frame sealed under the wrong sha for its bytes is refused on reading
+    liar = gf.seal(KEY, ROOM, gf.Kind.MEDIA, b"not the image", sha=IMAGE_SHA)
+    with pytest.raises(gf.GuestFormatError, match="match"):
+        gf.unseal_media(KEY, ROOM, IMAGE_SHA, liar)
+    # a media envelope cannot pass for a notes frame, nor for JSON
+    with pytest.raises(gf.GuestFormatError):
+        gf.unseal_notes(KEY, ROOM, env)
+    with pytest.raises(gf.GuestFormatError):
+        gf.seal_json(KEY, ROOM, gf.Kind.MEDIA, {})
+    # and a notes envelope is not media
+    with pytest.raises(gf.GuestFormatError):
+        gf.unseal_media(KEY, ROOM, IMAGE_SHA, gf.seal_notes(KEY, ROOM, "", "", DELTA))
+
+
+def test_media_name():
+    name = gf.media_name(KEY, IMAGE_SHA)
+    assert re.fullmatch(r"[0-9a-f]{64}", name)
+    assert name != IMAGE_SHA
+    assert name == gf.media_name(KEY, IMAGE_SHA)
+    assert name != gf.media_name(bytes(range(1, 33)), IMAGE_SHA)
+    assert name != gf.media_name(KEY, hashlib.sha256(b"other").hexdigest())
+    assert gf.media_name_key(KEY) not in (gf.frames_key(KEY), KEY)
+    sealed_hash = hashlib.sha256(gf.seal_media(KEY, ROOM, IMAGE_SHA, IMAGE)).hexdigest()
+    assert name != sealed_hash
