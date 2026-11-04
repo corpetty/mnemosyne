@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { importMeeting, openApp } from './fixtures';
+import { addImage, importMeeting, openApp } from './fixtures';
 
 const BACKEND = 'http://127.0.0.1:8018';
 const NAME = 'shared-notes-demo';
@@ -168,6 +168,65 @@ test('a caret and a selection show up in the other page and go away on blur', as
     await edA.evaluate((el) => (el as HTMLElement).blur());
     await expect(carets(b)).toHaveCount(0, { timeout: 15_000 });
     await expect(carets(a)).toHaveCount(1);
+  } finally {
+    await ctxA.close();
+    await ctxB.close();
+  }
+});
+
+// Images in the notes (images-in-notes task 14). A picture pasted in one window goes up to the
+// backend (PUT /api/sessions/{id}/notes/media/{sha}, src/lib/app/notesMedia.ts); the image line
+// travels in the document, and the other window fetches the bytes when the `notes_media` event (or
+// its retry timer) says they are stored. Both pages run the same stored connection.
+test('an image pasted in one window shows in another, and after a reload', async ({ page, browser, request }, info) => {
+  const ctxA = await browser.newContext({ storageState: await page.context().storageState() });
+  const ctxB = await browser.newContext({ storageState: await page.context().storageState() });
+  try {
+    const a = await ctxA.newPage();
+    const b = await ctxB.newPage();
+    await openApp(a);
+    await importMeeting(a, info.outputDir, NAME);
+    const edA = await openNotes(a);
+    const edB = await openNotes(b);
+    const id: string = (await (await request.get(`${BACKEND}/api/sessions`)).json()).find((s: { name: string }) => s.name === NAME).id;
+
+    // A types a line, pastes a picture and captions it.
+    await edA.click();
+    await a.keyboard.type('Whiteboard from the call');
+    await a.keyboard.press('Enter');
+    await addImage(a, edA);
+    const figA = edA.locator('figure.ne-image');
+    await expect(figA).toHaveCount(1);
+    await expect(figA).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
+    await a.keyboard.type('Roadmap sketch');
+    const sha = (await figA.getAttribute('data-sha'))!;
+    expect(sha).toMatch(/^[0-9a-f]{64}$/);
+
+    // B gets the line, then the bytes (loaded from the backend into an object URL), and the caption.
+    const figB = edB.locator('figure.ne-image');
+    await expect(figB).toHaveCount(1, { timeout: 20_000 });
+    await expect(figB).toHaveAttribute('data-state', 'ready', { timeout: 30_000 });
+    await expect(figB).toHaveAttribute('data-sha', sha);
+    await expect(figB.locator('img')).toHaveAttribute('src', /^blob:/);
+    await expect(edB.locator('.ne-image-line')).toContainText('Roadmap sketch');
+    await expect(edB).toContainText('Whiteboard from the call');
+
+    // The backend holds the bytes (a WebP or JPEG, whichever the browser could encode) ...
+    const media = await request.get(`${BACKEND}/api/sessions/${id}/notes/media/${sha}`);
+    expect(media.ok()).toBeTruthy();
+    expect(media.headers()['content-type']).toMatch(/^image\/(webp|jpeg)$/);
+    // ... and, once the document is folded, the meeting's notes text names them.
+    await expect(async () => {
+      const notes: string = (await (await request.get(`${BACKEND}/api/sessions/${id}`)).json()).notes;
+      expect(notes).toMatch(new RegExp(`!\\[Roadmap sketch\\]\\(mnemosyne:image/${sha}\\.(webp|jpeg)@240x160\\)`));
+    }).toPass({ timeout: 8000 });
+
+    // B loads the app again (no reload(): see the note in the first test): the picture is still there.
+    const edB2 = await openNotes(b);
+    const figB2 = edB2.locator('figure.ne-image');
+    await expect(figB2).toHaveCount(1);
+    await expect(figB2).toHaveAttribute('data-state', 'ready', { timeout: 30_000 });
+    await expect(edB2.locator('.ne-image-line')).toContainText('Roadmap sketch');
   } finally {
     await ctxA.close();
     await ctxB.close();

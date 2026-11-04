@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { addImage, chooseImage } from './fixtures';
 
 // The notes editor's input layer in a real engine, on the dev-only harness route
 // (src/routes/dev/notes-editor: a local document, no backend). Typing goes through
@@ -17,6 +18,8 @@ declare global {
       getSelectionOffsets(root: HTMLElement): { anchor: number; focus: number } | null;
       input: { setLink(from: number, to: number, url: string | null): void; setReadOnly(v: boolean): void };
       lastChip: { kind: string; part?: number; seconds?: number; name?: string; id?: string } | null;
+      /** The harness's fake media provider (null with ?nomedia). */
+      media: { failUploads: boolean; uploadMs: number; uploads: string[]; has(sha: string): boolean } | null;
     };
   }
 }
@@ -391,4 +394,149 @@ test.describe('on a touch screen', () => {
     await page.getByTestId('editor').evaluate((el) => (el as HTMLElement).blur());
     await expect(bar).toHaveCount(0);
   });
+});
+
+// ---- images (images in the notes, task 14) -----------------------------------------------------------
+// The harness gives the editor a fake media provider (`window.__notes.media`): an upload takes 150 ms
+// and fails while "Uploads fail" is ticked. A pasted PNG is drawn on a canvas (fixtures.ts), re-encoded
+// by prepareImage (WebP, else JPEG) and goes in as an image line `![caption](mnemosyne:image/<sha>.<ext>@WxH)`.
+
+const IMAGE_LINE = (caption = '', w = 240, h = 160) =>
+  new RegExp(`^!\\[${caption}\\]\\(mnemosyne:image/[0-9a-f]{64}\\.(webp|jpeg)@${w}x${h}\\)\\n$`);
+
+test('paste an image: the block shows, the upload settles, the markdown has the image line', async ({ page }) => {
+  const editor = await open(page);
+  await addImage(page, editor);
+  const fig = editor.locator('figure.ne-image');
+  await expect(fig).toHaveCount(1);
+  await expect(fig).toHaveAttribute('data-state', 'ready');
+  await expect(editor.locator('.ne-image-line')).toHaveAttribute('data-placeholder', 'Add a caption');
+  expect(await md(page)).toMatch(IMAGE_LINE());
+  // One upload, to the provider, of the bytes the line names.
+  const uploads = await page.evaluate(() => window.__notes.media!.uploads);
+  expect(uploads).toHaveLength(1);
+  const sha = (await fig.getAttribute('data-sha'))!;
+  expect(sha).toMatch(/^[0-9a-f]{64}$/);
+  expect(uploads[0]).toBe(`${sha} ok`);
+  expect(await page.evaluate((h) => window.__notes.media!.has(h), sha)).toBe(true);
+});
+
+test('a caption is typed under the picture and goes into the markdown', async ({ page }) => {
+  const editor = await open(page);
+  await addImage(page, editor);
+  await expect(editor.locator('figure.ne-image')).toHaveAttribute('data-state', 'ready');
+  // The caret lands in the empty caption.
+  await page.keyboard.type('A grey square');
+  await expect(editor.locator('.ne-image-line')).toContainText('A grey square');
+  expect(await md(page)).toMatch(IMAGE_LINE('A grey square'));
+  expect(await text(page)).toBe('A grey square\n');
+});
+
+test('Backspace on an empty caption removes the image and Ctrl+Z puts it back', async ({ page }) => {
+  const editor = await open(page);
+  await addImage(page, editor);
+  const fig = editor.locator('figure.ne-image');
+  await expect(fig).toHaveAttribute('data-state', 'ready');
+  await page.keyboard.press('Backspace');
+  await expect(fig).toHaveCount(0);
+  expect(await text(page)).toBe('\n');
+  await page.keyboard.press('Control+z');
+  await expect(fig).toHaveCount(1);
+  await expect(fig).toHaveAttribute('data-state', 'ready');
+  expect(await md(page)).toMatch(IMAGE_LINE());
+});
+
+test('a failed upload shows Retry and Remove; Retry sends it again and succeeds', async ({ page }) => {
+  const editor = await open(page);
+  await page.getByTestId('fail-uploads').check();
+  await editor.click();
+  await addImage(page, editor);
+  const fig = editor.locator('figure.ne-image');
+  await expect(fig).toHaveAttribute('data-state', 'failed');
+  await expect(fig.locator('.ne-image-note')).toContainText('Not uploaded');
+  await expect(fig.getByRole('button', { name: 'Retry' })).toBeVisible();
+  await expect(fig.getByRole('button', { name: 'Remove' })).toBeVisible();
+  const sha = (await fig.getAttribute('data-sha'))!;
+  expect(await page.evaluate(() => window.__notes.media!.uploads)).toEqual([`${sha} failed`]);
+  // The line is in the document all along, uploaded or not.
+  expect(await md(page)).toMatch(IMAGE_LINE());
+
+  await page.getByTestId('fail-uploads').uncheck();
+  await fig.getByRole('button', { name: 'Retry' }).click();
+  await expect(fig).toHaveAttribute('data-state', 'ready');
+  await expect(fig.getByRole('button')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__notes.media!.uploads)).toEqual([`${sha} failed`, `${sha} ok`]);
+});
+
+test('a failed upload can be removed with its Remove button', async ({ page }) => {
+  const editor = await open(page);
+  await page.evaluate(() => (window.__notes.media!.failUploads = true));
+  await addImage(page, editor);
+  const fig = editor.locator('figure.ne-image');
+  await expect(fig).toHaveAttribute('data-state', 'failed');
+  await fig.getByRole('button', { name: 'Remove' }).click();
+  await expect(fig).toHaveCount(0);
+  expect(await text(page)).toBe('\n');
+});
+
+test('the lightbox opens on a click and closes with Escape, the close button or a click outside', async ({ page }) => {
+  const editor = await open(page);
+  await addImage(page, editor);
+  const fig = editor.locator('figure.ne-image');
+  await expect(fig).toHaveAttribute('data-state', 'ready');
+  const lightbox = page.getByRole('dialog', { name: 'Image', exact: true });
+  await expect(lightbox).toHaveCount(0);
+
+  await fig.click();
+  await expect(lightbox).toBeVisible();
+  await expect(lightbox.locator('img')).toHaveAttribute('src', /^blob:/);
+  await expect(lightbox.getByRole('button', { name: 'Close image' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(lightbox).toHaveCount(0);
+  await expect(fig).toBeFocused(); // the picture gets its focus back
+
+  // Enter on the focused picture opens it again; the close button closes it.
+  await page.keyboard.press('Enter');
+  await expect(lightbox).toBeVisible();
+  await lightbox.getByRole('button', { name: 'Close image' }).click();
+  await expect(lightbox).toHaveCount(0);
+
+  // A click on the backdrop (the dialog itself, away from the picture) closes it too.
+  await fig.click();
+  await expect(lightbox).toBeVisible();
+  await lightbox.click({ position: { x: 4, y: 4 } });
+  await expect(lightbox).toHaveCount(0);
+});
+
+test('/Image in the insert menu opens the file chooser and the chosen picture goes in', async ({ page }) => {
+  const editor = await open(page);
+  await chooseImage(page, 1);
+  const fig = editor.locator('figure.ne-image');
+  await expect(fig).toHaveCount(1);
+  await expect(fig).toHaveAttribute('data-state', 'ready');
+  expect(await md(page)).toMatch(IMAGE_LINE('', 241, 160));
+  expect(await text(page)).toBe('\n'); // "/ima" is gone
+});
+
+test('without a media provider (?nomedia) the insert menu has no Image item', async ({ page }) => {
+  // With one: the item is there, and the editor has its hidden file input.
+  await open(page);
+  await page.keyboard.type('/');
+  const menu = insertMenu(page);
+  await expect(menu.getByRole('option', { name: 'Heading 1' })).toBeVisible();
+  await expect(menu.getByRole('option', { name: /^Image/ })).toBeVisible();
+  await expect(page.getByTestId('notes-image-input')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+
+  // Without: the same menu, no Image; no file input, no "Uploads fail" switch.
+  await page.goto('/dev/notes-editor?nomedia&md=');
+  await expect(page.getByTestId('status')).toHaveText('ready');
+  await page.getByTestId('editor').click();
+  await page.keyboard.type('/');
+  await expect(menu.getByRole('option', { name: 'Heading 1' })).toBeVisible();
+  await expect(menu.getByRole('option', { name: /Image/ })).toHaveCount(0);
+  await expect(page.getByTestId('notes-image-input')).toHaveCount(0);
+  await expect(page.getByTestId('fail-uploads')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__notes.media)).toBeNull();
 });

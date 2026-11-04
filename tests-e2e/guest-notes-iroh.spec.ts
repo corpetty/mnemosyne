@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { importMeeting, openApp } from './fixtures';
+import { addImage, importMeeting, openApp } from './fixtures';
 
 const BACKEND = 'http://127.0.0.1:8018';
 const PUBLISH_HOST = 'http://127.0.0.1:8028';
@@ -264,5 +264,61 @@ test('carets and typing cross between an iroh guest, a mirror-host guest and the
   } finally {
     await inaCtx.close();
     await bobCtx.close();
+  }
+});
+
+// Images over iroh (images-in-notes task 14; guest/src/media.ts, services/guest_notes.py). The owner's
+// picture is uploaded to the backend, the bridge seals it into the room (MEDIA frames) and the guest
+// page opens it from there; a guest's picture goes up the same way and the bridge stores it for the
+// owner. Each side shows `figure.ne-image` in state `ready` once its object URL has loaded.
+test('an image crosses between the owner and an iroh guest in both directions', async ({ page, browser, request }, info) => {
+  await putSettings(request, { guest_transport: 'iroh', guest_host: '' });
+  const guestCtx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  try {
+    const { id, owner } = await setUp(page, request, info.outputDir);
+    const { link, menu } = await createLink(page);
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    const guest = await guestCtx.newPage();
+    const guestEditor = await guestJoins(guest, link, 'Ina');
+
+    // The owner pastes a picture and captions it: the guest gets the line, then the bytes.
+    await owner.click();
+    await addImage(page, owner, 0);
+    const ownerFigs = owner.locator('figure.ne-image');
+    await expect(ownerFigs).toHaveCount(1);
+    await expect(ownerFigs.first()).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
+    await page.keyboard.type('Owner photo');
+    const ownerSha = (await ownerFigs.first().getAttribute('data-sha'))!;
+
+    const guestFigs = guestEditor.locator('figure.ne-image');
+    await expect(guestFigs).toHaveCount(1, { timeout: 60_000 });
+    await expect(guestFigs.first()).toHaveAttribute('data-sha', ownerSha);
+    await expect(guestFigs.first()).toHaveAttribute('data-state', 'ready', { timeout: 60_000 });
+    await expect(guestFigs.first().locator('img')).toHaveAttribute('src', /^blob:/);
+    await expect(guestEditor.locator('.ne-image-line')).toContainText('Owner photo');
+
+    // The guest adds one of its own below (a click on the caption, not on the picture, which opens
+    // the lightbox): the owner gets the line and, within the fold delay and the bridge's fetch, the bytes.
+    await guestEditor.getByText('Owner photo').click();
+    await guest.keyboard.press('Control+End');
+    await guest.keyboard.press('Enter');
+    await addImage(guest, guestEditor, 1);
+    await expect(guestFigs).toHaveCount(2);
+    await expect(guestFigs.nth(1)).toHaveAttribute('data-state', 'ready', { timeout: 30_000 });
+    await guest.keyboard.type('Guest photo');
+    const guestSha = (await guestFigs.nth(1).getAttribute('data-sha'))!;
+    expect(guestSha).not.toBe(ownerSha);
+
+    await expect(ownerFigs).toHaveCount(2, { timeout: 60_000 });
+    await expect(ownerFigs.nth(1)).toHaveAttribute('data-sha', guestSha);
+    await expect(ownerFigs.nth(1)).toHaveAttribute('data-state', 'ready', { timeout: 60_000 });
+    await expect(owner.locator('.ne-image-line').nth(1)).toContainText('Guest photo');
+    // The bridge stored the guest's bytes in the meeting's media.
+    const media = await request.get(`${BACKEND}/api/sessions/${id}/notes/media/${guestSha}`);
+    expect(media.ok()).toBeTruthy();
+    expect(media.headers()['content-type']).toMatch(/^image\/(webp|jpeg)$/);
+  } finally {
+    await guestCtx.close();
   }
 });
