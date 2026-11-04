@@ -1,11 +1,17 @@
 """Obsidian export templates, exporter, and endpoint."""
 
+import os
 from datetime import datetime
+from pathlib import Path
 
+from mnemosyne.api.routes.export import _tag
 from mnemosyne.export.obsidian import ObsidianExporter
 from mnemosyne.export.templates import render_meeting_note
 from mnemosyne.models.session import Session
 from mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.services import notes_media
+from mnemosyne.storage.crypto import new_key
+from tests.test_notes_media import jpeg, sha, value, webp
 
 
 def test_render_meeting_note_structure():
@@ -161,3 +167,145 @@ def test_exporter_passes_the_meeting_lookup_to_the_notes(tmp_path):
     note = exporter.render(s)
     assert "[[2026-10-14-Planning|Planning]]" in note and "[[Ada Lovelace]]" in note
     assert "mnemosyne:" not in ObsidianExporter(str(tmp_path), link_people=False).render(s)
+
+
+# ---- images in the notes (services/notes_media.py) --------------------------------------------
+
+
+def _image_meeting(ctx, tmp_path, *pictures, caption="Whiteboard"):
+    """A saved meeting whose notes embed `pictures` (bytes, stored in its media store), and a vault
+    with the settings pointing at it. Returns (session id, attachments folder, note path stem)."""
+    vault = tmp_path / "vault"
+    vault.mkdir(exist_ok=True)
+    ctx.settings.obsidian_vault_path = str(vault)
+    ctx.settings.obsidian_subfolder = "notes"
+    session = ctx.repo.save(Session(name="Planning", created_at=datetime(2026, 11, 4, 9, 0)))
+    lines = []
+    for data in pictures:
+        info = notes_media.store(ctx, session.id, sha(data), data)
+        lines.append(f"![{caption}](mnemosyne:image/{info.sha256}.{info.ext}@640x480)")
+    ctx.sessions.update_notes(session.id, "Intro\n" + "\n".join(lines) + "\n")
+    return session.id, vault / "notes" / "attachments", "2026-11-04-Planning"
+
+
+def _export(client, sid):
+    resp = client.post(f"/api/sessions/{sid}/export/obsidian")
+    assert resp.status_code == 200, resp.text
+    return Path(resp.json()["path"]).read_text(encoding="utf-8")
+
+
+def test_export_writes_the_notes_images_as_attachments(client, ctx, tmp_path):
+    data = webp(pad=b"board")
+    sid, attachments, stem = _image_meeting(ctx, tmp_path, data)
+    note = _export(client, sid)
+    name = f"{stem}-{_tag(sha(data))}.webp"
+    assert f"![[{name}|Whiteboard]]" in note
+    assert "mnemosyne:" not in note
+    assert (attachments / name).read_bytes() == data
+
+
+def test_export_writes_a_sealed_image_decrypted(client, ctx, tmp_path):
+    ctx.master_key = new_key()
+    ctx.settings.encrypt_at_rest = True
+    data = jpeg(pad=b"secret pixels")
+    sid, attachments, stem = _image_meeting(ctx, tmp_path, data)
+    assert [p.suffix for p in (ctx.settings.notes_media_dir / sid).iterdir()] == [".enc"]
+    note = _export(client, sid)
+    name = f"{stem}-{_tag(sha(data))}.jpeg"
+    assert f"![[{name}|Whiteboard]]" in note
+    assert (attachments / name).read_bytes() == data
+
+
+def test_export_again_does_not_rewrite_an_unchanged_image(client, ctx, tmp_path):
+    data = webp(pad=b"same")
+    sid, attachments, stem = _image_meeting(ctx, tmp_path, data)
+    _export(client, sid)
+    file = attachments / f"{stem}-{_tag(sha(data))}.webp"
+    os.utime(file, ns=(1_000_000_000, 1_000_000_000))
+    _export(client, sid)
+    assert file.stat().st_mtime_ns == 1_000_000_000  # left alone
+    # Another size on disk (the user pasted something over it): written again.
+    file.write_bytes(b"short")
+    _export(client, sid)
+    assert file.read_bytes() == data
+    assert not list(attachments.glob("*.part"))
+
+
+def test_export_removes_only_our_stale_files_of_that_stem(client, ctx, tmp_path):
+    one, two = webp(pad=b"one"), webp(pad=b"two")
+    sid, attachments, stem = _image_meeting(ctx, tmp_path, one, two)
+    _export(client, sid)
+    stale = attachments / f"{stem}-{_tag(sha(two))}.webp"
+    assert stale.exists()
+    # The notes drop the second picture; other files sit in the same folder.
+    keep = {
+        f"{stem}-{'0' * 8}.gif": b"x",  # not our type
+        f"{stem}-notes.webp": b"x",  # not our naming
+        f"{stem}-{'a' * 8}-extra.webp": b"x",  # a longer name (another note's stem)
+        f"2026-11-04-Planning-b-{'a' * 8}.webp": b"x",  # another note's file
+        f"2026-11-05-Retro-{'a' * 8}.webp": b"x",  # another note's file
+        "diagram.png": b"x",
+    }
+    for name, body in keep.items():
+        (attachments / name).write_bytes(body)
+    mine = attachments / f"{stem}-{'c' * 8}.jpeg"  # ours by name, no longer used
+    mine.write_bytes(b"old")
+    ctx.sessions.update_notes(sid, "Intro\n" + f"![x](mnemosyne:image/{value(one)})\n")
+    note = _export(client, sid)
+    assert f"![[{stem}-{_tag(sha(one))}.webp|x]]" in note
+    assert not stale.exists() and not mine.exists()
+    assert (attachments / f"{stem}-{_tag(sha(one))}.webp").exists()
+    for name in keep:
+        assert (attachments / name).exists(), name
+    # No image left in the notes: the last one goes too.
+    ctx.sessions.update_notes(sid, "Just words\n")
+    _export(client, sid)
+    assert not (attachments / f"{stem}-{_tag(sha(one))}.webp").exists()
+    for name in keep:
+        assert (attachments / name).exists(), name
+
+
+def test_an_image_whose_bytes_are_not_here_is_the_plain_form(client, ctx, tmp_path):
+    data = webp(pad=b"far away")
+    sid, attachments, stem = _image_meeting(ctx, tmp_path, data, caption="Far")
+    name = f"{stem}-{_tag(sha(data))}.webp"
+    notes_media.path(ctx, sid, sha(data)).unlink()  # a row without bytes (synced, not fetched yet)
+    # A copy written by an earlier export is kept: the notes still use that image.
+    attachments.mkdir(parents=True)
+    (attachments / name).write_bytes(data)
+    note = _export(client, sid)
+    assert "[image: Far]" in note and "![[" not in note and "mnemosyne:" not in note
+    assert (attachments / name).exists()
+
+
+def test_the_preview_shows_images_in_the_plain_form(client, ctx, tmp_path):
+    data = webp(pad=b"preview")
+    sid, attachments, _ = _image_meeting(ctx, tmp_path, data)
+    markdown = client.get(f"/api/sessions/{sid}/export/markdown").json()["markdown"]
+    assert "[image: Whiteboard]" in markdown and "mnemosyne:" not in markdown
+    assert not attachments.exists()  # a preview writes nothing
+
+
+def test_the_notes_section_with_embeds_reads_back_like_any_text(client, ctx, tmp_path):
+    from mnemosyne.export.note_parse import cut, parse
+
+    data = webp(pad=b"readback")
+    sid, _, _ = _image_meeting(ctx, tmp_path, data)
+    note = _export(client, sid)
+    assert "![[" in note
+    rest, _ = cut(note)
+    assert "![[" in rest  # the Notes section stays in the text the merge works on
+    assert "![[" not in repr(parse(note))  # no projection section picks the embed up
+    # Exporting again reads the note back first (ticks, edits): the embed is no trouble.
+    assert "![[" in _export(client, sid)
+
+
+def test_an_attachment_tag_is_never_all_digits():
+    """redact_exports would take 8 digits for an account number and break the embed."""
+    from mnemosyne.summarization.privacy import redact_identifiers
+
+    digits_first = "12345678" + "9abcdef0" + "0" * 48
+    assert _tag(digits_first) == "9abcdef0"
+    assert _tag("abcdef01" + "0" * 56) == "abcdef01"
+    line = f"![[2026-11-04-Planning-{_tag(digits_first)}.webp|Whiteboard]]"
+    assert redact_identifiers(line) == line

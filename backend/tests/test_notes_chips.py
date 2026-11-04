@@ -3,6 +3,7 @@ readers that use them (the summary's notes hint)."""
 
 from mnemosyne.services.notes_chips import (
     exported_meeting_note,
+    image_lines,
     obsidian_notes,
     parse_chip,
     plain_notes,
@@ -153,3 +154,83 @@ def test_summary_reads_the_notes_chips_as_text(client, ctx, fake_provider, trans
         in prompt
     )
     assert "mnemosyne:" not in prompt
+
+
+SHA_A = "a" * 64
+SHA_B = "b" * 64
+
+
+def image(caption: str = "", sha: str = SHA_A, ext: str = "webp") -> str:
+    return f"![{caption}](mnemosyne:image/{sha}.{ext}@640x480)"
+
+
+def test_plain_notes_turns_an_image_line_into_its_caption():
+    md = f"Intro\n{image('Whiteboard, Oct 14')}\n{image()}\nOutro [12:34](mnemosyne:t/0/754)"
+    assert plain_notes(md) == "Intro\n[image: Whiteboard, Oct 14]\n[image]\nOutro 12:34"
+    assert "mnemosyne:" not in plain_notes(md)
+
+
+def test_plain_notes_unescapes_an_image_caption():
+    # notes-core escapes each bracket of the caption (and `*`, `_`, a backslash...).
+    md = image(r"Plan \[draft\] \*v2\* a\\b \]")
+    assert plain_notes(md) == "[image: Plan [draft] *v2* a\\b ]]"
+    assert plain_notes(image(r"\]")) == "[image: ]]"
+    # A caption that spells a chip never becomes a link target in the result.
+    assert "mnemosyne:" not in plain_notes(image(r"\[x\](mnemosyne:t/0/5)"))
+
+
+def test_plain_notes_leaves_what_is_not_an_image_line():
+    inline = f"see {image('x')} here"
+    bad_value = "![x](mnemosyne:image/not-a-value)"
+    bad_size = f"![x](mnemosyne:image/{SHA_A}.webp@0x480)"
+    ext = f"![x](mnemosyne:image/{SHA_A}.gif@640x480)"
+    for md in (inline, bad_value, bad_size, ext, "![x](https://example.com/a.png)"):
+        assert plain_notes(md) == md
+
+
+def test_image_lines_lists_valid_lines_in_order():
+    md = f"{image('one')}\ntext\n{image('two', SHA_B, 'jpeg')}\n![x](mnemosyne:image/bad)"
+    found = image_lines(md)
+    assert [(i.sha, i.ext, i.width, i.height, i.caption) for i in found] == [
+        (SHA_A, "webp", 640, 480, "one"),
+        (SHA_B, "jpeg", 640, 480, "two"),
+    ]
+    assert md[found[1].start : found[1].end] == image("two", SHA_B, "jpeg")
+
+
+def test_obsidian_notes_embeds_an_image_the_export_has():
+    asked: list[tuple[str, str]] = []
+
+    def image_file(sha: str, ext: str):
+        asked.append((sha, ext))
+        return f"note-{sha[:8]}.{ext}" if sha == SHA_A else None
+
+    md = (
+        f"{image('Whiteboard')}\n{image('', SHA_A)}\n{image('Lost', SHA_B, 'jpeg')}\n"
+        "At [1:05](mnemosyne:t/0/65)"
+    )
+    out = obsidian_notes(md, True, image_file=image_file)
+    assert out == (
+        "![[note-aaaaaaaa.webp|Whiteboard]]\n![[note-aaaaaaaa.webp]]\n[image: Lost]\nAt 1:05"
+    )
+    assert asked[0] == (SHA_A, "webp") and (SHA_B, "jpeg") in asked
+    # No callback: the plain form.
+    assert obsidian_notes(image("Whiteboard"), True) == "[image: Whiteboard]"
+
+
+def test_obsidian_notes_keeps_a_caption_from_breaking_the_embed():
+    def image_file(sha: str, ext: str):
+        return f"n-{sha[:8]}.{ext}"
+
+    out = obsidian_notes(image(r"a \[b\] | c # d ^ e"), True, image_file=image_file)
+    assert out == "![[n-aaaaaaaa.webp|a b c d e]]"
+    # A number is a width in an embed, not a caption.
+    assert obsidian_notes(image("300"), True, image_file=image_file) == "![[n-aaaaaaaa.webp]]"
+    assert obsidian_notes(image("300x200"), True, image_file=image_file) == "![[n-aaaaaaaa.webp]]"
+    # A file name that would break the link, or a lookup that fails: the plain form.
+    assert obsidian_notes(image("x"), True, image_file=lambda s, e: "a|b.webp") == "[image: x]"
+
+    def boom(sha: str, ext: str):
+        raise RuntimeError("no")
+
+    assert obsidian_notes(image("x"), True, image_file=boom) == "[image: x]"

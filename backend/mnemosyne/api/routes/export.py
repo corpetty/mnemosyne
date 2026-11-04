@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import os
+import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -135,6 +137,68 @@ def _resources(ctx: AppContext, session, exporter: ObsidianExporter) -> list[str
     return out
 
 
+_ATTACHMENT_CHARS = re.compile(r"[\\/:*?\"<>|#^\[\]]")
+
+
+def _tag(sha: str) -> str:
+    """8 hex digits of `sha` for a file name: the first 8 that are not all digits, which
+    `redact_exports` would read as an account number and rewrite in the embed."""
+    return next((sha[i : i + 8] for i in range(0, 64, 8) if not sha[i : i + 8].isdigit()), sha[:8])
+
+
+def _images(
+    ctx: AppContext, session, exporter: ObsidianExporter
+) -> Callable[[str, str], str | None]:
+    """The images of the meeting's notes, written (decrypted) to
+    `<vault>/<folder>/attachments/<note stem>-<sha8>.<ext>` when missing or of another size, and
+    the callback `(sha, ext) -> file name` for the note (None: that image's bytes are not here,
+    so it renders as `[image: caption]`). Files of this stem that look like ours
+    (`<stem>-<8 hex>.webp|jpeg`) and that the notes no longer use are removed; nothing else in
+    attachments/ is touched, and no other note's file."""
+    from ...export.obsidian import note_stem
+    from ...services import notes_media
+
+    root = exporter.vault_path
+    if not root.is_dir():  # no vault: the export itself fails with its own message
+        return lambda sha, ext: None
+    folder = root / exporter.subfolder / "attachments"
+    stem = _ATTACHMENT_CHARS.sub("_", note_stem(session))
+    names: dict[str, str] = {}  # sha -> file name, for every image the notes use
+    for value in notes_media.values_in(session.notes):
+        sha, ext = notes_media.parse_value(value)[:2]
+        name = f"{stem}-{_tag(sha)}.{ext}"
+        if sha not in names and name not in names.values():  # a clash of 8 hex digits: first wins
+            names[sha] = name
+    available: dict[str, str] = {}
+    for sha, name in names.items():
+        target = folder / name
+        try:
+            data = notes_media.read(ctx, session.id, sha)
+            if not (target.is_file() and target.stat().st_size == len(data)):
+                folder.mkdir(parents=True, exist_ok=True)
+                part = target.with_name(target.name + ".part")
+                part.write_bytes(data)
+                os.replace(part, target)
+            available[sha] = name
+        except FileNotFoundError:
+            logger.debug("Image %s of %s is not on this computer", sha, session.id)
+        except Exception:
+            logger.warning("Could not copy image %s to the vault", sha, exc_info=True)
+    if folder.is_dir():
+        ours = re.compile(re.escape(stem) + r"-[0-9a-f]{8}\.(webp|jpeg)")
+        try:
+            for file in folder.iterdir():
+                if ours.fullmatch(file.name) and file.name not in names.values():
+                    if file.is_file() and not file.is_symlink():
+                        try:
+                            file.unlink()
+                        except OSError:
+                            logger.warning("Could not remove %s", file, exc_info=True)
+        except OSError:
+            logger.warning("Could not list %s", folder, exc_info=True)
+    return lambda sha, ext: available.get(sha)
+
+
 def before_export(ctx: AppContext, session, vault_path: str):
     """Runs before a meeting is written to the vault, and returns the session to write (read
     again): ticks and edits to the summary made in the note in Obsidian are taken back first,
@@ -192,6 +256,7 @@ def export_session(ctx: AppContext, session, vault_path: str, decisions: bool = 
     decisions log (`decisions=False`: the caller writes it once after many meetings)."""
     session = before_export(ctx, session, vault_path)
     exporter = build_exporter(ctx, vault_path, session)
+    exporter.image_file = _images(ctx, session, exporter)
     path = exporter.export(
         session,
         _resources(ctx, session, exporter),
