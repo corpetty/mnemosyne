@@ -9,8 +9,9 @@ from fastapi.testclient import TestClient
 
 from mnemosyne import access
 from mnemosyne.api.app import create_app
-from mnemosyne.services import records
+from mnemosyne.services import notes_media, records
 from tests.conftest import drain_until_job, run_summarize
+from tests.test_notes_media import sha, webp
 
 
 def _transcribed(client, ctx, tmp_path, name="Annual review"):
@@ -164,3 +165,21 @@ def test_members_hold_nothing_and_export_only_their_own(settings, keystore, tmp_
         r = client.post("/api/records/export", json={"session_ids": [sid]}, headers=tokens["Bob"])
         assert r.status_code == 404
     assert access.current.get() is None
+
+
+def test_an_export_carries_the_notes_images_and_the_seal_ignores_them(client, ctx, tmp_path):
+    sid, _ = _transcribed(client, ctx, tmp_path)
+    assert records.verify(ctx, sid).ok
+    seals = ctx.repo.seals(sid)
+    data = webp(pad=b"m" * 200)
+    notes_media.store(ctx, sid, sha(data), data)
+    assert records.verify(ctx, sid).ok and ctx.repo.seals(sid) == seals  # nothing sealed changed
+
+    dest = tmp_path / "export.zip"
+    records.export_zip(ctx, records.ExportRequest(session_ids=[sid]), dest)
+    z = zipfile.ZipFile(dest)
+    name = next(n for n in z.namelist() if n.endswith(f"/media/{sha(data)}.webp"))
+    assert z.read(name) == data
+    sums = dict(line.split("  ", 1)[::-1] for line in z.read("SHA256SUMS").decode().splitlines())
+    assert sums[name] == sha(data)
+    assert "media/" in z.read("README.txt").decode()

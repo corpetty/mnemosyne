@@ -7,6 +7,8 @@ import pytest
 
 from mnemosyne.models.session import Recording, Session
 from mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.services import notes_media
+from tests.test_notes_media import sha, webp
 
 
 def _with_audio(ctx, name, days_old, transcript=True, size=1000):
@@ -108,3 +110,28 @@ async def test_retention_loop_runs_on_startup(ctx):
     await asyncio.sleep(0.05)
     assert ctx.storage.report(30).sessions_with_audio == 0
     ctx._retention_task.cancel()
+
+
+def test_images_are_counted_and_outlive_deleted_audio_and_retention(client, ctx):
+    s = _with_audio(ctx, "pictured", 90, size=100)
+    data = webp(pad=b"p" * 500)
+    notes_media.store(ctx, s.id, sha(data), data)
+    folder = ctx.settings.notes_media_dir / s.id
+
+    body = client.get("/api/storage").json()
+    assert body["notes_media_bytes"] == len(data)
+    assert body["largest"][0]["media_bytes"] == len(data)
+    assert body["largest"][0]["audio_bytes"] == 200
+
+    result = client.post("/api/storage/cleanup", params={"days": 30, "dry_run": False}).json()
+    assert [u["name"] for u in result["sessions"]] == ["pictured"]
+    assert not (ctx.settings.recordings_dir / s.id).exists()
+    assert (folder / f"{sha(data)}.webp").read_bytes() == data  # retention leaves the images
+    assert ctx.repo.media_rows(s.id)
+
+    again = _with_audio(ctx, "again", 1)
+    notes_media.store(ctx, again.id, sha(data), data)
+    assert client.delete(f"/api/sessions/{again.id}/audio").status_code == 200
+    assert notes_media.read(ctx, again.id, sha(data)) == data  # so does "delete audio"
+    after = client.get("/api/storage").json()
+    assert after["notes_media_bytes"] == 2 * len(data) and after["sessions_with_audio"] == 0
