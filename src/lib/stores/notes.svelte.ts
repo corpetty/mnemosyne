@@ -10,6 +10,8 @@
 //   (`waitingForSync`) rejoins to get it. Reloading Session.notes for the stores that read it
 //   (search, the legacy editor) is the controller's job (app/controller.svelte.ts), which
 //   already owns the bus handlers that refresh the open meeting.
+// - the bus event `{type:"notes_media", session_id, sha256}` (an image of the notes was stored
+//   here) goes to whoever asked with `onNotesMedia` (the desktop's image provider).
 import { NotesDocState, type NotesDocOptions } from '../notes/doc.svelte.js';
 import { ensureWasm } from '../notes/wasm.js';
 import type { BackendEvent } from '../types/index.js';
@@ -21,10 +23,26 @@ interface Entry {
 }
 
 const entries = new Map<string, Entry>();
+const mediaListeners = new Map<string, Set<(sha: string) => void>>();
 let stopBus: (() => void) | null = null;
+
+function startBus(): void {
+  if (!stopBus) stopBus = wsState.onMessage(onBus);
+}
+
+function stopBusIfIdle(): void {
+  if (entries.size === 0 && mediaListeners.size === 0 && stopBus) {
+    stopBus();
+    stopBus = null;
+  }
+}
 
 function onBus(raw: Record<string, unknown>): void {
   const msg = raw as unknown as BackendEvent;
+  if (msg.type === 'notes_media') {
+    for (const fn of [...(mediaListeners.get(msg.session_id) ?? [])]) fn(msg.sha256);
+    return;
+  }
   if (msg.type !== 'notes') return;
   const entry = entries.get(msg.session_id);
   if (entry && entry.state.waitingForSync) entry.state.reconnect();
@@ -43,7 +61,7 @@ export function acquireNotes(sessionId: string, opts?: NotesDocOptions): NotesDo
   }
   const entry: Entry = { state: new NotesDocState(opts), refs: 1 };
   entries.set(sessionId, entry);
-  if (!stopBus) stopBus = wsState.onMessage(onBus);
+  startBus();
   // The CRDT is wasm: load it before the first hello builds a document.
   ensureWasm().then(
     () => {
@@ -65,10 +83,21 @@ export function releaseNotes(sessionId: string): void {
   if (--entry.refs > 0) return;
   entries.delete(sessionId);
   entry.state.destroy();
-  if (entries.size === 0 && stopBus) {
-    stopBus();
-    stopBus = null;
-  }
+  stopBusIfIdle();
+}
+
+/** Call `fn(sha)` when an image of this meeting's notes is stored here; returns the unsubscribe. */
+export function onNotesMedia(sessionId: string, fn: (sha: string) => void): () => void {
+  let set = mediaListeners.get(sessionId);
+  if (!set) mediaListeners.set(sessionId, (set = new Set()));
+  set.add(fn);
+  startBus();
+  return () => {
+    const s = mediaListeners.get(sessionId);
+    s?.delete(fn);
+    if (s && s.size === 0) mediaListeners.delete(sessionId);
+    stopBusIfIdle();
+  };
 }
 
 /** The state if the meeting's notes are open (no reference taken). */

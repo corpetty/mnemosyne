@@ -68,11 +68,9 @@ async function downloadFile(sessionId: string, file: PublicationFileResult): Pro
 /** An image of the notes (`GET /api/sessions/{id}/notes/media/{sha}`). An <img> cannot carry the
  * bearer token, so it is fetched here and shown from an object URL. */
 async function fetchNotesImage(sessionId: string, sha256: string): Promise<Blob> {
-	const res = await fetch(`${connectionState.url}/api/sessions/${sessionId}/notes/media/${sha256}`, {
-		headers: connectionState.headers()
-	});
-	if (!res.ok) throw new Error(`${res.status}: Could not load the image`);
-	return res.blob();
+	const blob = await backend.getNotesMedia(sessionId, sha256);
+	if (!blob) throw new Error('404: Could not load the image');
+	return blob;
 }
 
 const defaultApi: PublishingApi = {
