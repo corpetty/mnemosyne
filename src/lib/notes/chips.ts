@@ -5,17 +5,20 @@
 //   mnemosyne:t/<part>/<seconds>     a moment in the recording (part index, whole seconds)
 //   mnemosyne:person/<name>          a person, the name percent-encoded
 //   mnemosyne:meeting/<id>           another meeting, its hex id
+//   mnemosyne:by/copilot             who wrote the line (only the copilot; text "Copilot")
 import { insertText, setLink, type CommandResult } from './commands.js';
 import { cpLen, cpSlice, type Doc } from './model.js';
 
 export type Chip =
   | { kind: 'time'; part: number; seconds: number }
   | { kind: 'person'; name: string }
-  | { kind: 'meeting'; id: string };
+  | { kind: 'meeting'; id: string }
+  | { kind: 'by'; who: 'copilot' };
 
 const TIME = /^mnemosyne:t\/(\d+)\/(\d+)$/;
 const PERSON = /^mnemosyne:person\/([^/]+)$/;
 const MEETING = /^mnemosyne:meeting\/([0-9a-f]{8,32})$/;
+const BY = /^mnemosyne:by\/copilot$/;
 
 /** Whole seconds only; a negative or non-finite value is clamped to 0. */
 export function timeUrl(part: number, seconds: number): string {
@@ -31,7 +34,12 @@ export function meetingUrl(id: string): string {
   return `mnemosyne:meeting/${id}`;
 }
 
-/** The chip a URL names, or null for anything that is not exactly one of the three forms. */
+/** Who wrote a line; the chip's text is "Copilot". */
+export function byUrl(who: 'copilot'): string {
+  return `mnemosyne:by/${who}`;
+}
+
+/** The chip a URL names, or null for anything that is not exactly one of the four forms. */
 export function parseChip(url: string): Chip | null {
   const t = TIME.exec(url);
   if (t) {
@@ -49,7 +57,8 @@ export function parseChip(url: string): Chip | null {
     }
   }
   const m = MEETING.exec(url);
-  return m ? { kind: 'meeting', id: m[1] } : null;
+  if (m) return { kind: 'meeting', id: m[1] };
+  return BY.test(url) ? { kind: 'by', who: 'copilot' } : null;
 }
 
 export function isChipUrl(url: string): boolean {

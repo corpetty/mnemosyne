@@ -10,9 +10,9 @@ const plain = (d: ReturnType<typeof mk>) => d.web.text(d.obj);
 describe('copilotLine / copilotModel', () => {
   it('a summary point is a bullet', () => {
     expect(copilotModel({ kind: 'summary', text: 'We reviewed Q3' })).toEqual({
-      text: 'We reviewed Q3\n',
+      text: 'Copilot We reviewed Q3\n',
       lines: [{ kind: 'bullet' }],
-      inline: []
+      inline: [{ from: 0, to: 7, kind: 'link', value: 'mnemosyne:by/copilot' }]
     });
   });
 
@@ -31,22 +31,22 @@ describe('copilotLine / copilotModel', () => {
   });
 
   it('collapses newlines and spaces so the item stays one line', () => {
-    expect(copilotModel({ kind: 'summary', text: ' a\n b   c ' }).text).toBe('a b c\n');
+    expect(copilotModel({ kind: 'summary', text: ' a\n b   c ' }).text).toBe('Copilot a b c\n');
   });
 });
 
 describe('markdown for the plain-text notes', () => {
   it('writes bullets and tasks', () => {
-    expect(copilotMarkdown({ kind: 'decision', text: 'X' })).toBe('- Decided: X');
-    expect(copilotMarkdown({ kind: 'action', text: 'Y', owner: 'Bo' })).toBe('- [ ] Y (Bo)');
+    expect(copilotMarkdown({ kind: 'decision', text: 'X' })).toBe('- [Copilot](mnemosyne:by/copilot) Decided: X');
+    expect(copilotMarkdown({ kind: 'action', text: 'Y', owner: 'Bo' })).toBe('- [ ] [Copilot](mnemosyne:by/copilot) Y (Bo)');
   });
 
   it('appends after existing notes with or without a final newline', () => {
     const item: CopilotItem = { kind: 'summary', text: 'Z' };
-    expect(appendToText('', item)).toBe('- Z\n');
-    expect(appendToText('  \n', item)).toBe('- Z\n');
-    expect(appendToText('hello', item)).toBe('hello\n- Z\n');
-    expect(appendToText('hello\n', item)).toBe('hello\n- Z\n');
+    expect(appendToText('', item)).toBe('- [Copilot](mnemosyne:by/copilot) Z\n');
+    expect(appendToText('  \n', item)).toBe('- [Copilot](mnemosyne:by/copilot) Z\n');
+    expect(appendToText('hello', item)).toBe('hello\n- [Copilot](mnemosyne:by/copilot) Z\n');
+    expect(appendToText('hello\n', item)).toBe('hello\n- [Copilot](mnemosyne:by/copilot) Z\n');
   });
 });
 
@@ -54,7 +54,7 @@ describe('appendToDoc', () => {
   it('an empty document gets the line as its first', () => {
     const d = mk();
     appendToDoc(d, { kind: 'action', text: 'Call Bo', owner: 'Ana' });
-    expect(plain(d)).toBe('Call Bo (Ana)\n');
+    expect(plain(d)).toBe('Copilot Call Bo (Ana)\n');
     expect(view(lines(d))).toContain('task');
     expect(lines(d)).toHaveLength(1);
     expect(lines(d)[0].kind).toBe('task');
@@ -66,7 +66,7 @@ describe('appendToDoc', () => {
     insertText(d, 0, 'Agenda');
     appendToDoc(d, { kind: 'summary', text: 'first' });
     appendToDoc(d, { kind: 'question', text: 'second?' });
-    expect(plain(d)).toBe('Agenda\nfirst\nQuestion: second?\n');
+    expect(plain(d)).toBe('Agenda\nCopilot first\nCopilot Question: second?\n');
     expect(lines(d).map((l) => l.kind)).toEqual([null, 'bullet', 'bullet']);
   });
 
@@ -75,11 +75,11 @@ describe('appendToDoc', () => {
     insertModel(d, 0, { text: 'Title\n\n', lines: [{ kind: 'h1' }, { kind: 'bullet' }], inline: [] });
     expect(lines(d).map((l) => l.text)).toEqual(['Title', '']);
     appendToDoc(d, { kind: 'decision', text: 'go' });
-    expect(plain(d)).toBe('Title\nDecided: go\n');
+    expect(plain(d)).toBe('Title\nCopilot Decided: go\n');
     expect(lines(d).map((l) => l.kind)).toEqual(['h1', 'bullet']);
     setLineKind(d, 6, 6, 'h2');
     appendToDoc(d, { kind: 'summary', text: 'more' });
-    expect(plain(d)).toBe('Title\nDecided: go\nmore\n');
+    expect(plain(d)).toBe('Title\nCopilot Decided: go\nCopilot more\n');
   });
 
   it('does not format the new line like the bold text before it', () => {
@@ -87,5 +87,16 @@ describe('appendToDoc', () => {
     insertModel(d, 0, { text: 'bold\n', lines: [{ kind: null }], inline: [{ from: 0, to: 4, kind: 'bold' }] });
     appendToDoc(d, { kind: 'summary', text: 'plain' });
     expect(lines(d)[1].runs.every((r) => !r.bold)).toBe(true);
+  });
+
+  it('starts the line with the copilot chip, in both ways of appending', () => {
+    const d = mk();
+    appendToDoc(d, { kind: 'summary', text: 'one' });
+    appendToDoc(d, { kind: 'summary', text: 'two' });
+    for (const l of lines(d)) {
+      expect(l.runs[0].text).toBe('Copilot');
+      expect(l.runs[0].link).toBe('mnemosyne:by/copilot');
+      expect(l.runs.slice(1).every((r) => r.link === null)).toBe(true);
+    }
   });
 });

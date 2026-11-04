@@ -7,6 +7,7 @@ from mnemosyne.services.notes_chips import (
     obsidian_notes,
     parse_chip,
     plain_notes,
+    task_line_parts,
 )
 from tests.conftest import run_summarize
 
@@ -17,6 +18,7 @@ def test_parse_chip_is_strict():
     assert parse_chip("mnemosyne:t/1/754") == ("time", "1/754")
     assert parse_chip("mnemosyne:person/Ada%20Lovelace") == ("person", "Ada Lovelace")
     assert parse_chip(f"mnemosyne:meeting/{MEETING}") == ("meeting", MEETING)
+    assert parse_chip("mnemosyne:by/copilot") == ("by", "copilot")
     for bad in (
         "mnemosyne:t/1",
         "mnemosyne:t/1/2/3",
@@ -32,6 +34,10 @@ def test_parse_chip_is_strict():
         "mnemosyne:meeting/0123456",  # too short
         "mnemosyne:meeting/0123456789ABCDEF",  # uppercase
         f"mnemosyne:meeting/{MEETING}x",
+        "mnemosyne:by/",
+        "mnemosyne:by/Copilot",
+        "mnemosyne:by/ada",
+        "mnemosyne:by/copilot/x",
         "mnemosyne:other/1",
         "https://example.com",
         "MNEMOSYNE:t/1/2",
@@ -234,3 +240,15 @@ def test_obsidian_notes_keeps_a_caption_from_breaking_the_embed():
         raise RuntimeError("no")
 
     assert obsidian_notes(image("x"), True, image_file=boom) == "[image: x]"
+
+
+def test_the_copilot_chip_reads_as_copilot_colon():
+    chip = "[Copilot](mnemosyne:by/copilot)"
+    md = f"- {chip} Decided: ship\n- [ ] {chip} Call Bo (Ana)"
+    plain = "- Copilot: Decided: ship\n- [ ] Copilot: Call Bo (Ana)"
+    assert plain_notes(md) == plain
+    assert obsidian_notes(md, True) == plain
+    assert task_line_parts("[Copilot](mnemosyne:by/copilot) Call Bo (Ana)") == (
+        None,
+        " Call Bo (Ana)",
+    )
