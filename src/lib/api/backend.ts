@@ -1349,3 +1349,33 @@ export function backendMediaUrl(path: string): string {
   const frag = hash < 0 ? '' : path.slice(hash);
   return connectionState.withToken(`${base()}${head}`) + frag;
 }
+
+// ---- images in the notes (routes/notes_media.py) -------------------------------------------------
+// An <img> cannot carry the bearer token, so the bytes are fetched here and shown from object URLs.
+
+const notesMediaPath = (sessionId: string, sha256: string) => `/api/sessions/${sessionId}/notes/media/${sha256}`;
+
+/** One image of the meeting's notes as stored; null when it is not here yet (404). Other failures throw "<status>: <detail>". */
+export async function getNotesMedia(sessionId: string, sha256: string): Promise<Blob | null> {
+  const res = await fetch(`${base()}${notesMediaPath(sessionId, sha256)}`, { headers: connectionState.headers() });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`${res.status}: Could not load the image`);
+  return res.blob();
+}
+
+/** Store an image under its SHA-256 (201 stored, 200 already there); rejects with "<status>: <detail>". */
+export async function putNotesMedia(sessionId: string, sha256: string, bytes: Uint8Array, contentType: string): Promise<void> {
+  const res = await fetch(`${base()}${notesMediaPath(sessionId, sha256)}`, {
+    method: 'PUT',
+    body: bytes as BodyInit,
+    headers: { 'Content-Type': contentType, ...connectionState.headers() }
+  });
+  if (res.ok) return;
+  let detail = await res.text();
+  try {
+    detail = JSON.parse(detail).detail ?? detail;
+  } catch {
+    /* plain text */
+  }
+  throw new Error(`${res.status}: ${detail}`);
+}

@@ -4,6 +4,7 @@
 	// state is shared with the Copilot's "Add to notes" through the registry (stores/notes.svelte.ts).
 	import { onMount, untrack } from 'svelte';
 	import { createNotesInserts } from '$lib/app/notesInserts.js';
+	import { createNotesMedia } from '$lib/app/notesMedia.js';
 	import { createNotesPresence } from '$lib/app/notesPresence.js';
 	import { ago } from '$lib/app/syncText.js';
 	import type { CommentSelection } from '$lib/notes/comments.js';
@@ -12,7 +13,7 @@
 	import NotesEditor from '$lib/notes/ui/NotesEditor.svelte';
 	import type { NotesHost } from '$lib/notes/ui/types.js';
 	import { commentsState } from '$lib/stores/comments.svelte.js';
-	import { acquireNotes, releaseNotes } from '$lib/stores/notes.svelte.js';
+	import { acquireNotes, onNotesMedia, releaseNotes } from '$lib/stores/notes.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
@@ -58,6 +59,27 @@
 
 	const presence = $derived(docState ? createNotesPresence(docState) : undefined);
 	const inserts = $derived(sessionId ? createNotesInserts(sessionId) : undefined);
+
+	// Images: bytes over the connection as object URLs, revoked with the meeting. Not for a meeting
+	// shared from someone else (its images arrive with a later phase), so the Image item hides there.
+	// The editor has no hook for a paste without a provider, so that case has no message.
+	const sharedFrom = $derived(!!sessionState.activeSession?.shared_from);
+	let media = $state.raw<ReturnType<typeof createNotesMedia> | undefined>();
+	$effect(() => {
+		const id = sessionId;
+		if (!id || sharedFrom) {
+			media = undefined;
+			return;
+		}
+		const m = createNotesMedia(id);
+		const off = onNotesMedia(id, (sha) => m.event(sha));
+		media = m;
+		return () => {
+			off();
+			m.dispose();
+			if (media === m) media = undefined;
+		};
+	});
 
 	/** The document state the mounted editor is bound to (its remote hooks are on it). */
 	let bound: NotesDocState | null = null;
@@ -105,6 +127,9 @@
 		},
 		get inserts() {
 			return inserts;
+		},
+		get media() {
+			return media;
 		}
 	};
 
