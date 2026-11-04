@@ -17,15 +17,24 @@ from ..models.session import (
 )
 from ..models.transcript import TranscriptSegment
 from ..storage.sqlite import SessionRepository
+from . import notes_media
 
 logger = logging.getLogger(__name__)
 
 
 class SessionService:
-    def __init__(self, repo: SessionRepository, recordings_dir: Path, bus: EventBus | None = None):
+    def __init__(
+        self,
+        repo: SessionRepository,
+        recordings_dir: Path,
+        bus: EventBus | None = None,
+        notes_media_dir: Path | None = None,
+    ):
         self.repo = repo
         self.recordings_dir = recordings_dir
         self.bus = bus
+        # The images of the notes (services/notes_media.py): beside the recordings unless given.
+        self.notes_media_dir = notes_media_dir or recordings_dir.parent / "notes_media"
 
     def _notify(self, session: Session | None) -> Session | None:
         if session is not None and self.bus is not None:
@@ -103,6 +112,10 @@ class SessionService:
         recording_dir = self.recordings_dir / session_id
         if recording_dir.exists():
             shutil.rmtree(recording_dir, ignore_errors=True)
+        try:  # the notes' images go with the meeting (their rows went with it)
+            notes_media.remove_folder(self.notes_media_dir, session_id)
+        except ValueError:  # not a usable folder name: nothing of ours is there
+            pass
         logger.info("Deleted session %s", session_id)
         if self.bus is not None:
             self.bus.publish({"type": "session", "session_id": session_id, "status": "deleted"})

@@ -2,8 +2,9 @@
 
 What is encrypted: the database (sessions, transcripts, summaries, notes, search index, voice
 profiles) with SQLCipher, and every audio file (recordings, mixes, clips) once a recording has
-stopped. What is not: the WAV files pw-record writes while a recording runs, the Obsidian vault
-(written for other apps to read), config.toml and the backend log.
+stopped, and the images in the notes (services/notes_media.py). What is not: the WAV files
+pw-record writes while a recording runs, the Obsidian vault (written for other apps to read),
+config.toml and the backend log.
 """
 
 from __future__ import annotations
@@ -107,6 +108,29 @@ def _convert_audio(app: AppContext, session_id: str, key: bytes | None) -> tuple
     return converted, errors
 
 
+def convert_media(app: AppContext, key: bytes | None) -> tuple[int, list[str]]:
+    """Encryption turned on (key) or off (None): seal or open the images of every meeting's
+    notes (notes_media/<id>/). Walks the folders, not the meetings: a meeting recorded elsewhere
+    has no audio here but may have images. A `.part` (an upload being written) is left."""
+    base = app.settings.notes_media_dir
+    converted, errors = 0, []
+    for folder in sorted(base.iterdir()) if base.is_dir() else []:
+        for file in sorted(folder.iterdir()) if folder.is_dir() else []:
+            if not file.is_file() or file.name.endswith(".part"):
+                continue
+            try:
+                if key is not None and not is_encrypted(file):
+                    encrypt_file(file, key)
+                    converted += 1
+                elif key is None and is_encrypted(file):
+                    decrypt_file(file, app.file_key)
+                    converted += 1
+            except Exception as e:  # keep going; this file stays as it was
+                logger.warning("Could not convert %s", file, exc_info=True)
+                errors.append(f"{folder.name}/{file.name}: {e}")
+    return converted, errors
+
+
 def seal_session_audio(app: AppContext, session_id: str) -> None:
     """After a recording stops or a file is imported: encrypt its audio when encryption is on."""
     key = app.file_key
@@ -172,6 +196,8 @@ def enable(app: AppContext) -> EncryptionEnabled:
     for sid in _all_session_ids(app):
         n, errs = _convert_audio(app, sid, app.file_key)
         files, errors = files + n, errors + errs
+    n, errs = convert_media(app, app.file_key)
+    files, errors = files + n, errors + errs
     from .assets import convert_files
 
     try:
@@ -191,6 +217,10 @@ def disable(app: AppContext) -> int:
         if errors:
             raise RuntimeError("Could not decrypt: " + "; ".join(errors))
         files += n
+    n, errors = convert_media(app, None)
+    if errors:
+        raise RuntimeError("Could not decrypt: " + "; ".join(errors))
+    files += n
     from .assets import convert_files
 
     files += convert_files(app, None)

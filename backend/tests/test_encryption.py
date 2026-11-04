@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from mnemosyne.api.app import create_app
 from mnemosyne.models.session import Recording, Session
 from mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.services import notes_media
 from mnemosyne.storage import crypto
 from mnemosyne.storage.crypto import (
     CHUNK,
@@ -22,6 +23,7 @@ from mnemosyne.storage.crypto import (
     plaintext,
     recovery_code,
 )
+from tests.test_notes_media import sha, webp
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 KEY = bytes(range(32))
@@ -288,3 +290,33 @@ def test_readers_wait_while_the_database_is_swapped(client, ctx, monkeypatch):
     assert client.post("/api/encryption/enable").status_code == 200
     seen["reader"].join(5)
     assert seen["waited"] and "error" not in seen and seen["stamp"]
+
+
+def test_turning_encryption_on_and_off_converts_the_notes_images(settings, keystore):
+    app = create_app(settings, keystore=keystore)
+    ctx = app.state.ctx
+    sids = [ctx.repo.save(Session(name=n)).id for n in ("One", "Two")]
+    data = [webp(pad=b"a" * 100), webp(pad=b"b" * 100)]
+    for sid, blob in zip(sids, data, strict=True):
+        notes_media.store(ctx, sid, sha(blob), blob)
+    folder = settings.notes_media_dir / sids[0]
+    (folder / f"{sha(data[1])}.webp.part").write_bytes(b"half")  # an upload in progress
+
+    def files(sid):
+        return sorted(p.name for p in (settings.notes_media_dir / sid).iterdir())
+
+    with TestClient(app) as client:
+        on = client.post("/api/encryption/enable").json()
+        assert on["files"] == 2 and on["errors"] == []
+        for sid, blob in zip(sids, data, strict=True):
+            sealed = settings.notes_media_dir / sid / f"{sha(blob)}.webp.enc"
+            assert sealed.is_file() and blob not in sealed.read_bytes()
+            assert f"{sha(blob)}.webp" not in files(sid)
+            assert notes_media.read(ctx, sid, sha(blob)) == blob  # reads through the key
+        assert f"{sha(data[1])}.webp.part" in files(sids[0])  # untouched
+        (folder / f"{sha(data[1])}.webp.part").unlink()
+
+        assert client.post("/api/encryption/disable").status_code == 200
+        for sid, blob in zip(sids, data, strict=True):
+            assert files(sid) == [f"{sha(blob)}.webp"]
+            assert notes_media.read(ctx, sid, sha(blob)) == blob

@@ -1,5 +1,5 @@
-"""Disk usage and audio retention. Only audio is ever removed; transcripts, summaries
-and notes stay."""
+"""Disk usage and audio retention. Only audio is ever removed; transcripts, summaries,
+notes and the images in them stay (retention and "delete audio" leave notes_media/<id>)."""
 
 from __future__ import annotations
 
@@ -20,12 +20,14 @@ class SessionUsage(ApiModel):
     name: str
     created_at: datetime
     audio_bytes: int
+    media_bytes: int  # the images in the meeting's notes (kept when its audio is deleted)
     has_transcript: bool
 
 
 class StorageReport(ApiModel):
     data_dir: str
     recordings_bytes: int
+    notes_media_bytes: int
     database_bytes: int
     sessions_with_audio: int
     retention_days: int
@@ -45,10 +47,17 @@ def dir_size(path: Path) -> int:
 
 
 class StorageService:
-    def __init__(self, repo: SessionRepository, data_dir: Path, recordings_dir: Path):
+    def __init__(
+        self,
+        repo: SessionRepository,
+        data_dir: Path,
+        recordings_dir: Path,
+        notes_media_dir: Path | None = None,
+    ):
         self.repo = repo
         self.data_dir = data_dir
         self.recordings_dir = recordings_dir
+        self.notes_media_dir = notes_media_dir or data_dir / "notes_media"
 
     def _usage(self, s: SessionSummary) -> SessionUsage:
         return SessionUsage(
@@ -56,6 +65,7 @@ class StorageService:
             name=s.name,
             created_at=s.created_at,
             audio_bytes=dir_size(self.recordings_dir / s.id),
+            media_bytes=dir_size(self.notes_media_dir / s.id),
             has_transcript=s.has_transcript,
         )
 
@@ -66,14 +76,18 @@ class StorageService:
         return StorageReport(
             data_dir=str(self.data_dir),
             recordings_bytes=dir_size(self.recordings_dir),
+            notes_media_bytes=dir_size(self.notes_media_dir),
             database_bytes=db,
             sessions_with_audio=len(with_audio),
             retention_days=retention_days,
-            largest=sorted(with_audio, key=lambda u: u.audio_bytes, reverse=True)[:top],
+            largest=sorted(with_audio, key=lambda u: u.audio_bytes + u.media_bytes, reverse=True)[
+                :top
+            ],
         )
 
     def delete_audio(self, session_id: str, reason: str = "manual") -> int:
-        """Remove a session's audio files and references. Returns bytes freed."""
+        """Remove a session's audio files and references. Returns bytes freed. The images in its
+        notes (notes_media/<id>) stay."""
         folder = self.recordings_dir / session_id
         freed = dir_size(folder)
         if not self.repo.clear_audio(session_id):

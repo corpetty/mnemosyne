@@ -1,7 +1,9 @@
 """Combining meetings, and adding an audio file to one (services/combine.py, import as a part)."""
 
+import hashlib
 import io
 import shutil
+import struct
 import subprocess
 import time
 import wave
@@ -12,6 +14,7 @@ import pytest
 
 from mnemosyne.models.session import Recording
 from mnemosyne.models.transcript import TranscriptSegment
+from mnemosyne.services import notes_media
 from mnemosyne.services.parts import audio_seconds
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
@@ -234,3 +237,39 @@ def test_an_audio_file_is_added_as_the_next_part(client, ctx, fake_engine):
     assert len(fake_engine.sources) == 1  # only the new part was transcribed
     assert s["transcript"][0]["text"] == "morning"  # the first part's lines are kept
     assert all(x["start"] >= 5.0 for x in s["transcript"][1:])
+
+
+def sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def webp(pad: bytes) -> bytes:
+    """A WebP header (VP8X) the sniffer accepts (tests/test_notes_media.py has the general one;
+    importing it here would be circular)."""
+    body = b"VP8X" + struct.pack("<I", 10) + b"\0" * 4 + (639).to_bytes(3, "little")
+    body += (479).to_bytes(3, "little") + pad
+    return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WEBP" + body
+
+
+@needs_ffmpeg
+def test_the_other_meetings_images_move_into_the_combined_one(client, ctx):
+    t0 = datetime(2026, 9, 28, 10, 0)
+    kept = _meeting(ctx, "Kept", 2.0, t0 + timedelta(minutes=10), [("Ana", 0.5, "hi")], {})
+    other = _meeting(ctx, "Other", 2.0, t0, [("Bob", 0.5, "hello")], {})
+    mine, theirs, both = webp(pad=b"k"), webp(pad=b"o"), webp(pad=b"s")
+    notes_media.store(ctx, kept, sha(mine), mine)
+    notes_media.store(ctx, kept, sha(both), both)
+    notes_media.store(ctx, other, sha(theirs), theirs, by="Bob")
+    notes_media.store(ctx, other, sha(both), both)
+    sealed_before = ctx.settings.notes_media_dir / other
+
+    job = client.post(f"/api/sessions/{kept}/combine", json={"other_id": other}).json()
+    done = _wait(client, job["id"])
+    assert done["status"] == "completed", done["error"]
+
+    assert client.get(f"/api/sessions/{other}").status_code == 404
+    assert not sealed_before.exists() and ctx.repo.media_rows(other) == []
+    assert {r["sha256"] for r in ctx.repo.media_rows(kept)} == {sha(mine), sha(theirs), sha(both)}
+    for blob in (mine, theirs, both):
+        assert notes_media.read(ctx, kept, sha(blob)) == blob
+    assert {r["sha256"]: r["by"] for r in ctx.repo.media_rows(kept)}[sha(theirs)] == "Bob"

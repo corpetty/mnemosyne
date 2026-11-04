@@ -9,8 +9,10 @@ from fastapi.testclient import TestClient
 
 from mnemosyne.api.app import create_app
 from mnemosyne.config import Settings
+from mnemosyne.services import notes_media
 from mnemosyne.services.backup import PREFIX, due, prune
 from mnemosyne.storage.crypto import MemoryKeyStore
+from tests.test_notes_media import sha, webp
 
 
 def _wait(client, job_id, timeout=20):
@@ -182,3 +184,32 @@ def test_a_file_that_goes_away_mid_backup_is_skipped(settings, keystore, monkeyp
             names = tar.getnames()
     assert f"recordings/{sid}/a_mixed.ogg" in names
     assert not any("clips" in n or "joining" in n for n in names)
+
+
+def test_the_notes_images_are_backed_up_and_restored(settings, keystore):
+    app = create_app(settings, keystore=keystore)
+    ctx = app.state.ctx
+    sid = _meeting(ctx)
+    data = webp(pad=b"i" * 300)
+    notes_media.store(ctx, sid, sha(data), data)
+    folder = settings.notes_media_dir / sid
+    (folder / f"{sha(webp(pad=b'u'))}.webp.part").write_bytes(b"half")  # an upload in progress
+    with TestClient(app) as client:
+        info = _back_up(client)
+        backup = settings.data_dir.parent / "backups" / info["name"]
+        with tarfile.open(backup) as tar:
+            names = tar.getnames()
+        assert f"notes_media/{sid}/{sha(data)}.webp" in names
+        assert not any(n.endswith(".part") for n in names)
+
+        client.delete(f"/api/sessions/{sid}")  # the meeting and its images are gone...
+        assert not folder.exists()
+        assert client.post("/api/backup/restore", json={"name": info["name"]}).status_code == 200
+
+    restarted = create_app(settings, keystore=keystore)  # ...and come back with the restore
+    with TestClient(restarted) as client:
+        assert client.get(f"/api/sessions/{sid}").status_code == 200
+        assert notes_media.read(restarted.state.ctx, sid, sha(data)) == data
+        assert [r["sha256"] for r in restarted.state.ctx.repo.media_rows(sid)] == [sha(data)]
+        result = client.get("/api/backup").json()["last_restore"]
+    assert result["error"] is None

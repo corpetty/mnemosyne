@@ -9,8 +9,8 @@
 - Retention: `records_retention_years` after a meeting, deleting it or its audio needs an admin
   and a reason; a legal hold refuses it to everyone. Every deletion is logged (`deletions`),
   and that log outlives the meeting.
-- Export: meetings (one, or a date range) as a zip with audio, transcript, summary,
-  versions, history, seals and SHA256SUMS.
+- Export: meetings (one, or a date range) as a zip with audio, the notes' images, transcript,
+  summary, versions, history, seals and SHA256SUMS.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from .. import access
 from ..models.base import ApiModel
 from ..storage.records import chain_hash, content_hash, content_of
+from . import notes_media
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -232,6 +233,8 @@ One folder per meeting:
                      this computer with its relay and a mirror host), when and by whom it was
                      started, ended and stopped. Never the link, its key or the host tokens
   audio/             the recordings (each channel and the mix), unencrypted
+  media/             the images in the meeting's notes, as <sha256>.<webp|jpeg>, unencrypted
+                     (only for meetings that have any; the seals cover the notes' text, not them)
 
 deletions.json lists meetings and audio deleted in the period, with who, when and why.
 
@@ -342,6 +345,12 @@ def export_zip(app: AppContext, request: ExportRequest, dest: Path, progress=Non
                     put(
                         f"{folder}/audio/{path.name.removesuffix('.enc')}", Path(plain).read_bytes()
                     )
+            for row in app.repo.media_rows(session.id):  # the notes' images
+                try:
+                    data = notes_media.read(app, session.id, row["sha256"])
+                except FileNotFoundError:  # a row whose bytes are not on this computer
+                    continue
+                put(f"{folder}/media/{row['sha256']}.{row['ext']}", data)
             if progress:
                 progress(n / max(len(meetings), 1))
         start = (request.start or date(1970, 1, 1)).isoformat()

@@ -8,6 +8,7 @@ A backup is one uncompressed tar (the audio is compressed already):
                             stored (encrypted when encryption at rest is on)
     recordings/<id>/...     audio (.ogg, or .enc) and clips
     assets/<id>/...         files attached to meetings as resources
+    notes_media/<id>/...    the images in the meetings' notes (.webp/.jpeg, or .enc)
 
 With encryption on, a backup is as encrypted as the data, and the key is not in it: on a new
 machine the recovery code unlocks it (the same locked screen as a missing key). Without
@@ -103,6 +104,11 @@ def _files(recordings_dir: Path) -> list[Path]:
     )
 
 
+def _media_files(media_dir: Path) -> list[Path]:
+    """The notes' images (notes_media/<id>/): not an upload still being written (`.part`)."""
+    return [p for p in _files(media_dir) if p.suffix != ".part"]
+
+
 def _size(path: Path) -> int:
     try:
         return path.stat().st_size
@@ -129,7 +135,8 @@ def create_backup(app: AppContext, progress: Callable[[float], None] | None = No
     snapshot = dest / f".{name}.db"
     files = _files(settings.recordings_dir)
     resources = _files(settings.assets_dir)
-    total = sum(_size(f) for f in files + resources) or 1
+    images = _media_files(settings.notes_media_dir)  # an upload still being written
+    total = sum(_size(f) for f in files + resources + images) or 1
     manifest = {
         "format": FORMAT,
         "app_version": _app_version(),
@@ -149,6 +156,7 @@ def create_backup(app: AppContext, progress: Callable[[float], None] | None = No
             for folder, top, group in (
                 (settings.recordings_dir, "recordings", files),
                 (settings.assets_dir, "assets", resources),
+                (settings.notes_media_dir, "notes_media", images),
             ):
                 for f in group:
                     try:
@@ -255,7 +263,9 @@ def last_restore(settings: Settings) -> RestoreResult | None:
 
 def _data_members(tar: tarfile.TarFile):
     for m in tar:
-        if m.name == "mnemosyne.db" or m.name.startswith(("recordings/", "assets/")):
+        if m.name == "mnemosyne.db" or m.name.startswith(
+            ("recordings/", "assets/", "notes_media/")
+        ):
             yield m
 
 
@@ -273,7 +283,14 @@ def apply_pending_restore(settings: Settings) -> RestoreResult | None:
     aside = data / f"pre-restore-{at:%Y%m%d-%H%M%S}"
     aside.mkdir()
     moved = []
-    names = ["mnemosyne.db", "mnemosyne.db-wal", "mnemosyne.db-shm", "recordings", "assets"]
+    names = [
+        "mnemosyne.db",
+        "mnemosyne.db-wal",
+        "mnemosyne.db-shm",
+        "recordings",
+        "assets",
+        "notes_media",
+    ]
     extracting = False
     try:
         manifest = read_manifest(path)

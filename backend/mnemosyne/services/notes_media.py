@@ -157,8 +157,7 @@ def _lock(session_id: str) -> threading.Lock:
         return _locks.setdefault(session_id, threading.Lock())
 
 
-def _folder(app: AppContext, session_id: str) -> Path:
-    base = app.settings.notes_media_dir
+def _checked(base: Path, session_id: str) -> Path:
     folder = base / session_id
     if (
         not session_id
@@ -169,6 +168,10 @@ def _folder(app: AppContext, session_id: str) -> Path:
     ):
         raise ValueError("Not a meeting id")
     return folder
+
+
+def _folder(app: AppContext, session_id: str) -> Path:
+    return _checked(app.settings.notes_media_dir, session_id)
 
 
 def _now() -> str:
@@ -276,7 +279,12 @@ def remove_blob(app: AppContext, session_id: str, sha: str) -> None:
 
 def remove_session(app: AppContext, session_id: str) -> None:
     """The meeting's folder goes (its rows go with the meeting: ON DELETE CASCADE)."""
-    shutil.rmtree(_folder(app, session_id), ignore_errors=True)
+    remove_folder(app.settings.notes_media_dir, session_id)
+
+
+def remove_folder(base: Path, session_id: str) -> None:
+    """`remove_session` for a caller that has the media folder but not the app (SessionService)."""
+    shutil.rmtree(_checked(base, session_id), ignore_errors=True)
 
 
 def move_session(app: AppContext, src: str, dst: str) -> int:

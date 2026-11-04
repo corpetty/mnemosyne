@@ -1,5 +1,8 @@
 """Session CRUD through the HTTP API."""
 
+from mnemosyne.services import notes_media
+from tests.test_notes_media import sha, webp
+
 
 def test_health(client):
     body = client.get("/health").json()
@@ -75,3 +78,17 @@ def test_session_events_are_broadcast(client):
         assert ws.receive_json() == {"type": "session", "session_id": sid, "status": "created"}
         client.delete(f"/api/sessions/{sid}")
         assert ws.receive_json() == {"type": "session", "session_id": sid, "status": "deleted"}
+
+
+def test_delete_session_removes_the_images_of_its_notes(client, ctx):
+    sid = client.post("/api/sessions", json={}).json()["id"]
+    other = client.post("/api/sessions", json={}).json()["id"]
+    data = webp(pad=b"x")
+    notes_media.store(ctx, sid, sha(data), data)
+    notes_media.store(ctx, other, sha(data), data)
+    folder = ctx.settings.notes_media_dir / sid
+    assert (folder / f"{sha(data)}.webp").is_file() and ctx.repo.media_rows(sid)
+
+    assert client.delete(f"/api/sessions/{sid}").status_code == 200
+    assert not folder.exists() and ctx.repo.media_rows(sid) == []
+    assert notes_media.read(ctx, other, sha(data)) == data  # another meeting's are untouched
