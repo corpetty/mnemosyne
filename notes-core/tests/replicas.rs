@@ -12,7 +12,7 @@ const NOTES: &str = "# Standup\n\n- [ ] Ana: draft the **budget**\n- Ben reviewe
 fn a_set_text_delta_gives_a_second_replica_the_same_document() {
     let mut a = Notes::new(origin(1));
     let before = a.snapshot();
-    let frames = a.set_text(NOTES);
+    let frames = a.set_text(NOTES, &Default::default());
     assert_eq!(frames.last().unwrap()[0], DELTA_TAG);
     let b = fold(origin(1), Some(&before), &frames).unwrap();
     assert_eq!(b.render(), a.render());
@@ -23,12 +23,12 @@ fn a_set_text_delta_gives_a_second_replica_the_same_document() {
 #[test]
 fn set_text_deltas_hold_only_the_new_ops() {
     let mut a = Notes::new(origin(1));
-    a.set_text(NOTES);
+    a.set_text(NOTES, &Default::default());
     let snap = a.snapshot();
     // A replica decoded from the snapshot (as the sidecar does) edits one word.
     let mut b = Notes::from_snapshot(origin(1), &snap).unwrap();
     let edited = NOTES.replace("budget", "plan");
-    let frames = b.set_text(&edited);
+    let frames = b.set_text(&edited, &Default::default());
     assert_eq!(frames.len(), 1, "no new artifacts");
     let delta = &frames[0];
     assert!(
@@ -55,7 +55,7 @@ fn long_urls_travel_as_artifact_frames() {
     let url = "https://example.com/a/very/long/path/to/the/meeting/deck?version=3";
     let md = format!("see [the deck]({url})\n");
     let mut a = Notes::new(origin(2));
-    let frames = a.set_text(&md);
+    let frames = a.set_text(&md, &Default::default());
     assert_eq!(frames.len(), 2);
     assert_eq!(frames[0][0], ARTIFACT_TAG, "artifacts first");
     assert_eq!(frames[1][0], DELTA_TAG);
@@ -72,12 +72,16 @@ fn long_urls_travel_as_artifact_frames() {
 #[test]
 fn merge_is_the_same_in_both_orders() {
     let mut base = Notes::new(origin(3));
-    base.set_text(NOTES);
+    base.set_text(NOTES, &Default::default());
     let (mut a, mut b) = (base.clone(), base.clone());
-    a.set_text(&NOTES.replace("Standup", "Standup notes"));
-    b.set_text(&format!(
-        "{NOTES}\nA [new link](https://example.com/another/long/link/here)\n"
-    ));
+    a.set_text(
+        &NOTES.replace("Standup", "Standup notes"),
+        &Default::default(),
+    );
+    b.set_text(
+        &format!("{NOTES}\nA [new link](https://example.com/another/long/link/here)\n"),
+        &Default::default(),
+    );
     let (mut ab, mut ba) = (a.clone(), b.clone());
     ab.merge(b);
     ba.merge(a);
@@ -95,8 +99,8 @@ fn merge_is_the_same_in_both_orders() {
 fn seeding_the_same_markdown_twice_gives_the_same_ops() {
     let mut a = Notes::new(origin(4));
     let mut b = Notes::new(origin(4));
-    let fa = a.set_text(NOTES);
-    let fb = b.set_text(NOTES);
+    let fa = a.set_text(NOTES, &Default::default());
+    let fb = b.set_text(NOTES, &Default::default());
     assert_eq!(fa, fb);
     assert_eq!(a.snapshot(), b.snapshot());
     a.merge(b);
@@ -106,18 +110,18 @@ fn seeding_the_same_markdown_twice_gives_the_same_ops() {
 #[test]
 fn concurrent_word_edits_do_not_interleave() {
     let mut base = Notes::new(origin(5));
-    base.set_text("The meeting went well\n");
+    base.set_text("The meeting went well\n", &Default::default());
     let (mut a, mut b) = (base.clone(), base.clone());
-    a.set_text("The quick meeting went well\n");
-    b.set_text("The meeting went really well\n");
+    a.set_text("The quick meeting went well\n", &Default::default());
+    b.set_text("The meeting went really well\n", &Default::default());
     a.merge(b);
     assert_eq!(a.text(), "The quick meeting went really well\n");
 
     let mut base = Notes::new(origin(5));
-    base.set_text("Hello\n");
+    base.set_text("Hello\n", &Default::default());
     let (mut a, mut b) = (base.clone(), base.clone());
-    a.set_text("Hello alpha\n");
-    b.set_text("Hello bravo\n");
+    a.set_text("Hello alpha\n", &Default::default());
+    b.set_text("Hello bravo\n", &Default::default());
     a.merge(b);
     // Both inserted " <word>" at the same place from the same state: hashseq's ops are
     // content-addressed, so the two leading spaces are one op. The words stay whole.
@@ -131,11 +135,11 @@ fn concurrent_word_edits_do_not_interleave() {
 #[test]
 fn a_new_line_after_a_kept_line_leaves_its_kind_alone() {
     let mut doc = Notes::new(origin(6));
-    doc.set_text("# Title\nbody\n");
-    doc.set_text("# Title\nfirst\nbody\n");
+    doc.set_text("# Title\nbody\n", &Default::default());
+    doc.set_text("# Title\nfirst\nbody\n", &Default::default());
     assert_eq!(doc.render().markdown, "# Title\nfirst\nbody\n");
-    doc.set_text("# Title\n- one\n");
-    doc.set_text("# Title\n- one\n- two\n");
+    doc.set_text("# Title\n- one\n", &Default::default());
+    doc.set_text("# Title\n- one\n- two\n", &Default::default());
     assert_eq!(doc.render().markdown, "# Title\n- one\n- two\n");
     // The client's Enter at a line end: the new `\n` after the old terminator.
     let at = doc.text().find("one\n").unwrap() + 4;
@@ -146,9 +150,9 @@ fn a_new_line_after_a_kept_line_leaves_its_kind_alone() {
 #[test]
 fn frames_for_other_objects_are_ignored_and_bad_frames_named() {
     let mut other = Notes::new(origin(9));
-    let theirs = other.set_text("not ours\n");
+    let theirs = other.set_text("not ours\n", &Default::default());
     let mut mine = Notes::new(origin(7));
-    let ours = mine.set_text("ours\n");
+    let ours = mine.set_text("ours\n", &Default::default());
     let frames = vec![theirs[0].clone(), ours[0].clone()];
     let folded = fold(origin(7), None, &frames).unwrap();
     assert_eq!(folded.render().markdown, "ours\n");
@@ -176,7 +180,7 @@ fn the_notes_object_is_the_wasm_seq_id() {
 fn bold_grows_at_its_end_only_on_every_replica() {
     let mut a = Notes::new(origin(10));
     let before = a.snapshot();
-    let seeded = a.set_text("x **bold** y\n");
+    let seeded = a.set_text("x **bold** y\n", &Default::default());
     // A second replica gets the bold from the frames, then types at both edges.
     let mut b = fold(origin(10), Some(&before), &seeded).unwrap();
     let clock = b.web.clock();
@@ -192,9 +196,9 @@ fn bold_grows_at_its_end_only_on_every_replica() {
 #[test]
 fn frames_since_bring_a_replica_to_the_union_with_artifacts() {
     let mut base = Notes::new(origin(7));
-    base.set_text("alpha beta gamma\n");
+    base.set_text("alpha beta gamma\n", &Default::default());
     let (mut a, mut b) = (base.clone(), base.clone());
-    a.set_text("alpha beta gamma\nlocal line\n");
+    a.set_text("alpha beta gamma\nlocal line\n", &Default::default());
     // The other replica comments on "beta": the mark kind `comment:<id>` is an artifact.
     let mut minted = Vec::new();
     b.mark_inline(
@@ -236,7 +240,7 @@ fn ids(doc: &Notes, from: usize, to: usize) -> (hashseq::Id, hashseq::Id) {
 #[test]
 fn mark_comment_marks_the_range_between_two_element_ids() {
     let mut server = Notes::new(origin(9));
-    server.set_text("alpha beta gamma\nsecond line\n");
+    server.set_text("alpha beta gamma\nsecond line\n", &Default::default());
     let snap = server.snapshot();
     let mut client = Notes::from_snapshot(origin(9), &snap).unwrap();
     // "beta" is characters 6..10; the reader's client sends the ids of 6 and 9.
@@ -274,7 +278,7 @@ fn mark_comment_marks_the_range_between_two_element_ids() {
 #[test]
 fn mark_comment_refuses_unknown_deleted_or_reversed_ids() {
     let mut doc = Notes::new(origin(9));
-    doc.set_text("alpha beta gamma\n");
+    doc.set_text("alpha beta gamma\n", &Default::default());
     let (first, last) = ids(&doc, 6, 9);
     doc.remove(9, 1); // the last character is deleted
     let err = doc.mark_comment(&first, &last, "c1").unwrap_err();

@@ -35,12 +35,15 @@ fn tasks(answer: &Value) -> &Vec<Value> {
 /// A replica from `snapshot` that makes `edits` one after the other, giving each one's frames.
 fn log(snapshot: &[u8], o: u8, edits: &[&str]) -> Vec<Vec<Vec<u8>>> {
     let mut replica = Notes::from_snapshot(origin(o), snapshot).unwrap();
-    edits.iter().map(|md| replica.set_text(md)).collect()
+    edits
+        .iter()
+        .map(|md| replica.set_text(md, &Default::default()))
+        .collect()
 }
 
 fn base_snapshot(o: u8) -> Vec<u8> {
     let mut doc = Notes::new(origin(o));
-    doc.set_text(BASE);
+    doc.set_text(BASE, &Default::default());
     doc.snapshot()
 }
 
@@ -92,7 +95,7 @@ fn a_document_without_tasks_has_an_empty_list() {
     let answer = call(json!({"op":"fold","notes":hex(1),"snapshot":null,"frames":[]})).unwrap();
     assert_eq!(answer["tasks"], json!([]));
     let mut doc = Notes::new(origin(1));
-    doc.set_text("# Only a heading\n\nand text\n");
+    doc.set_text("# Only a heading\n\nand text\n", &Default::default());
     let answer =
         call(json!({"op":"fold","notes":hex(1),"snapshot":b64(&doc.snapshot()),"frames":[]}))
             .unwrap();
@@ -103,7 +106,7 @@ fn a_document_without_tasks_has_an_empty_list() {
 fn frame_is_the_latest_request_frame_that_added_the_line_or_its_kind() {
     const BASE: &str = "# Plan\n- [ ] Ana: draft\n- [x] Ben: review\n- plain bullet\n";
     let mut seed = Notes::new(origin(2));
-    seed.set_text(BASE);
+    seed.set_text(BASE, &Default::default());
     let snap = seed.snapshot();
     let new_line = format!("{BASE}- [ ] Cho: send the notes\n");
     let flipped = new_line.replacen("- [ ] Ana", "- [x] Ana", 1);
@@ -158,8 +161,8 @@ fn frame_is_the_latest_request_frame_that_added_the_line_or_its_kind() {
 #[test]
 fn without_a_snapshot_every_line_comes_from_a_frame() {
     let mut a = Notes::new(origin(3));
-    let first = a.set_text("- [ ] one\n");
-    let second = a.set_text("- [ ] one\n- [x] two\n");
+    let first = a.set_text("- [ ] one\n", &Default::default());
+    let second = a.set_text("- [ ] one\n- [x] two\n", &Default::default());
     let frames: Vec<Vec<u8>> = first.iter().chain(&second).cloned().collect();
     let answer =
         call(json!({"op":"fold","notes":hex(3),"snapshot":null,"frames":frames_b64(&frames)}))
@@ -204,7 +207,10 @@ fn every_op_answers_with_tasks() {
     );
     let other = {
         let mut o = Notes::from_snapshot(origin(4), &snap).unwrap();
-        o.set_text(&format!("{BASE}- [ ] from the other side\n"));
+        o.set_text(
+            &format!("{BASE}- [ ] from the other side\n"),
+            &Default::default(),
+        );
         o.snapshot()
     };
     let merged = call(json!({
@@ -286,7 +292,7 @@ fn set_kind_flips_a_task_and_the_frames_reach_another_replica() {
 fn set_kind_resolves_concurrent_task_and_task_done() {
     // A line that is a bullet; two replicas make it a task and a done task at once.
     let mut base = Notes::new(origin(6));
-    base.set_text("- a bullet\n- another\n");
+    base.set_text("- a bullet\n- another\n", &Default::default());
     let snap = base.snapshot();
     let nl = base.text().chars().position(|c| c == '\n').unwrap();
     let line = base.seq().id_at(nl).unwrap();

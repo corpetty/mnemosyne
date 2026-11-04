@@ -26,6 +26,12 @@
 //!   document, named by the hash ([`Notes::media`] lists the ones in use). An `image` line
 //!   without a valid value reads as a paragraph; to a client or sidecar that does not know
 //!   the kind it is a paragraph holding the caption, and the marks stay.
+//! - **Refs**: [`KIND_REF`], closed on a terminator like `lang`, names what a line is for the
+//!   backend (`sec:summary`, `sum:<id>`, `cp:<n>`; docs/plans/2026-11-04-summaries-in-notes.md),
+//!   on a line of any kind. Never in the markdown: not rendered, not parsed, set only through
+//!   [`Notes::set_text`]'s `refs` and reported by [`Notes::refs`]. A reworded line keeps its
+//!   terminator and so its ref; a copied or retyped line is a new line without one. To a
+//!   client or sidecar that does not know the kind it is an unknown mark and changes nothing.
 //! - **Tables**: rows are `table` lines, the first row of a run `table_head`; cells are
 //!   separated by U+001F ([`model::CELL`]). A `table` line after a non-table line renders as
 //!   a head. Ragged rows are padded with empty cells.
@@ -38,8 +44,8 @@
 //! - **Concurrent values** stay live together (MVR); render resolves them: `task` with
 //!   `task_done` is done; other `block` conflicts show the first value in markedSpans order
 //!   (the lowest mark id, as the client's editor does); two live link URLs render as the
-//!   plain text followed by " (link conflict)"; `lang`/`align`/`image` take the first value
-//!   too (an invalid first `image` value is no image).
+//!   plain text followed by " (link conflict)"; `lang`/`align`/`image`/`ref` take the first
+//!   value too (an invalid first `image` value is no image, an empty `ref` no ref).
 //! - Mark strings longer than 14 UTF-8 bytes (most URLs, every `comment:<id>`) are
 //!   artifacts: they travel as 0xAF frames next to the 0xDE delta, never inside it.
 //!
@@ -57,7 +63,7 @@ pub mod model;
 pub mod parse;
 pub mod render;
 
-pub use doc::{fold, Comments, Notes};
+pub use doc::{fold, Comments, LineRef, Notes};
 pub use model::{is_image_value, normalize, Block, Model, Parsed, IMAGE_URL, IMAGE_VALUE};
 pub use render::{render, Rendered};
 
@@ -70,6 +76,7 @@ pub const KIND_BLOCK: &str = "block";
 pub const KIND_LANG: &str = "lang";
 pub const KIND_ALIGN: &str = "align";
 pub const KIND_IMAGE: &str = "image";
+pub const KIND_REF: &str = "ref";
 pub const KIND_BOLD: &str = "bold";
 pub const KIND_ITALIC: &str = "italic";
 pub const KIND_STRIKE: &str = "strike";

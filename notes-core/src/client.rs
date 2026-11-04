@@ -135,6 +135,8 @@ pub fn from_json(json: &str) -> Result<Model, Error> {
             lang: l.lang.clone(),
             align,
             image: l.image.clone(),
+            // Refs are never pasteable: the wire form has none.
+            r#ref: None,
         });
     }
     for (i, m) in wire.inline.iter().enumerate() {

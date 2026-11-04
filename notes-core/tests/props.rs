@@ -38,10 +38,10 @@ fn set_text_round_trips_and_is_idempotent() {
         let m = random_model(&mut rng);
         let md = render(&m).markdown;
         let mut doc = Notes::new(origin(1));
-        doc.set_text(&md);
+        doc.set_text(&md, &Default::default());
         assert_eq!(doc.render().markdown, md, "seed {seed}");
         assert!(
-            doc.set_text(&md).is_empty(),
+            doc.set_text(&md, &Default::default()).is_empty(),
             "seed {seed}: second set_text emitted ops"
         );
     }
@@ -52,13 +52,13 @@ fn set_text_round_trips_and_is_idempotent() {
 #[test]
 fn set_text_of_the_rendering_changes_nothing() {
     use notes_core::model::{Block, CELL};
-    use notes_core::{KIND_ALIGN, KIND_BLOCK, KIND_IMAGE, KIND_LANG};
+    use notes_core::{KIND_ALIGN, KIND_BLOCK, KIND_IMAGE, KIND_LANG, KIND_REF};
     let mut checked = 0;
     for seed in 0..CASES {
         let mut rng = Rng::new(seed);
         let m = random_model(&mut rng);
         let mut doc = Notes::new(origin(1));
-        doc.set_text(&render(&m).markdown);
+        doc.set_text(&render(&m).markdown, &Default::default());
         let mut minted = Vec::new();
         for _ in 0..rng.below(12) {
             let text: Vec<char> = doc.text().chars().collect();
@@ -116,7 +116,7 @@ fn set_text_of_the_rendering_changes_nothing() {
                     let li = rng.below(spans.len());
                     let (s, e, nl) = spans[li];
                     let Some(nl) = nl else { continue };
-                    match rng.below(7) {
+                    match rng.below(8) {
                         0 => doc.mark_line(
                             nl,
                             KIND_LANG,
@@ -133,6 +133,12 @@ fn set_text_of_the_rendering_changes_nothing() {
                             nl,
                             KIND_IMAGE,
                             Some(*rng.pick(&[common::IMAGES[0], common::IMAGES[1], "x.webp@1x1"])),
+                            &mut minted,
+                        ),
+                        3 => doc.mark_line(
+                            nl,
+                            KIND_REF,
+                            Some(*rng.pick(&["cp:1", "sec:open_questions", ""])),
                             &mut minted,
                         ),
                         _ => {
@@ -181,7 +187,7 @@ fn set_text_of_the_rendering_changes_nothing() {
             md,
             "seed {seed}: not a fixpoint"
         );
-        let frames = doc.set_text(&md);
+        let frames = doc.set_text(&md, &Default::default());
         assert!(
             frames.is_empty(),
             "seed {seed}: set_text of the rendering emitted ops\n{md}\n{:?}",

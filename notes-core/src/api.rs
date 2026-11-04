@@ -4,11 +4,17 @@
 //!
 //! - `{"op":"fold","notes":hex,"snapshot":b64|null,"frames":[b64]}` →
 //!   `{"snapshot":b64,"markdown":s,"plain":s,"comments":{"<id>":[s,e]|null},"tasks":[...],
-//!   "media":[...]}` (`tasks` and `media` are in every answer, see below)
-//! - `{"op":"set_text","notes":hex,"snapshot":b64|null,"frames":[b64],"markdown":s}` →
-//!   `{"frames":[b64],"snapshot":b64,"markdown":s,"plain":s,"comments":{...}}`: `frames` are
-//!   what to broadcast to clients (0xAF artifacts first, then one 0xDE delta of only the new
-//!   ops), `[]` when nothing changed; `snapshot` is after the given frames and the new ones.
+//!   "media":[...],"refs":[...]}` (`tasks`, `media` and `refs` are in every answer, see below)
+//! - `{"op":"set_text","notes":hex,"snapshot":b64|null,"frames":[b64],"markdown":s,
+//!   "refs":{"<n>":s}?}` → `{"frames":[b64],"snapshot":b64,"markdown":s,"plain":s,
+//!   "comments":{...}}`: `frames` are what to broadcast to clients (0xAF artifacts first, then
+//!   one 0xDE delta of only the new ops), `[]` when nothing changed; `snapshot` is after the
+//!   given frames and the new ones. `refs` (optional) sets line refs by markdown line: the
+//!   key is the 0-based number of the line of `markdown` where a document line starts (the
+//!   `md_line` an answer gives), a value sets that line's ref, `""` clears it; a line without
+//!   a key keeps the ref its terminator has after the diff (a reworded line keeps it, a new
+//!   line has none). Keys that start no line (a blank line the parser drops as the gap
+//!   between blocks, a table's separator row, a closing fence, past the end) are ignored.
 //! - `{"op":"merge","notes":hex,"snapshot":b64,"other":b64,"frames":[b64]?}` →
 //!   `{"snapshot":b64,"markdown":s,"plain":s,"comments":{...},"frames":[b64]}` (the union).
 //!   The answer's `frames` are what the replica holding `snapshot` lacks of the union, for
@@ -34,15 +40,29 @@
 //! line's `\n` or the mark giving its kind; `null` when neither came from a request frame
 //! (the snapshot, the union in `merge`, or what the request itself did).
 //!
+//! Every `tasks` entry also has `"ref":s|null`, the line's ref (see `refs`).
+//!
 //! Every answer has `media` too, the pictures the document shows (`Notes::media`): the
 //! distinct `image` values `<sha256 hex>.<webp|jpeg>@<w>x<h>` of its image lines, in document
 //! order, `[]` when there are none. The bytes are named by the hash and kept beside the
 //! document; this list is how the backend learns which ones are in use.
 //!
+//! Every answer has `refs`, the lines with a `ref` mark (`Notes::refs`), in document order:
+//! `[{"line":hex,"ref":s,"index":i,"md_line":n}]`. `line` is the element id of the line's
+//! `\n` (as in `tasks`), `ref` the value (the first live one; never empty), `index` the
+//! line's 0-based number in the document (the same line of `plain`), `md_line` the 0-based
+//! line of the answer's `markdown` where the line's rendering starts: its own line, a code
+//! run's opening fence for its first line, a table's head row for the head (rows follow the
+//! separator row), for an empty line one of the blank lines before the next block (the
+//! renderer's gap between blocks is the last of them). Refs are never in `markdown` or
+//! `plain`; [`crate::client`] neither reads nor writes them.
+//!
 //! `frames` are a client log in order: 0xDE deltas and 0xAF artifacts. Duplicates are
 //! harmless; delta groups for other objects are ignored; a frame that does not decode is an
 //! error naming its index (`frame 3: ...`). `comments` give each `comment:<id>` mark's range
 //! in `plain` as `[start, end)` code points, `null` once all its characters are gone.
+
+use std::collections::BTreeMap;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
@@ -67,6 +87,9 @@ enum Request {
         #[serde(default)]
         frames: Vec<String>,
         markdown: String,
+        /// Markdown line number (decimal) → ref (`""` clears).
+        #[serde(default)]
+        refs: Option<BTreeMap<String, String>>,
     },
     Merge {
         notes: String,
@@ -119,9 +142,11 @@ pub fn handle(request: Value) -> Result<Value, Error> {
             snapshot,
             frames,
             markdown,
+            refs,
         } => {
             let (mut notes, arrivals) = load(&notes, snapshot.as_deref(), &frames)?;
-            let out = notes.set_text(&markdown);
+            let refs = line_refs(refs.unwrap_or_default())?;
+            let out = notes.set_text(&markdown, &refs);
             Ok(answer(&notes, Some(out), &arrivals))
         }
         Request::MarkComment {
@@ -183,6 +208,16 @@ pub fn handle(request: Value) -> Result<Value, Error> {
     }
 }
 
+/// `set_text`'s `refs` keyed by line number; a key that is not one is an error.
+fn line_refs(refs: BTreeMap<String, String>) -> Result<BTreeMap<usize, String>, Error> {
+    refs.into_iter()
+        .map(|(key, value)| match key.parse::<usize>() {
+            Ok(n) if n.to_string() == key => Ok((n, value)),
+            _ => Err(Error(format!("refs: {key:?} is not a line number"))),
+        })
+        .collect()
+}
+
 fn b64(what: &str, s: &str) -> Result<Vec<u8>, Error> {
     STANDARD
         .decode(s.trim())
@@ -221,6 +256,19 @@ fn answer(notes: &Notes, frames: Option<Vec<Vec<u8>>>, arrivals: &Arrivals) -> V
                 "frame": t.frame(arrivals),
                 "text": t.text,
                 "links": t.links.iter().map(|(s, e, u)| json!([s, e, u])).collect::<Vec<_>>(),
+                "ref": t.r#ref,
+            })
+        })
+        .collect();
+    let refs: Vec<Value> = notes
+        .refs()
+        .into_iter()
+        .map(|r| {
+            json!({
+                "line": id_to_hex(&r.line),
+                "ref": r.value,
+                "index": r.index,
+                "md_line": r.md_line,
             })
         })
         .collect();
@@ -231,6 +279,7 @@ fn answer(notes: &Notes, frames: Option<Vec<Vec<u8>>>, arrivals: &Arrivals) -> V
         "comments": comments,
         "tasks": tasks,
         "media": notes.media(),
+        "refs": refs,
     });
     if let Some(frames) = frames {
         out["frames"] = frames.iter().map(|f| STANDARD.encode(f)).collect();

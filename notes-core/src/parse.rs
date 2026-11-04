@@ -30,10 +30,20 @@ use crate::render::{is_delimiter_row, needs_gap, Sig};
 
 /// Parse markdown into a document (not yet normalized; see [`crate::model::normalize`]).
 pub fn parse(md: &str) -> Model {
+    parse_lines(md).0
+}
+
+/// [`parse`], and per document line the markdown line (0-based, counted after `\r\n` and `\r`
+/// became `\n`) it starts at: its own line, a code run's opening fence for its first line, a
+/// table's head row for the head (the separator row after it is no line's), the blank line
+/// itself for an empty line. The blank line the renderer adds between two blocks is dropped
+/// and so is no line's start; of several blank lines it is the last one. For markdown
+/// [`crate::render`] wrote, this is [`crate::render::md_lines`] of the document.
+pub fn parse_lines(md: &str) -> (Model, Vec<usize>) {
     let md = md.replace("\r\n", "\n").replace('\r', "\n");
     let mut model = Model::default();
     if md.is_empty() {
-        return model;
+        return (model, Vec::new());
     }
     let body = md.strip_suffix('\n').unwrap_or(&md);
     let lines: Vec<&str> = body.split('\n').collect();
@@ -42,20 +52,21 @@ pub fn parse(md: &str) -> Model {
     while i < lines.len() {
         let line = lines[i];
         if line.is_empty() {
-            items.push(Item::Blank);
+            items.push(Item::Blank(i));
             i += 1;
             continue;
         }
         match classify(line) {
             Class::Fence { ch, len, lang } => {
+                let fence = i;
                 i += 1;
                 let mut first = true;
                 while i < lines.len() && !is_fence_close(lines[i], ch, len) {
                     items.push(code_line(
-                        &mut model,
                         lines[i],
                         first.then(|| lang.clone()),
                         line,
+                        if first { fence } else { i },
                     ));
                     first = false;
                     i += 1;
@@ -64,7 +75,7 @@ pub fn parse(md: &str) -> Model {
                     i += 1; // the closing fence
                 }
                 if first {
-                    items.push(code_line(&mut model, "", Some(lang), line));
+                    items.push(code_line("", Some(lang), line, fence));
                 }
             }
             Class::Heading(level, content) => {
@@ -73,28 +84,28 @@ pub fn parse(md: &str) -> Model {
                     2 => Block::H2,
                     _ => Block::H3,
                 };
-                items.push(text_line(&mut model, Some(kind), content, line));
+                items.push(text_line(&mut model, Some(kind), content, line, i));
                 i += 1;
             }
             Class::Quote(content) => {
-                items.push(text_line(&mut model, Some(Block::Quote), content, line));
+                items.push(text_line(&mut model, Some(Block::Quote), content, line, i));
                 i += 1;
             }
             Class::Task(done, content) => {
                 let kind = if done { Block::TaskDone } else { Block::Task };
-                items.push(text_line(&mut model, Some(kind), content, line));
+                items.push(text_line(&mut model, Some(kind), content, line, i));
                 i += 1;
             }
             Class::Bullet(content) => {
-                items.push(text_line(&mut model, Some(Block::Bullet), content, line));
+                items.push(text_line(&mut model, Some(Block::Bullet), content, line, i));
                 i += 1;
             }
             Class::Number(content) => {
-                items.push(text_line(&mut model, Some(Block::Number), content, line));
+                items.push(text_line(&mut model, Some(Block::Number), content, line, i));
                 i += 1;
             }
             Class::Thematic => {
-                items.push(text_line(&mut model, None, line, line));
+                items.push(text_line(&mut model, None, line, line, i));
                 i += 1;
             }
             Class::Para => {
@@ -113,6 +124,7 @@ pub fn parse(md: &str) -> Model {
                         chars,
                         md: line.to_string(),
                         md_line: line.to_string(),
+                        src: i,
                     }));
                     i += 1;
                     continue;
@@ -131,42 +143,48 @@ pub fn parse(md: &str) -> Model {
                             _ => '-',
                         })
                         .collect();
-                    let mut item = table_row(&mut model, line, Block::TableHead);
+                    let mut item = table_row(&mut model, line, Block::TableHead, i);
                     if let Item::Line(d) = &mut item {
                         d.attr.align = Some(align);
                     }
                     items.push(item);
                     i += 2;
                     while i < lines.len() && !lines[i].is_empty() && !starts_block(lines[i]) {
-                        items.push(table_row(&mut model, lines[i], Block::Table));
+                        items.push(table_row(&mut model, lines[i], Block::Table, i));
                         i += 1;
                     }
                 } else {
-                    items.push(text_line(&mut model, None, line, line));
+                    items.push(text_line(&mut model, None, line, line, i));
                     i += 1;
                 }
             }
         }
     }
 
-    // Blank lines become empty lines, less the one the renderer adds between blocks.
+    // Blank lines become empty lines, less the one the renderer adds between blocks (the
+    // last blank before the block: the renderer writes it after the empty lines).
     let mut last: Option<Sig> = None;
-    let mut pending = 0usize;
+    let mut pending: Vec<usize> = Vec::new();
     let mut text: Vec<char> = Vec::new();
     let mut fmt: Vec<Fmt> = Vec::new();
     let mut attrs: Vec<LineAttr> = Vec::new();
-    let empty_line =
-        |n: usize, text: &mut Vec<char>, fmt: &mut Vec<Fmt>, attrs: &mut Vec<LineAttr>| {
-            for _ in 0..n {
-                text.push('\n');
-                fmt.push(Fmt::default());
-                attrs.push(LineAttr::default());
-            }
-        };
+    let mut starts: Vec<usize> = Vec::new();
+    let empty_lines = |blank: &[usize],
+                       text: &mut Vec<char>,
+                       fmt: &mut Vec<Fmt>,
+                       attrs: &mut Vec<LineAttr>,
+                       starts: &mut Vec<usize>| {
+        for &src in blank {
+            text.push('\n');
+            fmt.push(Fmt::default());
+            attrs.push(LineAttr::default());
+            starts.push(src);
+        }
+    };
     for item in items {
         match item {
-            Item::Blank => pending += 1,
-            Item::Line(d) if d.attr.kind.is_none() && d.chars.is_empty() => pending += 1,
+            Item::Blank(src) => pending.push(src),
+            Item::Line(d) if d.attr.kind.is_none() && d.chars.is_empty() => pending.push(d.src),
             Item::Line(d) => {
                 let sig = Sig {
                     kind: d.attr.kind,
@@ -174,22 +192,17 @@ pub fn parse(md: &str) -> Model {
                     md: d.md.clone(),
                 };
                 let gap = last.as_ref().is_some_and(|a| needs_gap(a, &sig));
-                empty_line(
-                    if gap {
-                        pending.saturating_sub(1)
-                    } else {
-                        pending
-                    },
-                    &mut text,
-                    &mut fmt,
-                    &mut attrs,
-                );
-                pending = 0;
+                if gap {
+                    pending.pop();
+                }
+                empty_lines(&pending, &mut text, &mut fmt, &mut attrs, &mut starts);
+                pending.clear();
                 text.extend(&d.chars);
                 fmt.extend(&d.fmt);
                 text.push('\n');
                 fmt.push(Fmt::default());
                 attrs.push(d.attr);
+                starts.push(d.src);
                 last = Some(Sig {
                     md: d.md_line,
                     ..sig
@@ -197,15 +210,16 @@ pub fn parse(md: &str) -> Model {
             }
         }
     }
-    empty_line(pending, &mut text, &mut fmt, &mut attrs);
+    empty_lines(&pending, &mut text, &mut fmt, &mut attrs, &mut starts);
     model.text = text;
     model.fmt = fmt;
     model.lines = attrs;
-    model
+    (model, starts)
 }
 
 enum Item {
-    Blank,
+    /// A blank markdown line: its number.
+    Blank(usize),
     Line(DocLine),
 }
 
@@ -217,11 +231,19 @@ struct DocLine {
     md: String,
     /// The markdown line itself.
     md_line: String,
+    /// The number of the markdown line this document line starts at.
+    src: usize,
 }
 
-fn text_line(model: &mut Model, kind: Option<Block>, content: &str, line: &str) -> Item {
-    let src: Vec<char> = content.chars().collect();
-    let (chars, fmt) = parse_inline(&src, model);
+fn text_line(
+    model: &mut Model,
+    kind: Option<Block>,
+    content: &str,
+    line: &str,
+    src: usize,
+) -> Item {
+    let content: Vec<char> = content.chars().collect();
+    let (chars, fmt) = parse_inline(&content, model);
     Item::Line(DocLine {
         attr: LineAttr {
             kind,
@@ -231,10 +253,11 @@ fn text_line(model: &mut Model, kind: Option<Block>, content: &str, line: &str) 
         fmt,
         md: line.to_string(),
         md_line: line.to_string(),
+        src,
     })
 }
 
-fn code_line(_model: &mut Model, line: &str, lang: Option<String>, fence: &str) -> Item {
+fn code_line(line: &str, lang: Option<String>, fence: &str, src: usize) -> Item {
     let chars: Vec<char> = line.chars().collect();
     let fmt = vec![Fmt::default(); chars.len()];
     Item::Line(DocLine {
@@ -247,10 +270,11 @@ fn code_line(_model: &mut Model, line: &str, lang: Option<String>, fence: &str) 
         fmt,
         md: fence.to_string(),
         md_line: line.to_string(),
+        src,
     })
 }
 
-fn table_row(model: &mut Model, line: &str, kind: Block) -> Item {
+fn table_row(model: &mut Model, line: &str, kind: Block, src: usize) -> Item {
     let mut chars = Vec::new();
     let mut fmt = Vec::new();
     for (n, cell) in split_row(line).iter().enumerate() {
@@ -276,6 +300,7 @@ fn table_row(model: &mut Model, line: &str, kind: Block) -> Item {
         fmt,
         md: line.to_string(),
         md_line: line.to_string(),
+        src,
     })
 }
 
