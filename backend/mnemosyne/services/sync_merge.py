@@ -22,6 +22,8 @@ item by id, bookmark notes, comment texts) go through the sidecar's one-off thre
   newer `updated_at` wins whole, the version is the larger, one live row per meeting;
 - peer shares (who the meeting is shared with) likewise by person (`merge_peer_shares`): the
   newer `updated_at` wins, a revoked row beats a live one at a tie;
+- the images of the notes (`media`, rows only) are a union by sha256, ours first: a blob is
+  content-addressed, so there is nothing to merge, and a merge never removes one;
 - the notes' action items (`notes_items`, per id): the state fields (follow, due, issue_url,
   task_id) three ways like summary action items, everything derived from the notes (text,
   owner, at, done, line, by) ours, which our own fold derives again; an item only they have is
@@ -46,7 +48,12 @@ from typing import TYPE_CHECKING, Any
 
 from ..export.note_merge import MergeError, merge_many
 from ..models.session import AgendaItem, Chapter, ClientFact, NotesItem, SummaryData
-from ..models.sync_session import SyncSession, merge_peer_shares, merge_publications
+from ..models.sync_session import (
+    SyncMedia,
+    SyncSession,
+    merge_peer_shares,
+    merge_publications,
+)
 from .summary_doc import _AT, _IDS, SECTIONS, merge_topics, place, section, whole_list
 from .tasks import _norm, same_item
 
@@ -593,6 +600,7 @@ def _finish(
     out.notes_doc = None  # documents are merged apart from the rest (services/sync_notes.py)
     out.publications = merge_publications(ours.publications, theirs.publications)
     out.peer_shares = merge_peer_shares(ours.peer_shares, theirs.peer_shares)
+    out.media = merge_media(ours.media, theirs.media)
     out.vv, out.updated_at = vv, now
     seen = {e.uid for e in ours.events}
     out.events = [e.model_copy() for e in ours.events] + [
@@ -601,6 +609,15 @@ def _finish(
     origin = ours if ours_is_origin else theirs
     out.recordings = [r.model_copy(deep=True) for r in origin.recordings]
     out.origin_audio = origin.origin_audio
+
+
+def merge_media(ours: list[SyncMedia] | None, theirs: list[SyncMedia] | None) -> list[SyncMedia]:
+    """The image rows of a meeting after two machines' states meet: a union by sha256, ours
+    first, theirs we lack after. A side that sends none (None, an older peer) loses nothing."""
+    by_sha: dict[str, SyncMedia] = {}
+    for m in [*(ours or []), *(theirs or [])]:
+        by_sha.setdefault(m.sha256, m)
+    return list(by_sha.values())
 
 
 def _rows(items) -> dict:
