@@ -110,6 +110,7 @@ def render_meeting_note(
     continued: Mapping[str, str] | None = None,  # action item id -> note of its later mention
     meeting_note: Callable[[str], tuple[str, str] | None] | None = None,  # id -> (stem, title)
     notes_items: list[NotesItem] | None = None,  # action items typed in the notes
+    image_file: Callable[[str, str], str | None] | None = None,  # (sha, ext) -> file in the vault
 ) -> str:
     """Render a complete Obsidian-compatible note with YAML frontmatter.
 
@@ -133,6 +134,8 @@ def render_meeting_note(
     `notes_items` (Session.notes_items, services/notes_items.py) are listed in Action Items after
     the summary's, rendered the same way with their ids as block ids; in the Notes section the
     task line of each is a plain bullet (no box), so a vault task query lists it once.
+    An image line of the notes is `![[file|caption]]` when `image_file(sha, ext)` gives the file
+    the export wrote to attachments/, else `[image: caption]`.
     """
     tags = tags if tags is not None else ["meeting", "mnemosyne"]
 
@@ -278,7 +281,9 @@ def render_meeting_note(
     if notes:
         sections.append("## Notes\n")
         sections.append(
-            obsidian_notes(_plain_task_lines(notes, notes_items or []), link_people, meeting_note)
+            obsidian_notes(
+                _plain_task_lines(notes, notes_items or []), link_people, meeting_note, image_file
+            )
         )
         sections.append("")
 

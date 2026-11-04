@@ -15,6 +15,10 @@ is left as it is, and so is anything that is not a well-formed inline link.
 The scanner follows how notes-core writes and reads links (notes-core/src/render.rs `url`,
 `escape_char`; parse.rs `link_tail`): backslash escapes before ASCII punctuation, a link text that
 ends at its first unescaped `]` (code spans may hold one), a bare or `<...>` destination.
+
+An image (services/notes_media.py) is a line of its own, `![caption](mnemosyne:image/<value>)`, the
+caption escaped like link text. `plain_notes` turns it into `[image: caption]` (`[image]` without a
+caption); `obsidian_notes` into `![[file|caption]]` when the export has the file.
 """
 
 from __future__ import annotations
@@ -25,9 +29,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote
 
+from .notes_media import parse_value
+
 _TIME = re.compile(r"mnemosyne:t/([0-9]+)/([0-9]+)", re.ASCII)
 _PERSON = re.compile(r"mnemosyne:person/([^/]+)")
 _MEETING = re.compile(r"mnemosyne:meeting/([0-9a-f]{8,32})")
+
+# An image line as notes-core writes it: the whole line, the caption is escaped link text.
+IMAGE_LINE = re.compile(r"^!\[((?:[^\]\\\n]|\\.)*)\]\(mnemosyne:image/([^)\s]+)\)$", re.MULTILINE)
 
 _MAX_SAFE = 2**53 - 1
 
@@ -218,10 +227,55 @@ def _rewrite(md: str, fn: Callable[[Chip], str]) -> str:
     return "".join(out)
 
 
+@dataclass(frozen=True)
+class ImageLine:
+    sha: str  # the plain content hash
+    ext: str  # "webp" | "jpeg"
+    width: int
+    height: int
+    caption: str  # backslash escapes removed
+    start: int  # the line's span in the markdown
+    end: int
+
+
+def image_lines(md: str) -> list[ImageLine]:
+    """The image lines of `md` in order (the same image may repeat). A line whose value is not
+    exactly `<sha256>.<webp|jpeg>@<w>x<h>` is not an image and is not listed."""
+    out: list[ImageLine] = []
+    if "mnemosyne:image/" not in md:
+        return out
+    for m in IMAGE_LINE.finditer(md):
+        value = parse_value(m[2])
+        if value is not None:
+            out.append(ImageLine(*value, _unescape(m[1]), m.start(), m.end()))
+    return out
+
+
+def _rewrite_images(md: str, fn: Callable[[ImageLine], str]) -> str:
+    """`md` with every image line replaced by what `fn` returns for it."""
+    lines = image_lines(md)
+    if not lines:
+        return md
+    out: list[str] = []
+    last = 0
+    for line in lines:
+        out.append(md[last : line.start])
+        out.append(fn(line))
+        last = line.end
+    out.append(md[last:])
+    return "".join(out)
+
+
+def _plain_image(line: ImageLine) -> str:
+    caption = re.sub(r"\s+", " ", line.caption).strip()
+    return f"[image: {caption}]" if caption else "[image]"
+
+
 def plain_notes(md: str) -> str:
     """The notes with every chip replaced by its text: `12:34`, `@Ada Lovelace`, a meeting's
-    title. Nothing in the result names a `mnemosyne:` URL."""
-    return _rewrite(md, lambda chip: chip.text)
+    title, and every image line by `[image: caption]` (`[image]` without a caption). Nothing in
+    the result names a `mnemosyne:` URL."""
+    return _rewrite(_rewrite_images(md, _plain_image), lambda chip: chip.text)
 
 
 def task_line_parts(md: str) -> tuple[str | None, str]:
@@ -242,16 +296,34 @@ def task_line_parts(md: str) -> tuple[str | None, str]:
 
 
 _WIKI_BAD = re.compile(r"[\[\]|#^\\\n]")
+_SIZE_ALIAS = re.compile(r"[0-9]+(x[0-9]+)?", re.ASCII)  # `![[file|100]]` is a width, not a caption
 
 
 def obsidian_notes(
     md: str,
     link_people: bool,
     meeting_note: Callable[[str], tuple[str, str] | None] | None = None,
+    image_file: Callable[[str, str], str | None] | None = None,
 ) -> str:
     """The notes as the vault should have them: a time chip is its text, a person chip `[[Name]]`
     when `link_people` (else its text), a meeting chip `[[stem|title]]` when `meeting_note(id)`
-    gives that meeting's exported note as (stem, title), else its text."""
+    gives that meeting's exported note as (stem, title), else its text. An image line is
+    `![[file|caption]]` when `image_file(sha, ext)` gives the file's name in the vault (the export
+    wrote it), else the plain `[image: caption]`."""
+
+    def image(line: ImageLine) -> str:
+        file = None
+        if image_file is not None:
+            try:
+                file = image_file(line.sha, line.ext)
+            except Exception:  # a lookup that fails is the plain form, never a failed export
+                file = None
+        if not file or _WIKI_BAD.search(file):
+            return _plain_image(line)
+        alias = re.sub(r"\s+", " ", _WIKI_BAD.sub(" ", line.caption)).strip()
+        if not alias or _SIZE_ALIAS.fullmatch(alias):  # Obsidian would read a number as a size
+            return f"![[{file}]]"
+        return f"![[{file}|{alias}]]"
 
     def one(chip: Chip) -> str:
         if chip.kind == "person" and link_people and not _WIKI_BAD.search(chip.value):
@@ -267,7 +339,7 @@ def obsidian_notes(
                 return f"[[{stem}|{alias}]]" if alias and alias != stem else f"[[{stem}]]"
         return chip.text
 
-    return _rewrite(md, one)
+    return _rewrite(_rewrite_images(md, image), one)
 
 
 def exported_meeting_note(repo, session_id: str) -> tuple[str, str] | None:
