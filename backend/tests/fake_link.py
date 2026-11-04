@@ -50,7 +50,10 @@ after the box with `[label](url)` links reduced to their label, `links` those as
 url]` in code points of `text`, `frame` null. `set_kind` takes that `line` and a `kind` and emits
 one `["kind", line, kind]` frame (id `kind-<line>-<kind>-<8 hex of the old text's sha256>`),
 `[]` when the line already shows it; an index past the last line is "no such character", a line
-that is not a task is "not a task"."""
+that is not a task is "not a task".
+Every answer also has `media`: the values of the text's `![caption](mnemosyne:image/<value>)` lines,
+distinct, in order (unchecked: notes-core reports only valid ones, the backend checks again); such
+lines stay in the markdown as they are."""
 
 import base64
 import json
@@ -224,11 +227,21 @@ if sys.argv[1:] == ["notes", "doc"]:
                         "links": links, "frame": None})
         return out
 
+    IMAGE = re.compile(r"^!\[(?:[^\]\\\n]|\\.)*\]\(mnemosyne:image/([^)\s]+)\)$")
+
+    def media_of(text):
+        out = []
+        for line in text.split("\n"):
+            m = IMAGE.match(line)
+            if m and m.group(1) not in out:
+                out.append(m.group(1))
+        return out
+
     def answer(state, **extra):
         text, comments = replay(state)
         snapshot = base64.b64encode(json.dumps(state, sort_keys=True).encode()).decode()
         out = {"snapshot": snapshot, "markdown": text, "plain": text.replace("\x1f", "\t"),
-               "comments": comments, "tasks": tasks_of(text)}
+               "comments": comments, "tasks": tasks_of(text), "media": media_of(text)}
         out.update(extra)
         print(json.dumps(out))
         sys.exit(0)

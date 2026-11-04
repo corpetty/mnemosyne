@@ -344,6 +344,22 @@ CREATE TABLE IF NOT EXISTS shared_notes (
     plain TEXT,
     comment_ranges TEXT
 );
+-- Images in the notes (services/notes_media.py): one row per stored blob of a meeting, the
+-- file under <data_dir>/notes_media/<session_id>/<sha256>.<ext>[.enc]. `last_seen_at` is when
+-- the document last referenced it (a fold's `media`, or the upload); unseen for 7 days = swept.
+-- `by` is who uploaded it (a user id, "" on the desktop, "guest", a contact).
+CREATE TABLE IF NOT EXISTS notes_media (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    sha256 TEXT NOT NULL,
+    ext TEXT NOT NULL,
+    width INTEGER NOT NULL DEFAULT 0,
+    height INTEGER NOT NULL DEFAULT 0,
+    size INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    by TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (session_id, sha256)
+);
 CREATE TABLE IF NOT EXISTS session_assets (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
@@ -2478,6 +2494,87 @@ class SessionRepository:
             ).fetchall()
         by_seq = {r["seq"]: r["author"] or "" for r in rows}
         return [by_seq.get(s, "") for s in seqs]
+
+    # ---- images in the notes (services/notes_media.py; no access checks: the caller checks) --
+
+    def put_media_row(
+        self,
+        session_id: str,
+        sha256: str,
+        ext: str,
+        width: int,
+        height: int,
+        size: int,
+        by: str = "",
+        at: str | None = None,
+    ) -> bool:
+        """A blob stored for the meeting (a new one, or the file of a row that had none): a new
+        version of the meeting (`_touch`). False for an unknown meeting."""
+        at = at or datetime.now().isoformat()
+        with self._lock, self._conn:
+            if self._conn.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone():
+                self._conn.execute(
+                    "INSERT INTO notes_media (session_id, sha256, ext, width, height, size,"
+                    " created_at, last_seen_at, by) VALUES (?,?,?,?,?,?,?,?,?)"
+                    " ON CONFLICT(session_id, sha256) DO UPDATE SET ext=excluded.ext,"
+                    " width=excluded.width, height=excluded.height, size=excluded.size,"
+                    " last_seen_at=excluded.last_seen_at",
+                    (session_id, sha256, ext, width, height, size, at, at, by),
+                )
+                self._touch(session_id)
+                return True
+        return False
+
+    def media_rows(self, session_id: str) -> list[dict]:
+        """The meeting's blobs, oldest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM notes_media WHERE session_id=? ORDER BY created_at, sha256",
+                (session_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def touch_media(self, session_id: str, shas: list[str], at: str) -> int:
+        """The document references these blobs (a fold's `media`): `last_seen_at` = `at`. No new
+        version: each machine sees its own. Returns the rows changed."""
+        if not shas:
+            return 0
+        with self._lock, self._conn:
+            cur = self._conn.executemany(
+                "UPDATE notes_media SET last_seen_at=? WHERE session_id=? AND sha256=?"
+                " AND last_seen_at < ?",
+                [(at, session_id, sha, at) for sha in dict.fromkeys(shas)],
+            )
+        return cur.rowcount
+
+    def stale_media(self, before: str) -> list[dict]:
+        """Rows of every meeting not seen since `before` (an ISO time), for the sweep."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM notes_media WHERE last_seen_at < ? ORDER BY session_id, sha256",
+                (before,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_media_rows(self, session_id: str, shas: list[str]) -> int:
+        """Forget blobs (the sweep): no new version, like `touch_media`."""
+        if not shas:
+            return 0
+        with self._lock, self._conn:
+            cur = self._conn.executemany(
+                "DELETE FROM notes_media WHERE session_id=? AND sha256=?",
+                [(session_id, sha) for sha in dict.fromkeys(shas)],
+            )
+        return cur.rowcount
+
+    def media_total(self, session_id: str) -> int:
+        """The bytes of the meeting's stored blobs (for the per-meeting cap)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(SUM(size), 0) AS total FROM notes_media WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        return int(row["total"])
 
     # ---- action items from the notes (services/notes_items.py; internal, no access checks) --
 

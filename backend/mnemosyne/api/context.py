@@ -67,10 +67,14 @@ class AppContext:
     _idle_task: asyncio.Task | None = None
     _awake_task: asyncio.Task | None = None
     _vault_task: asyncio.Task | None = None
+    _media_task: asyncio.Task | None = None
     # Ticks read back from the Obsidian vault (services/vault_sync.py): seconds between passes
     # (0: none; tests drive sync_vault directly) and each note's mtime at the last pass.
     vault_sync_interval: float = 300.0
     vault_seen: dict = field(default_factory=dict)
+    # Unused images of the notes are swept at startup and then this often (seconds; 0: never,
+    # tests call services/notes_media.py `sweep` directly).
+    media_sweep_interval: float = 24 * 3600.0
     _intervals: tuple[float, float] = (6 * 3600, 900)
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     live: dict = field(default_factory=dict)  # session id -> running LiveTranscriber
@@ -437,6 +441,16 @@ class AppContext:
             except Exception:
                 logger.exception("Digest schedule check failed")
 
+    async def _media_loop(self, interval_seconds: float) -> None:
+        from ..services.notes_media import sweep
+
+        while True:
+            try:
+                await asyncio.to_thread(sweep, self)
+            except Exception:
+                logger.exception("Sweeping unused notes images failed")
+            await asyncio.sleep(interval_seconds)
+
     async def _idle_loop(self, interval_seconds: float) -> None:
         while True:
             await asyncio.sleep(interval_seconds)
@@ -558,6 +572,8 @@ class AppContext:
             from ..services.vault_sync import sync_loop
 
             self._vault_task = asyncio.create_task(sync_loop(self, self.vault_sync_interval))
+        if self.media_sweep_interval > 0:
+            self._media_task = asyncio.create_task(self._media_loop(self.media_sweep_interval))
         # Linked tasks that disagree (a tick merged in elsewhere) settle on their head.
         await self._try("Task links", self._reconcile_tasks)
         # Library sync: claim meetings from before it, then pull from the peers and watch.
@@ -664,6 +680,7 @@ class AppContext:
             self._idle_task,
             self._awake_task,
             self._vault_task,
+            self._media_task,
         ):
             if task is not None:
                 task.cancel()
