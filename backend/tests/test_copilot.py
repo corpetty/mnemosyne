@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from mnemosyne.models.session import Session
+from mnemosyne.models.session import CopilotAdded, Session
 from mnemosyne.models.transcript import TranscriptSegment
 from mnemosyne.services.copilot import (
     MIN_NEW_CHARS,
@@ -225,3 +225,68 @@ def test_a_new_recording_starts_new_notes(client, ctx, fake_pipewire):
     client.post("/api/audio/start", json={"device_ids": [1], "session_id": s.id})
     assert ctx.repo.get(s.id).copilot_notes is None
     client.post(f"/api/audio/stop/{s.id}", json={"transcribe": False})
+
+
+def test_a_new_recording_keeps_what_the_copilot_added_to_the_notes(client, ctx, fake_pipewire):
+    s = ctx.repo.save(Session(name="m"))
+    added = [CopilotAdded(kind="decision", text="ship Friday", n=0)]
+    ctx.repo.update_fields(s.id, copilot_notes=_notes(s.id, decisions=["ship Friday"]))
+    ctx.copilot_notes[s.id] = _notes(s.id, decisions=["ship Friday"]).model_copy(
+        update={"added": added, "lines": 12}
+    )
+    client.post("/api/audio/start", json={"device_ids": [1], "session_id": s.id})
+    kept = ctx.repo.get(s.id).copilot_notes
+    assert kept.added == added  # the notes start afresh, what is in the notes stays known
+    assert (kept.summary, kept.decisions, kept.lines) == ([], [], 0)
+    assert s.id not in ctx.copilot_notes
+    client.post(f"/api/audio/stop/{s.id}", json={"transcribe": False})
+
+
+@pytest.mark.anyio
+async def test_update_carries_what_was_added():
+    async def complete(system, user):
+        assert "added" not in user  # the model never sees it
+        return json.dumps({"decisions": ["d"]})
+
+    added = [CopilotAdded(kind="decision", text="d", n=0)]
+    previous = CopilotNotes(session_id="s1", decisions=["d"], added=added)
+    fresh = await update_notes(complete, previous, "s1", [_seg(0, "more")])
+    assert fresh.added == added and fresh.added is not previous.added
+
+
+@pytest.mark.anyio
+async def test_runner_of_a_new_recording_does_not_add_again(
+    ctx, fake_provider, tmp_path, monkeypatch
+):
+    from mnemosyne.jobs import JobContext
+    from tests import fake_link
+
+    fake_link.install(tmp_path, monkeypatch)
+    session = ctx.repo.save(Session(name="live"))
+    added = [CopilotAdded(kind="decision", text="Ship in October", n=0)]
+    # What a new recording leaves (routes/audio.py): only what was added before.
+    ctx.repo.update_fields(
+        session.id, copilot_notes=CopilotNotes(session_id=session.id, added=added)
+    )
+    ctx.settings.default_provider = "fake"
+    fake_provider.reply = json.dumps({"decisions": ["Ship in October.", "Hire a designer"]})
+    live = FakeLive()
+    ctx.live[session.id] = live
+    events = []
+    job_ctx = JobContext.__new__(JobContext)
+    job_ctx.update = lambda *a, **k: None
+    job_ctx.emit = events.append
+    task = asyncio.create_task(copilot_runner(ctx, session.id, tick=0.01)(job_ctx))
+    live.committed.append(_seg(0, "y" * MIN_NEW_CHARS))
+    for _ in range(300):
+        if events:
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+    await task
+    notes = ctx.repo.get(session.id).notes
+    assert "Hire a designer" in notes and "Ship in October" not in notes
+    assert [(a.text, a.n) for a in ctx.repo.get(session.id).copilot_notes.added] == [
+        ("Ship in October", 0),
+        ("Hire a designer", 1),
+    ]
