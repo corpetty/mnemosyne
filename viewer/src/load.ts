@@ -11,8 +11,10 @@ import {
 	decodeKey,
 	deriveKey,
 	openClip,
+	openImage,
 	openManifest,
 	type ClipRef,
+	type ImageRef,
 	type Manifest
 } from './format';
 
@@ -22,6 +24,39 @@ export type Source = { kind: 'hosted' } | { kind: 'file'; payload: string | null
 /** Fetches and decrypts one clip; resolves to the Ogg Opus bytes. */
 export type ClipLoader = (clip: ClipRef) => Promise<Uint8Array>;
 
+/**
+ * Fetches, decrypts and shows one image of the notes: resolves to a `blob:` URL for it, made once
+ * per image id. `dispose` revokes them (the page leaving, a preview closing).
+ */
+export type ImageLoader = ((image: ImageRef) => Promise<string>) & { dispose?: () => void };
+
+/** What an image may be shown as; anything else a manifest claims is refused. */
+const IMAGE_TYPES = new Set(['image/webp', 'image/jpeg']);
+
+/** An `ImageLoader` over a function that gives the decrypted bytes; one URL per image id. */
+export function createImageLoader(open: (image: ImageRef) => Promise<Uint8Array>): ImageLoader {
+	const urls = new Map<string, Promise<string>>();
+	const load: ImageLoader = (image) => {
+		let url = urls.get(image.id);
+		if (!url) {
+			url = (async () => {
+				if (!IMAGE_TYPES.has(image.mime)) throw new PublicationFormatError('The image has an unknown type');
+				const bytes = await open(image);
+				return URL.createObjectURL(new Blob([bytes as BlobPart], { type: image.mime }));
+			})();
+			urls.set(image.id, url);
+			// A failure is not remembered: the next look tries again.
+			url.catch(() => urls.get(image.id) === url && urls.delete(image.id));
+		}
+		return url;
+	};
+	load.dispose = () => {
+		for (const url of urls.values()) url.then((u) => URL.revokeObjectURL(u), () => {});
+		urls.clear();
+	};
+	return load;
+}
+
 export type ViewState =
 	| { kind: 'loading' }
 	| { kind: 'incomplete'; reason: 'missing' | 'malformed' }
@@ -30,7 +65,7 @@ export type ViewState =
 	| { kind: 'expired'; on: string }
 	| { kind: 'password'; error: string | null }
 	| { kind: 'error'; title: string; detail: string }
-	| { kind: 'ready'; manifest: Manifest; loadClip: ClipLoader };
+	| { kind: 'ready'; manifest: Manifest; loadClip: ClipLoader; loadImage: ImageLoader };
 
 /** Heading and explanation for every state that is not the meeting itself. */
 export function stateMessage(state: ViewState): { title: string; detail: string } | null {
@@ -78,9 +113,9 @@ export function expiredOn(manifest: Manifest, now: Date): string | null {
 	return formatDate(manifest.expires_at);
 }
 
-function readyOrExpired(manifest: Manifest, loadClip: ClipLoader, now: Date): ViewState {
+function readyOrExpired(manifest: Manifest, loadClip: ClipLoader, loadImage: ImageLoader, now: Date): ViewState {
 	const on = expiredOn(manifest, now);
-	return on ? { kind: 'expired', on } : { kind: 'ready', manifest, loadClip };
+	return on ? { kind: 'expired', on } : { kind: 'ready', manifest, loadClip, loadImage };
 }
 
 // ---- hosted: /p/<id>#<key> ---------------------------------------------------------------
@@ -145,7 +180,14 @@ export async function openHosted(
 		if (!r.ok) throw new Error(`The server answered ${r.status}`);
 		return openClip(id, clip, new Uint8Array(await r.arrayBuffer()), key);
 	};
-	return readyOrExpired(manifest, loadClip, now);
+	const loadImage = createImageLoader(async (image) => {
+		if (!SHA.test(image.sha256)) throw new PublicationFormatError('The image has a malformed address');
+		const r = await fetchFn(`/pub/${id}/${image.sha256}`, REQUEST);
+		if (r.status === 404 || r.status === 410) throw new Error('This image is no longer available');
+		if (!r.ok) throw new Error(`The server answered ${r.status}`);
+		return openImage(id, image, new Uint8Array(await r.arrayBuffer()), key);
+	});
+	return readyOrExpired(manifest, loadClip, loadImage, now);
 }
 
 // ---- a single file: the payload inlined in the page --------------------------------------
@@ -164,6 +206,8 @@ export interface FilePayload {
 	manifest: string;
 	/** Sealed clip blobs by their address (lowercase hex SHA-256 of the blob). */
 	clips: Record<string, string>;
+	/** Sealed image blobs by their address; absent from a file without images. */
+	images?: Record<string, string>;
 	/** The 32-byte key (43 characters), for a file without a password. */
 	key?: string;
 	/** For a file with a password: PBKDF2-HMAC-SHA256 over the password with this salt (16 bytes). */
@@ -196,6 +240,11 @@ export function parsePayload(text: string | null | undefined): FilePayload {
 	for (const [sha, blob] of Object.entries(clips)) {
 		if (!SHA.test(sha) || typeof blob !== 'string') throw bad();
 	}
+	const images = p.images ?? {};
+	if (typeof images !== 'object' || images === null || Array.isArray(images)) throw bad();
+	for (const [sha, blob] of Object.entries(images)) {
+		if (!SHA.test(sha) || typeof blob !== 'string') throw bad();
+	}
 	const hasKey = typeof p.key === 'string';
 	const pw = p.password as Record<string, unknown> | undefined;
 	const hasPassword =
@@ -207,6 +256,7 @@ export function parsePayload(text: string | null | undefined): FilePayload {
 		version: p.version,
 		manifest: p.manifest,
 		clips: clips as Record<string, string>,
+		...(p.images !== undefined ? { images: images as Record<string, string> } : {}),
 		...(hasKey ? { key: p.key as string } : { password: { salt: pw!.salt as string, iterations: pw!.iterations as number } })
 	};
 }
@@ -263,5 +313,10 @@ async function openWithKey(payload: FilePayload, key: Uint8Array, now: Date): Pr
 		if (blob === undefined) throw new Error('This clip is not in the file');
 		return openClip(payload.id, clip, b64urlDecode(blob), key);
 	};
-	return readyOrExpired(manifest, loadClip, now);
+	const loadImage = createImageLoader(async (image) => {
+		const blob = payload.images?.[image.sha256];
+		if (blob === undefined) throw new Error('This image is not in the file');
+		return openImage(payload.id, image, b64urlDecode(blob), key);
+	});
+	return readyOrExpired(manifest, loadClip, loadImage, now);
 }

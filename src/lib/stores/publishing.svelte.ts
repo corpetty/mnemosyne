@@ -25,6 +25,8 @@ export interface PublishingApi {
 	listPublications(): Promise<PublicationListItem[]>;
 	startPublicationFile(sessionId: string, selection: PublicationSelection, password: string | null): Promise<Job>;
 	getJob(jobId: string): Promise<Job>;
+	/** One image of the meeting's notes as stored (WebP or JPEG), with the connection's headers. */
+	fetchNotesImage(sessionId: string, sha256: string): Promise<Blob>;
 	/** Save the made file (the backend deletes it after one save or download). False when the
 	 * person cancelled the save dialog; nothing returned counts as saved. */
 	saveFile(sessionId: string, file: PublicationFileResult): Promise<boolean | void>;
@@ -63,6 +65,16 @@ async function downloadFile(sessionId: string, file: PublicationFileResult): Pro
 	setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
 }
 
+/** An image of the notes (`GET /api/sessions/{id}/notes/media/{sha}`). An <img> cannot carry the
+ * bearer token, so it is fetched here and shown from an object URL. */
+async function fetchNotesImage(sessionId: string, sha256: string): Promise<Blob> {
+	const res = await fetch(`${connectionState.url}/api/sessions/${sessionId}/notes/media/${sha256}`, {
+		headers: connectionState.headers()
+	});
+	if (!res.ok) throw new Error(`${res.status}: Could not load the image`);
+	return res.blob();
+}
+
 const defaultApi: PublishingApi = {
 	getSettings: backend.getSettings,
 	getPublication: backend.getPublication,
@@ -73,6 +85,7 @@ const defaultApi: PublishingApi = {
 	listPublications: backend.listPublications,
 	startPublicationFile: backend.startPublicationFile,
 	getJob: backend.getJob,
+	fetchNotesImage,
 	saveFile
 };
 
@@ -83,6 +96,8 @@ export function errorText(e: unknown, fallback: string): string {
 }
 
 type Busy = 'publish' | 'unpublish' | 'file' | null;
+/** One image of the notes in the dialog's list (generated `NotesImage`). */
+export type NotesImage = PublicationDefaults['notes_images'][number];
 type MeetingRef = Pick<SessionDetail, 'id' | 'name' | 'attendees' | 'participants'>;
 
 /**
@@ -128,6 +143,8 @@ export class PublishingState {
 	#timer: ReturnType<typeof setTimeout> | null = null;
 	#previewSeq = 0;
 	#openSeq = 0;
+	/** Object URLs of the open dialog's notes images by plain hash, revoked when it closes. */
+	#imageUrls = new Map<string, Promise<string>>();
 
 	constructor(api: PublishingApi = defaultApi, debounceMs = 400, pollMs = 500) {
 		this.#api = api;
@@ -138,6 +155,17 @@ export class PublishingState {
 	/** Publishing is on: always on the desktop, on a team server once an admin allows it. */
 	get allowed(): boolean {
 		return !connectionState.me?.team_mode || this.allowPublishing;
+	}
+
+	/** The images of the open meeting's notes, in order, each once. */
+	get notesImages(): NotesImage[] {
+		return this.defaults?.notes_images ?? [];
+	}
+
+	/** Whether this image goes into the publication (`images` null = all of them). */
+	imageIncluded(sha256: string): boolean {
+		const chosen = this.selection?.images;
+		return chosen == null || chosen.includes(sha256);
 	}
 
 	/** The open meeting's live publication. */
@@ -204,7 +232,7 @@ export class PublishingState {
 			if (seq !== this.#openSeq) return;
 			this.publications[id] = pub;
 			this.defaults = defaults;
-			const { local_reach: _r, local_url: _u, ...sel } = defaults;
+			const { local_reach: _r, local_url: _u, notes_images: _i, ...sel } = defaults;
 			const pending = this.pending[id] ?? [];
 			delete this.pending[id];
 			this.target = sel.where === 'host' && (this.publishHost || defaults.host_url) ? 'host' : 'local';
@@ -230,6 +258,7 @@ export class PublishingState {
 	}
 
 	#reset() {
+		this.#revokeImages();
 		if (this.#timer) clearTimeout(this.#timer);
 		this.#timer = null;
 		this.#previewSeq++;
@@ -283,6 +312,37 @@ export class PublishingState {
 		if (!this.selection) return;
 		const k = quoteKey(q);
 		this.setQuotes(this.selection.quotes.map((x) => (quoteKey(x) === k ? { ...x, with_clip: withClip } : x)));
+	}
+
+	/** Tick or untick one of the notes' images; `images` is null while all of them are in. */
+	setImage(sha256: string, on: boolean) {
+		if (!this.selection) return;
+		const chosen = new Set(this.notesImages.map((i) => i.sha256).filter((h) => (h === sha256 ? on : this.imageIncluded(h))));
+		const all = this.notesImages.every((i) => chosen.has(i.sha256));
+		// In the notes' order, so the same choice is always the same request.
+		this.set({ images: all ? null : this.notesImages.map((i) => i.sha256).filter((h) => chosen.has(h)) });
+	}
+
+	/**
+	 * A `blob:` URL for one of the notes' images, for a thumbnail or the preview: fetched once per
+	 * dialog with the connection's headers, revoked when the dialog closes.
+	 */
+	imageUrl(sha256: string): Promise<string> {
+		const id = this.dialogFor;
+		if (!id) return Promise.reject(new Error('The dialog is closed'));
+		let url = this.#imageUrls.get(sha256);
+		if (!url) {
+			url = this.#api.fetchNotesImage(id, sha256).then((blob) => URL.createObjectURL(blob));
+			this.#imageUrls.set(sha256, url);
+			// A failure is not kept: opening the list again tries again.
+			url.catch(() => this.#imageUrls.get(sha256) === url && this.#imageUrls.delete(sha256));
+		}
+		return url;
+	}
+
+	#revokeImages() {
+		for (const url of this.#imageUrls.values()) url.then((u) => URL.revokeObjectURL(u), () => {});
+		this.#imageUrls.clear();
 	}
 
 	/** The selection as the backend takes it for the chosen target. */

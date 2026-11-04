@@ -2,9 +2,10 @@
 // End to end against the committed vectors with real WebCrypto (Node's; jsdom has none).
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { b64urlDecode, b64urlEncode, fromHex, hex } from './format';
 import {
+	createImageLoader,
 	expiredOn,
 	openFile,
 	openHosted,
@@ -28,6 +29,9 @@ const VERSION: number = vec.manifest.version;
 const MANIFEST = b64urlDecode(vec.manifest.blob_b64url);
 const CLIP = b64urlDecode(vec.clip.blob_b64url);
 const CLIP_SHA: string = vec.clip.sha256;
+const IM = vec.image;
+const IMAGES_MANIFEST = b64urlDecode(vec.images_manifest.blob_b64url);
+const IMAGES_VERSION: number = vec.images_manifest.version;
 const BEFORE_EXPIRY = new Date('2026-10-23T12:00:00Z');
 const AFTER_EXPIRY = new Date('2027-02-01T12:00:00Z');
 
@@ -139,6 +143,86 @@ describe('hosted', () => {
 		});
 		const state = ready(await openHosted(at(`#${KEY}`), only.fn, BEFORE_EXPIRY));
 		await expect(state.loadClip(state.manifest.quotes[0].clip!)).rejects.toThrow(/no longer available/);
+	});
+});
+
+describe('images', () => {
+	const hostWithImage = () =>
+		fakeFetch({
+			[`/pub/${ID}`]: { status: 200, body: IMAGES_MANIFEST, headers: { 'X-Pub-Version': String(IMAGES_VERSION) } },
+			[`/pub/${ID}/${IM.sha256}`]: { status: 200, body: b64urlDecode(IM.blob_b64url) }
+		});
+
+	beforeEach(() => {
+		URL.createObjectURL = vi.fn(() => 'blob:image-1');
+		URL.revokeObjectURL = vi.fn();
+	});
+
+	it('fetches an image by its blob address, once, and decrypts it', async () => {
+		const { fn, urls } = hostWithImage();
+		const state = ready(await openHosted(at(`#${KEY}`), fn, BEFORE_EXPIRY));
+		const ref = state.manifest.images![0];
+		expect(urls).toEqual([`/pub/${ID}`]); // nothing yet: images load when shown
+		expect(await state.loadImage(ref)).toBe('blob:image-1');
+		expect(await state.loadImage(ref)).toBe('blob:image-1');
+		expect(urls).toEqual([`/pub/${ID}`, `/pub/${ID}/${IM.sha256}`]);
+		expect(urls.join()).not.toContain(KEY);
+		const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
+		expect(blob.type).toBe('image/webp');
+		expect(hex(new Uint8Array(await blob.arrayBuffer()))).toBe(IM.plaintext_hex);
+		state.loadImage.dispose!();
+		await vi.waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:image-1'));
+	});
+
+	it('reports an image that is gone, and tries again next time', async () => {
+		const only = fakeFetch({
+			[`/pub/${ID}`]: { status: 200, body: IMAGES_MANIFEST, headers: { 'X-Pub-Version': String(IMAGES_VERSION) } }
+		});
+		const state = ready(await openHosted(at(`#${KEY}`), only.fn, BEFORE_EXPIRY));
+		const ref = state.manifest.images![0];
+		await expect(state.loadImage(ref)).rejects.toThrow(/no longer available/);
+		await expect(state.loadImage(ref)).rejects.toThrow(/no longer available/);
+		expect(only.urls.filter((u) => u.endsWith(IM.sha256)).length).toBe(2);
+	});
+
+	it('refuses a malformed address or a type that is not WebP or JPEG', async () => {
+		const { fn, urls } = hostWithImage();
+		const state = ready(await openHosted(at(`#${KEY}`), fn, BEFORE_EXPIRY));
+		const ref = state.manifest.images![0];
+		await expect(state.loadImage({ ...ref, id: 'a'.repeat(64), sha256: '../x' })).rejects.toThrow(/malformed/);
+		await expect(state.loadImage({ ...ref, id: 'b'.repeat(64), mime: 'image/svg+xml' })).rejects.toThrow(/unknown type/);
+		expect(urls).toEqual([`/pub/${ID}`]);
+	});
+
+	it('reads images from the file itself, without fetching', async () => {
+		const spy = vi.spyOn(globalThis, 'fetch');
+		const payload: FilePayload = {
+			format: 1,
+			id: ID,
+			version: IMAGES_VERSION,
+			manifest: vec.images_manifest.blob_b64url,
+			clips: {},
+			images: { [IM.sha256]: IM.blob_b64url },
+			key: KEY
+		};
+		expect(parsePayload(JSON.stringify(payload))).toEqual(payload);
+		const state = ready(await openFile(JSON.stringify(payload), BEFORE_EXPIRY));
+		expect(await state.loadImage(state.manifest.images![0])).toBe('blob:image-1');
+		expect(spy).not.toHaveBeenCalled();
+		spy.mockRestore();
+		// A file without the blob says so; a damaged images table is a damaged file.
+		const bare = ready(await openFile(JSON.stringify({ ...payload, images: undefined }), BEFORE_EXPIRY));
+		await expect(bare.loadImage(bare.manifest.images![0])).rejects.toThrow(/not in the file/);
+		expect(() => parsePayload(JSON.stringify({ ...payload, images: { abc: 'x' } }))).toThrow(/damaged/);
+		expect(() => parsePayload(JSON.stringify({ ...payload, images: [] }))).toThrow(/damaged/);
+	});
+
+	it('makes one URL per image id, even for concurrent asks', async () => {
+		const open = vi.fn(async () => new Uint8Array([1]));
+		const load = createImageLoader(open);
+		const ref = { id: 'a'.repeat(64), sha256: 'b'.repeat(64), size: 1, mime: 'image/jpeg', v: 1, width: 1, height: 1 };
+		await Promise.all([load(ref), load(ref)]);
+		expect(open).toHaveBeenCalledTimes(1);
 	});
 });
 

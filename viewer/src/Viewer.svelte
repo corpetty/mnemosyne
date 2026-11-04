@@ -44,7 +44,7 @@
 
 <main class="mx-auto w-full max-w-3xl px-4 py-8 sm:py-12">
 	{#if view.kind === 'ready'}
-		<Meeting manifest={view.manifest} loadClip={view.loadClip} />
+		<Meeting manifest={view.manifest} loadClip={view.loadClip} loadImage={view.loadImage} />
 	{:else if view.kind === 'password'}
 		<form class="mx-auto mt-12 max-w-sm space-y-3" onsubmit={unlock}>
 			<h1 class="text-lg font-semibold text-gray-100">This meeting is protected with a password</h1>

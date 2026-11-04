@@ -21,7 +21,7 @@ export const PBKDF2_ITERATIONS = 600_000;
 export const PBKDF2_MIN_ITERATIONS = 100_000;
 export const PBKDF2_MAX_ITERATIONS = 10_000_000;
 
-export type Kind = 'manifest' | 'clip';
+export type Kind = 'manifest' | 'clip' | 'image';
 
 // ---- manifest types (mirror Manifest in publication_format.py; no transcript field) ------
 
@@ -32,6 +32,18 @@ export interface ClipRef {
   mime: string;
   /** The version that first uploaded this clip; part of its AAD. */
   v: number;
+}
+/** An image of the notes. `id` is the sha-256 of the image bytes (what the notes text names in
+ * `mnemosyne:image/<id>.<ext>@<w>x<h>`), `sha256` the sealed blob's address. */
+export interface ImageRef {
+  id: string;
+  sha256: string;
+  size: number;
+  mime: string;
+  /** The version that first uploaded this image; part of its AAD. */
+  v: number;
+  width: number;
+  height: number;
 }
 export interface Decision {
   id: string;
@@ -79,6 +91,8 @@ export interface Manifest {
   attendees: string[];
   topics: string[];
   notes: string | null;
+  /** The images the notes show; absent from a publication without any. */
+  images?: ImageRef[];
   quotes: Quote[];
 }
 
@@ -149,7 +163,7 @@ export function unpad(padded: Uint8Array, block: number): Uint8Array {
 }
 
 export function aad(id: string, kind: Kind, version: number): Uint8Array {
-  if (kind !== 'manifest' && kind !== 'clip') {
+  if (kind !== 'manifest' && kind !== 'clip' && kind !== 'image') {
     throw new PublicationFormatError(`Unknown blob kind ${String(kind)}`);
   }
   return new TextEncoder().encode(`${AAD_PREFIX}|${id}|${kind}|${version}`);
@@ -241,6 +255,23 @@ export async function openClip(
     throw new PublicationFormatError('The clip does not match its address');
   }
   return openBlob('clip', id, clip.v, blob, key);
+}
+
+/** Open an image blob (version `ref.v`), checking its address and that its bytes hash to `ref.id`. */
+export async function openImage(
+  id: string,
+  ref: ImageRef,
+  blob: Uint8Array,
+  key: Uint8Array
+): Promise<Uint8Array> {
+  if ((await blobHash(blob)) !== ref.sha256) {
+    throw new PublicationFormatError('The image does not match its address');
+  }
+  const data = await openBlob('image', id, ref.v, blob, key);
+  if (!/^[0-9a-f]{64}$/.test(ref.id) || (await blobHash(data)) !== ref.id) {
+    throw new PublicationFormatError('The image does not match its hash');
+  }
+  return data;
 }
 
 // ---- a key from a password ---------------------------------------------------------------

@@ -22,7 +22,7 @@
 	import type { PublicationSelection, QuoteSpan } from '$lib/types/index.js';
 	import PartPicker from './PartPicker.svelte';
 	import Meeting from '../../../viewer/src/Meeting.svelte';
-	import type { Manifest } from '../../../viewer/src/format';
+	import type { ImageRef, Manifest } from '../../../viewer/src/format';
 
 	// Publish a meeting (backend services/publishing.py): the choices on the left, the viewer's
 	// own rendering of the result on the right, refreshed as they change.
@@ -80,6 +80,17 @@
 	/** The preview renders clips from the list on the left, which plays this backend's audio. */
 	async function previewClip(): Promise<Uint8Array> {
 		throw new Error('Listen to it under Quotes, on the left');
+	}
+
+	/** The preview's pictures come from this backend's notes, fetched with the connection's headers. */
+	function previewImage(image: ImageRef): Promise<string> {
+		return pub.imageUrl(image.id);
+	}
+
+	function sizeLabel(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 	}
 
 	async function primary() {
@@ -159,6 +170,36 @@
 						sel={sel as unknown as Record<string, boolean>}
 						onchange={(key, value) => pub.set({ [key]: value })}
 					/>
+
+					{#if sel.notes && pub.notesImages.length}
+						<section aria-label="Images in the notes">
+							<h4 class={groupHeading}>Images in the notes</h4>
+							<ul class="space-y-1.5">
+								{#each pub.notesImages as image (image.sha256)}
+									<li>
+										<label class="flex items-center gap-2 text-gray-300">
+											<input
+												type="checkbox"
+												class={check}
+												checked={pub.imageIncluded(image.sha256)}
+												onchange={(e) => pub.setImage(image.sha256, e.currentTarget.checked)}
+											/>
+											{#await pub.imageUrl(image.sha256)}
+												<span class="h-10 w-10 shrink-0 rounded bg-gray-800" aria-hidden="true"></span>
+											{:then url}
+												<img src={url} alt="" class="h-10 w-10 shrink-0 rounded bg-gray-800 object-cover" />
+											{:catch}
+												<span class="h-10 w-10 shrink-0 rounded bg-gray-800" aria-hidden="true"></span>
+											{/await}
+											<span class="min-w-0 flex-1 truncate text-xs {image.caption ? '' : 'text-gray-500'}">{image.caption || 'No caption'}</span>
+											<span class="shrink-0 text-xs text-gray-500">{sizeLabel(image.size)}</span>
+										</label>
+									</li>
+								{/each}
+							</ul>
+							<p class="mt-1.5 text-xs text-gray-500">A left-out image shows as its caption in brackets.</p>
+						</section>
+					{/if}
 
 					<section aria-label="Quotes">
 						<h4 class={groupHeading}>Quotes</h4>
@@ -292,7 +333,7 @@
 					</p>
 					<div class="max-h-[70vh] overflow-y-auto rounded-lg border border-gray-800 bg-gray-950 p-4">
 						{#if manifest}
-							<Meeting {manifest} loadClip={previewClip} preview />
+							<Meeting {manifest} loadClip={previewClip} loadImage={previewImage} preview />
 						{:else if !pub.previewError}
 							<p class="text-sm text-gray-500">Loading the preview…</p>
 						{/if}
