@@ -8,6 +8,7 @@ import {
   cpSlice,
   decodeAlign,
   encodeAlign,
+  IMAGE,
   ensureTerminated,
   lineAt,
   lines,
@@ -133,6 +134,50 @@ describe('lines()', () => {
     expect(ls[1].text).toBe('tail');
     expect(ensureTerminated(A.doc)).toBe(true);
     expect(lines(A.doc)[1].id).toBeTruthy();
+  });
+});
+
+describe('image lines', () => {
+  const A = '3f0c5aa1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5ca9.webp@1600x900';
+  const B = '00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff.jpeg@640x480';
+
+  it('reads a valid value on an image line; the text is the caption', () => {
+    const C = single();
+    C.web.textInsert(C.doc.obj, 0, 'The board\nnext\n');
+    C.web.markRangeClosed(C.doc.obj, 9, 10, BLOCK, 'image');
+    C.web.markRangeClosed(C.doc.obj, 9, 10, IMAGE, A);
+    const ls = lines(C.doc);
+    expect(ls[0]).toMatchObject({ kind: 'image', image: A, text: 'The board', start: 0, end: 9 });
+    expect(ls[1]).toMatchObject({ kind: null, image: null });
+  });
+
+  it('reads a missing or invalid value as a paragraph, and an image mark elsewhere as nothing', () => {
+    const C = single();
+    C.web.textInsert(C.doc.obj, 0, 'cap\nnext\nlast\n');
+    C.web.markRangeClosed(C.doc.obj, 3, 4, BLOCK, 'image');
+    expect(lines(C.doc)[0]).toMatchObject({ kind: null, kinds: ['image'], image: null });
+    C.web.markRangeClosed(C.doc.obj, 3, 4, IMAGE, 'not-an-image.png');
+    expect(lines(C.doc)[0]).toMatchObject({ kind: null, image: null });
+    // An image mark on a line of another kind means nothing.
+    C.web.markRangeClosed(C.doc.obj, 8, 9, BLOCK, 'bullet');
+    C.web.markRangeClosed(C.doc.obj, 8, 9, IMAGE, A);
+    expect(lines(C.doc)[1]).toMatchObject({ kind: 'bullet', image: null });
+    // A plain line with an image mark is plain.
+    C.web.markRangeClosed(C.doc.obj, 13, 14, IMAGE, A);
+    expect(lines(C.doc)[2]).toMatchObject({ kind: null, image: null });
+  });
+
+  it('two live values resolve to the first on every replica', () => {
+    const { relay, A: X, B: Y } = pair();
+    X.web.textInsert(X.doc.obj, 0, 'cap\n');
+    X.web.markRangeClosed(X.doc.obj, 3, 4, BLOCK, 'image');
+    relay.settle();
+    X.web.markRangeClosed(X.doc.obj, 3, 4, IMAGE, A);
+    Y.web.markRangeClosed(Y.doc.obj, 3, 4, IMAGE, B);
+    relay.settle();
+    const [x, y] = [lines(X.doc)[0], lines(Y.doc)[0]];
+    expect(x.image).toBe(y.image);
+    expect([A, B]).toContain(x.image);
   });
 });
 
