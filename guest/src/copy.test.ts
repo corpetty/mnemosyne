@@ -2,7 +2,7 @@
 // dependency of this repo, so only the shape checks, the expiry rule, the in-memory store and the
 // "no indexedDB means a no-op" promise of the real one are.
 import { describe, expect, it } from 'vitest';
-import { IndexedDbCopyStore, MemoryCopyStore, expired, validRec, type CopyRec } from './copy';
+import { IndexedDbCopyStore, MemoryCopyStore, expired, validMediaRec, validRec, type CopyRec } from './copy';
 
 const rec = (over: Partial<CopyRec> = {}): CopyRec => ({
   envelope: new Uint8Array([3, 1, 2, 3]),
@@ -34,6 +34,43 @@ describe('MemoryCopyStore', () => {
     await s.save('a', r);
     r.envelope[0] = 0;
     expect((await s.load('a'))!.envelope[0]).toBe(3);
+  });
+});
+
+describe('MemoryCopyStore media', () => {
+  const name = 'ab'.repeat(32);
+  it('keeps sealed images by room and name, as their own bytes', async () => {
+    const s = new MemoryCopyStore();
+    expect(await s.getMedia('a', name)).toBeNull();
+    const env = new Uint8Array([6, 1, 2]);
+    await s.putMedia('a', name, env);
+    env[0] = 0;
+    expect(Array.from((await s.getMedia('a', name))!)).toEqual([6, 1, 2]);
+    expect(await s.getMedia('b', name)).toBeNull();
+    expect(await s.getMedia('a', 'cd'.repeat(32))).toBeNull();
+  });
+  it('remove(room) takes the room\'s images with the copy and no others', async () => {
+    const s = new MemoryCopyStore();
+    await s.save('a', rec());
+    await s.save('ab', rec());
+    await s.putMedia('a', name, new Uint8Array([6]));
+    await s.putMedia('ab', name, new Uint8Array([6]));
+    await s.remove('a');
+    expect(await s.load('a')).toBeNull();
+    expect(await s.getMedia('a', name)).toBeNull();
+    expect(await s.getMedia('ab', name)).not.toBeNull(); // another room whose id starts the same
+    expect(await s.load('ab')).not.toBeNull();
+  });
+});
+
+describe('validMediaRec', () => {
+  it('takes the envelope and the time, nothing else', () => {
+    const v = validMediaRec({ envelope: new Uint8Array([6]), saved_at: 'x', extra: 1 });
+    expect(v).toEqual({ envelope: new Uint8Array([6]), saved_at: 'x' });
+    expect(validMediaRec(null)).toBeNull();
+    expect(validMediaRec({ envelope: new Uint8Array(), saved_at: 'x' })).toBeNull();
+    expect(validMediaRec({ envelope: [6], saved_at: 'x' })).toBeNull();
+    expect(validMediaRec({ envelope: new Uint8Array([6]) })).toBeNull();
   });
 });
 
@@ -70,5 +107,7 @@ describe('IndexedDbCopyStore without IndexedDB', () => {
     await s.save('a', rec());
     expect(await s.load('a')).toBeNull();
     await s.remove('a');
+    await s.putMedia('a', 'ab'.repeat(32), new Uint8Array([6]));
+    expect(await s.getMedia('a', 'ab'.repeat(32))).toBeNull();
   });
 });

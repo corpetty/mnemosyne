@@ -9,11 +9,13 @@ import { insertText, setLink } from '$lib/notes/commands.js';
 import { ARTIFACT_TAG, DELTA_TAG, drain } from '$lib/notes/sync.js';
 import { MemoryCopyStore, type CopyRec } from './copy';
 import { DEBOUNCE_MS, GuestDoc, parseMeta, PRESENCE_TTL_MS, SEL_EVERY_MS, cleanSel, type GuestDocOptions } from './doc';
+import type { UrlMaker } from './media';
 import { createGuestPresence } from './presence';
 import {
   Kind,
   b64urlEncode,
   deriveKeys,
+  mediaName,
   newKey,
   newRoom,
   sealJson,
@@ -75,6 +77,10 @@ class HostSocket implements RoomSocket {
   }
 }
 
+function hexBytes(h: string): Uint8Array {
+  return Uint8Array.from(h.match(/../g)!, (x) => parseInt(x, 16));
+}
+
 function tagged(tag: number, seq: number | null, env: Uint8Array): Uint8Array {
   const head = seq === null ? 1 : 9;
   const out = new Uint8Array(head + env.length);
@@ -96,6 +102,11 @@ class Host {
   noAcks = false;
   /** Every presence envelope a client sent, in order. */
   presences: Uint8Array[] = [];
+  /** Sealed images by name (hex), and the names clients asked for. */
+  media = new Map<string, Uint8Array>();
+  mediaGets: string[] = [];
+  /** Refuse every media put with this error code. */
+  mediaRefusal: string | null = null;
   Socket: new (url: string) => HostSocket;
 
   constructor(
@@ -123,12 +134,31 @@ class Host {
     if (typeof data === 'string') {
       if (data === 'ping') return s.deliver('pong');
       const msg = JSON.parse(data);
+      if (msg.type === 'get_media') {
+        const blob = s.joined ? this.media.get(msg.name) : undefined;
+        if (!blob) return s.json({ type: 'error', code: 'media_missing', name: msg.name });
+        const out = new Uint8Array(33 + blob.length);
+        out[0] = 0x05;
+        out.set(hexBytes(msg.name), 1);
+        out.set(blob, 33);
+        this.mediaGets.push(msg.name);
+        return s.deliver(out);
+      }
       if (msg.type !== 'join' || msg.token !== this.keys.roomToken) return s.drop(4401);
       this.join(s, msg.since);
       return;
     }
     if (!s.joined) return s.drop(4401);
     const env = data.slice(1);
+    if (data[0] === 0x04) {
+      const name = Array.from(data.subarray(1, 33), (x) => x.toString(16).padStart(2, '0')).join('');
+      if (this.mediaRefusal) return s.json({ type: 'error', code: this.mediaRefusal, name });
+      if (!this.media.has(name)) {
+        this.media.set(name, data.slice(33));
+        for (const o of this.live) if (o !== s) o.json({ type: 'media', name });
+      }
+      return s.json({ type: 'media', name, ok: true });
+    }
     if (data[0] === 0x01) {
       if (this.endedAt !== null) return s.drop(4403);
       if (this.deaf) return;
@@ -924,6 +954,151 @@ describe('GuestDoc saved copy', () => {
     expect(text(B)).toContain('newer\n');
     expect(B.applyLocal((d) => insertText(d, 0, 'x'))).not.toBeUndefined();
     expect(copies.copies.has(host.room)).toBe(true);
+  });
+});
+
+// ---- images ----------------------------------------------------------------------------------
+
+describe('GuestDoc images', () => {
+  const sha256 = async (b: Uint8Array) =>
+    Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', b as BufferSource)), (x) =>
+      x.toString(16).padStart(2, '0')
+    ).join('');
+  const webp = (fill: number): Uint8Array => {
+    const b = new Uint8Array(200).fill(fill);
+    b.set([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+    return b;
+  };
+  const prepared = async (bytes: Uint8Array) => ({ bytes, ext: 'webp' as const, w: 4, h: 4, sha: await sha256(bytes) });
+  class Urls implements UrlMaker {
+    made = new Map<string, Uint8Array>();
+    create(bytes: Uint8Array): string {
+      const u = `blob:doc/${this.made.size + 1}`;
+      this.made.set(u, bytes);
+      return u;
+    }
+    revoke(): void {}
+  }
+  const same = (a: Uint8Array | undefined, b: Uint8Array) => !!a && Buffer.from(a).equals(Buffer.from(b));
+  async function until(cond: () => boolean): Promise<void> {
+    for (let i = 0; i < 400 && !cond(); i++) await tick();
+    if (!cond()) throw new Error('did not happen');
+  }
+
+  it("one guest's image reaches another through the room, sealed under the media name", async () => {
+    const host = await Host.create();
+    const au = new Urls();
+    const bu = new Urls();
+    const A = guest(host, 'Ana', { urls: au });
+    const B = guest(host, 'Ben', { urls: bu });
+    await settle(host, A, B);
+    const img = await prepared(webp(5));
+    await A.media.upload(img);
+    expect(A.media.state(img.sha)).toBeNull();
+    // the room holds one sealed blob under the HMAC name; the host cannot read the sha from it
+    const name = await mediaName(host.keys, img.sha);
+    expect([...host.media.keys()]).toEqual([name]);
+    expect(name).not.toContain(img.sha);
+    // B learns the sha from the notes, asks for it and gets the bytes
+    expect(B.media.url(img.sha)).toBeNull();
+    await until(() => B.media.url(img.sha) !== null);
+    expect(same(bu.made.get(B.media.url(img.sha)!), img.bytes)).toBe(true);
+    expect(host.mediaGets).toEqual([name]);
+    expect(same(au.made.get(A.media.url(img.sha)!), img.bytes)).toBe(true);
+  });
+
+  it('a guest waiting for an image gets it at once when the host announces it', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana', { urls: new Urls() });
+    const bu = new Urls();
+    const B = guest(host, 'Ben', { urls: bu });
+    await settle(host, A, B);
+    const img = await prepared(webp(6));
+    expect(B.media.url(img.sha)).toBeNull(); // not in the room yet: media_missing, retry in 10 s
+    await tick(20); // the miss is answered; the next ask would be 10 s away
+    await A.media.upload(img); // the broadcast reaches B
+    await until(() => B.media.url(img.sha) !== null);
+    expect(same(bu.made.get(B.media.url(img.sha)!), img.bytes)).toBe(true);
+  });
+
+  it('a reload reads the image from the copy kept in the browser, not from the room', async () => {
+    const host = await Host.create();
+    const copies = new MemoryCopyStore();
+    const A = guest(host, 'Ana', { urls: new Urls() });
+    const B = guest(host, 'Ben', { copies, urls: new Urls() });
+    await settle(host, A, B);
+    const img = await prepared(webp(7));
+    await A.media.upload(img);
+    B.media.url(img.sha);
+    await until(() => B.media.url(img.sha) !== null);
+    await B.idle();
+    const name = await mediaName(host.keys, img.sha);
+    expect(copies.media.has(`${host.room}/${name}`)).toBe(true);
+    B.destroy();
+
+    host.media.clear(); // the owner's computer is off / the room lost it
+    host.mediaGets = [];
+    const cu = new Urls();
+    const C = guest(host, 'Ben', { copies, urls: cu });
+    await settle(host, C);
+    C.media.url(img.sha);
+    await until(() => C.media.url(img.sha) !== null);
+    expect(host.mediaGets).toEqual([]);
+    expect(same(cu.made.get(C.media.url(img.sha)!), img.bytes)).toBe(true);
+  });
+
+  it("a refused upload is 'failed' and rejects; the image stays shown; retry works", async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana', { urls: new Urls() });
+    await settle(host, A);
+    const img = await prepared(webp(8));
+    host.mediaRefusal = 'room_media_full';
+    await expect(A.media.upload(img)).rejects.toMatchObject({ code: 'room_media_full' });
+    expect(A.media.state(img.sha)).toBe('failed');
+    expect(A.media.url(img.sha)).not.toBeNull();
+    expect(host.media.size).toBe(0);
+    host.mediaRefusal = null;
+    await A.media.upload(img);
+    expect(A.media.state(img.sha)).toBeNull();
+    expect(host.media.size).toBe(1);
+  });
+
+  it('an upload made while the connection is down goes out after the reconnect', async () => {
+    const host = await Host.create();
+    const A = guest(host, 'Ana', { urls: new Urls() });
+    await settle(host, A);
+    socketOf(host, A).drop(1006);
+    const img = await prepared(webp(9));
+    const done = A.media.upload(img);
+    expect(host.media.size).toBe(0);
+    A.reconnect();
+    await settle(host, A);
+    await done;
+    expect(host.media.size).toBe(1);
+  });
+
+  it('the room being gone removes its images from the copy; so does an expired copy', async () => {
+    const host = await Host.create();
+    const copies = new MemoryCopyStore();
+    const A = guest(host, 'Ana', { copies, urls: new Urls() });
+    await settle(host, A);
+    const img = await prepared(webp(3));
+    await A.media.upload(img);
+    expect(copies.media.size).toBe(1);
+    socketOf(host, A).drop(4410);
+    await settle(host, A);
+    expect(A.status).toBe('gone');
+    expect(copies.media.size).toBe(0);
+
+    // an expired copy: opening the saved copy forgets it, images included
+    const { host: h2, env } = await withSnapshot();
+    const c2 = new MemoryCopyStore();
+    await c2.save(h2.room, savedRec(env, { expires: new Date(Date.now() - 1000).toISOString() }));
+    await c2.putMedia(h2.room, 'ab'.repeat(32), new Uint8Array([6, 1]));
+    const B = guest(h2, 'Ben', { copies: c2, webSocket: gated(h2, { down: true, code: 1006 }), offlineMs: 20 });
+    await settle(h2, B);
+    expect(c2.copies.size).toBe(0);
+    expect(c2.media.size).toBe(0);
   });
 });
 

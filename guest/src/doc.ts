@@ -28,6 +28,7 @@ import { ARTIFACT_TAG, DELTA_TAG, applyRemote, drain } from '$lib/notes/sync.js'
 import { WasmHashWeb } from '$lib/notes/wasm.js';
 import { defaultCopyStore, expired, type CopyRec, type CopyStore } from './copy';
 import { Kind, b64urlDecode, parseNotes, sealJson, sealNotes, unseal, type GuestKeys } from './format';
+import { GuestMedia, type UrlMaker } from './media';
 import { RoomClient, roomUrl, type RoomSocketCtor, type RoomState, type RoomTransport, type Welcome } from './room';
 
 export type GuestStatus =
@@ -170,6 +171,8 @@ export interface GuestDocOptions {
   /** A guest's comment op relayed by the room (create/reply/edit/delete; not `threads`). */
   onGuestComment?: (op: Record<string, unknown>) => void;
   now?: () => number;
+  /** How images become URLs (tests); defaults to object URLs. */
+  urls?: UrlMaker;
 }
 
 /** Apply one frame without sending anything. */
@@ -287,6 +290,8 @@ export class GuestDoc {
   onGuestComment: ((op: Record<string, unknown>) => void) | undefined;
 
   readonly room: RoomClient;
+  /** The notes' images (the editor's MediaProvider): sealed blobs in the room, kept in the saved copy. */
+  readonly media: GuestMedia;
   private readonly roomId: string;
   private readonly keys: GuestKeys;
   private readonly url: string;
@@ -370,11 +375,21 @@ export class GuestDoc {
         },
         onEnded: (endedAt, expires) => this.markEnded(endedAt, expires),
         onState: (s) => this.onRoomState(s),
+        onMedia: (name) => this.media.heard(name),
         onTransport: () => this.notify(),
         onUnreachable: () => this.offline()
       },
       { webSocket: opts.webSocket, probe: opts.probe }
     );
+    this.media = new GuestMedia({
+      room: this.roomId,
+      keys: this.keys,
+      transport: this.room,
+      copies: this.store,
+      // A blob goes into the saved copy only while the copy can exist (it needs the room's expiry).
+      keep: () => !!this.expires && this.expires > 0 && this.room.state !== 'gone',
+      urls: opts.urls
+    });
   }
 
   // ---- state ---------------------------------------------------------------------------------
@@ -454,6 +469,7 @@ export class GuestDoc {
     if (this.onPageHide && typeof window !== 'undefined') window.removeEventListener('pagehide', this.onPageHide);
     this.onPageHide = null;
     this.room.close();
+    this.media.dispose();
     for (const done of this.syncWaiters.splice(0)) done();
   }
 

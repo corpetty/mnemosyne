@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEAD_MS,
+  MAX_GETS,
+  MediaError,
   PING_MS,
   RECONNECT_MS,
   ROOM_CLOSE,
@@ -98,6 +100,7 @@ function make(opts: { probe?: () => Promise<'gone' | 'full' | null> } = {}): { r
     onCaughtUp: () => log.events.push('caught_up'),
     onEnded: (at, exp) => log.events.push(`ended:${at}:${exp}`),
     onError: (code) => log.events.push(`error:${code}`),
+    onMedia: (name) => log.events.push(`media:${name.slice(0, 4)}`),
     onState: (s) => log.states.push(s)
   };
   const room = new RoomClient(h, { webSocket: FakeSocket, probe: opts.probe });
@@ -381,5 +384,159 @@ describe('RoomClient', () => {
     expect(room.state).toBe('closed');
     await vi.advanceTimersByTimeAsync(60_000);
     expect(FakeSocket.all.length).toBe(1);
+  });
+});
+
+
+describe('RoomClient media', () => {
+  const hex = (n: number) => n.toString(16).padStart(2, '0').repeat(32);
+  const raw = (n: number) => new Uint8Array(32).fill(n);
+  const blobEnv = new Uint8Array([6, 1, 2, 3, 4]);
+
+  function joined() {
+    const m = make();
+    m.room.connect('ws://h/live/r', 'tok');
+    last().accept();
+    last().json(welcome());
+    return m;
+  }
+  const gets = (s: FakeSocket) =>
+    s.sent
+      .filter((x): x is string => typeof x === 'string' && x.startsWith('{'))
+      .map((x) => JSON.parse(x))
+      .filter((x) => x.type === 'get_media')
+      .map((x) => x.name as string);
+  const puts = (s: FakeSocket) => s.binaries.filter((b) => b[0] === 0x04);
+  const settled = async (p: Promise<unknown>) => p.then(() => 'ok', (e) => (e instanceof MediaError ? e.code : String(e)));
+
+  it('puts 0x04 || name || envelope and resolves on the ok answer', async () => {
+    const { room } = joined();
+    const done = room.putMedia(hex(0xab), blobEnv);
+    const [out] = puts(last());
+    expect(out.length).toBe(33 + blobEnv.length);
+    expect(Array.from(out.subarray(1, 33))).toEqual(Array.from(raw(0xab)));
+    expect(Array.from(out.subarray(33))).toEqual(Array.from(blobEnv));
+    last().json({ type: 'media', name: hex(0xcd), ok: true }); // another name: nothing
+    last().json({ type: 'media', name: hex(0xab), ok: true });
+    await expect(done).resolves.toBeUndefined();
+    // answered: not sent again after a reconnect
+    last().serverClose(1006);
+    vi.advanceTimersByTime(RECONNECT_MS[0]);
+    last().accept();
+    last().json(welcome());
+    expect(puts(last())).toHaveLength(0);
+  });
+
+  it('rejects a put on the host error that names it, and keeps the socket', async () => {
+    const { room } = joined();
+    const a = settled(room.putMedia(hex(1), blobEnv));
+    const b = settled(room.putMedia(hex(2), blobEnv));
+    const c = settled(room.putMedia(hex(3), blobEnv));
+    last().json({ type: 'error', code: 'media_too_large', name: hex(1) });
+    last().json({ type: 'error', code: 'room_media_full', name: hex(2) });
+    last().json({ type: 'media', name: hex(3), ok: true });
+    expect(await Promise.all([a, b, c])).toEqual(['media_too_large', 'room_media_full', 'ok']);
+    expect(room.state).toBe('live');
+  });
+
+  it('keeps a put made while not joined and sends it after the welcome, again after a reconnect', async () => {
+    const { room } = make();
+    room.connect('ws://h/live/r', 'tok');
+    const done = room.putMedia(hex(5), blobEnv); // before the socket is open
+    last().accept();
+    expect(puts(last())).toHaveLength(0);
+    last().json(welcome());
+    expect(puts(last())).toHaveLength(1);
+    // the socket dies before the answer: the next welcome sends it again
+    last().serverClose(1006);
+    vi.advanceTimersByTime(RECONNECT_MS[0]);
+    last().accept();
+    last().json(welcome());
+    expect(puts(last())).toHaveLength(1);
+    last().json({ type: 'media', name: hex(5), ok: true });
+    await expect(done).resolves.toBeUndefined();
+  });
+
+  it('gets a blob: text get_media out, 0x05 || name || envelope in', async () => {
+    const { room } = joined();
+    const got = room.getMedia(hex(9));
+    expect(gets(last())).toEqual([hex(9)]);
+    last().bin(tagged(0x05, null, new Uint8Array([...raw(0x08), 7, 7]))); // someone else's name: ignored
+    last().bin(tagged(0x05, null, new Uint8Array([...raw(0x09), ...blobEnv])));
+    expect(Array.from(await got)).toEqual(Array.from(blobEnv));
+  });
+
+  it('shares one request between asks of the same name; media_missing rejects them all', async () => {
+    const { room } = joined();
+    const a = settled(room.getMedia(hex(4)));
+    const b = settled(room.getMedia(hex(4)));
+    expect(gets(last())).toEqual([hex(4)]);
+    last().json({ type: 'error', code: 'media_missing', name: hex(4) });
+    expect(await Promise.all([a, b])).toEqual(['media_missing', 'media_missing']);
+    // and may be asked again
+    const again = room.getMedia(hex(4));
+    expect(gets(last())).toEqual([hex(4), hex(4)]);
+    last().bin(tagged(0x05, null, new Uint8Array([...raw(4), ...blobEnv])));
+    await again;
+  });
+
+  it('has at most MAX_GETS asks in flight; each answer lets the next go', async () => {
+    const { room } = joined();
+    const all = Array.from({ length: MAX_GETS + 3 }, (_, i) => settled(room.getMedia(hex(i + 1))));
+    expect(gets(last())).toHaveLength(MAX_GETS);
+    last().json({ type: 'error', code: 'media_missing', name: hex(1) });
+    expect(gets(last())).toHaveLength(MAX_GETS + 1);
+    last().bin(tagged(0x05, null, new Uint8Array([...raw(2), 1])));
+    last().bin(tagged(0x05, null, new Uint8Array([...raw(3), 1])));
+    expect(gets(last())).toHaveLength(MAX_GETS + 3);
+    expect(gets(last()).slice(-3)).toEqual([hex(21), hex(22), hex(23)]);
+    for (let i = 4; i <= MAX_GETS + 3; i++) last().bin(tagged(0x05, null, new Uint8Array([...raw(i), 1])));
+    const r = await Promise.all(all);
+    expect(r[0]).toBe('media_missing');
+    expect(r.slice(1)).toEqual(Array(MAX_GETS + 2).fill('ok'));
+  });
+
+  it('asks again after media_busy, and again for asks lost with the socket', async () => {
+    const { room } = joined();
+    const got = room.getMedia(hex(7));
+    last().json({ type: 'error', code: 'media_busy', name: hex(7) });
+    expect(gets(last())).toHaveLength(1);
+    vi.advanceTimersByTime(300);
+    expect(gets(last())).toHaveLength(2);
+    last().serverClose(1006);
+    vi.advanceTimersByTime(RECONNECT_MS[0]);
+    last().accept();
+    last().json(welcome());
+    expect(gets(last())).toEqual([hex(7)]);
+    last().bin(tagged(0x05, null, new Uint8Array([...raw(7), ...blobEnv])));
+    expect(Array.from(await got)).toEqual(Array.from(blobEnv));
+  });
+
+  it('tells the handler about a blob that landed (a media message without ok)', () => {
+    const { log } = joined();
+    last().json({ type: 'media', name: hex(0xee) });
+    last().json({ type: 'media', name: 'nonsense' });
+    expect(log.events).toContain('media:eeee');
+    expect(log.events.filter((e) => e.startsWith('media:'))).toHaveLength(1);
+  });
+
+  it('refuses a bad name, rejects pending asks when the room is closed or gone, and puts when it ended', async () => {
+    const { room } = joined();
+    expect(await settled(room.putMedia('xyz', blobEnv))).toBe('bad_name');
+    expect(await settled(room.getMedia(hex(0xab).toUpperCase()))).toBe('bad_name');
+    const get = settled(room.getMedia(hex(1)));
+    const put = settled(room.putMedia(hex(2), blobEnv));
+    last().json({ type: 'ended', ended_at: 5, expires: 9 });
+    expect(await put).toBe('room_ended');
+    expect(await settled(room.putMedia(hex(3), blobEnv))).toBe('room_ended');
+    room.close();
+    expect(await get).toBe('closed');
+    expect(await settled(room.getMedia(hex(1)))).toBe('closed');
+
+    const g = joined();
+    const pending = settled(g.room.getMedia(hex(5)));
+    last().serverClose(4410);
+    expect(g.room.state).toBe('gone');
+    expect(await pending).toBe('closed');
   });
 });
