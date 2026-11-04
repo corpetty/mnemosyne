@@ -10,6 +10,7 @@ viewer's (viewer/src/format.test.ts), so the two implementations cannot drift ap
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -22,10 +23,19 @@ KEY = bytes(range(32))
 MANIFEST_NONCE = bytes(range(0xA0, 0xAC))
 CLIP_NONCE = bytes(range(0xB0, 0xBC))
 PASSWORD_NONCE = bytes(range(0xC0, 0xCC))
+IMAGE_NONCE = bytes(range(0xD0, 0xDC))
+IMAGES_MANIFEST_NONCE = bytes(range(0xE0, 0xEC))
 PASSWORD = "pässwörd 🔑 ключ"
 SALT = bytes(range(0x10, 0x20))
 CLIP_FIRST_VERSION = 1
 MANIFEST_VERSION = 2
+IMAGE_FIRST_VERSION = 1
+IMAGES_MANIFEST_VERSION = 3
+# Not a decodable image: the format only seals bytes and checks their SHA-256 (`ImageRef.id`).
+IMAGE_BYTES = (
+    b"RIFF\x24\x00\x00\x00WEBPVP8 fake webp bytes for the test vectors \xf0\x9f\x96\xbc" * 2
+)
+IMAGE_WIDTH, IMAGE_HEIGHT = 640, 480
 CLIP_BYTES = b"OggS\x00fake opus bytes for the test vectors \xf0\x9f\x8e\xb5" * 3
 
 
@@ -70,6 +80,35 @@ def build() -> dict:
     )
     plaintext = pf.manifest_bytes(manifest)
     blob, sha = pf.seal_manifest(manifest, KEY, nonce=MANIFEST_NONCE)
+    image_id = hashlib.sha256(IMAGE_BYTES).hexdigest()
+    image_blob, image_sha = pf.seal_image(
+        ID, IMAGE_FIRST_VERSION, IMAGE_BYTES, KEY, nonce=IMAGE_NONCE
+    )
+    # A later version of the meeting: the notes show the image (kept) and another (left out), the
+    # image is reused from version 1, and there are no quotes or clips.
+    url = f"mnemosyne:image/{image_id}.webp@{IMAGE_WIDTH}x{IMAGE_HEIGHT}"
+    kept_line = f"![Whiteboard 🧠 \\[draft\\]]({url})"
+    images_manifest = pf.Manifest(
+        id=ID,
+        version=IMAGES_MANIFEST_VERSION,
+        published_at="2026-10-24T09:30:00Z",
+        title="Roadmap sync — with a picture",
+        date="2026-10-22",
+        notes=f"Before the picture\n{kept_line}\n[image: Left out]\nAfter it\n",
+        images=[
+            pf.ImageRef(
+                id=image_id,
+                sha256=image_sha,
+                size=len(IMAGE_BYTES),
+                mime="image/webp",
+                v=IMAGE_FIRST_VERSION,
+                width=IMAGE_WIDTH,
+                height=IMAGE_HEIGHT,
+            )
+        ],
+    )
+    images_plaintext = pf.manifest_bytes(images_manifest)
+    images_blob, images_sha = pf.seal_manifest(images_manifest, KEY, nonce=IMAGES_MANIFEST_NONCE)
     password_key = pf.derive_key(PASSWORD, SALT, pf.PBKDF2_ITERATIONS)
     password_blob, password_sha = pf.seal_manifest(manifest, password_key, nonce=PASSWORD_NONCE)
     return {
@@ -94,6 +133,31 @@ def build() -> dict:
             "padded_length": len(pf.pad(CLIP_BYTES, pf.CLIP_BLOCK)),
             "blob_b64url": pf.b64url_encode(clip_blob),
             "sha256": clip_sha,
+        },
+        "image": {
+            "first_version": IMAGE_FIRST_VERSION,
+            "aad": pf.aad(ID, "image", IMAGE_FIRST_VERSION).decode(),
+            "nonce_hex": IMAGE_NONCE.hex(),
+            "plaintext_hex": IMAGE_BYTES.hex(),
+            "plaintext_sha256": image_id,  # the ImageRef `id`
+            "mime": "image/webp",
+            "width": IMAGE_WIDTH,
+            "height": IMAGE_HEIGHT,
+            "padded_length": len(pf.pad(IMAGE_BYTES, pf.IMAGE_BLOCK)),
+            "blob_b64url": pf.b64url_encode(image_blob),
+            "sha256": image_sha,  # the blob's address (`ImageRef.sha256`)
+        },
+        # A manifest with `images`: its notes hold one kept image line (the ref's `id` is the
+        # hash in its URL) and one left-out `[image: ...]`; the ref reuses the `image` blob above.
+        "images_manifest": {
+            "version": IMAGES_MANIFEST_VERSION,
+            "aad": pf.aad(ID, "manifest", IMAGES_MANIFEST_VERSION).decode(),
+            "nonce_hex": IMAGES_MANIFEST_NONCE.hex(),
+            "json": images_plaintext.decode(),
+            "json_hex": images_plaintext.hex(),
+            "padded_length": len(pf.pad(images_plaintext, pf.MANIFEST_BLOCK)),
+            "blob_b64url": pf.b64url_encode(images_blob),
+            "sha256": images_sha,
         },
         "password": {
             "password": PASSWORD,

@@ -5897,6 +5897,22 @@ export interface components {
             text: string;
         };
         /**
+         * NotesImage
+         * @description An image of the meeting's notes, for the Publish dialog's list.
+         */
+        NotesImage: {
+            /** Caption */
+            caption: string;
+            /** Height */
+            height: number;
+            /** Sha256 */
+            sha256: string;
+            /** Size */
+            size: number;
+            /** Width */
+            width: number;
+        };
+        /**
          * NotesItem
          * @description An action item typed in the meeting's live notes (phase 11): a task line with a person
          *     chip (services/notes_items.py). `text`, `owner`, `at` and `done` are derived from the line
@@ -6433,6 +6449,8 @@ export interface components {
             host_is_ours: boolean;
             /** Host Url */
             host_url: string;
+            /** Images */
+            images: string[] | null;
             /**
              * Local Reach
              * @enum {string}
@@ -6451,6 +6469,8 @@ export interface components {
              * @default false
              */
             notes: boolean;
+            /** Notes Images */
+            notes_images: components["schemas"]["NotesImage"][];
             /**
              * Questions
              * @default true
@@ -6524,6 +6544,8 @@ export interface components {
              * @default true
              */
             hide_identifiers: boolean;
+            /** Images */
+            images?: string[] | null;
             /**
              * Names
              * @default as_is
@@ -6596,6 +6618,8 @@ export interface components {
              * @default true
              */
             hide_identifiers: boolean;
+            /** Images */
+            images: string[] | null;
             /**
              * Names
              * @default as_is

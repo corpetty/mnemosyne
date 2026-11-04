@@ -51,6 +51,8 @@ function defaults(extra: Partial<PublicationDefaults> = {}): PublicationDefaults
 		local_url: '',
 		host_url: '',
 		host_is_ours: false,
+		images: null,
+		notes_images: [],
 		...extra
 	};
 }

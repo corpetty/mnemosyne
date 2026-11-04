@@ -38,6 +38,9 @@ class PublicationSelection(ApiModel):
     chapters: bool = True
     topics: bool = True
     notes: bool = False  # the meeting's (live shared) notes
+    # The notes' images to include, by their plain hash (`NotesImage.sha256`): None = all of
+    # them, [] = none. A left-out image shows as "[image: caption]". Only with `notes`.
+    images: list[str] | None = None
     # The people to list as attendees; anyone of the meeting not listed here is also taken out
     # of every text, as "Person N".
     attendees: list[str] = Field(default_factory=list)
@@ -46,6 +49,16 @@ class PublicationSelection(ApiModel):
     quotes: list[QuoteSpan] = Field(default_factory=list)
     where: Where = "local"  # "local": served by this computer; "host": the publish host
     expires_days: int | None = 90  # None: never (only for "local")
+
+
+class NotesImage(ApiModel):
+    """An image of the meeting's notes, for the Publish dialog's list."""
+
+    sha256: str  # the plain hash: what `PublicationSelection.images` names
+    caption: str
+    width: int
+    height: int
+    size: int  # bytes as stored
 
 
 class PublicationDefaults(PublicationSelection):
@@ -58,6 +71,9 @@ class PublicationDefaults(PublicationSelection):
     # and none is set) and whether it is Mnemosyne's own (services/ours.py).
     host_url: str
     host_is_ours: bool
+    # The images of the meeting's notes, in order, each once (`images`, inherited, is which to
+    # include: null = all).
+    notes_images: list[NotesImage] = Field(default_factory=list)
 
 
 class Publication(ApiModel):

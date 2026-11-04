@@ -143,6 +143,40 @@ def test_history_and_records(client, ctx, seals):
     ].count(False) == 1
 
 
+def test_a_file_carries_the_notes_images(client, ctx, seals):
+    from mnemosyne.services import notes_media
+
+    from .test_notes_media import sha, value, webp
+
+    s = _meeting(ctx)
+    pics = (webp(10, 20, b"one"), webp(30, 40, b"two"))
+    lines = []
+    for data in pics:
+        info = notes_media.store(ctx, s.id, sha(data), data)
+        lines.append(f"![pic](mnemosyne:image/{value(data, info.ext, info.width, info.height)})")
+    ctx.repo.update_fields(s.id, notes="\n".join(lines) + "\n")
+    sel = {"notes": True, "attendees": ["Ana Lopez", "Bo Chen"], "images": [sha(pics[1])]}
+    p = _payload(_download(client, s.id, _export(client, s.id, sel)).text)
+    assert set(p) == {"format", "id", "version", "manifest", "clips", "images", "key"}
+    key = pf.decode_key(p["key"])
+    m = pf.open_manifest(p["id"], 1, pf.b64url_decode(p["manifest"]), key)
+    (ref,) = m.images
+    assert ref.id == sha(pics[1]) and (ref.width, ref.height, ref.v) == (30, 40, 1)
+    assert set(p["images"]) == {ref.sha256} and p["clips"] == {}
+    blob = pf.b64url_decode(p["images"][ref.sha256])
+    assert pf.open_image(p["id"], ref, blob, key) == pics[1]
+    assert "[image: pic]" in m.notes and sha(pics[0]) not in m.notes
+    # Without images the payload has no `images` slot, as before.
+    p2 = _payload(
+        _download(client, s.id, _export(client, s.id, {"notes": True, "images": []})).text
+    )
+    assert "images" not in p2
+    # An image that is not here refuses the export up front.
+    notes_media.remove_blob(ctx, s.id, sha(pics[0]))
+    r = client.post(f"/api/sessions/{s.id}/publication/file", json={"selection": {"notes": True}})
+    assert r.status_code == 400 and "not on this computer" in r.json()["detail"]
+
+
 def test_clips_off_the_origin_are_refused(client, ctx, fake_cut):
     s = _meeting(ctx, audio="/nowhere/mixed.ogg", origin="peer0001")
     sel = {"quotes": [{"start": 0, "end": 6, "with_clip": True}]}

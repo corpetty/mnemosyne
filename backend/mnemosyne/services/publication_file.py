@@ -69,6 +69,9 @@ def check_request(app: AppContext, session, sel: PublicationSelection, password:
     template()
     if any(q.with_clip for q in sel.quotes):
         require_local_audio(app, session)
+    if sel.notes:
+        content, _ = publishing.build_content(app, session, sel)
+        publishing.require_images(app, session, content)
 
 
 def safe_filename(title: str) -> str:
@@ -110,7 +113,7 @@ async def build(
         key = pf.derive_key(pw, salt)
         protect = {"password": {"salt": pf.b64url_encode(salt), "iterations": pf.PBKDF2_ITERATIONS}}
 
-    _, specs = publishing.build_content(app, session, sel)
+    content, specs = publishing.build_content(app, session, sel)
     wanted = [s for s in specs if s["with_clip"]]
     refs: dict[str, pf.ClipRef] = {}
     blobs: dict[str, bytes] = {}
@@ -143,9 +146,20 @@ async def build(
         raise publishing.PublishError(str(e)) from e
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    images: dict[str, bytes] = {}
+    image_refs: dict[str, pf.ImageRef] = {}
+    shown = content.get("images", [])
+    for n, item in enumerate(shown):
+        job.update(f"Image {n + 1} of {len(shown)}", 0.7 + 0.1 * n / max(1, len(shown)))
+        blob, sha, rec = await publishing.seal_image(app, session, item, pub_id, version, key)
+        images[sha] = blob
+        padded.append(rec["padded"])
+        image_refs[item["id"]] = publishing.image_ref(item, rec)
     try:
         pf.check_clips_total(padded)
-        manifest, _ = publishing.build_manifest(app, session, sel, pub_id, version, clip_refs=refs)
+        manifest, _ = publishing.build_manifest(
+            app, session, sel, pub_id, version, clip_refs=refs, image_refs=image_refs
+        )
         job.update("Sealing", 0.8)
         manifest_blob, _ = pf.seal_manifest(manifest, key)
     except pf.PublicationFormatError as e:
@@ -157,6 +171,7 @@ async def build(
         "version": version,
         "manifest": pf.b64url_encode(manifest_blob),
         "clips": {sha: pf.b64url_encode(b) for sha, b in blobs.items()},
+        **({"images": {sha: pf.b64url_encode(b) for sha, b in images.items()}} if images else {}),
         **protect,
     }
     out = render(html, payload).encode("utf-8")
@@ -186,6 +201,7 @@ async def build(
         parts=parts,
         quotes=len(sel.quotes),
         clips=len(wanted),
+        **({"images": len(images)} if images else {}),
         names=sel.names,
         hide_identifiers=sel.hide_identifiers,
         password=pw is not None,
