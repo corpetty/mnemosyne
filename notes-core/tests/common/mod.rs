@@ -38,6 +38,12 @@ pub const URLS: [&str; 6] = [
     "a|b\\c<d>",
 ];
 
+/// Valid `image` mark values.
+pub const IMAGES: [&str; 2] = [
+    "3f0c5aa1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5ca9.webp@1600x900",
+    "00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff.jpeg@1x99999",
+];
+
 const WORDS: [&str; 24] = [
     "a",
     "word",
@@ -142,6 +148,16 @@ pub fn random_model(rng: &mut Rng) -> Model {
             li += n;
             continue;
         }
+        if roll == 13 {
+            // an image, its caption random text
+            let n = rng.below(4);
+            let caption = words(rng, n, false);
+            let value = rng.pick(&IMAGES).to_string();
+            push_line(&mut m, Some(Block::Image), &caption, None, None);
+            m.lines.last_mut().expect("just pushed").image = Some(value);
+            li += 1;
+            continue;
+        }
         let kind = match roll {
             2 => Some(Block::H1),
             3 => Some(Block::H2),
@@ -201,7 +217,12 @@ fn push_line(
     }
     m.text.push('\n');
     m.fmt.push(Fmt::default());
-    m.lines.push(LineAttr { kind, lang, align });
+    m.lines.push(LineAttr {
+        kind,
+        lang,
+        align,
+        ..LineAttr::default()
+    });
 }
 
 pub fn origin(n: u8) -> hashseq::Id {

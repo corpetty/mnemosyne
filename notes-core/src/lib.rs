@@ -16,10 +16,16 @@
 //!   `char` per element. JavaScript strings count UTF-16 units, so a client converts.
 //! - **Line kind**: a closed mark of kind [`KIND_BLOCK`] over the line's `\n`
 //!   (`Before(nl)..After(nl)`), value one of `h1 h2 h3 bullet number task task_done quote
-//!   code table table_head` ([`model::Block`]). A paragraph has none.
+//!   code table table_head image` ([`model::Block`]). A paragraph has none.
 //! - [`KIND_LANG`] on a code run's first terminator (the fence's info string);
 //!   [`KIND_ALIGN`] on a table head row's terminator, one of `l c r -` per column (`lc-r`:
 //!   14 columns stay within 14 bytes, inside the delta).
+//! - **Images**: an `image` line's text is the caption (plain: inline formats on it mean
+//!   nothing); [`KIND_IMAGE`], closed on its terminator like `lang`, holds the picture as
+//!   `<sha256 hex>.<webp|jpeg>@<w>x<h>` ([`model::IMAGE_VALUE`]). The bytes live beside the
+//!   document, named by the hash ([`Notes::media`] lists the ones in use). An `image` line
+//!   without a valid value reads as a paragraph; to a client or sidecar that does not know
+//!   the kind it is a paragraph holding the caption, and the marks stay.
 //! - **Tables**: rows are `table` lines, the first row of a run `table_head`; cells are
 //!   separated by U+001F ([`model::CELL`]). A `table` line after a non-table line renders as
 //!   a head. Ragged rows are padded with empty cells.
@@ -32,7 +38,8 @@
 //! - **Concurrent values** stay live together (MVR); render resolves them: `task` with
 //!   `task_done` is done; other `block` conflicts show the first value in markedSpans order
 //!   (the lowest mark id, as the client's editor does); two live link URLs render as the
-//!   plain text followed by " (link conflict)"; `lang`/`align` take the first value too.
+//!   plain text followed by " (link conflict)"; `lang`/`align`/`image` take the first value
+//!   too (an invalid first `image` value is no image).
 //! - Mark strings longer than 14 UTF-8 bytes (most URLs, every `comment:<id>`) are
 //!   artifacts: they travel as 0xAF frames next to the 0xDE delta, never inside it.
 //!
@@ -51,7 +58,7 @@ pub mod parse;
 pub mod render;
 
 pub use doc::{fold, Comments, Notes};
-pub use model::{normalize, Block, Model, Parsed};
+pub use model::{is_image_value, normalize, Block, Model, Parsed, IMAGE_URL, IMAGE_VALUE};
 pub use render::{render, Rendered};
 
 /// Parse markdown into a normalized document.
@@ -62,6 +69,7 @@ pub fn parse(markdown: &str) -> Model {
 pub const KIND_BLOCK: &str = "block";
 pub const KIND_LANG: &str = "lang";
 pub const KIND_ALIGN: &str = "align";
+pub const KIND_IMAGE: &str = "image";
 pub const KIND_BOLD: &str = "bold";
 pub const KIND_ITALIC: &str = "italic";
 pub const KIND_STRIKE: &str = "strike";

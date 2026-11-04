@@ -52,7 +52,7 @@ fn set_text_round_trips_and_is_idempotent() {
 #[test]
 fn set_text_of_the_rendering_changes_nothing() {
     use notes_core::model::{Block, CELL};
-    use notes_core::{KIND_ALIGN, KIND_BLOCK, KIND_LANG};
+    use notes_core::{KIND_ALIGN, KIND_BLOCK, KIND_IMAGE, KIND_LANG};
     let mut checked = 0;
     for seed in 0..CASES {
         let mut rng = Rng::new(seed);
@@ -116,7 +116,7 @@ fn set_text_of_the_rendering_changes_nothing() {
                     let li = rng.below(spans.len());
                     let (s, e, nl) = spans[li];
                     let Some(nl) = nl else { continue };
-                    match rng.below(6) {
+                    match rng.below(7) {
                         0 => doc.mark_line(
                             nl,
                             KIND_LANG,
@@ -127,6 +127,12 @@ fn set_text_of_the_rendering_changes_nothing() {
                             nl,
                             KIND_ALIGN,
                             Some(*rng.pick(&["lr", "c", "-cr", "x"])),
+                            &mut minted,
+                        ),
+                        2 => doc.mark_line(
+                            nl,
+                            KIND_IMAGE,
+                            Some(*rng.pick(&[common::IMAGES[0], common::IMAGES[1], "x.webp@1x1"])),
                             &mut minted,
                         ),
                         _ => {

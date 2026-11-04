@@ -3,8 +3,8 @@
 //! hex characters).
 //!
 //! - `{"op":"fold","notes":hex,"snapshot":b64|null,"frames":[b64]}` →
-//!   `{"snapshot":b64,"markdown":s,"plain":s,"comments":{"<id>":[s,e]|null},"tasks":[...]}`
-//!   (`tasks` is in every answer, see below)
+//!   `{"snapshot":b64,"markdown":s,"plain":s,"comments":{"<id>":[s,e]|null},"tasks":[...],
+//!   "media":[...]}` (`tasks` and `media` are in every answer, see below)
 //! - `{"op":"set_text","notes":hex,"snapshot":b64|null,"frames":[b64],"markdown":s}` →
 //!   `{"frames":[b64],"snapshot":b64,"markdown":s,"plain":s,"comments":{...}}`: `frames` are
 //!   what to broadcast to clients (0xAF artifacts first, then one 0xDE delta of only the new
@@ -33,6 +33,11 @@
 //! `text`. `frame` is the index in the request's `frames` of the latest frame that added the
 //! line's `\n` or the mark giving its kind; `null` when neither came from a request frame
 //! (the snapshot, the union in `merge`, or what the request itself did).
+//!
+//! Every answer has `media` too, the pictures the document shows (`Notes::media`): the
+//! distinct `image` values `<sha256 hex>.<webp|jpeg>@<w>x<h>` of its image lines, in document
+//! order, `[]` when there are none. The bytes are named by the hash and kept beside the
+//! document; this list is how the backend learns which ones are in use.
 //!
 //! `frames` are a client log in order: 0xDE deltas and 0xAF artifacts. Duplicates are
 //! harmless; delta groups for other objects are ignored; a frame that does not decode is an
@@ -225,6 +230,7 @@ fn answer(notes: &Notes, frames: Option<Vec<Vec<u8>>>, arrivals: &Arrivals) -> V
         "plain": rendered.plain,
         "comments": comments,
         "tasks": tasks,
+        "media": notes.media(),
     });
     if let Some(frames) = frames {
         out["frames"] = frames.iter().map(|f| STANDARD.encode(f)).collect();

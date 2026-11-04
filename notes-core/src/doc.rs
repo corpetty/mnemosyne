@@ -13,14 +13,14 @@ use hashseq::{
 
 use crate::diff;
 use crate::model::{
-    dont_care, normalize, same, same_link, Block, Fmt, LineAttr, Link, Model, BOLD, CODE, ITALIC,
-    STRIKE,
+    dont_care, is_image_value, normalize, same, same_link, Block, Fmt, LineAttr, Link, Model, BOLD,
+    CODE, ITALIC, STRIKE,
 };
 use crate::parse::parse;
 use crate::render::{plain, render, Rendered};
 use crate::{
-    Error, COMMENT_PREFIX, FLAG_VALUE, KIND_ALIGN, KIND_BLOCK, KIND_BOLD, KIND_CODE, KIND_ITALIC,
-    KIND_LANG, KIND_LINK, KIND_STRIKE,
+    Error, COMMENT_PREFIX, FLAG_VALUE, KIND_ALIGN, KIND_BLOCK, KIND_BOLD, KIND_CODE, KIND_IMAGE,
+    KIND_ITALIC, KIND_LANG, KIND_LINK, KIND_STRIKE,
 };
 
 /// One meeting's notes: the store and the seq opened at the notes origin.
@@ -65,6 +65,16 @@ impl TaskLine {
             .filter_map(|id| arrivals.get(id).copied())
             .max()
     }
+}
+
+/// What [`Notes::read_marks`] gives: the document as stored, comment ranges and, per line,
+/// the live `block` marks showing a task kind and the valid live `image` values (in
+/// markedSpans order).
+struct Read {
+    model: Model,
+    comments: Comments,
+    kind_marks: Vec<Vec<Id>>,
+    images: Vec<Vec<String>>,
 }
 
 impl Notes {
@@ -233,9 +243,14 @@ impl Notes {
         comments
     }
 
-    /// Every task line (kind `task` or `task_done`) in document order.
+    /// Every task line (kind `task` or `task_done`) in document order. An image line is
+    /// never one (its kind is `image`).
     pub fn tasks(&self) -> Vec<TaskLine> {
-        let (model, _, marks) = self.read_marks();
+        let Read {
+            model,
+            kind_marks: marks,
+            ..
+        } = self.read_marks();
         let mut out = Vec::new();
         for (li, (start, end, nl)) in model.line_spans().into_iter().enumerate() {
             let Some(nl) = nl else { continue };
@@ -278,16 +293,39 @@ impl Notes {
         out
     }
 
-    /// Read the seq: per character text and format, per line attributes, comment ranges.
-    fn read(&self) -> (Model, Comments) {
-        let (model, comments, _) = self.read_marks();
-        (model, comments)
+    /// The pictures the document shows: every valid live `image` value on a line that reads
+    /// as an image (normally one per line; concurrent edits may leave more, and the blob of
+    /// each stays wanted), distinct, in document order. What the bytes beside the document
+    /// are kept and fetched for.
+    pub fn media(&self) -> Vec<String> {
+        let read = self.read_marks();
+        let shown = normalize(&read.model);
+        let mut out: Vec<String> = Vec::new();
+        for (line, values) in shown.lines.iter().zip(read.images) {
+            if line.kind != Some(Block::Image) {
+                continue;
+            }
+            for v in values {
+                if !out.contains(&v) {
+                    out.push(v);
+                }
+            }
+        }
+        out
     }
 
-    /// [`Notes::read`] and, per line, the ids of the live `block` marks showing a task kind.
-    fn read_marks(&self) -> (Model, Comments, Vec<Vec<Id>>) {
+    /// Read the seq: per character text and format, per line attributes, comment ranges.
+    fn read(&self) -> (Model, Comments) {
+        let read = self.read_marks();
+        (read.model, read.comments)
+    }
+
+    /// [`Notes::read`] and, per line, the ids of the live `block` marks showing a task kind
+    /// and the valid live `image` values.
+    fn read_marks(&self) -> Read {
         let seq = self.seq();
         let mut kind_marks: Vec<Vec<Id>> = Vec::new();
+        let mut images: Vec<Vec<String>> = Vec::new();
         let mut model = Model::default();
         let mut comments: Comments = BTreeMap::new();
         let mut names: BTreeMap<Id, Option<String>> = BTreeMap::new();
@@ -305,6 +343,7 @@ impl Notes {
             let mut line = LineAttr::default();
             let mut here: Vec<String> = Vec::new();
             let mut block_marks: Vec<Id> = Vec::new();
+            let mut image_values: Vec<String> = Vec::new();
             for (kind, lives) in &set {
                 let Some(kind) = name(kind) else { continue };
                 let values: Vec<Option<String>> = lives.iter().map(|(_, v)| name(v)).collect();
@@ -323,6 +362,16 @@ impl Notes {
                     }
                     KIND_LANG => line.lang = first,
                     KIND_ALIGN => line.align = first,
+                    KIND_IMAGE => {
+                        // The first value, as `lang`; one that is not an image value is no
+                        // image (the line reads as a paragraph).
+                        line.image = first.filter(|v| is_image_value(v));
+                        image_values = values
+                            .into_iter()
+                            .flatten()
+                            .filter(|v| is_image_value(v))
+                            .collect();
+                    }
                     KIND_BOLD => fmt.set(BOLD, true),
                     KIND_ITALIC => fmt.set(ITALIC, true),
                     KIND_STRIKE => fmt.set(STRIKE, true),
@@ -358,14 +407,21 @@ impl Notes {
                 if c == '\n' {
                     model.lines.push(line.clone());
                     kind_marks.push(block_marks.clone());
+                    images.push(image_values.clone());
                 }
             }
         }
         if model.text.last().is_some_and(|&c| c != '\n') {
             model.lines.push(LineAttr::default());
             kind_marks.push(Vec::new());
+            images.push(Vec::new());
         }
-        (model, comments, kind_marks)
+        Read {
+            model,
+            comments,
+            kind_marks,
+            images,
+        }
     }
 
     /// Make the document say `markdown`. Returns the frames for the clients, artifacts
@@ -486,8 +542,19 @@ impl Notes {
             for (li, &(_, _, nl)) in spans.iter().enumerate() {
                 let Some(nl) = nl else { continue };
                 let (want, have, was) = (&desired.lines[li], &cur.lines[li], &raw.lines[li]);
-                if (all || have.kind != want.kind) && was.kind != want.kind {
+                let kind_differs = all || have.kind != want.kind;
+                if kind_differs && was.kind != want.kind {
                     self.mark_line(nl, KIND_BLOCK, want.kind.map(Block::as_str), minted);
+                    changed = true;
+                }
+                if want.kind == Some(Block::Image) {
+                    if (all || have.image != want.image) && was.image != want.image {
+                        self.mark_line(nl, KIND_IMAGE, want.image.as_deref(), minted);
+                        changed = true;
+                    }
+                } else if kind_differs && was.image.is_some() {
+                    // No longer an image: the picture goes with the kind.
+                    self.mark_line(nl, KIND_IMAGE, None, minted);
                     changed = true;
                 }
                 if want.kind == Some(Block::Code)
