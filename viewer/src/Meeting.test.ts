@@ -125,6 +125,91 @@ describe('Meeting', () => {
 	});
 });
 
+describe('images in the notes', () => {
+	const withImage: Manifest = JSON.parse(vec.images_manifest.json);
+	const ref = withImage.images![0];
+	const mountWith = (m: Manifest, loadImage?: (r: unknown) => Promise<string>) => {
+		target = document.createElement('div');
+		document.body.appendChild(target);
+		component = mount(Meeting, { target, props: { manifest: m, loadClip: vi.fn(), loadImage: loadImage as never } });
+		flushSync();
+	};
+
+	it('shows a grey box of the right size, then the decrypted picture', async () => {
+		let release!: (url: string) => void;
+		const loadImage = vi.fn(() => new Promise<string>((r) => (release = r)));
+		mountWith(withImage, loadImage);
+		const box = target.querySelector<HTMLElement>('.mn-image')!;
+		expect(box).not.toBeNull();
+		expect(box.style.width).toBe('640px');
+		expect(box.style.aspectRatio).toBe('640 / 480');
+		expect(target.querySelector('img')).toBeNull();
+		expect(loadImage).toHaveBeenCalledWith(ref);
+		release('blob:picture');
+		await vi.waitFor(() => expect(target.querySelector('img')).not.toBeNull());
+		const img = target.querySelector('img')!;
+		expect(img.getAttribute('src')).toBe('blob:picture');
+		expect(img.alt).toBe('Whiteboard 🧠 [draft]');
+		expect(img.getAttribute('width')).toBe('640');
+		expect(img.getAttribute('height')).toBe('480');
+		expect(target.querySelector('.mn-image')!.hasAttribute('style')).toBe(false);
+	});
+
+	it('writes a left-out image as text, and no mnemosyne address reaches the page', async () => {
+		mountWith(withImage, async () => 'blob:picture');
+		await vi.waitFor(() => expect(target.querySelector('img')).not.toBeNull());
+		expect(text()).toContain('[image: Left out]');
+		expect(text()).toContain('Before the picture');
+		expect(text()).toContain('After it');
+		expect(target.innerHTML).not.toContain('mnemosyne:');
+		expect(target.querySelectorAll('img').length).toBe(1);
+	});
+
+	it('writes an image the manifest does not list, or cannot load, as text', async () => {
+		mountWith({ ...withImage, images: [] }, async () => 'blob:never');
+		expect(text()).toContain('[image: Whiteboard 🧠 [draft]]');
+		expect(target.querySelector('img')).toBeNull();
+		expect(target.innerHTML).not.toContain('mnemosyne:');
+		unmount(component!);
+		target.remove();
+		mountWith(withImage, async () => {
+			throw new Error('gone');
+		});
+		await vi.waitFor(() => expect(text()).toContain('[image: Whiteboard 🧠 [draft]]'));
+		expect(target.querySelector('img')).toBeNull();
+		expect(target.querySelector('.mn-image')).toBeNull();
+	});
+
+	it('does without a loader, and ignores a picture that arrives after the notes changed', async () => {
+		mountWith(withImage);
+		expect(text()).toContain('[image: Whiteboard 🧠 [draft]]');
+		unmount(component!);
+		target.remove();
+		let release!: (url: string) => void;
+		mountWith(withImage, () => new Promise<string>((r) => (release = r)));
+		unmount(component!);
+		release('blob:late');
+		await Promise.resolve();
+		expect(target.querySelector('img')).toBeNull();
+	});
+
+	it('leaves an image line inside a code fence alone, and a mid-line one never becomes a picture', () => {
+		const line = `![x](mnemosyne:image/${ref.id}.webp@640x480)`;
+		mountWith({ ...withImage, notes: `\`\`\`\n${line}\n\`\`\`\nnot ${line} alone\n` }, async () => 'blob:picture');
+		expect(target.querySelector('pre')!.textContent).toContain(line);
+		expect(target.querySelector('img')).toBeNull();
+		expect(target.querySelector('a[href^="mnemosyne"]')).toBeNull();
+		expect(target.querySelector('[src^="mnemosyne"]')).toBeNull();
+	});
+
+	it('never lets a mnemosyne address through as a link or an image of its own', () => {
+		mountWith({ ...withImage, notes: '[chip](mnemosyne:person/Ada) and <img src="mnemosyne:image/x"> and [x](javascript:alert(1))' });
+		expect(target.querySelector('[href^="mnemosyne"]')).toBeNull();
+		expect(target.querySelector('[href^="javascript"]')).toBeNull();
+		expect(target.querySelector('[src^="mnemosyne"]')).toBeNull();
+	});
+});
+
 describe('Viewer', () => {
 	it('shows the bare single-file template as an error', async () => {
 		target = document.createElement('div');

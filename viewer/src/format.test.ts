@@ -16,6 +16,7 @@ import {
   hex,
   openBlob,
   openClip,
+  openImage,
   openManifest,
   unpad
 } from './format';
@@ -127,5 +128,53 @@ describe('vectors', () => {
       openManifest(vec.id, m.version, b64urlDecode(p.manifest_blob_b64url), wrong)
     ).rejects.toThrow(/Could not decrypt/);
     await expect(deriveKey('x', fromHex(p.salt_hex), 1000)).rejects.toThrow(/out of range/);
+  });
+});
+
+describe('image vectors', () => {
+  const im = vec.image;
+  const blob = b64urlDecode(im.blob_b64url);
+  const m = vec.images_manifest;
+  const ref = {
+    id: im.plaintext_sha256,
+    sha256: im.sha256,
+    size: 114,
+    mime: im.mime,
+    v: im.first_version,
+    width: im.width,
+    height: im.height
+  };
+
+  it('has the image AAD, and refuses unknown kinds', () => {
+    expect(dec.decode(aad(vec.id, 'image', im.first_version))).toBe(im.aad);
+    expect(() => aad(vec.id, 'audio' as never, 1)).toThrow(PublicationFormatError);
+  });
+
+  it('opens the image byte for byte, with the version that first uploaded it', async () => {
+    expect(await blobHash(blob)).toBe(im.sha256);
+    expect(hex(await openImage(vec.id, ref, blob, key))).toBe(im.plaintext_hex);
+    expect(hex(await openBlob('image', vec.id, im.first_version, blob, key))).toBe(im.plaintext_hex);
+    await expect(openBlob('image', vec.id, im.first_version + 1, blob, key)).rejects.toThrow(/Could not decrypt/);
+    await expect(openBlob('clip', vec.id, im.first_version, blob, key)).rejects.toThrow(/Could not decrypt/);
+  });
+
+  it('checks the image against its address and its hash', async () => {
+    await expect(openImage(vec.id, { ...ref, sha256: '0'.repeat(64) }, blob, key)).rejects.toThrow(/address/);
+    await expect(openImage(vec.id, { ...ref, id: '0'.repeat(64) }, blob, key)).rejects.toThrow(/hash/);
+    await expect(openImage(vec.id, { ...ref, id: 'nothex' }, blob, key)).rejects.toThrow(/hash/);
+    await expect(openImage('fedcba9876543210', ref, blob, key)).rejects.toThrow(/Could not decrypt/);
+  });
+
+  it('opens the manifest that lists the image, and keeps what it does not know', async () => {
+    const mblob = b64urlDecode(m.blob_b64url);
+    expect(await blobHash(mblob)).toBe(m.sha256);
+    const plain = await openBlob('manifest', vec.id, m.version, mblob, key);
+    expect(dec.decode(plain)).toBe(m.json);
+    const manifest = await openManifest(vec.id, m.version, mblob, key);
+    expect(manifest.images).toEqual([ref]);
+    expect(manifest.notes).toContain(`mnemosyne:image/${ref.id}.webp@640x480`);
+    // The earlier manifest has no images field at all.
+    const old = await openManifest(vec.id, vec.manifest.version, b64urlDecode(vec.manifest.blob_b64url), key);
+    expect(old.images).toBeUndefined();
   });
 });
