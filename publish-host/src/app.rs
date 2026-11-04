@@ -162,6 +162,10 @@ pub fn router(app: Shared) -> Router {
             get(live_socket).put(create_room).delete(delete_room),
         )
         .route("/live/{room}/snapshot", put(put_snapshot))
+        .route(
+            "/live/{room}/media/{name}",
+            get(get_room_media).put(put_room_media),
+        )
         .route("/live/{room}/end", post(end_room))
         .layer(middleware::from_fn_with_state(app.clone(), rate_limit))
         .layer(middleware::map_response(security_headers))
@@ -242,6 +246,12 @@ fn check_sha(sha: &str) -> Result<(), ApiError> {
     valid_sha(sha)
         .then_some(())
         .ok_or(ApiError::bad("bad_sha256"))
+}
+
+fn check_name(name: &str) -> Result<(), ApiError> {
+    valid_sha(name)
+        .then_some(())
+        .ok_or(ApiError::bad("bad_name"))
 }
 
 /// The publisher's token (as its hash) from `Authorization: Bearer`, and whether the host's
@@ -581,6 +591,57 @@ async fn put_snapshot(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+/// `PUT /live/<room>/media/<name>`: a sealed media blob from the owner's bridge (guests use the
+/// socket). 201 when stored, 204 when the name was there (kept as it is), 413 `media_too_large` /
+/// `room_media_full`, 409 `room_ended`.
+async fn put_room_media(
+    State(app): State<Shared>,
+    Extension(client): Extension<ClientIp>,
+    UrlPath((room, name)): UrlPath<(String, String)>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, ApiError> {
+    check_id(&room)?;
+    check_name(&name)?;
+    let auth = auth_of(&app, &headers)?;
+    app.rooms.check_publisher(&room, &auth).await?;
+    let bytes = read_body(&headers, body, app.cfg.room_media_max_bytes)
+        .await
+        .map_err(|mut e| {
+            if e.status == StatusCode::PAYLOAD_TOO_LARGE {
+                e.code = "media_too_large";
+            }
+            e
+        })?;
+    app.charge_write(client, bytes.len() as u64)?;
+    let stored = app.rooms.put_media(&room, 0, &name, &bytes).await?;
+    Ok(if stored {
+        StatusCode::CREATED
+    } else {
+        StatusCode::NO_CONTENT
+    }
+    .into_response())
+}
+
+/// `GET /live/<room>/media/<name>`: the sealed blob, for the owner's bridge (publisher token);
+/// 404 `media_missing`.
+async fn get_room_media(
+    State(app): State<Shared>,
+    UrlPath((room, name)): UrlPath<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    check_id(&room)?;
+    check_name(&name)?;
+    let auth = auth_of(&app, &headers)?;
+    app.rooms.check_publisher(&room, &auth).await?;
+    let (file, len) = app.rooms.open_media(&room, &name).await?;
+    let mut res = Response::new(Body::from_stream(ReaderStream::new(file)));
+    set(&mut res, header::CONTENT_TYPE, "application/octet-stream");
+    set(&mut res, header::CONTENT_LENGTH, &len.to_string());
+    set(&mut res, header::CACHE_CONTROL, IMMUTABLE);
+    Ok(res)
+}
+
 /// `POST /live/<room>/end`: read-only from now on, until `X-Room-Expires` (default: the
 /// current expiry).
 async fn end_room(
@@ -620,9 +681,14 @@ async fn live_socket(
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
     check_id(&room)?;
-    let max = usize::try_from(app.cfg.room_frame_max_bytes)
-        .unwrap_or(usize::MAX)
-        .saturating_add(64 * 1024);
+    // Room for the largest message: a frame, or a media blob with its name.
+    let max = usize::try_from(
+        app.cfg
+            .room_frame_max_bytes
+            .max(app.cfg.room_media_max_bytes),
+    )
+    .unwrap_or(usize::MAX)
+    .saturating_add(64 * 1024);
     let (id, _) = match app.rooms.connect(&room).await {
         Ok(joined) => joined,
         Err(e) => {

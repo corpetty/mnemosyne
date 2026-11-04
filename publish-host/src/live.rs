@@ -32,6 +32,23 @@
 //!   Refusals: ended room → close 4403; over the frame cap or a full log → `{"type":"error",
 //!   "code":"frame_too_large"|"log_full"}` then close 4413; an empty or unknown frame →
 //!   `{"type":"error","code":"bad_frame"}` (the connection stays).
+//! - Media (notes images, sealed by the owner's page or a guest's) travel on the same socket, beside
+//!   the log and outside it. A blob's name is 32 bytes (64 lowercase hex characters as text) the
+//!   host cannot interpret; a name is stored once and never replaced.
+//!   Up: `0x04 || name(32) || envelope` stores the blob (at most `room_media_max_bytes`; the
+//!   room's media at most `room_media_total_bytes`) and is answered to the sender with
+//!   `{"type":"media","name":"<hex>","ok":true}` (also when the name was already stored), while
+//!   every other connection of the room, whoever stored it (a guest, or the owner's bridge over
+//!   HTTP), is told `{"type":"media","name":"<hex>"}` so one waiting for it can ask at once.
+//!   Down: the text `{"type":"get_media","name":"<hex>"}` is answered with `0x05 || name(32) ||
+//!   envelope`. At most `MAX_GETS` gets of one connection are in flight; one more is answered
+//!   `media_busy` (ask again after an answer). A malformed get is a `bad_frame`.
+//!   Media errors are `{"type":"error","code":..,"name":"<hex>"}` and leave the connection open:
+//!   `media_missing` (a get; the room has no such name), `media_too_large`, `room_media_full`,
+//!   `media_busy`, `empty_media`. Over the write budget a put is refused like a frame
+//!   (`write_budget`, close 4429; the blob's bytes are charged, a stored name's too). In an ended
+//!   room a put is `{"type":"error","code":"room_ended"}` and a close 4403, like a frame. A put
+//!   shorter than its name is a `bad_frame`.
 //! - Text `ping` is answered with `pong`. The host pings every `PING_EVERY`; a connection it has
 //!   heard nothing from for `SILENT_FOR` is closed (1001, "idle").
 
@@ -42,13 +59,16 @@ use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket};
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tokio::io::AsyncReadExt;
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::mpsc;
 use tokio::time::{interval_at, timeout, Instant, MissedTickBehavior};
 
 use crate::app::{ClientIp, Shared};
 use crate::error::ApiError;
 use crate::metrics::Metrics;
 use crate::rooms::{Event, Joined};
+use crate::store::valid_sha;
 
 pub const JOIN_TIMEOUT: Duration = Duration::from_secs(10);
 pub const PING_EVERY: Duration = Duration::from_secs(30);
@@ -67,6 +87,15 @@ pub const PRESENCE_BURST: f64 = 20.0;
 pub const KIND_FRAME: u8 = 0x01;
 pub const KIND_PRESENCE: u8 = 0x02;
 pub const KIND_SNAPSHOT: u8 = 0x03;
+/// Up: `name(32) || envelope`, a media blob to store.
+pub const KIND_MEDIA_PUT: u8 = 0x04;
+/// Down: `name(32) || envelope`, the answer to a `get_media`.
+pub const KIND_MEDIA: u8 = 0x05;
+/// A media blob's name in bytes (64 hex characters as text).
+pub const NAME_LEN: usize = 32;
+/// Media gets of one connection answered at once (each holds a blob, 2 MiB and a bit, in memory
+/// until it is sent); more are answered `media_busy`.
+pub const MAX_GETS: usize = 20;
 
 pub const CLOSE_IDLE: u16 = 1001;
 pub const CLOSE_SERVER_ERROR: u16 = 1011;
@@ -165,6 +194,59 @@ fn tagged(kind: u8, seq: Option<u64>, bytes: &[u8]) -> Message {
     }
     out.extend_from_slice(bytes);
     Message::Binary(Bytes::from(out))
+}
+
+fn name_hex(raw: &[u8]) -> String {
+    raw.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The 32 bytes of a name that is 64 lowercase hex characters (`valid_sha`).
+fn name_bytes(hex: &str) -> Option<[u8; NAME_LEN]> {
+    if !valid_sha(hex) {
+        return None;
+    }
+    let digit = |b: u8| if b <= b'9' { b - b'0' } else { b - b'a' + 10 };
+    let mut out = [0u8; NAME_LEN];
+    for (byte, pair) in out.iter_mut().zip(hex.as_bytes().chunks(2)) {
+        *byte = digit(pair[0]) << 4 | digit(pair[1]);
+    }
+    Some(out)
+}
+
+/// What a media get ended with: the name asked for and the tagged message, or why not.
+type Answer = (String, Result<Vec<u8>, ApiError>);
+
+/// The media gets of one connection: answers come back on `tx`'s channel, so the loop goes on
+/// relaying while a blob is read.
+struct Gets {
+    tx: mpsc::Sender<Answer>,
+    inflight: usize,
+}
+
+impl Gets {
+    /// Counts a get in and hands out the sender its task answers on; `None` at `MAX_GETS`.
+    fn begin(&mut self) -> Option<mpsc::Sender<Answer>> {
+        if self.inflight >= MAX_GETS {
+            return None;
+        }
+        self.inflight += 1;
+        Some(self.tx.clone())
+    }
+
+    /// An answer came back.
+    fn finished(&mut self) {
+        self.inflight = self.inflight.saturating_sub(1);
+    }
+}
+
+async fn read_media(app: Shared, room: String, name: String) -> Result<Vec<u8>, ApiError> {
+    let raw = name_bytes(&name).ok_or(ApiError::bad("bad_name"))?;
+    let (mut file, len) = app.rooms.open_media(&room, &name).await?;
+    let mut out = Vec::with_capacity(1 + NAME_LEN + len as usize);
+    out.push(KIND_MEDIA);
+    out.extend_from_slice(&raw);
+    file.read_to_end(&mut out).await?;
+    Ok(out)
 }
 
 async fn send(socket: &mut WebSocket, msg: Message) -> Step {
@@ -299,6 +381,11 @@ async fn serve(socket: &mut WebSocket, conn: &Connection) -> Step {
     let mut heard = Instant::now();
     let mut presence_open = true;
     let mut bucket = PresenceBucket::new(StdInstant::now());
+    let (media_tx, mut media_rx) = mpsc::channel::<Answer>(MAX_GETS);
+    let mut gets = Gets {
+        tx: media_tx,
+        inflight: 0,
+    };
     loop {
         tokio::select! {
             event = rx.recv() => match event {
@@ -314,13 +401,21 @@ async fn serve(socket: &mut WebSocket, conn: &Connection) -> Step {
                 // why (`Deleted` comes before its end).
                 Err(RecvError::Closed) => presence_open = false,
             },
+            // `gets` holds a sender, so the channel never closes under us.
+            Some((name, answer)) = media_rx.recv() => {
+                gets.finished();
+                match answer {
+                    Ok(msg) => send(socket, Message::Binary(Bytes::from(msg))).await?,
+                    Err(e) => media_refused(socket, &name, &e).await?,
+                }
+            }
             msg = socket.recv() => {
                 let msg = match msg {
                     None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return Err(Stop::Lost),
                     Some(Ok(msg)) => msg,
                 };
                 heard = Instant::now();
-                incoming(socket, conn, &mut bucket, msg).await?;
+                incoming(socket, conn, &mut bucket, &mut gets, msg).await?;
             }
             _ = ping.tick() => {
                 if heard.elapsed() >= SILENT_FOR {
@@ -343,6 +438,10 @@ async fn relay(socket: &mut WebSocket, event: &Event, me: u64) -> Step {
         }
         Event::Presence { from, .. } if *from == me => Ok(()),
         Event::Presence { bytes, .. } => send(socket, tagged(KIND_PRESENCE, None, bytes)).await,
+        Event::Media { from, .. } if *from == me => Ok(()),
+        Event::Media { name, .. } => {
+            send_json(socket, json!({ "type": "media", "name": name })).await
+        }
         Event::Count(n) => send_json(socket, json!({ "type": "count", "present": n })).await,
         Event::Ended { ended_at, expires } => {
             send_json(
@@ -355,36 +454,119 @@ async fn relay(socket: &mut WebSocket, event: &Event, me: u64) -> Step {
     }
 }
 
+/// Charges `bytes` to the connection's client. Over the daily budget the refusal is sent as
+/// an error message and the connection is closed with 4429.
+async fn charge(socket: &mut WebSocket, conn: &Connection, bytes: usize) -> Step {
+    if let Err(e) = conn.app.charge_write(conn.client, bytes as u64) {
+        send_json(
+            socket,
+            json!({
+                "type": "error",
+                "code": e.code,
+                "retry_after": e.retry_after,
+            }),
+        )
+        .await?;
+        return Err(Stop::Close(CLOSE_BUDGET, e.code));
+    }
+    Ok(())
+}
+
+/// A store error met on a media put or get: told with the blob's name, and the connection
+/// stays, except where a frame's would close (an ended or gone room).
+async fn media_refused(socket: &mut WebSocket, name: &str, e: &ApiError) -> Step {
+    let told = json!({ "type": "error", "code": e.code, "name": name });
+    match e.status {
+        StatusCode::CONFLICT => {
+            send_json(socket, told).await?;
+            Err(Stop::Close(CLOSE_ENDED, "ended"))
+        }
+        StatusCode::NOT_FOUND if e.code == "media_missing" => send_json(socket, told).await,
+        StatusCode::NOT_FOUND | StatusCode::GONE => Err(Stop::Close(CLOSE_GONE, "gone")),
+        StatusCode::PAYLOAD_TOO_LARGE | StatusCode::BAD_REQUEST => send_json(socket, told).await,
+        _ => {
+            send_json(socket, told).await?;
+            Err(Stop::Close(CLOSE_SERVER_ERROR, "server_error"))
+        }
+    }
+}
+
+/// `0x04 || name(32) || envelope`.
+async fn media_put(socket: &mut WebSocket, conn: &Connection, rest: &[u8]) -> Step {
+    let Some((raw, env)) = rest.split_at_checked(NAME_LEN) else {
+        return send_json(socket, json!({ "type": "error", "code": "bad_frame" })).await;
+    };
+    let name = name_hex(raw);
+    charge(socket, conn, env.len()).await?;
+    match conn
+        .app
+        .rooms
+        .put_media(&conn.room, conn.id, &name, env)
+        .await
+    {
+        Ok(_) => send_json(socket, json!({ "type": "media", "name": name, "ok": true })).await,
+        Err(e) => media_refused(socket, &name, &e).await,
+    }
+}
+
+#[derive(Deserialize)]
+struct MediaRequest {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    name: String,
+}
+
+/// `{"type":"get_media","name":hex}`: read in a task, answered through `gets`. Other text is
+/// not ours and needs nothing.
+async fn media_get(socket: &mut WebSocket, conn: &Connection, gets: &mut Gets, text: &str) -> Step {
+    let Ok(req) = serde_json::from_str::<MediaRequest>(text) else {
+        return Ok(());
+    };
+    if req.kind != "get_media" {
+        return Ok(());
+    }
+    if !valid_sha(&req.name) {
+        return send_json(socket, json!({ "type": "error", "code": "bad_frame" })).await;
+    }
+    let Some(tx) = gets.begin() else {
+        return send_json(
+            socket,
+            json!({ "type": "error", "code": "media_busy", "name": req.name }),
+        )
+        .await;
+    };
+    let (app, room) = (conn.app.clone(), conn.room.clone());
+    tokio::spawn(async move {
+        let answer = read_media(app, room, req.name.clone()).await;
+        // The loop is gone when the connection ended: nobody to answer.
+        let _ = tx.send((req.name, answer)).await;
+    });
+    Ok(())
+}
+
 async fn incoming(
     socket: &mut WebSocket,
     conn: &Connection,
     bucket: &mut PresenceBucket,
+    gets: &mut Gets,
     msg: Message,
 ) -> Step {
     let rooms = &conn.app.rooms;
     match msg {
         Message::Text(t) if t.as_str() == "ping" => send(socket, Message::text("pong")).await,
+        Message::Text(t) => media_get(socket, conn, gets, t.as_str()).await,
         Message::Binary(b) => {
             let result = match b.split_first() {
                 Some((&KIND_FRAME, env)) => {
-                    if let Err(e) = conn.app.charge_write(conn.client, env.len() as u64) {
-                        send_json(
-                            socket,
-                            json!({
-                                "type": "error",
-                                "code": e.code,
-                                "retry_after": e.retry_after,
-                            }),
-                        )
-                        .await?;
-                        return Err(Stop::Close(CLOSE_BUDGET, e.code));
-                    }
+                    charge(socket, conn, env.len()).await?;
                     let appended = rooms.append(&conn.room, conn.id, env).await.map(drop);
                     if appended.is_ok() {
                         Metrics::inc(&conn.app.metrics.frames_relayed);
                     }
                     appended
                 }
+                Some((&KIND_MEDIA_PUT, rest)) => return media_put(socket, conn, rest).await,
                 Some((&KIND_PRESENCE, _)) if !bucket.allow(StdInstant::now()) => return Ok(()),
                 Some((&KIND_PRESENCE, env)) => rooms.presence(&conn.room, conn.id, env).await,
                 _ => Err(ApiError::bad("bad_frame")),
@@ -394,7 +576,7 @@ async fn incoming(
                 Err(e) => frame_refused(socket, &e).await,
             }
         }
-        // Other text (a second join, say) and protocol pings need nothing from us.
+        // Protocol pings and the like need nothing from us.
         _ => Ok(()),
     }
 }
@@ -402,6 +584,31 @@ async fn incoming(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_round_trip_between_hex_and_bytes() {
+        let hex = "00ff10abcdef0123456789abcdef0123456789abcdef0123456789abcdef01aa";
+        let raw = name_bytes(hex).unwrap();
+        assert_eq!(raw[..3], [0x00, 0xff, 0x10]);
+        assert_eq!(name_hex(&raw), hex);
+        assert_eq!(name_bytes(&hex.to_uppercase()), None);
+        assert_eq!(name_bytes(&hex[..62]), None);
+    }
+
+    #[test]
+    fn gets_in_flight_are_capped() {
+        let mut gets = Gets {
+            tx: mpsc::channel(MAX_GETS).0,
+            inflight: 0,
+        };
+        assert!((0..MAX_GETS).all(|_| gets.begin().is_some()));
+        assert!(gets.begin().is_none());
+        gets.finished();
+        assert!(gets.begin().is_some());
+        assert!(gets.begin().is_none());
+        (0..MAX_GETS + 5).for_each(|_| gets.finished());
+        assert_eq!(gets.inflight, 0);
+    }
 
     #[test]
     fn the_bucket_allows_a_burst_then_the_rate() {

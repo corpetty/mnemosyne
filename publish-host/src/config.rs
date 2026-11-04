@@ -92,6 +92,17 @@ pub struct Config {
     /// Largest room snapshot.
     #[arg(long, env = "PUBLISH_ROOM_SNAPSHOT_MAX_BYTES", default_value_t = 8 * MIB)]
     pub room_snapshot_max_bytes: u64,
+    /// Largest sealed media blob (a notes image) a room accepts: a 2,000,000-byte image padded
+    /// to 64 KiB plus its envelope.
+    #[arg(long, env = "PUBLISH_ROOM_MEDIA_MAX_BYTES", default_value_t = 2 * MIB + 128 * 1024)]
+    pub room_media_max_bytes: u64,
+    /// Most a room's media may hold in all (decimal megabytes, as the owner's cap is said).
+    #[arg(
+        long,
+        env = "PUBLISH_ROOM_MEDIA_TOTAL_BYTES",
+        default_value_t = 25_000_000
+    )]
+    pub room_media_total_bytes: u64,
     /// Furthest expiry a room may ask for, in days from now.
     #[arg(long, env = "PUBLISH_ROOM_MAX_DAYS", default_value_t = 7)]
     pub room_max_days: u64,
