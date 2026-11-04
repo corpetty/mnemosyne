@@ -189,6 +189,8 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   Cloudflare quick tunnel). Keep it that way.
 - Guest frames carry a full snapshot: 8 MiB + 64 KiB, in BOTH frame.rs copies (link/src/guest/frame.rs and
   guest-wasm/src/frame.rs). They must match.
+- Never hold a notes lock (shared_notes) while calling `item_flags` / `task_links` fan-out: linked meetings take their
+  own notes locks and two folds deadlock. `notes_summary.read_back` runs ticks in a daemon thread after the fold.
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.
@@ -607,6 +609,17 @@ naming it. Travelling: `SyncSession.media` + `GET /api/sync/media/...`, `SharedM
 sync, share, bridge, viewer, guest); `img.src` is set only from the provider's object URLs, never from a `mnemosyne:`
 address; a blob nothing has shown for 7 days is swept (after one more fold of the meeting); caps 2,000,000 bytes an image,
 50,000,000 a meeting, 25,000,000 a room (2 MiB + 128 KiB sealed a blob), 20 MiB per publication with clips.
+
+Summaries in the notes (unreleased, docs/plans/2026-11-04-summaries-in-notes.md): the live copilot adds each new point
+once to the notes under a Copilot heading (`copilot_to_notes`), and a summarize writes a Summary section in its place that
+follows the summary and flows back (`summary_in_notes`). notes-core `ref` line mark (`sec:<name>`, `sum:<id>`, `cp:<n>`;
+set_text `refs`, answers carry `refs` and `tasks[].ref`), services/notes_sections.py (split/compose, `own_notes`),
+shared_notes.edit_blocking + `AFTER_FOLD` hooks, services/copilot_notes.py (`CopilotNotes.added`), notes_summary.py
+(`register()` at startup, summary_doc `notes` slot), summary_readback.py (the core shared with vault_sync), the
+`mnemosyne:by/copilot` chip. Rules: only the backend writes ref'd lines, only on the origin machine, never for
+`shared_from`; readers that must not see the sections read `Session.own_notes` (None = not worked out: use `notes`);
+summary action items in the notes are never notes items; ticks from the notes run outside the notes lock; the
+editor keeps a ref on the line holding the original text and never gives one to a new line.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

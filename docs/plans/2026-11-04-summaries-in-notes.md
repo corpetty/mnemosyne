@@ -1,6 +1,6 @@
 # Summaries in the notes: design and tasks
 
-Status: draft 2026-11-04, nothing built (branch summaries-in-notes at 5c41172 = Release 0.28.0). Design and
+Status: built 2026-11-04 on branch summaries-in-notes, unreleased (branched at 5c41172 = Release 0.28.0). Design and
 build order in one file. Phases 2, 4, 6 and 11 of docs/plans/2026-10-12-hashseq-collaboration.md and the
 images work (docs/plans/2026-11-04-images-tasks.md) are the surroundings. Every statement below about the
 code was checked against it; the files and functions are named.
@@ -390,3 +390,14 @@ Decided by default (2026-11-04), listed so Corey can overrule:
   actions and questions.
 - Whoever may edit the notes may edit the summary through them.
 - MCP reads `Session.own_notes` (the notes without the sections), so it does not print the summary twice.
+
+## Changed while building
+
+- `Session.own_notes` is `None` when it was not worked out (only the single-meeting read does it); readers fall
+  back to `notes`.
+- A summary body that opens with its own Summary heading drops it, or the section would show two.
+- Ticks read back from the notes run after the notes lock is released (a daemon thread per fold), so linked
+  meetings never deadlock on the fan-out.
+- The read-back hook is registered at startup (`notes_summary.register()`, api/context.py).
+- summary_doc keeps a `notes` slot beside `vault` (`update_slot`): what was written into the notes.
+- The copilot panel's "+ Add to notes" is hidden while the copilot adds by itself.
