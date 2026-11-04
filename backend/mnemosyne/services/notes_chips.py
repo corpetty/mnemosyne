@@ -6,6 +6,7 @@ In `Session.notes`, the markdown notes-core renders, a chip is an ordinary link:
     [12:34](mnemosyne:t/<part>/<seconds>)
     [@Ada Lovelace](mnemosyne:person/Ada%20Lovelace)
     [Planning, Oct 14](mnemosyne:meeting/<hex id>)
+    [Copilot](mnemosyne:by/copilot)
 
 Readers that are not the editor must never see those URLs: `plain_notes` turns each chip into its
 text (the summary's hint, MCP, published notes), `obsidian_notes` into what the vault understands.
@@ -34,6 +35,7 @@ from .notes_media import parse_value
 _TIME = re.compile(r"mnemosyne:t/([0-9]+)/([0-9]+)", re.ASCII)
 _PERSON = re.compile(r"mnemosyne:person/([^/]+)")
 _MEETING = re.compile(r"mnemosyne:meeting/([0-9a-f]{8,32})")
+_BY = re.compile(r"mnemosyne:by/(copilot)")
 
 # An image line as notes-core writes it: the whole line, the caption is escaped link text.
 IMAGE_LINE = re.compile(r"^!\[((?:[^\]\\\n]|\\.)*)\]\(mnemosyne:image/([^)\s]+)\)$", re.MULTILINE)
@@ -45,13 +47,13 @@ _PUNCT = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 
 @dataclass(frozen=True)
 class Chip:
-    kind: str  # "time" | "person" | "meeting"
+    kind: str  # "time" | "person" | "meeting" | "by"
     text: str  # the link text, backslash escapes removed
-    value: str  # person: the name; meeting: the id; time: "<part>/<seconds>"
+    value: str  # person: the name; meeting: the id; time: "<part>/<seconds>"; by: "copilot"
 
 
 def parse_chip(url: str) -> tuple[str, str] | None:
-    """(kind, value) of a chip URL, or None for anything but exactly one of the three forms."""
+    """(kind, value) of a chip URL, or None for anything but exactly one of the four forms."""
     if m := _TIME.fullmatch(url):
         if max(int(m[1]), int(m[2])) > _MAX_SAFE:  # Number.isSafeInteger in the TS parser
             return None
@@ -66,6 +68,8 @@ def parse_chip(url: str) -> tuple[str, str] | None:
         return "person", name
     if m := _MEETING.fullmatch(url):
         return "meeting", m[1]
+    if m := _BY.fullmatch(url):
+        return "by", m[1]
     return None
 
 
@@ -271,17 +275,22 @@ def _plain_image(line: ImageLine) -> str:
     return f"[image: {caption}]" if caption else "[image]"
 
 
+def _chip_text(chip: Chip) -> str:
+    # In the notes the copilot chip is followed by a space: "Copilot:" + " " reads "Copilot: ...".
+    return "Copilot:" if chip.kind == "by" else chip.text
+
+
 def plain_notes(md: str) -> str:
     """The notes with every chip replaced by its text: `12:34`, `@Ada Lovelace`, a meeting's
-    title, and every image line by `[image: caption]` (`[image]` without a caption). Nothing in
-    the result names a `mnemosyne:` URL."""
-    return _rewrite(_rewrite_images(md, _plain_image), lambda chip: chip.text)
+    title, `Copilot:` for the copilot chip, and every image line by `[image: caption]` (`[image]`
+    without a caption). Nothing in the result names a `mnemosyne:` URL."""
+    return _rewrite(_rewrite_images(md, _plain_image), _chip_text)
 
 
 def task_line_parts(md: str) -> tuple[str | None, str]:
     """(owner, text) of a task line's words: the owner is the first person chip's name (None
-    without one); the text is `md` with person and time chips removed, a meeting chip kept as
-    its text (the title is what the task is about)."""
+    without one); the text is `md` with person, time and copilot chips removed, a meeting chip kept
+    as its text (the title is what the task is about)."""
     owner: list[str] = []
 
     def cut(chip: Chip) -> str:
@@ -337,7 +346,7 @@ def obsidian_notes(
                 stem, title = found
                 alias = re.sub(r"\s+", " ", _WIKI_BAD.sub(" ", title or chip.text)).strip()
                 return f"[[{stem}|{alias}]]" if alias and alias != stem else f"[[{stem}]]"
-        return chip.text
+        return _chip_text(chip)
 
     return _rewrite(_rewrite_images(md, image), one)
 

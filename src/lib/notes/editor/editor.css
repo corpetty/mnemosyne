@@ -342,6 +342,12 @@
 .notes-editor a.ne-chip-meeting:hover {
   background: rgb(55 65 81);
 }
+.notes-editor a.ne-chip-by {
+  color: rgb(192 168 224);
+  background: rgb(147 51 234 / 0.1);
+  border-color: rgb(147 51 234 / 0.25);
+  cursor: default;
+}
 .notes-editor .ne-link-conflict {
   text-decoration: underline dotted;
   text-underline-offset: 2px;

@@ -379,6 +379,7 @@ function buildRun(doc: Document, run: Run): Node {
       // A chip (phase 11): a pill, never a hyperlink. The text stays ordinary editable text.
       a.className = `ne-chip ne-chip-${chip.kind}`;
       a.dataset.chip = run.link;
+      if (chip.kind === 'by') a.title = 'Added by the copilot';
     } else {
       // A peer wrote this URL (C12): only these schemes may be followed, also in a read-only
       // editor, where a `javascript:` link would otherwise run on click.

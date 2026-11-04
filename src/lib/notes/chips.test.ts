@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { insertChip, formatClock, isChipUrl, meetingUrl, parseChip, personUrl, timeUrl } from './chips.js';
+import { byUrl, insertChip, formatClock, isChipUrl, meetingUrl, parseChip, personUrl, timeUrl } from './chips.js';
 import { spansOf, ensureTerminated } from './model.js';
 import { insertText } from './commands.js';
 import { single } from './test-harness.js';
@@ -25,6 +25,14 @@ describe('chip urls', () => {
     expect(parseChip('mnemosyne:meeting/0123abcd4567')).toEqual({ kind: 'meeting', id: '0123abcd4567' });
     expect(parseChip(`mnemosyne:meeting/${'a'.repeat(8)}`)).not.toBeNull();
     expect(parseChip(`mnemosyne:meeting/${'a'.repeat(32)}`)).not.toBeNull();
+  });
+
+  it('builds and parses the copilot chip, and nothing but it', () => {
+    expect(byUrl('copilot')).toBe('mnemosyne:by/copilot');
+    expect(parseChip('mnemosyne:by/copilot')).toEqual({ kind: 'by', who: 'copilot' });
+    for (const bad of ['mnemosyne:by/', 'mnemosyne:by/Copilot', 'mnemosyne:by/ada', 'mnemosyne:by/copilot/x', 'mnemosyne:by/copilot ']) {
+      expect(parseChip(bad)).toBeNull();
+    }
   });
 
   it.each([

@@ -200,7 +200,7 @@ export function createNotesInserts(sessionId: string): InsertProvider {
         uiState.personRequest = chip.name;
         uiState.view = 'people';
         sessionState.show(null);
-      } else {
+      } else if (chip.kind === 'meeting') {
         void openMeeting(chip.id);
       }
     }
