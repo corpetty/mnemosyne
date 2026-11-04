@@ -159,7 +159,13 @@ export type BackendEvent =
   | ({ type: 'recovered' } & RecoveredRecording)
   | { type: 'pong' }
   | { type: 'job'; job: Job }
-  | { type: 'session'; session_id: string; status: SessionStatus | 'deleted' | 'audio_deleted' }
+  | {
+      type: 'session';
+      session_id: string;
+      status: SessionStatus | 'deleted' | 'audio_deleted';
+      // Set when the summary changed in the background (edits read back from the notes or the vault).
+      changed?: 'summary';
+    }
   | { type: 'status'; session_id: string | null; message: string }
   | { type: 'transcription'; session_id: string | null; segment: TranscriptSegment }
   | { type: 'error'; session_id: string | null; message: string }
