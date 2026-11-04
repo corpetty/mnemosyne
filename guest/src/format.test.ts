@@ -187,7 +187,7 @@ describe('media', () => {
     const over = new Uint8Array(MEDIA_MAX + 1).fill(7);
     await bad(sealMedia(keys, room, await sha(over), over));
     await bad(sealMedia(keys, room, await sha(enc.encode('other')), image));
-  });
+  }, 30_000); // two 2 MB seals: over vitest's 5 s on CI runners
   it('requires the sha for MEDIA only', async () => {
     const s = await sha(image);
     expect(() => aad(room, Kind.MEDIA)).toThrow(GuestFormatError);
