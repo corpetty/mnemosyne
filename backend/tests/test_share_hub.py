@@ -2,6 +2,8 @@
 (api/routes/peer_shares.py): a contact's token reads only what is shared with it."""
 
 import base64
+import hashlib
+import struct
 from datetime import datetime
 
 import pytest
@@ -10,7 +12,7 @@ from mnemosyne.models.contact import Card
 from mnemosyne.models.session import Session
 from mnemosyne.models.shared_meeting import SharedMeeting, ShareParts
 from mnemosyne.models.transcript import TranscriptSegment
-from mnemosyne.services import contacts, shares
+from mnemosyne.services import contacts, notes_media, shares
 from mnemosyne.services.person import PersonKeys
 
 EP_ADA, EP_BOB, EP_ADA2 = "a1" * 32, "b2" * 32, "c3" * 32
@@ -111,6 +113,70 @@ def test_the_hub_is_closed_in_team_mode(hub, client):
 def test_poke_is_accepted(hub, client):
     r = client.post("/api/share/poke", headers=hub.ada.headers)
     assert r.status_code == 204 and r.content == b""
+
+
+# ---- /api/share/media (docs/plans/2026-11-04-images-tasks.md, task 11a) ----------------
+
+
+def _webp(pad: bytes) -> bytes:
+    body = b"VP8X" + struct.pack("<I", 10) + b"\0\0\0\0" + (63).to_bytes(3, "little")
+    body += (47).to_bytes(3, "little") + pad
+    return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WEBP" + body
+
+
+def _imaged(hub, notes_fmt="![x](mnemosyne:image/{sha}.webp@64x48)\n"):
+    """A meeting whose notes show one stored image: (id, sha, bytes) and an unused upload's sha."""
+    data = _webp(b"shown")
+    sha = hashlib.sha256(data).hexdigest()
+    sid = hub.repo.save(Session(name="Pictures", notes=notes_fmt.format(sha=sha))).id
+    notes_media.store(hub, sid, sha, data, by="Corey")
+    spare = _webp(b"spare")
+    spare_sha = hashlib.sha256(spare).hexdigest()
+    notes_media.store(hub, sid, spare_sha, spare, by="Corey")
+    return sid, sha, data, spare_sha
+
+
+def _media(client, sid, sha, who=None):
+    return client.get(f"/api/share/media/{sid}/{sha}", headers=who.headers if who else ADMIN)
+
+
+def test_a_contact_with_a_share_with_notes_gets_the_image(hub, client):
+    sid, sha, data, _spare = _imaged(hub)
+    share(hub, sid, hub.ada)
+    r = _media(client, sid, sha, hub.ada)
+    assert r.status_code == 200 and r.content == data
+    assert r.headers["content-type"] == "image/webp"
+    assert "private" in r.headers["cache-control"]
+
+
+def test_the_image_is_refused_without_a_share_with_notes(hub, client):
+    sid, sha, _data, spare = _imaged(hub)
+    share(hub, sid, hub.ada, notes=False)
+    assert _media(client, sid, sha, hub.ada).status_code == 404  # a share without notes
+    assert _media(client, sid, sha, hub.bob).status_code == 404  # no share at all
+    share(hub, sid, hub.ada)
+    assert _media(client, sid, sha, hub.ada).status_code == 200
+    assert _media(client, sid, spare, hub.ada).status_code == 404  # no line of the notes shows it
+    assert _media(client, sid, sha, hub.bob).status_code == 404  # still no share for Bob
+    assert hub.repo.revoke_peer_share(sid, hub.ada.person)
+    assert _media(client, sid, sha, hub.ada).status_code == 404  # unshared
+
+
+def test_the_image_answers_alike_for_what_does_not_exist(hub, client):
+    sid, sha, _data, _spare = _imaged(hub)
+    share(hub, sid, hub.ada)
+    other = hub.repo.save(Session(name="Not shared")).id
+    unknown = [(other, sha), ("0" * 12, sha), (sid, "f" * 64), (sid, "nothex"), (sid, "A" * 64)]
+    answers = {_media(client, s, h, hub.ada).status_code for s, h in unknown}
+    assert answers == {404}
+    assert _media(client, sid, sha).status_code == 403  # the admin token is no contact
+    assert client.get(f"/api/share/media/{sid}/{sha}").status_code == 401
+
+
+def test_the_image_route_is_closed_in_team_mode(hub, client):
+    sid, sha, _data, _spare = _imaged(hub)
+    hub.settings.team_mode = True
+    assert _media(client, sid, sha).status_code == 409
 
 
 # ---- /api/share/changes ----------------------------------------------------------------------

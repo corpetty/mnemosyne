@@ -12,6 +12,10 @@ that (contact, machine) in the contact's `cursors` (`{endpoint: {since, tombston
 - one whose digest equals the stored copy's is skipped;
 - anything else replaces the copy (`repo.apply_shared`, the hub is the truth) and its notes
   document is adopted where we have none, else united with ours (services/sync_notes.py);
+- the images its notes show are then fetched (`GET /api/share/media/<meeting>/<sha>`, same client,
+  `notes_media.store` checks hash, type and caps); what could not be fetched is asked for again
+  when a fold of that copy finds it missing (`_media_missing`, a `notes_media.MISSING_HOOKS` entry
+  that only schedules, after `media_delay`), and the next time the owner's meeting changes;
 - a tombstone deletes our copy when that contact shared it ("removed: <reason> by <name>").
 
 A round runs every `interval` seconds for every contact, at once for one contact on its poke
@@ -25,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -34,7 +39,7 @@ from .. import access
 from ..models.contact import ContactPullInfo
 from ..models.share_hub import SHARE_PROTOCOL, ShareChanges, ShareHello, ShareTombstone
 from ..models.shared_meeting import SharedMeeting
-from . import contacts
+from . import contacts, notes_media, shared_notes
 
 if TYPE_CHECKING:
     import httpx
@@ -60,6 +65,8 @@ TOMBSTONE_MARGIN = timedelta(hours=2)
 # (it pokes us to pull the tombstones before it drops our token); this is the fallback for an
 # owner that was offline then. The count is in memory: it starts again after a restart.
 GONE_AFTER = 3
+MEDIA_FETCH_MAX = 200  # images asked for per meeting and attempt
+MEDIA_DELAY = 5.0  # seconds from a fold finding images missing to asking the owner for them
 
 
 class ShareSkew(Exception):
@@ -136,6 +143,10 @@ class SharePuller:
         self._locks: dict[str, asyncio.Lock] = {}
         self._again: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
+        self.media_delay = MEDIA_DELAY  # tests set 0
+        # Meetings whose missing images are already scheduled for a fetch (any thread adds).
+        self._media_wanted: set[str] = set()
+        self._media_guard = threading.Lock()
         self._loop_task: asyncio.Task | None = None
         self._wake: asyncio.Event | None = None
 
@@ -417,6 +428,7 @@ class SharePuller:
             page = ShareChanges.model_validate(r.json())
             outcomes = await asyncio.to_thread(self._take_page, row, page.sessions)
             outcomes += self._take_tombstones(row, page.tombstones)
+            await self._fetch_page_media(client, person, outcomes)
             self._after(row, st, outcomes)
             if any(o.kind == "waiting" for o in outcomes):
                 stuck = True
@@ -434,6 +446,104 @@ class SharePuller:
             if not page.more or page.next_since <= since:
                 return
             since = page.next_since
+
+    # ---- the images of shared notes ---------------------------------------------------------
+
+    async def _fetch_page_media(
+        self, client: httpx.AsyncClient, person: str, outcomes: list[_Outcome]
+    ) -> None:
+        """The images the meetings just taken in show and we lack. A failure never fails the
+        round: the meeting is in, the images come with the next fold or change."""
+        import httpx
+
+        for o in outcomes:
+            if o.kind not in ("new", "parts", "updated", "ignored"):
+                continue
+            try:
+                await self.fetch_media(client, person, o.session_id)
+            except (httpx.HTTPError, OSError) as e:
+                logger.info("Images of shared meeting %s not fetched: %s", o.session_id, e)
+
+    async def fetch_media(self, client: httpx.AsyncClient, person: str, session_id: str) -> int:
+        """Fetch what the copy's notes show and is not stored here, one image at a time.
+        Returns how many were stored. An image the owner does not serve (404), is too big, or
+        fails `notes_media.store`'s checks is skipped."""
+        if self.ctx.repo.shared_from(session_id) != person:
+            return 0
+        values = await asyncio.to_thread(notes_media.missing, self.ctx, session_id)
+        stored = 0
+        for value in values[:MEDIA_FETCH_MAX]:
+            sha = value[:64]
+            data = await self._get_blob(client, session_id, sha)
+            if data is None:
+                continue
+            try:
+                await asyncio.to_thread(
+                    notes_media.store, self.ctx, session_id, sha, data, by="p:" + person[:16]
+                )
+            except notes_media.MediaError as e:
+                logger.warning("Image %s of shared meeting %s refused: %s", sha, session_id, e)
+                continue
+            stored += 1
+        return stored
+
+    async def _get_blob(self, client: httpx.AsyncClient, session_id: str, sha: str) -> bytes | None:
+        async with client.stream("GET", f"/api/share/media/{session_id}/{sha}") as r:
+            if r.status_code != 200:
+                logger.info("Image %s of %s: the owner answered %s", sha, session_id, r.status_code)
+                return None
+            data = bytearray()
+            async for chunk in r.aiter_bytes():
+                data += chunk
+                if len(data) > notes_media.IMAGE_MAX_BYTES:
+                    logger.warning("Image %s of %s is over the size limit", sha, session_id)
+                    return None
+        return bytes(data)
+
+    def want_media(self, person: str, session_id: str) -> None:
+        """Images of a shared meeting's notes are missing (any thread): ask its owner for them
+        soon. A meeting already scheduled is not scheduled again."""
+        with self._media_guard:
+            if session_id in self._media_wanted:
+                return
+            self._media_wanted.add(session_id)
+        shared_notes._on_loop(self.ctx, self._schedule_media, person, session_id)
+
+    def _schedule_media(self, person: str, session_id: str) -> None:
+        try:
+            self._spawn(self._media_later(person, session_id))
+        except RuntimeError:  # no event loop (shutting down): the next fold asks again
+            with self._media_guard:
+                self._media_wanted.discard(session_id)
+
+    async def _media_later(self, person: str, session_id: str) -> None:
+        try:
+            if self.media_delay:
+                await asyncio.sleep(self.media_delay)
+            await self.pull_media(person, session_id)
+        except Exception as e:  # noqa: BLE001 - the next fold asks again
+            logger.info("Images of shared meeting %s not fetched: %s", session_id, e)
+        finally:
+            with self._media_guard:
+                self._media_wanted.discard(session_id)
+
+    async def pull_media(self, person: str, session_id: str) -> int:
+        """The missing images of one shared meeting, from the first machine of its owner that
+        answers. 0 for no live contact or sharing off here."""
+        if not self._available():
+            return 0
+        row = self.ctx.repo.contact(person)
+        if row is None or row["removed_at"]:
+            return 0
+        reset = access.current.set(None)
+        try:
+
+            async def serve(client: httpx.AsyncClient, _endpoint: str) -> int:
+                return await self.fetch_media(client, person, session_id)
+
+            return await self.with_machine(row, serve)
+        finally:
+            access.current.reset(reset)
 
     # ---- taking a page in -------------------------------------------------------------------
 
@@ -540,3 +650,16 @@ class SharePuller:
         self.ctx.bus.publish(
             {"type": "share_pull", "person": person, "state": st.state, "error": st.error}
         )
+
+
+def _media_missing(app: AppContext, session_id: str, values: list[str]) -> None:
+    """`notes_media.MISSING_HOOKS`: a fold of a meeting shared with us shows images whose bytes
+    are not here. Runs inside the fold (its lock held): only schedules."""
+    puller = getattr(app, "share_pull", None)
+    person = app.repo.shared_from(session_id) if puller is not None else ""
+    if person:
+        puller.want_media(person, session_id)
+
+
+if _media_missing not in notes_media.MISSING_HOOKS:
+    notes_media.MISSING_HOOKS.append(_media_missing)

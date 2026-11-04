@@ -61,6 +61,19 @@ class SharedSegment(ApiModel):
     end: float
 
 
+class SharedMedia(ApiModel):
+    """An image the shared notes show (docs/plans/2026-11-04-images-tasks.md, task 11a). Only a
+    description: the bytes come from `GET /api/share/media/<meeting id>/<sha256>`, which checks
+    the share again. Filled only when the share includes the notes, and only for images the
+    notes document references and whose bytes the owner has."""
+
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")  # of the stored bytes
+    ext: Literal["webp", "jpeg"]
+    width: int
+    height: int
+    size: int  # bytes
+
+
 class SharedMeeting(ApiModel):
     format: int = 1
     id: str
@@ -76,6 +89,7 @@ class SharedMeeting(ApiModel):
     transcript: list[SharedSegment] = Field(default_factory=list)
     notes: str = ""  # markdown, as folded
     notes_doc: str = ""  # base64 of the notes document's snapshot ("" = none)
+    media: list[SharedMedia] = Field(default_factory=list)  # images of the notes, with `notes`
     comments: list[SyncComment] = Field(default_factory=list)
     # Everyone with a live share on this meeting, the recipient included (display names).
     shared_with: list[str] = Field(default_factory=list)

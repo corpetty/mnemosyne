@@ -27,6 +27,7 @@ from ..models.shared_meeting import (
     Contribution,
     ContributionBatch,
     ContributionResult,
+    SharedMedia,
     SharedMeeting,
     SharedOwner,
     SharedSegment,
@@ -34,7 +35,7 @@ from ..models.shared_meeting import (
 )
 from ..models.sync_session import SyncComment
 from ..summarization.privacy import redact_contacts, redact_identifiers, redact_transcript
-from . import comments, contacts, item_flags, shared_notes
+from . import comments, contacts, item_flags, notes_media, shared_notes
 from .person import PersonKeys
 
 if TYPE_CHECKING:
@@ -128,6 +129,20 @@ def _comments(
     return out
 
 
+def _media(app: AppContext, session_id: str, notes: str) -> list[SharedMedia]:
+    """The images the shared notes show whose bytes are here, in document order (a blob no line
+    references, an upload not yet used, is not shared)."""
+    rows = {r["sha256"]: r for r in app.repo.media_rows(session_id)}
+    out = []
+    for value in notes_media.values_in(notes):
+        sha, ext, width, height = notes_media.parse_value(value)  # values_in checked it
+        row = rows.get(sha)
+        if row is None or notes_media.path(app, session_id, sha) is None:
+            continue
+        out.append(SharedMedia(sha256=sha, ext=ext, width=width, height=height, size=row["size"]))
+    return out
+
+
 def _shared_with(app: AppContext, session_id: str) -> list[str]:
     names = []
     for share in app.repo.peer_shares(session_id):
@@ -182,9 +197,10 @@ def build_shared_meeting(app: AppContext, session_id: str, person: str) -> Share
             SharedSegment(speaker=s.speaker, text=text_contacts(s.text), start=s.start, end=s.end)
             for s in lines
         ]
-    notes, notes_doc = "", ""
+    notes, notes_doc, media = "", "", []
     if parts.notes:
         notes = session.notes
+        media = _media(app, session_id, notes)
         doc = app.repo.notes_doc(session_id)
         if doc and doc["snapshot"] is not None:
             notes_doc = base64.b64encode(bytes(doc["snapshot"])).decode("ascii")
@@ -204,6 +220,7 @@ def build_shared_meeting(app: AppContext, session_id: str, person: str) -> Share
         transcript=transcript,
         notes=notes,
         notes_doc=notes_doc,
+        media=media,
         comments=_comments(app, session_id, parts, owner.name),
         shared_with=_shared_with(app, session_id),
     )
