@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 from .. import access
 from ..models.session import NotesItem
+from . import notes_sections
 from .notes_chips import parse_chip
 from .tasks import _norm
 
@@ -57,7 +58,7 @@ ID_LEN = 16
 _HEX = re.compile(r"[0-9a-f]+")
 # Authors whose lines are derived without a history line (services/shared_notes.py
 # SEED_AUTHOR / API_AUTHOR; sync_notes.author gives "sync (<peer>)").
-_SILENT = ("seed", "api")
+_SILENT = ("seed", "api", "Copilot", "Summary")
 _SEPARATORS = " \t:-–—,;"  # left at an end of the text by a chip cut out there
 
 
@@ -101,6 +102,9 @@ def lines_of(tasks: list, offsets: dict[int, float]) -> list[Line]:
         line, text, links = t.get("line"), t.get("text"), t.get("links")
         if not (isinstance(line, str) and _HEX.fullmatch(line.lower()) and isinstance(text, str)):
             continue
+        ref = t.get("ref")
+        if isinstance(ref, str) and ref.startswith((notes_sections.SUM, notes_sections.CP)):
+            continue  # the backend's own lines (a summary's action item, a copilot's to-do)
         owner: str | None = None
         at: float | None = None
         timed = False

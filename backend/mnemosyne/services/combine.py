@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from ..models.session import Recording, Session, SessionStatus
 from ..models.transcript import TranscriptSegment
-from . import notes_media, shared_notes
+from . import notes_media, notes_sections, shared_notes
 from .notes_chips import retarget_chips
 from .parts import audio_seconds, cut, join, match_speakers, offsets, part_of, shift
 
@@ -197,8 +197,9 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
     # The chips in both notes (phase 11) follow the parts, which are numbered anew by recording
     # time, so that order is worked out here, before the join.
     order = part_order(target, other)
+    other_source = (app.repo.notes_source(other.id) or (other.notes or "", ""))[0]
     other_notes = renumber_chips(
-        (app.repo.notes_source(other.id) or (other.notes or "", ""))[0],
+        notes_sections.own_notes(app.repo, other.id, other_source),  # not its summary section
         other.id, order, target.id, other.id,
     )  # fmt: skip
     target_source = (app.repo.notes_source(target.id) or (target.notes or "", ""))[0]

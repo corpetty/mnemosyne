@@ -69,7 +69,7 @@ class SessionService:
         return self.repo.update_fields(session.id, **fields)
 
     def create_session(self, name: str = DEFAULT_SESSION_NAME) -> Session:
-        session = self._typed(self.repo.save(Session(name=name)))
+        session = self._typed(self.repo.save(Session(name=name, own_notes="")))
         logger.info("Created session %s: %s", session.id, session.name)
         return self._notify(session)
 

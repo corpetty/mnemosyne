@@ -178,8 +178,10 @@ async def get_meeting(
         out += ["", "## Chapters"] + [
             f"- [{_mmss(c['start'])}] {c['title']}" for c in d["chapters"]
         ]
-    if s.get("notes"):
-        out += ["", "## Notes", plain_notes(s["notes"])]
+    own = s.get("own_notes")  # without the backend's own sections, when worked out
+    notes = s.get("notes") if own is None else own
+    if notes:
+        out += ["", "## Notes", plain_notes(notes)]
     if include_transcript and s.get("transcript"):
         lines = s["transcript"]
         page = lines[max(0, offset) : max(0, offset) + max(1, min(max_lines, 2000))]

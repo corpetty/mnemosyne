@@ -465,3 +465,42 @@ def test_update_refuses_a_meeting_shared_with_me(ctx, sidecar):
     with pytest.raises(access.Forbidden, match="Tick it in the notes"):
         notes_items.update(ctx, sid, item.id, done=True)
     assert not items(ctx, sid)[0].done
+
+
+# ---- the backend's sections (docs/plans/2026-11-04-summaries-in-notes.md) ---------------------
+
+WITH_SUMMARY = "My own note\n\n## Summary\n\nA summary line\n"
+
+
+def store_doc(ctx, session_id, markdown=WITH_SUMMARY, refs=None):
+    """A folded document for the meeting: `markdown` with a `sec:summary` heading at line 2."""
+    import json
+
+    refs = (
+        refs
+        if refs is not None
+        else [{"line": "a1", "ref": "sec:summary", "index": 2, "md_line": 2}]
+    )
+    with ctx.repo._lock, ctx.repo._conn:
+        ctx.repo._conn.execute(
+            "INSERT OR REPLACE INTO shared_notes (session_id, updated_at, markdown, refs)"
+            " VALUES (?,?,?,?)",
+            (session_id, "2026-11-04T10:00:00", markdown, json.dumps(refs)),
+        )
+    ctx.sessions.update_notes(session_id, markdown)
+
+
+def test_lines_with_a_summary_or_copilot_ref_are_not_notes_items():
+    ada = [(5, 8, "mnemosyne:person/Ada")]
+    tasks = [
+        {**task(0, "Send @Ada", ada), "ref": "sum:abc"},
+        {**task(1, "Call @Ada", ada), "ref": "cp:3"},
+        {**task(2, "Ping @Ada", ada), "ref": "sec:action_items"},  # not one of the two
+        task(3, "Mail @Ada", ada),
+    ]
+    assert [x.line[-1] for x in notes_items.lines_of(tasks, {})] == ["2", "3"]
+
+
+def test_the_backends_authors_derive_silently():
+    assert notes_items._silent("Copilot") and notes_items._silent("Summary")
+    assert not notes_items._silent("Ada")

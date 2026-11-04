@@ -206,11 +206,19 @@ def defaults(app: AppContext, session: Session) -> PublicationDefaults:
     )
 
 
+def _own_notes(app: AppContext, session: Session) -> str:
+    """The notes without the backend's sections (summary, copilot): those are curated by the
+    selection, never published as the person's notes."""
+    from .notes_sections import own_notes
+
+    return own_notes(app.repo, session.id, session.notes or "")
+
+
 def notes_images(app: AppContext, session: Session) -> list[NotesImage]:
     """The images of the meeting's notes, in order, each once, for the Publish dialog."""
     sizes = {r["sha256"]: r["size"] for r in app.repo.media_rows(session.id)}
     found: dict[str, NotesImage] = {}
-    for line in image_lines(session.notes or ""):
+    for line in image_lines(_own_notes(app, session)):
         if line.sha not in found:
             found[line.sha] = NotesImage(
                 sha256=line.sha,
@@ -308,8 +316,9 @@ def build_content(
         "attendees": [names.name(p) for p in people if p.casefold() in wanted],
         "quotes": [],
     }
-    if sel.notes and session.notes.strip():
-        content["notes"], shown = _notes_text(session.notes, sel, text)
+    notes = _own_notes(app, session)
+    if sel.notes and notes.strip():
+        content["notes"], shown = _notes_text(notes, sel, text)
         if shown:  # only when there are some: a publication without images digests as it did
             content["images"] = shown
     if data is not None:

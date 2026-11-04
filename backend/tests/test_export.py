@@ -160,7 +160,9 @@ def test_notes_chips_in_the_vault_note():
 
 
 def test_exporter_passes_the_meeting_lookup_to_the_notes(tmp_path):
-    s = Session(name="Now", created_at=datetime(2026, 10, 20, 9, 0), notes=CHIP_NOTES)
+    s = Session(
+        name="Now", created_at=datetime(2026, 10, 20, 9, 0), notes=CHIP_NOTES, own_notes=CHIP_NOTES
+    )
     exporter = ObsidianExporter(
         str(tmp_path), meeting_note=lambda _mid: ("2026-10-14-Planning", "Planning")
     )
@@ -309,3 +311,19 @@ def test_an_attachment_tag_is_never_all_digits():
     assert _tag("abcdef01" + "0" * 56) == "abcdef01"
     line = f"![[2026-11-04-Planning-{_tag(digits_first)}.webp|Whiteboard]]"
     assert redact_identifiers(line) == line
+
+
+def test_the_vault_note_gets_the_own_notes_only(client, ctx, tmp_path):
+    from tests.test_notes_items import store_doc
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    ctx.settings.obsidian_vault_path = str(vault)
+    ctx.settings.obsidian_subfolder = "notes"
+    sid = ctx.sessions.create_session("Planning").id
+    store_doc(ctx, sid)
+    assert ctx.repo.get(sid).own_notes == "My own note\n"
+    assert client.post(f"/api/sessions/{sid}/export/obsidian").status_code == 200
+    (note,) = (vault / "notes").glob("*.md")
+    text = note.read_text()
+    assert "My own note" in text and "A summary line" not in text

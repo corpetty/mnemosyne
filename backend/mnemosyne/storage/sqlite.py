@@ -1173,6 +1173,12 @@ class SessionRepository:
             for r in rows
         ]
 
+    def _own_notes(self, session_id: str, notes: str | None) -> str:
+        """The notes above the backend's sections (services/notes_sections.py)."""
+        from ..services.notes_sections import own_notes
+
+        return own_notes(self, session_id, notes or "")
+
     def get(self, session_id: str) -> Session | None:
         """The meeting, or None when there is none or the caller may not see it."""
         only = access.read_owner()
@@ -1218,6 +1224,7 @@ class SessionRepository:
                 else None
             ),
             notes=row["notes"],
+            own_notes=self._own_notes(session_id, row["notes"]),
             participants=json.loads(row["participants"]),
             attendees=json.loads(row["attendees"]),
             local_only=bool(row["local_only"]),

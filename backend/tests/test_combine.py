@@ -273,3 +273,19 @@ def test_the_other_meetings_images_move_into_the_combined_one(client, ctx):
     for blob in (mine, theirs, both):
         assert notes_media.read(ctx, kept, sha(blob)) == blob
     assert {r["sha256"]: r["by"] for r in ctx.repo.media_rows(kept)}[sha(theirs)] == "Bob"
+
+
+@needs_ffmpeg
+def test_only_the_others_own_notes_are_joined(client, ctx):
+    from tests.test_notes_items import store_doc
+
+    t0 = datetime(2026, 9, 28, 10, 0)
+    a = _two_parts(ctx, "Alpha", t0, t0 + timedelta(minutes=20), "Alpha note")
+    b = _two_parts(ctx, "Beta", t0 + timedelta(minutes=10), t0 + timedelta(minutes=30), "x")
+    store_doc(ctx, b)  # "My own note" above a summary section
+    done = _wait(
+        client, client.post(f"/api/sessions/{a}/combine", json={"other_id": b}).json()["id"]
+    )
+    assert done["status"] == "completed", done["error"]
+    notes = client.get(f"/api/sessions/{a}").json()["notes"]
+    assert "My own note" in notes and "A summary line" not in notes
