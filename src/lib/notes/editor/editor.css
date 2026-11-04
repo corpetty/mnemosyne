@@ -212,7 +212,10 @@
   height: 100%;
   object-fit: contain;
 }
-.notes-editor .ne-image:not([data-state='ready']) img {
+/* Uploading or not uploaded: the local picture shows under its note (the design's "appears at
+   once"); loading and missing have no bytes to show yet. */
+.notes-editor .ne-image:is([data-state='loading'], [data-state='missing']) img,
+.notes-editor .ne-image img:not([src]) {
   visibility: hidden;
 }
 .notes-editor .ne-image[data-state='ready'] {
@@ -240,6 +243,46 @@
 .notes-editor .ne-image[data-state='failed'] .ne-image-note {
   color: rgb(229 231 235);
 }
+.notes-editor .ne-image[tabindex]:focus-visible {
+  outline: 2px solid rgb(96 165 250);
+  outline-offset: 2px;
+}
+
+/* The full-size view (ui/Lightbox.svelte), outside the editor's root. */
+.ne-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(17 24 39 / 0.9);
+}
+.ne-lightbox img {
+  display: block;
+  max-width: 95vw;
+  max-height: 95vh;
+  object-fit: contain;
+  border-radius: 0.375rem;
+}
+.ne-lightbox-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9999px;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: rgb(229 231 235);
+  background: rgb(55 65 81);
+  cursor: pointer;
+}
+.ne-lightbox-close:hover,
+.ne-lightbox-close:focus-visible {
+  background: rgb(75 85 99);
+}
+
 /* The caption: ordinary editable text with a muted placeholder while it is empty. */
 .notes-editor .ne-image-line:has(> br[data-sentinel])::after {
   content: attr(data-placeholder);

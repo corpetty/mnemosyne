@@ -20,7 +20,8 @@
 //   nothing on a filled one. Delete at a line end joins the next line (never into or out of a
 //   table). In a table row these and the cell steps run on keydown: WebKit fires no
 //   beforeinput at a cell's edge.
-// - Cut copies the selection's markdown first; paste reads text/plain as markdown.
+// - Cut copies the selection's markdown first; paste reads text/plain as markdown. Files on a
+//   paste or a drop go to `onFiles` first (images); when it declines, the text path runs.
 //
 // Shortcuts (Ctrl is also Cmd):
 //   Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+Shift+X   bold / italic / code / strikethrough on the selection
@@ -99,6 +100,12 @@ export interface InputOptions {
    * engine only fires when keydown was not cancelled (UI Events), so `enter()` never runs.
    */
   interceptKey?: (e: KeyboardEvent) => boolean;
+  /**
+   * Files pasted or dropped (images in the notes), before any text handling: `[from, to)` is the
+   * selection (a paste) or the drop point. true = taken, nothing else happens; false = the text
+   * path runs as it would without files. Never called while read-only.
+   */
+  onFiles?: (files: File[], from: number, to: number) => boolean;
 }
 
 /** Where `command` leaves the selection (default: the command's own caret). */
@@ -839,7 +846,47 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
     const s = selection();
     if (!s) return;
     opts.onTyping?.();
+    const files = filesOf(e.clipboardData);
+    if (files.length && opts.onFiles?.(files, s[0], s[1])) return;
     paste(e.clipboardData?.getData('text/plain') ?? '', s[0], s[1]);
+  };
+
+  /** Is a drag carrying files (its items are not readable before the drop)? */
+  const dragsFiles = (dt: DataTransfer | null): boolean => !!dt && Array.from(dt.types ?? []).includes('Files');
+
+  // A drag with files is accepted (the default would open the file in the window); a drop of
+  // files goes to `onFiles`, and when it declines the browser's own drop runs (its beforeinput
+  // insertFromDrop is the text path above).
+  const onDragOver = (e: DragEvent) => {
+    if (readOnly || !opts.onFiles || !dragsFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  };
+  const onDrop = (e: DragEvent) => {
+    if (readOnly || !opts.onFiles) return;
+    const files = filesOf(e.dataTransfer);
+    if (!files.length) return;
+    const at = dropOffset(e) ?? selection()?.[0] ?? lastCaret();
+    if (!opts.onFiles(files, at, at)) return;
+    e.preventDefault();
+    opts.onTyping?.();
+  };
+  /** The model offset under a drop point (caretPositionFromPoint, WebKit's caretRangeFromPoint). */
+  const dropOffset = (e: DragEvent): number | null => {
+    const d = domDoc as Document & {
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    let node: Node | null = null;
+    let offset = 0;
+    if (typeof d.caretPositionFromPoint === 'function') {
+      const p = d.caretPositionFromPoint(e.clientX, e.clientY);
+      if (p) [node, offset] = [p.offsetNode, p.offset];
+    } else if (typeof d.caretRangeFromPoint === 'function') {
+      const r = d.caretRangeFromPoint(e.clientX, e.clientY);
+      if (r) [node, offset] = [r.startContainer, r.startOffset];
+    }
+    return node && root.contains(node) ? view.offsetOf(node, offset) : null;
   };
 
   /** The composed line as the DOM shows it while the IME works (updates are deferred). */
@@ -871,6 +918,8 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
   root.addEventListener('copy', onCopy as EventListener);
   root.addEventListener('cut', onCut as EventListener);
   root.addEventListener('paste', onPaste as EventListener);
+  root.addEventListener('dragover', onDragOver as EventListener);
+  root.addEventListener('drop', onDrop as EventListener);
   root.addEventListener('compositionstart', onCompositionStart);
   root.addEventListener('compositionend', onCompositionEnd);
 
@@ -888,6 +937,8 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
       root.removeEventListener('copy', onCopy as EventListener);
       root.removeEventListener('cut', onCut as EventListener);
       root.removeEventListener('paste', onPaste as EventListener);
+      root.removeEventListener('dragover', onDragOver as EventListener);
+      root.removeEventListener('drop', onDrop as EventListener);
       root.removeEventListener('compositionstart', onCompositionStart);
       root.removeEventListener('compositionend', onCompositionEnd);
     },
@@ -923,4 +974,18 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
       if (!readOnly) doRedo();
     }
   };
+}
+
+/** The files on a clipboard or a drop: `files`, else the items of kind `file` (some engines fill only those). */
+export function filesOf(dt: Pick<DataTransfer, 'files' | 'items'> | null | undefined): File[] {
+  if (!dt) return [];
+  const files = dt.files ? Array.from(dt.files) : [];
+  if (files.length) return files;
+  const out: File[] = [];
+  for (const it of Array.from(dt.items ?? [])) {
+    if (it.kind !== 'file') continue;
+    const f = it.getAsFile();
+    if (f) out.push(f);
+  }
+  return out;
 }

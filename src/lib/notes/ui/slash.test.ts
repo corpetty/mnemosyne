@@ -223,6 +223,20 @@ describe('menuItems', () => {
     expect(menuItems({ time: '1:00', people: true, meetings: true, line: 'table' }).map((i) => i.name)).toEqual(['Time now', 'Person', 'Earlier meeting']);
   });
 
+  it('lists Image only when the host has media, and only on a text line', () => {
+    const base = { time: null, people: false, meetings: false } as const;
+    const keys = (c: Parameters<typeof menuItems>[0]) => menuItems(c).map((i) => i.key);
+    expect(keys({ ...base, line: 'text' })).not.toContain('image');
+    expect(keys({ ...base, line: 'text', image: false })).not.toContain('image');
+    const withMedia = menuItems({ ...base, line: 'text', image: true });
+    expect(withMedia[withMedia.length - 1]).toMatchObject({ key: 'image', name: 'Image', group: 'blocks', act: { kind: 'image' } });
+    expect(keys({ ...base, line: 'code', image: true })).not.toContain('image');
+    expect(keys({ ...base, line: 'table', image: true })).not.toContain('image');
+    for (const q of ['ima', 'picture', 'photo', 'screenshot', 'upload', 'camera']) {
+      expect(filter(withMedia, q).map((i) => i.key)[0], q).toBe('image');
+    }
+  });
+
   it('makes DOM-safe id parts', () => {
     expect(idPart('Ana María 😀')).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(idPart('a b')).not.toBe(idPart('a_b'));
