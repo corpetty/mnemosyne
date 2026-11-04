@@ -52,10 +52,10 @@ fn b64(frames: &[Vec<u8>]) -> Vec<String> {
 fn fold_applies_client_frames_to_a_snapshot() {
     // Two clients typing: one seeds the notes, the other adds a line with a long link.
     let mut a = Notes::new(origin());
-    let first = a.set_text("# Notes\n- [ ] Ana: send the deck\n");
+    let first = a.set_text("# Notes\n- [ ] Ana: send the deck\n", &Default::default());
     let mut b = a.clone();
     let second =
-        b.set_text("# Notes\n- [ ] Ana: send the deck\n- see [the deck](https://example.com/decks/q3-planning)\n");
+        b.set_text("# Notes\n- [ ] Ana: send the deck\n- see [the deck](https://example.com/decks/q3-planning)\n", &Default::default());
     assert_eq!(second.len(), 2, "an artifact and a delta");
 
     let folded = reply(json!({
@@ -128,10 +128,10 @@ fn set_text_returns_frames_for_the_clients() {
 #[test]
 fn merge_is_a_union_in_either_order() {
     let mut base = Notes::new(origin());
-    base.set_text("Shared line\n");
+    base.set_text("Shared line\n", &Default::default());
     let (mut a, mut b) = (base.clone(), base.clone());
-    a.set_text("Shared line\nlaptop edit\n");
-    b.set_text("Shared line\ndesktop edit\n");
+    a.set_text("Shared line\nlaptop edit\n", &Default::default());
+    b.set_text("Shared line\ndesktop edit\n", &Default::default());
     let (sa, sb) = (STANDARD.encode(a.snapshot()), STANDARD.encode(b.snapshot()));
     let ab = reply(json!({"op": "merge", "notes": NOTES, "snapshot": sa, "other": sb}));
     let ba = reply(json!({"op": "merge", "notes": NOTES, "snapshot": sb, "other": sa}));
@@ -159,11 +159,12 @@ fn frames_of(answer: &Value) -> Vec<Vec<u8>> {
 fn merge_frames_bring_the_local_replica_to_the_union() {
     // Both sides have the base; each adds a line, one with a long link (an artifact).
     let mut base = Notes::new(origin());
-    base.set_text("Shared line\n");
+    base.set_text("Shared line\n", &Default::default());
     let (mut a, mut b) = (base.clone(), base.clone());
-    a.set_text("Shared line\nlaptop edit\n");
+    a.set_text("Shared line\nlaptop edit\n", &Default::default());
     b.set_text(
         "Shared line\ndesktop edit [the deck](https://example.com/decks/q3-planning-long)\n",
+        &Default::default(),
     );
     let (sa, sb) = (STANDARD.encode(a.snapshot()), STANDARD.encode(b.snapshot()));
 
@@ -203,7 +204,7 @@ fn merge_frames_bring_the_local_replica_to_the_union() {
 #[test]
 fn merge_with_nothing_new_has_no_frames() {
     let mut doc = Notes::new(origin());
-    doc.set_text("Same\n");
+    doc.set_text("Same\n", &Default::default());
     let snap = STANDARD.encode(doc.snapshot());
     let same = reply(json!({"op": "merge", "notes": NOTES, "snapshot": snap, "other": snap}));
     assert_eq!(same["frames"], json!([]));
@@ -217,7 +218,7 @@ fn merge_with_nothing_new_has_no_frames() {
 #[test]
 fn comment_ranges_are_reported() {
     let mut doc = Notes::new(origin());
-    let mut frames = doc.set_text("alpha beta gamma\n");
+    let mut frames = doc.set_text("alpha beta gamma\n", &Default::default());
     let mut minted = Vec::new();
     let before = doc.web.clock();
     doc.mark_inline(
@@ -264,7 +265,7 @@ fn comment_ranges_are_reported() {
 #[test]
 fn errors_go_to_stderr_with_exit_1() {
     let mut doc = Notes::new(origin());
-    let good = STANDARD.encode(&doc.set_text("x\n")[0]);
+    let good = STANDARD.encode(&doc.set_text("x\n", &Default::default())[0]);
     for (input, message) in [
         ("not json".to_string(), "invalid request"),
         (
@@ -303,7 +304,7 @@ fn errors_go_to_stderr_with_exit_1() {
 #[test]
 fn mark_comment_marks_a_range_for_a_reader() {
     let mut a = Notes::new(origin());
-    let seeded = a.set_text("Our launch plan is set\nSecond line\n");
+    let seeded = a.set_text("Our launch plan is set\nSecond line\n", &Default::default());
     let (h4, h14) = (
         notes_core::id_to_hex(&a.seq().id_at(4).unwrap()),
         notes_core::id_to_hex(&a.seq().id_at(14).unwrap()),

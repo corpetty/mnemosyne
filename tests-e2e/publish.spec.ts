@@ -147,6 +147,9 @@ test('images in the notes: listed with a checkbox, shown to readers, and left ou
   const editor = page.getByTestId('notes-editor');
   await expect(editor).toHaveAttribute('contenteditable', 'true');
   await editor.click();
+  // At the top: the summary now also sits at the end of the notes (summary_in_notes), and what is
+  // typed inside that section is not the person's own notes, which is what publishing shows.
+  await page.keyboard.press('Control+Home');
   await addImage(page, editor);
   await expect(editor.locator('figure.ne-image')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
   await page.keyboard.type('Whiteboard photo');
