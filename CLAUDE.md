@@ -610,7 +610,7 @@ sync, share, bridge, viewer, guest); `img.src` is set only from the provider's o
 address; a blob nothing has shown for 7 days is swept (after one more fold of the meeting); caps 2,000,000 bytes an image,
 50,000,000 a meeting, 25,000,000 a room (2 MiB + 128 KiB sealed a blob), 20 MiB per publication with clips.
 
-Summaries in the notes (unreleased, docs/plans/2026-11-04-summaries-in-notes.md): the live copilot adds each new point
+Summaries in the notes (released as 0.29.0, docs/plans/2026-11-04-summaries-in-notes.md): the live copilot adds each new point
 once to the notes under a Copilot heading (`copilot_to_notes`), and a summarize writes a Summary section in its place that
 follows the summary and flows back (`summary_in_notes`). notes-core `ref` line mark (`sec:<name>`, `sum:<id>`, `cp:<n>`;
 set_text `refs`, answers carry `refs` and `tasks[].ref`), services/notes_sections.py (split/compose, `own_notes`),
