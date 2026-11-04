@@ -39,7 +39,13 @@ from ..models.session import (
 )
 from ..models.shared_meeting import SharedMeeting
 from ..models.speaker import SpeakerProfile
-from ..models.sync_session import SyncPeerShare, SyncSession, event_travels, peer_share_rank
+from ..models.sync_session import (
+    SyncMedia,
+    SyncPeerShare,
+    SyncSession,
+    event_travels,
+    peer_share_rank,
+)
 from ..models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
@@ -614,6 +620,7 @@ def _dt(value: str) -> datetime:
 
 
 _TERM = re.compile(r"[\w']+", re.UNICODE)
+_MEDIA_SHA = re.compile(r"^[0-9a-f]{64}$")
 
 
 # Words that carry no retrieval signal in questions about meetings.
@@ -2508,11 +2515,16 @@ class SessionRepository:
         by: str = "",
         at: str | None = None,
     ) -> bool:
-        """A blob stored for the meeting (a new one, or the file of a row that had none): a new
-        version of the meeting (`_touch`). False for an unknown meeting."""
+        """A blob stored for the meeting: a new version of the meeting (`_touch`) when the row is
+        new; the file of a row that had none (it came with library sync, whose version already
+        counts it) changes nothing but the row. False for an unknown meeting."""
         at = at or datetime.now().isoformat()
         with self._lock, self._conn:
             if self._conn.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone():
+                known = self._conn.execute(
+                    "SELECT 1 FROM notes_media WHERE session_id=? AND sha256=?",
+                    (session_id, sha256),
+                ).fetchone()
                 self._conn.execute(
                     "INSERT INTO notes_media (session_id, sha256, ext, width, height, size,"
                     " created_at, last_seen_at, by) VALUES (?,?,?,?,?,?,?,?,?)"
@@ -2521,7 +2533,8 @@ class SessionRepository:
                     " last_seen_at=excluded.last_seen_at",
                     (session_id, sha256, ext, width, height, size, at, at, by),
                 )
-                self._touch(session_id)
+                if known is None:
+                    self._touch(session_id)
                 return True
         return False
 
@@ -4725,6 +4738,7 @@ class SessionRepository:
             self._link_synced_assets(sid, s)
             self.store_synced_publications(sid, s.publications)
             self._store_synced_peer_shares(sid, s.peer_shares)
+            self._store_synced_media(sid, s.media)
             have = {
                 r["uid"]
                 for r in self._conn.execute(
@@ -4773,6 +4787,32 @@ class SessionRepository:
                     p.at,
                     p.updated_at,
                     p.revoked_at,
+                ),
+            )
+
+    def _store_synced_media(self, session_id: str, media: list[SyncMedia] | None) -> None:
+        """Library sync's write of a meeting's image rows: the ones we lack are added without
+        their bytes (they are fetched afterwards, services/sync_service.py), `last_seen_at` now
+        so the sweep does not take them before the document is looked at; a row we have stays as
+        it is and none is removed, so an older peer that sends no `media` (None) wipes nothing.
+        No new version: the arrival is the sender's version. Inside the caller's transaction."""
+        now = datetime.now().isoformat()
+        for m in media or []:
+            if not _MEDIA_SHA.match(m.sha256) or m.ext not in ("webp", "jpeg") or m.size < 0:
+                continue
+            self._conn.execute(
+                "INSERT OR IGNORE INTO notes_media (session_id, sha256, ext, width, height, size,"
+                " created_at, last_seen_at, by) VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    session_id,
+                    m.sha256,
+                    m.ext,
+                    max(0, m.width),
+                    max(0, m.height),
+                    m.size,
+                    m.created_at or now,
+                    now,
+                    m.by,
                 ),
             )
 

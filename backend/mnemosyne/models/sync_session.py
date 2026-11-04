@@ -96,6 +96,20 @@ class SyncEvent(ApiModel):
     detail: dict = Field(default_factory=dict)
 
 
+class SyncMedia(ApiModel):
+    """An image of the meeting's notes as its row says (`notes_media`): which blob it is, never
+    its bytes (they come from `GET /api/sync/media/{session_id}/{sha256}`). `created_at` stays
+    the stored ISO text; `last_seen_at` is each machine's own and does not travel."""
+
+    sha256: str
+    ext: str  # "webp" | "jpeg"
+    width: int = 0
+    height: int = 0
+    size: int
+    created_at: str
+    by: str = ""
+
+
 class SyncPublication(ApiModel):
     """A publication row as stored (services/publishing.py), key and token included: library
     sync is between one person's own computers, which must be able to update a link. Times stay
@@ -236,6 +250,10 @@ class SyncSession(ApiModel):
     # Who the meeting is shared with (phase 8): merged by person, newer `updated_at` wins
     # (`merge_peer_shares`). Absent from older peers, which must not wipe ours.
     peer_shares: list[SyncPeerShare] = Field(default_factory=list)
+    # The images of the notes (rows only): None = the sender does not know the field (an older
+    # peer): ours are kept. Merged as a union by sha256 (services/sync_merge.py); none is ever
+    # removed by a merge (each machine sweeps its own unused ones).
+    media: list[SyncMedia] | None = None
     speaker_embeddings: dict[str, list[float]] = Field(default_factory=dict)
     assets: list[SyncAsset] = Field(default_factory=list)
     events: list[SyncEvent] = Field(default_factory=list)

@@ -16,6 +16,13 @@ Serving (`serve_changes`) remembers each document it hands a peer (`serve_snapsh
 peer's later concurrent edit has a base; a fast-forward taken from a peer is remembered the same
 way (both sides then hold that state).
 
+Images of the notes: the document carries rows (`SyncSession.media`), never bytes. After each
+page, every meeting of it that has a row without its file asks the peer that served the page
+for the blob (`GET /api/sync/media/{session}/{sha}`, `notes_media.store`: hash, type and caps
+checked, sealed here when this computer encrypts). A blob a fold later finds missing
+(`notes_media.MISSING_HOOKS`) is asked for in the background from the meeting's origin
+computer, then the other peers; never inside the fold.
+
 Scheduling: a pull from every peer at start and every `sync_interval` seconds, a pull soon after
 a peer says it has news (`poke`, debounced), and a poke to every peer after local changes
 (watched through the change counter). Never two rounds with one peer at a time. A peer that does
@@ -61,6 +68,7 @@ BACKOFF_FIRST, BACKOFF_MAX = 60.0, 600.0
 TOMBSTONE_MARGIN = timedelta(hours=2)
 TOMBSTONE_CURSOR = "sync_tombstones_since:"  # + peer id, in the repository's meta table
 REQUEST_TIMEOUT = 60.0
+MEDIA_RETRY = 300.0  # seconds before a blob the fold found missing is asked for again
 
 
 class SyncSkew(Exception):
@@ -121,6 +129,8 @@ class SyncService:
         self._loop_task: asyncio.Task | None = None
         self._wake: asyncio.Event | None = None  # made in start(): bound to the running loop
         self._announced = 0  # the change counter last told to the peers
+        self._loop: asyncio.AbstractEventLoop | None = None  # set in start(): where pulls run
+        self._media_asked: dict[tuple[str, str], float] = {}  # (meeting, sha) -> monotonic time
         # Hosted copies of publications that lost a merge (two machines published the same
         # meeting): deleted from the publish host once back on the event loop (flush_host_deletes).
         self.host_deletes: list[dict] = []
@@ -163,6 +173,7 @@ class SyncService:
         self._announced = self.ctx.repo.current_sync_seq()
         self._locks.clear()
         self._wake = asyncio.Event()
+        self._loop = asyncio.get_running_loop()
         if self.sync_interval and self._loop_task is None:
             self._loop_task = asyncio.create_task(self._run())
 
@@ -511,6 +522,14 @@ class SyncService:
                 self._take_page, peer, page, cursor
             )
             await self.flush_host_deletes()
+            await self._pull_media(
+                client,
+                [
+                    o.session_id
+                    for o in outcomes
+                    if o.kind in ("new", "updated", "merged", "ignored")
+                ],
+            )
             for o in outcomes:
                 self._count(st, o)
                 if o.kind in ("new", "updated", "merged"):
@@ -535,6 +554,111 @@ class SyncService:
             self.ctx.sync_peers.update(peer.id, since=stored, last_sync_at=now_iso())
             self._publish(peer, st)
             if not page.more or pos <= since:
+                return
+
+    # ---- images of the notes ----------------------------------------------------------------
+
+    def _without_bytes(self, session_id: str) -> list[str]:
+        """The shas of the meeting's image rows whose file is not here."""
+        from . import notes_media
+
+        try:
+            return [
+                r["sha256"]
+                for r in self.ctx.repo.media_rows(session_id)
+                if notes_media.path(self.ctx, session_id, r["sha256"]) is None
+            ]
+        except ValueError:  # not a meeting id of ours
+            return []
+
+    async def _pull_media(self, client: httpx.AsyncClient, session_ids: list[str]) -> None:
+        """The blobs of the page's meetings that we have a row for and no file: from the peer
+        that served the page. A peer without a blob (404) or a refused one is skipped (the
+        document's own references ask again later, see `want_media`); a transport error ends the
+        round, the cursor stays and the next round asks again."""
+        if self.ctx.settings.team_mode:
+            return
+        for sid in dict.fromkeys(session_ids):
+            for sha in await asyncio.to_thread(self._without_bytes, sid):
+                await self._fetch_media(client, sid, sha)
+
+    async def _fetch_media(self, client: httpx.AsyncClient, session_id: str, sha: str) -> bool:
+        """One blob from a peer into the store. True when it is stored now."""
+        from . import notes_media
+
+        r = await client.get(f"/api/sync/media/{session_id}/{sha}")
+        if r.status_code == 423:
+            raise PeerLocked()
+        if r.status_code != 200:
+            if r.status_code != 404:
+                logger.warning(
+                    "Sync: image %s of %s answered %d", sha[:12], session_id, r.status_code
+                )
+            return False
+
+        def store() -> bool:
+            by = next(
+                (x["by"] for x in self.ctx.repo.media_rows(session_id) if x["sha256"] == sha), ""
+            )
+            try:
+                notes_media.store(self.ctx, session_id, sha, r.content, by=by)
+            except notes_media.MediaError as e:
+                logger.warning("Sync: image %s of %s not kept: %s", sha[:12], session_id, e)
+                return False
+            return True
+
+        return await asyncio.to_thread(store)
+
+    def want_media(self, session_id: str, values: list[str]) -> None:
+        """A fold found images of the notes whose bytes are not here (`notes_media.MISSING_HOOKS`;
+        from any thread, with the fold lock held): schedule a pull from the meeting's origin
+        computer, then the other peers. Only notes and schedules: at most one try per blob in
+        `MEDIA_RETRY` seconds, none for a meeting nobody synced or without peers."""
+        loop = self._loop
+        if self.ctx.settings.team_mode or loop is None or loop.is_closed():
+            return
+        if not self.ctx.sync_peers.peers():
+            return
+        now = time.monotonic()
+        self._media_asked = {k: t for k, t in self._media_asked.items() if now - t < MEDIA_RETRY}
+        shas = [
+            v[:64] for v in dict.fromkeys(values) if (session_id, v[:64]) not in self._media_asked
+        ]
+        if not shas:
+            return
+        for sha in shas:
+            self._media_asked[(session_id, sha)] = now
+        loop.call_soon_threadsafe(self._spawn_media, session_id, shas)
+
+    def _spawn_media(self, session_id: str, shas: list[str]) -> None:
+        if self._loop is not None:
+            self._spawn(self._pull_missing_media(session_id, shas))
+
+    async def _pull_missing_media(self, session_id: str, shas: list[str]) -> None:
+        """Ask the origin computer, then the others, for blobs a fold found missing. Never
+        raises: what no peer has stays missing until the next try."""
+        state = self.ctx.repo.sync_state(session_id)
+        if state is None or self.ctx.locked:
+            return
+        peers = self.ctx.sync_peers.peers()
+        first = [p for p in peers if p.id == state[0]]
+        wanted = list(shas)
+        for peer in first + [p for p in peers if p.id != state[0]]:
+            try:
+                if not peer.listen and self.ctx.link.status.running:
+                    await ensure_dialed(self.ctx.link, self.ctx.sync_peers, peer)
+                    peer = self.ctx.sync_peers.get(peer.id) or peer
+                if not peer.listen:
+                    continue
+                async with self.client_for(peer) as client:
+                    for sha in list(wanted):
+                        if await self._fetch_media(client, session_id, sha):
+                            wanted.remove(sha)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - the next fold asks again after MEDIA_RETRY
+                logger.info("Sync: images of %s not fetched from %s: %s", session_id, peer.name, e)
+            if not wanted:
                 return
 
     async def flush_host_deletes(self) -> None:
@@ -782,3 +906,20 @@ class SyncService:
                 "total": st.total,
             }
         )
+
+
+def _media_missing(app: AppContext, session_id: str, values: list[str]) -> None:
+    """`notes_media.MISSING_HOOKS` entry: a fold found images whose bytes are not here."""
+    sync = getattr(app, "sync", None)
+    if sync is not None:
+        sync.want_media(session_id, values)
+
+
+def _register_hooks() -> None:
+    from . import notes_media
+
+    if _media_missing not in notes_media.MISSING_HOOKS:
+        notes_media.MISSING_HOOKS.append(_media_missing)
+
+
+_register_hooks()

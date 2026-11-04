@@ -8,7 +8,7 @@ routes know which peer asks; the admin token works too, but then nothing is reme
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from ... import access
 from ...models.sync import (
@@ -29,7 +29,7 @@ from ...models.sync import (
     SyncSelf,
     SyncStatus,
 )
-from ...services import contacts, sync_peers
+from ...services import contacts, notes_media, sync_peers
 from ...services.person import PersonKeys
 from ...services.sync_peers import SyncPairingError, SyncPeer
 from ..context import AppContext, get_ctx
@@ -232,3 +232,21 @@ async def get_contacts(request: Request, ctx: AppContext = Depends(get_ctx)):
         has_people_data=contacts.has_people_data(ctx),
         contacts=[SyncContact(**row) for row in contacts.export_rows(ctx)],
     )
+
+
+@router.get("/media/{session_id}/{sha256}")
+async def get_media(
+    session_id: str, sha256: str, request: Request, ctx: AppContext = Depends(get_ctx)
+):
+    """The bytes of an image of a meeting's notes (the document only carries its row), for the
+    computer that synced the meeting. Decrypted here; the caller seals them when it encrypts.
+    404 when the bytes are not here."""
+    _sync_peer(request, ctx)
+    try:
+        data = await asyncio.to_thread(notes_media.read, ctx, session_id, sha256)
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(404, "No such image") from e
+    except PermissionError as e:
+        raise HTTPException(423, "The image is sealed and its key is not available") from e
+    kind = notes_media.MEDIA_TYPES.get(notes_media.sniff(data) or "", "application/octet-stream")
+    return Response(content=data, media_type=kind)

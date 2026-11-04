@@ -25,6 +25,7 @@ from ..models.sync_session import (
     SyncBookmark,
     SyncComment,
     SyncEvent,
+    SyncMedia,
     SyncPeerShare,
     SyncPublication,
     SyncSession,
@@ -161,6 +162,18 @@ def export_session(repo: SessionRepository, session_id: str, device_id: str) -> 
                 revoked_at=x["revoked_at"],
             )
             for x in rows["peer_shares"]
+        ],
+        media=[
+            SyncMedia(
+                sha256=x["sha256"],
+                ext=x["ext"],
+                width=x["width"],
+                height=x["height"],
+                size=x["size"],
+                created_at=x["created_at"],
+                by=x["by"],
+            )
+            for x in repo.media_rows(session_id)
         ],
         speaker_embeddings={x["label"]: json.loads(x["embedding"]) for x in rows["embeddings"]},
         assets=[
