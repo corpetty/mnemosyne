@@ -46,7 +46,8 @@ def test_roundtrip(repo):
     s = _session()
     repo.save(s)
     loaded = repo.get(s.id)
-    assert loaded == s
+    assert loaded.own_notes == s.notes  # no sections of the backend's: all of them are own notes
+    assert loaded.model_copy(update={"own_notes": None}) == s
     assert loaded.transcript[0].words[0].word == "hi"
     assert loaded.transcript[1].words is None
     assert [r.source for r in loaded.recordings] == ["mic", "system"]

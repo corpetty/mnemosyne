@@ -585,6 +585,11 @@ def summarize_session(
         await asyncio.to_thread(
             link_quietly, app, session_id, app.settings.task_linking, hints or None
         )
+        # The notes' Summary section, in place of the copilot's lines (services/notes_summary.py),
+        # before the record and the export see the meeting.
+        from . import notes_summary
+
+        await notes_summary.after_summarize(app, session_id)
         from . import records
 
         await asyncio.to_thread(records.seal, app, session_id, "summarized")

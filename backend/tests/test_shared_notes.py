@@ -222,7 +222,9 @@ def test_summarize_folds_first(client, ctx, sidecar, fake_provider):
             )
         )
         assert done["status"] == "completed", done
-        assert ctx.repo.get(sid).notes == "typed live\n"
+        got = ctx.repo.get(sid)
+        assert got.own_notes == "typed live\n"  # what was typed live, folded before summarizing
+        assert got.notes.startswith("typed live\n## Summary\n")  # then summary_in_notes
 
 
 # ---- the notes route, seeding, no sidecar ----------------------------------------------

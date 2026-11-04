@@ -139,6 +139,10 @@ def _empty_vault() -> dict:
     return {"written": {"body": None, "blocks": {}}, "annex": {}}
 
 
+def _empty_notes() -> dict:
+    return {"written": {"body": None, "blocks": {}}}
+
+
 @dataclass
 class Doc:
     body: Block
@@ -147,6 +151,9 @@ class Doc:
     # id -> {"section", "text": its last known text}
     tombstones: dict[str, dict] = field(default_factory=dict)
     vault: dict = field(default_factory=_empty_vault)
+    # What the Summary section of the meeting's live notes was last written as (carried along
+    # here, filled by services/notes_summary.py).
+    notes: dict = field(default_factory=_empty_notes)
 
     def to_json(self) -> dict:
         return {
@@ -156,6 +163,7 @@ class Doc:
             "llm": self.llm.to_json(),
             "tombstones": self.tombstones,
             "vault": self.vault,
+            "notes": self.notes,
         }
 
     @classmethod
@@ -168,6 +176,7 @@ class Doc:
             llm=LlmBase.from_json(d.get("llm") or {}),
             tombstones=dict(d.get("tombstones") or {}),
             vault=d.get("vault") or _empty_vault(),
+            notes=d.get("notes") or _empty_notes(),
         )
 
 
@@ -510,6 +519,22 @@ def ensure_doc(ctx: AppContext, session_id: str) -> Doc | None:
         if session is None:
             return None
         return _ensure(ctx, session)[0]
+
+
+def update_slot(ctx: AppContext, session_id: str, name: str, change) -> bool:
+    """change(slot) on the doc's JSON slot `name` ("vault", "notes": what the Obsidian note and
+    the live notes last showed of the summary), stored. False when there is no doc."""
+    with _lock(session_id):
+        raw = ctx.repo.get_summary_doc(session_id)
+        if raw is None:
+            return False
+        slot = raw.get(name)
+        if not isinstance(slot, dict):
+            slot = _empty_vault() if name == "vault" else _empty_notes()
+        change(slot)
+        raw[name] = slot
+        ctx.repo.put_summary_doc(session_id, raw)
+        return True
 
 
 def _session(ctx: AppContext, session_id: str) -> Session:

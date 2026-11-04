@@ -740,6 +740,10 @@ class SessionRepository:
         self._lock = threading.RLock()
         # Called with (session id, owner id) after a new meeting is saved (services/prefs.py).
         self.on_new_session: Callable[[str, str], None] | None = None
+        # Called with a meeting's id after every write of its `summary` or `summary_data`, the
+        # transaction committed (`_after_summary`; api/context.py: the notes' Summary section
+        # follows, services/notes_summary.py). From any thread; it must not block.
+        self.after_summary: Callable[[str], None] | None = None
         # This machine's id in version vectors (services/sync sets it at startup). '' until
         # then: writes still bump the change counter and count under the key "" in sync_vv.
         self.device_id = ""
@@ -1300,7 +1304,16 @@ class SessionRepository:
         owner = self._owner(session.id)
         session.owner_id = owner if owner is not None else (session.owner_id or access.user_id())
         session.updated_at = datetime.now()
+        data_json = session.summary_data.model_dump_json() if session.summary_data else None
         with self._lock, self._conn:
+            was = self._conn.execute(
+                "SELECT summary, summary_data FROM sessions WHERE id=?", (session.id,)
+            ).fetchone()
+            summary_changed = (
+                (session.summary or "", data_json) != ((was["summary"] or ""), was["summary_data"])
+                if was is not None
+                else bool(session.summary or data_json)
+            )
             self._conn.execute(
                 """INSERT INTO sessions(id, name, status, created_at, updated_at, audio_file,
                                         summary, summary_data, notes, participants,
@@ -1325,7 +1338,7 @@ class SessionRepository:
                     session.updated_at.isoformat(),
                     session.audio_file,
                     session.summary,
-                    session.summary_data.model_dump_json() if session.summary_data else None,
+                    data_json,
                     session.notes,
                     json.dumps(session.participants),
                     json.dumps(session.attendees),
@@ -1341,6 +1354,8 @@ class SessionRepository:
             self._write_segments(session.id, session.transcript)
             self._write_recordings(session.id, session.recordings)
             self._touch(session.id, session.updated_at.isoformat())
+        if summary_changed:
+            self._after_summary(session.id)
         if owner is None and self.on_new_session is not None:
             self.on_new_session(session.id, session.owner_id)
         return session
@@ -1401,6 +1416,8 @@ class SessionRepository:
             # A status is per machine and the audio file is local: neither travels.
             if set(fields) - LOCAL_FIELDS:
                 self._touch(session_id, now)
+        if {"summary", "summary_data"} & set(fields):
+            self._after_summary(session_id)
         return self.get(session_id)
 
     def replace_segments(self, session_id: str, segments: list[TranscriptSegment]) -> None:
@@ -3069,6 +3086,7 @@ class SessionRepository:
                 (data.model_dump_json(), datetime.now().isoformat(), session_id),
             )
             self._touch(session_id)
+        self._after_summary(session_id)
         return True
 
     # By item id (ActionItem.id) rather than list position, for writes that reach several
@@ -3122,21 +3140,23 @@ class SessionRepository:
             ).fetchone()
             if row is None:
                 return False
+            item = None
             if row["summary_data"]:
                 data = SummaryData.model_validate_json(row["summary_data"])
                 item = next((a for a in data.action_items if a.id == item_id), None)
-                if item is not None:
-                    if all(getattr(item, k) == v for k, v in fields.items()):
-                        return True  # already so: no new version
-                    for k, v in fields.items():
-                        setattr(item, k, v)
-                    self._conn.execute(
-                        "UPDATE sessions SET summary_data=?, updated_at=? WHERE id=?",
-                        (data.model_dump_json(), datetime.now().isoformat(), session_id),
-                    )
-                    self._touch(session_id)
-                    return True
-            return self._write_notes_item_locked(session_id, item_id, fields)
+            if item is None:
+                return self._write_notes_item_locked(session_id, item_id, fields)
+            if all(getattr(item, k) == v for k, v in fields.items()):
+                return True  # already so: no new version
+            for k, v in fields.items():
+                setattr(item, k, v)
+            self._conn.execute(
+                "UPDATE sessions SET summary_data=?, updated_at=? WHERE id=?",
+                (data.model_dump_json(), datetime.now().isoformat(), session_id),
+            )
+            self._touch(session_id)
+        self._after_summary(session_id)
+        return True
 
     _NOTES_ITEM_FIELDS = frozenset({"done", "follow", "due", "task_id", "issue_url"})
 
@@ -3205,6 +3225,7 @@ class SessionRepository:
                 (data.model_dump_json(), datetime.now().isoformat(), session_id),
             )
             self._touch(session_id)
+        self._after_summary(session_id)
         return True
 
     def adopt_unowned(self, owner_id: str) -> int:
@@ -3528,6 +3549,7 @@ class SessionRepository:
                     now,
                 ),
             )
+        self._after_summary(sid)
         if row is None:
             return "new"
         if held is None or json.loads(held["parts"] or "{}") != parts:
@@ -4378,19 +4400,22 @@ class SessionRepository:
                 "UPDATE sessions SET participants=?, updated_at=? WHERE id=?",
                 (json.dumps(participants), datetime.now().isoformat(), session_id),
             )
-            self._rename_item_owners(session_id, old, new)
+            owners_changed = self._rename_item_owners(session_id, old, new)
             self._touch(session_id)
+        if owners_changed:
+            self._after_summary(session_id)
         return self.get(session_id)
 
-    def _rename_item_owners(self, session_id: str, old: str, new: str) -> None:
-        """Action items owned by the speaker label `old` now belong to `new`."""
+    def _rename_item_owners(self, session_id: str, old: str, new: str) -> bool:
+        """Action items owned by the speaker label `old` now belong to `new`. True when any
+        did."""
         from ..services.tasks import rename_owner
 
         row = self._conn.execute(
             "SELECT summary_data FROM sessions WHERE id=?", (session_id,)
         ).fetchone()
         if row is None or not row["summary_data"]:
-            return
+            return False
         data = SummaryData.model_validate_json(row["summary_data"])
         changed = False
         for item in data.action_items:
@@ -4402,6 +4427,7 @@ class SessionRepository:
                 "UPDATE sessions SET summary_data=? WHERE id=?",
                 (data.model_dump_json(), session_id),
             )
+        return changed
 
     def list_speakers(self) -> list[SpeakerProfile]:
         with self._lock:
@@ -4503,6 +4529,19 @@ class SessionRepository:
             "UPDATE sessions SET sync_seq=?, sync_vv=?, updated_at=? WHERE id=?",
             (seq, json.dumps(vv, sort_keys=True), at or datetime.now().isoformat(), session_id),
         )
+
+    def _after_summary(self, session_id: str) -> None:
+        """A meeting's `summary` or `summary_data` was written: tell `after_summary`. Called by
+        every statement that writes them, after its transaction (C9 of
+        docs/plans/2026-11-04-summaries-in-notes.md: ticks never pass update_fields). Never
+        raises."""
+        hook = self.after_summary
+        if hook is None:
+            return
+        try:
+            hook(session_id)
+        except Exception:
+            logger.warning("The summary hook failed for %s", session_id, exc_info=True)
 
     def _touch_all(self, moves: list[tuple[str, int, str, int]]) -> None:
         """Every meeting a move names, source and target, once."""
@@ -4810,6 +4849,7 @@ class SessionRepository:
                 self._touch(sid)
             else:
                 self._advance_seq(sid)
+        self._after_summary(sid)
         return sid
 
     def _store_synced_peer_shares(self, session_id: str, shares: list[SyncPeerShare]) -> None:
