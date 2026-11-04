@@ -232,3 +232,122 @@ test('an image pasted in one window shows in another, and after a reload', async
     await ctxB.close();
   }
 });
+
+// Summaries in the notes (docs/plans/2026-11-04-summaries-in-notes.md, task 10). While recording,
+// the live copilot adds its points under a "## Copilot" heading, each line led by a Copilot chip
+// (backend services/copilot_notes.py); a summarize replaces those lines with a "## Summary"
+// section (services/notes_summary.py) whose edits and ticks flow back into the summary. The demo
+// route `POST /api/demo/copilot/{id}` stands in for "the copilot ran" (no audio): canned notes of
+// one point, a decision, an action item with an owner and a question, added once.
+// The demo summary (backend/mnemosyne/demo.py) is what the Summary section mirrors.
+const COPILOT_POINT = 'The team went over the Waku migration';
+const COPILOT_DECISION = 'Hold the beta until the docs are ready';
+const COPILOT_ACTION = 'Send the beta invites';
+const COPILOT_QUESTION = 'Who tests the Android build?';
+const DECISION = 'Ship the Waku migration in October';
+const EDITED = `${DECISION} for real`;
+const ACTION = 'Update the docs before the release';
+
+test('the copilot writes into the notes, the summary replaces it, and edits and ticks flow back', async ({ page, request }, info) => {
+  test.setTimeout(150_000);
+  await openApp(page);
+  await importMeeting(page, info.outputDir, NAME);
+  const id: string = (await (await request.get(`${BACKEND}/api/sessions`)).json()).find((s: { name: string }) => s.name === NAME).id;
+  const detail = async () => (await (await request.get(`${BACKEND}/api/sessions/${id}`)).json()) as {
+    notes: string;
+    summary_data: { decisions: string[]; action_items: { text: string; done: boolean }[] } | null;
+  };
+
+  // The copilot "runs" twice: four lines the first time, nothing the second.
+  const editor = await openNotes(page);
+  const first = await request.post(`${BACKEND}/api/demo/copilot/${id}`);
+  expect(first.ok()).toBeTruthy();
+  expect(await first.json()).toEqual({ added: 4 });
+  await expect(editor.locator('.ne-h2')).toHaveText('Copilot');
+  const chips = editor.locator('a.ne-chip-by');
+  await expect(chips).toHaveCount(4);
+  await expect(chips.first()).toHaveText('Copilot');
+  await expect(chips.first()).toHaveAttribute('title', 'Added by the copilot');
+  const bullets = editor.locator('.ne-bullet');
+  await expect(bullets).toHaveCount(3);
+  await expect(bullets.nth(0)).toContainText(COPILOT_POINT);
+  await expect(bullets.nth(1)).toContainText(`Decided: ${COPILOT_DECISION}`);
+  await expect(bullets.nth(2)).toContainText(`Question: ${COPILOT_QUESTION}`);
+  await expect(editor.locator('.ne-task')).toHaveCount(1);
+  await expect(editor.locator('.ne-task')).toContainText(`${COPILOT_ACTION} (Mira)`);
+
+  const second = await request.post(`${BACKEND}/api/demo/copilot/${id}`);
+  expect(await second.json()).toEqual({ added: 0 });
+  await expect(editor.locator('.ne-h2')).toHaveCount(1);
+  await expect(chips).toHaveCount(4);
+  await expect(editor.getByText(COPILOT_DECISION)).toHaveCount(1);
+  // The folded notes text has the heading once and four chips.
+  await expect(async () => {
+    const notes = (await detail()).notes;
+    expect(notes.match(/^## Copilot$/gm)).toHaveLength(1);
+    expect(notes.match(/mnemosyne:by\/copilot/g)).toHaveLength(4);
+  }).toPass({ timeout: 10_000 });
+
+  // Summarize: the Notes tab then has a Summary section, the Copilot heading and its lines are gone.
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  await page.getByRole('button', { name: 'Summarize', exact: true }).click();
+  await expect(page.getByText(DECISION)).toBeVisible();
+  const notes1 = await openNotes(page);
+  await expect(notes1.locator('.ne-h2')).toHaveText('Summary');
+  await expect(notes1.locator('.ne-h3')).toHaveText(['Decisions', 'Action items', 'Open questions']);
+  await expect(notes1.locator('.ne-bullet').filter({ hasText: DECISION })).toHaveCount(1);
+  await expect(notes1.locator('.ne-task')).toContainText(ACTION);
+  await expect(notes1.locator('.ne-task')).toContainText('(SPEAKER_01)');
+  await expect(notes1.locator('a.ne-chip-by')).toHaveCount(0);
+  await expect(notes1).not.toContainText('Copilot');
+  await expect(notes1).not.toContainText(COPILOT_DECISION);
+
+  // Ticking the action item's box in the notes ticks it in the summary and in Tasks.
+  await notes1.locator('.ne-task .ne-check').click();
+  await expect(notes1.locator('.ne-task_done .ne-check')).toHaveAttribute('aria-checked', 'true');
+  await expect(async () => {
+    const items = (await detail()).summary_data?.action_items ?? [];
+    expect(items.map((a) => [a.text, a.done])).toEqual([[ACTION, true]]);
+  }).toPass({ timeout: 20_000 });
+  await openApp(page);
+  await page.getByText(NAME).first().click();
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  await expect(page.getByRole('button', { name: `Reopen: ${ACTION}` })).toBeVisible();
+  await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+  await page.getByRole('button', { name: 'Everyone', exact: true }).click(); // Mine is the default
+  await page.getByPlaceholder('Filter…').fill(ACTION);
+  await page.getByRole('button', { name: 'done', exact: true }).click(); // the Open list hides it
+  await expect(page.getByRole('checkbox', { name: `Done: ${ACTION}` })).toBeChecked();
+
+  // Editing the decision's text in the notes changes it in the summary after the fold.
+  const notes2 = await openNotes(page);
+  await notes2.locator('.ne-bullet').filter({ hasText: DECISION }).click();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' for real');
+  await expect(notes2.locator('.ne-bullet').filter({ hasText: DECISION })).toHaveText(EDITED);
+  await expect(async () => {
+    expect((await detail()).summary_data?.decisions).toEqual([EDITED]);
+  }).toPass({ timeout: 20_000 });
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  await expect(page.getByText(EDITED)).toBeVisible();
+  await expect(page.getByText(DECISION, { exact: true })).toHaveCount(0);
+
+  // Summarizing again keeps the edit (merged, so no "replaces your edits" question) and the notes.
+  let asked = false;
+  const onDialog = (d: import('@playwright/test').Dialog) => {
+    asked = true;
+    void d.dismiss();
+  };
+  page.on('dialog', onDialog);
+  await page.getByRole('button', { name: 'Re-summarize' }).click();
+  // Disabled while it runs ("Summarizing..."), enabled again when the job is done.
+  await expect(page.getByRole('button', { name: 'Re-summarize' })).toBeEnabled();
+  page.off('dialog', onDialog);
+  expect(asked).toBe(false);
+  await expect(page.getByText(EDITED)).toBeVisible();
+  expect((await detail()).summary_data?.decisions).toEqual([EDITED]);
+  const notes3 = await openNotes(page);
+  await expect(notes3.locator('.ne-h2')).toHaveText('Summary');
+  await expect(notes3.locator('.ne-bullet').filter({ hasText: 'Ship the Waku migration' })).toHaveText(EDITED);
+  await expect(notes3.locator('.ne-bullet').filter({ hasText: 'Ship the Waku migration' })).toHaveCount(1);
+});
