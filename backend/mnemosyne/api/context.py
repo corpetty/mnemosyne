@@ -86,6 +86,13 @@ class AppContext:
     notes_hub: Any = None
     # Guest notes (services/guest_notes.py): the bridges of live rooms and a lock per meeting.
     guest_bridges: Any = None
+    # The notes' Summary section follows every write of a summary (services/notes_summary.py):
+    # this many seconds after the last one, in a thread. The pending timers by meeting, the
+    # running syncs, and the event loop (known from startup; without it nothing is scheduled).
+    summary_notes_delay: float = 1.0
+    _summary_notes: dict = field(default_factory=dict)
+    _summary_syncs: set = field(default_factory=set)
+    _loop: Any = None
     # A team server's per-person calendars (calendar_for), by ICS link.
     person_calendars: dict = field(default_factory=dict)
     team_host: TeamHost = field(default_factory=lambda: TeamHost())
@@ -113,7 +120,50 @@ class AppContext:
         self.sessions.type_source = lambda: available_types(self.settings)
         self.sessions.is_recording = lambda sid: sid in self.active_recordings
         self.repo.on_new_session = self._new_session
+        self.repo.after_summary = self._summary_changed
         self.sessions.before_delete = self._forget_publications
+
+    def _summary_changed(self, session_id: str) -> None:
+        """The repository wrote a meeting's summary (from any thread): its notes' Summary
+        section is synced `summary_notes_delay` s after the last such write. Never blocks."""
+        loop = self._loop
+        if loop is None or loop.is_closed() or not self.settings.summary_in_notes:
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            self._schedule_summary_notes(session_id)
+            return
+        try:
+            loop.call_soon_threadsafe(self._schedule_summary_notes, session_id)
+        except RuntimeError:  # closed meanwhile
+            pass
+
+    def _schedule_summary_notes(self, session_id: str) -> None:
+        self.cancel_summary_notes(session_id)
+        if self._loop is None:  # shut down meanwhile
+            return
+        self._summary_notes[session_id] = self._loop.call_later(
+            self.summary_notes_delay, self._run_summary_notes, session_id
+        )
+
+    def cancel_summary_notes(self, session_id: str) -> None:
+        """Forget a pending sync (on the loop): the summarize job runs its own."""
+        handle = self._summary_notes.pop(session_id, None)
+        if handle is not None:
+            handle.cancel()
+
+    def _run_summary_notes(self, session_id: str) -> None:
+        from ..services import notes_summary
+
+        self._summary_notes.pop(session_id, None)
+        task = asyncio.ensure_future(
+            asyncio.to_thread(notes_summary.sync, self, session_id, create=False)
+        )
+        self._summary_syncs.add(task)
+        task.add_done_callback(self._summary_syncs.discard)
 
     def _forget_publications(self, session_id: str):
         from ..services import guest_notes
@@ -517,6 +567,7 @@ class AppContext:
 
         self.startup_problems[:0] = STARTUP_PROBLEMS
         self._intervals = (retention_interval, digest_interval)
+        self._loop = asyncio.get_running_loop()
         await self._try("Cleaning temporary copies", clean_scratch)
         # Also while locked: a paired computer can unlock.
         await self._try("Remote access", self.apply_remote_access)
@@ -689,6 +740,11 @@ class AppContext:
         await self.models.unload()
         from ..services import guest_notes, shared_notes
 
+        self._loop = None  # nothing is scheduled any more
+        for session_id in list(self._summary_notes):
+            self.cancel_summary_notes(session_id)
+        if self._summary_syncs:  # before the database closes
+            await asyncio.gather(*self._summary_syncs, return_exceptions=True)
         await guest_notes.shutdown(self)  # before the notes hub: its bridges detach from it
         await shared_notes.shutdown(self)
         self.repo.close()
