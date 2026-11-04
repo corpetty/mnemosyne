@@ -13,6 +13,13 @@
 //   ended room (ended: nothing more can change). 4429 (room full) is retried with the same
 //   backoff, in state 'full'. A text `ping` every PING_MS; nothing heard for
 //   DEAD_MS and the socket counts as dead.
+// - media (notes images, sealed blobs outside the log): `putMedia(name, env)` sends
+//   `0x04||name(32)||env` and resolves on `{"type":"media","name","ok":true}`; `getMedia(name)` asks
+//   `{"type":"get_media","name"}` and resolves on `0x05||name(32)||env`. Both are kept until
+//   answered and sent again after the next welcome (a dropped socket loses what was in flight);
+//   at most MAX_GETS gets are in flight, the rest wait. The host's `{"type":"media","name"}`
+//   (without `ok`) says a blob landed: `onMedia(name)`. Errors that name a blob (`media_missing`,
+//   `media_too_large`, `room_media_full`, `empty_media`) reject that call and keep the socket.
 // - sends while not joined are queued and go out after the next welcome (only the latest
 //   presence is kept); `queue: false` drops them instead (GuestDoc's notes frames: it works out
 //   after a reconnect what the room lacks and sends exactly that).
@@ -35,7 +42,7 @@
 
 export type RoomState = 'connecting' | 'live' | 'reconnecting' | 'ended' | 'gone' | 'full' | 'closed';
 
-export const TAG = { FRAME: 0x01, PRESENCE: 0x02, SNAPSHOT: 0x03 } as const;
+export const TAG = { FRAME: 0x01, PRESENCE: 0x02, SNAPSHOT: 0x03, MEDIA_PUT: 0x04, MEDIA: 0x05 } as const;
 
 /** Close codes of /live/<room>. */
 export const ROOM_CLOSE = {
@@ -55,6 +62,8 @@ export const PING_MS = 25_000;
 export const DEAD_MS = 60_000;
 /** At most this many envelopes wait for a welcome; the oldest go first. */
 export const MAX_QUEUE = 512;
+/** Media gets in flight at once on one connection (the host answers more with `media_busy`). */
+export const MAX_GETS = 20;
 
 const OPEN = 1; // WebSocket.OPEN, without needing the global (tests inject a fake)
 
@@ -94,6 +103,8 @@ export interface RoomHandlers {
   /** `{"type":"error","code"}` from the host (frame_too_large, log_full, bad_frame, ...). */
   onError?(code: string): void;
   onState?(state: RoomState): void;
+  /** The host says a blob landed in the room (`{"type":"media","name"}`): `name` is its 64 hex characters. */
+  onMedia?(name: string): void;
   /** The transport being tried or used changed (its `kind`). */
   onTransport?(kind: string): void;
   /** Every transport failed in a round and none has ever welcomed us: waiting for the next round. */
@@ -144,6 +155,41 @@ interface Pending {
   env: Uint8Array;
 }
 
+/** Why a media call failed: a host error code (`media_missing`, ...) or `closed` / `room_ended` / `bad_name`. */
+export class MediaError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = 'MediaError';
+  }
+}
+
+interface Waiter<T> {
+  resolve(v: T): void;
+  reject(e: unknown): void;
+}
+interface MediaCall<T> {
+  waiters: Waiter<T>[];
+  /** On the current socket and waiting for its answer. */
+  sent: boolean;
+}
+interface MediaPut extends MediaCall<void> {
+  env: Uint8Array;
+}
+
+const NAME = /^[0-9a-f]{64}$/;
+
+function nameBytes(name: string): Uint8Array {
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) out[i] = parseInt(name.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+function nameHex(b: Uint8Array): string {
+  let s = '';
+  for (const x of b) s += x.toString(16).padStart(2, '0');
+  return s;
+}
+
 export class RoomClient {
   state: RoomState = 'connecting';
   present = 0;
@@ -185,6 +231,10 @@ export class RoomClient {
   /** Our frames sent on this socket and not acknowledged yet, in send order. */
   private outstanding: Uint8Array[] = [];
   private catchUp: { target: number; needSnapshot: boolean } | null = null;
+  /** Blobs to store and blobs to fetch, by name, until the host answers. */
+  private puts = new Map<string, MediaPut>();
+  private gets = new Map<string, MediaCall<Uint8Array>>();
+  private getTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly h: RoomHandlers = {},
@@ -247,6 +297,7 @@ export class RoomClient {
     this.clearTimers();
     this.drop(1000);
     this.queue = [];
+    this.failMedia('closed');
     this.setState('closed');
   }
 
@@ -260,7 +311,114 @@ export class RoomClient {
     return this.send(TAG.PRESENCE, env, opts.queue ?? true);
   }
 
+  /**
+   * Store a sealed image in the room under `name` (64 hex). Resolves when the host has it (also when it
+   * already had it); rejects with a MediaError on the host's refusal or when the room cannot take
+   * it any more. Sent again after a reconnect until answered.
+   */
+  putMedia(name: string, env: Uint8Array): Promise<void> {
+    if (!NAME.test(name)) return Promise.reject(new MediaError('bad_name'));
+    if (this.state === 'gone' || this.state === 'closed') return Promise.reject(new MediaError('closed'));
+    if (this.ended) return Promise.reject(new MediaError('room_ended'));
+    return new Promise<void>((resolve, reject) => {
+      const have = this.puts.get(name);
+      if (have) have.waiters.push({ resolve, reject });
+      else this.puts.set(name, { env, waiters: [{ resolve, reject }], sent: false });
+      this.flushPuts();
+    });
+  }
+
+  /**
+   * The sealed blob stored under `name`. Rejects with `media_missing` when the room has none (the
+   * caller may ask again later) and with `closed` when the room is no more. Asks of the same name
+   * share one request; no more than MAX_GETS are on the wire at once.
+   */
+  getMedia(name: string): Promise<Uint8Array> {
+    if (!NAME.test(name)) return Promise.reject(new MediaError('bad_name'));
+    if (this.state === 'gone' || this.state === 'closed') return Promise.reject(new MediaError('closed'));
+    return new Promise<Uint8Array>((resolve, reject) => {
+      const have = this.gets.get(name);
+      if (have) have.waiters.push({ resolve, reject });
+      else this.gets.set(name, { waiters: [{ resolve, reject }], sent: false });
+      this.pumpGets();
+    });
+  }
+
   // ---- internals -------------------------------------------------------------------------------
+
+  private flushPuts(): void {
+    if (!this.joined || !this.isOpen()) return;
+    for (const [name, p] of this.puts) {
+      if (p.sent) continue;
+      const out = new Uint8Array(33 + p.env.length);
+      out[0] = TAG.MEDIA_PUT;
+      out.set(nameBytes(name), 1);
+      out.set(p.env, 33);
+      try {
+        this.ws?.send(out);
+      } catch {
+        return; // the close follows; the next welcome sends it again
+      }
+      p.sent = true;
+    }
+  }
+
+  private pumpGets(): void {
+    if (!this.joined || !this.isOpen()) return;
+    let inFlight = 0;
+    for (const g of this.gets.values()) if (g.sent) inFlight++;
+    for (const [name, g] of this.gets) {
+      if (inFlight >= MAX_GETS) return;
+      if (g.sent) continue;
+      try {
+        this.ws?.send(JSON.stringify({ type: 'get_media', name }));
+      } catch {
+        return;
+      }
+      g.sent = true;
+      inFlight++;
+    }
+  }
+
+  private failPuts(code: string): void {
+    const all = [...this.puts.values()];
+    this.puts.clear();
+    for (const p of all) for (const w of p.waiters) w.reject(new MediaError(code));
+  }
+
+  private failMedia(code: string): void {
+    this.failPuts(code);
+    const all = [...this.gets.values()];
+    this.gets.clear();
+    if (this.getTimer) clearTimeout(this.getTimer);
+    this.getTimer = null;
+    for (const g of all) for (const w of g.waiters) w.reject(new MediaError(code));
+  }
+
+  /** A media answer that names a blob. True when it was one of ours. */
+  private mediaError(code: string, name: string): boolean {
+    const put = this.puts.get(name);
+    if (put && code !== 'media_missing' && code !== 'media_busy') {
+      this.puts.delete(name);
+      for (const w of put.waiters) w.reject(new MediaError(code));
+      return true;
+    }
+    const get = this.gets.get(name);
+    if (!get) return false;
+    if (code === 'media_busy') {
+      // Ask again shortly: the host counted gets we had already seen answered.
+      get.sent = false;
+      this.getTimer ??= setTimeout(() => {
+        this.getTimer = null;
+        this.pumpGets();
+      }, 250);
+      return true;
+    }
+    this.gets.delete(name);
+    for (const w of get.waiters) w.reject(new MediaError(code));
+    this.pumpGets();
+    return true;
+  }
 
   private send(tag: number, env: Uint8Array, queue: boolean): boolean {
     if (this.ended || this.state === 'gone' || this.state === 'closed') return false;
@@ -291,6 +449,7 @@ export class RoomClient {
   private setState(s: RoomState): void {
     if (this.state === s) return;
     this.state = s;
+    if (s === 'gone') this.failMedia('closed');
     this.h.onState?.(s);
   }
 
@@ -469,8 +628,19 @@ export class RoomClient {
       case 'ended':
         this.end(num(msg.ended_at), num(msg.expires));
         break;
+      case 'media': {
+        const name = typeof msg.name === 'string' ? msg.name : '';
+        if (msg.ok === true) {
+          const put = this.puts.get(name);
+          if (!put) break;
+          this.puts.delete(name);
+          for (const w of put.waiters) w.resolve();
+        } else if (NAME.test(name)) this.h.onMedia?.(name);
+        break;
+      }
       case 'error': {
         const code = typeof msg.code === 'string' ? msg.code : 'error';
+        if (typeof msg.name === 'string' && this.mediaError(code, msg.name)) break;
         this.lastError = code;
         if (code === 'frame_too_large' || code === 'log_full') this.keepBackoff = true;
         this.h.onError?.(code);
@@ -495,6 +665,7 @@ export class RoomClient {
       this.ended = true;
       this.endedAt = w.ended_at;
       this.queue = [];
+      this.failPuts('room_ended');
     }
     // As the host decides (rooms.rs replay_locked).
     const needSnapshot = w.snapshot_seq !== null && (asked === 0 || asked < w.snapshot_seq);
@@ -506,7 +677,12 @@ export class RoomClient {
       const queued = this.queue;
       this.queue = [];
       for (const p of queued) if (!this.write(p.tag, p.env)) this.queue.push(p);
+      // What was in flight on the old socket may not have arrived: ask and send it again.
+      for (const p of this.puts.values()) p.sent = false;
+      this.flushPuts();
     }
+    for (const g of this.gets.values()) g.sent = false;
+    this.pumpGets();
     this.checkCaughtUp();
   }
 
@@ -523,6 +699,17 @@ export class RoomClient {
     const tag = b[0];
     if (tag === TAG.PRESENCE) {
       this.h.onPresence?.(b.slice(1));
+      return;
+    }
+    if (tag === TAG.MEDIA) {
+      if (b.length < 33) return;
+      const name = nameHex(b.subarray(1, 33));
+      const get = this.gets.get(name);
+      if (!get) return;
+      this.gets.delete(name);
+      const env = b.slice(33);
+      for (const w of get.waiters) w.resolve(env);
+      this.pumpGets();
       return;
     }
     if ((tag !== TAG.FRAME && tag !== TAG.SNAPSHOT) || b.length < 9) return;
@@ -542,6 +729,7 @@ export class RoomClient {
     this.endedAt = endedAt ?? this.endedAt;
     this.expires = expires ?? this.expires;
     this.queue = [];
+    this.failPuts('room_ended');
     this.setState('ended');
     if (!was || endedAt !== null) this.h.onEnded?.(this.endedAt, this.expires);
   }
@@ -582,11 +770,13 @@ export class RoomClient {
     if (code === ROOM_CLOSE.ended) {
       this.wanted = false;
       this.end(null, null);
+      this.failMedia('closed');
       return;
     }
     if (this.ended) {
       // Nothing can change in an ended room: keep what we have.
       this.wanted = false;
+      this.failMedia('closed');
       return;
     }
     if (code === ROOM_CLOSE.tooLarge) this.keepBackoff = true;

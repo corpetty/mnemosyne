@@ -97,6 +97,10 @@
 		},
 		get inserts() {
 			return inserts;
+		},
+		// Images: sealed blobs in the room (media.ts). The editor's file input carries `capture`, so a phone offers the camera.
+		get media() {
+			return guest.media;
 		}
 	};
 
