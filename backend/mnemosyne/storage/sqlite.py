@@ -338,7 +338,9 @@ CREATE TABLE IF NOT EXISTS shared_notes_ops (
 -- folded (Session.notes differing from it = written around the document, which catches up),
 -- its plain text and each comment mark's range in it as last folded (`comment_ranges`, JSON
 -- {comment id: [start, end) | null}, code points; services/comments.py places notes comments
--- from them), and the last edit shown.
+-- from them), its line refs as last folded (`refs`, JSON: the sidecar's `refs` list, each
+-- {line, ref, index, md_line} with md_line a line of `markdown`; services/notes_sections.py),
+-- and the last edit shown.
 CREATE TABLE IF NOT EXISTS shared_notes (
     session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
     snapshot BLOB,
@@ -348,7 +350,8 @@ CREATE TABLE IF NOT EXISTS shared_notes (
     last_at TEXT,
     markdown TEXT,
     plain TEXT,
-    comment_ranges TEXT
+    comment_ranges TEXT,
+    refs TEXT
 );
 -- Images in the notes (services/notes_media.py): one row per stored blob of a meeting, the
 -- file under <data_dir>/notes_media/<session_id>/<sha256>.<ext>[.enc]. `last_seen_at` is when
@@ -615,6 +618,11 @@ def _ranges_json(comments: dict | None) -> str | None:
     return None if comments is None else json.dumps(comments, sort_keys=True)
 
 
+def _refs_json(refs: list | None) -> str | None:
+    """A fold's line refs (the sidecar's `refs` list) as stored; None = not known."""
+    return None if refs is None else json.dumps(refs)
+
+
 def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
@@ -865,7 +873,7 @@ class SessionRepository:
         }:
             self._conn.execute("ALTER TABLE shared_notes ADD COLUMN markdown TEXT")
         notes_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(shared_notes)")}
-        for col in ("plain", "comment_ranges"):
+        for col in ("plain", "comment_ranges", "refs"):
             if col not in notes_cols:
                 self._conn.execute(f"ALTER TABLE shared_notes ADD COLUMN {col} TEXT")
         # A meeting someone shared WITH this person: the sharer's person key (64 hex); '' for
@@ -2366,11 +2374,14 @@ class SessionRepository:
         markdown: str | None,
         plain: str | None = None,
         comments: dict | None = None,
+        *,
+        refs: list | None = None,
     ) -> None:
         """The snapshot now holds every frame up to `upto_seq` and renders as `markdown` (None:
         not known, e.g. a snapshot merged in by sync before its fold; no catching up then).
         `plain` and `comments` are the fold's plain text and each comment mark's range in it
-        (the sidecar's answer; None = not known, then notes comments show as detached).
+        (the sidecar's answer; None = not known, then notes comments show as detached). `refs`
+        are its line refs (shared_notes.refs_of; None = not known, `notes_refs` gives None).
 
         A snapshot that differs from the stored one (the document's first, or formatting, comment
         marks and artifacts that leave the markdown alone) is a new version of the meeting for
@@ -2383,11 +2394,21 @@ class SessionRepository:
             ).fetchone()
             self._conn.execute(
                 "INSERT INTO shared_notes (session_id, snapshot, folded_seq, updated_at, markdown,"
-                " plain, comment_ranges) VALUES (?,?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE"
-                " SET snapshot=excluded.snapshot, folded_seq=excluded.folded_seq,"
+                " plain, comment_ranges, refs) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(session_id)"
+                " DO UPDATE SET snapshot=excluded.snapshot, folded_seq=excluded.folded_seq,"
                 " updated_at=excluded.updated_at, markdown=excluded.markdown,"
-                " plain=excluded.plain, comment_ranges=excluded.comment_ranges",
-                (session_id, snapshot, upto_seq, now, markdown, plain, _ranges_json(comments)),
+                " plain=excluded.plain, comment_ranges=excluded.comment_ranges,"
+                " refs=excluded.refs",
+                (
+                    session_id,
+                    snapshot,
+                    upto_seq,
+                    now,
+                    markdown,
+                    plain,
+                    _ranges_json(comments),
+                    _refs_json(refs),
+                ),
             )
             self._conn.execute(
                 "UPDATE shared_notes_ops SET folded=1 WHERE session_id=? AND seq<=? AND folded=0",
@@ -2413,12 +2434,13 @@ class SessionRepository:
         notes: str | None = None,
         plain: str | None = None,
         comments: dict | None = None,
+        refs: list | None = None,
     ) -> list[int]:
         """A notes document that came by library sync (services/sync_notes.py), one transaction:
         `frames` (what the local snapshot lacked of it, for the connected editors) are appended
         to the log as `author`, already folded; `snapshot` (the union, or the peer's document
         adopted where there was none) becomes the stored one with its `markdown`; `notes`, when
-        given, becomes `Session.notes` in the same breath; `plain` and `comments` as in
+        given, becomes `Session.notes` in the same breath; `plain`, `comments` and `refs` as in
         `store_notes_fold`. No new version (`_touch`): the sync
         apply path counts it. Frames that arrived from editors meanwhile (unfolded, so not in
         `snapshot`) stay unfolded. Returns the appended frames' sequence numbers."""
@@ -2436,10 +2458,10 @@ class SessionRepository:
             )
             self._conn.execute(
                 "INSERT INTO shared_notes (session_id, snapshot, folded_seq, updated_at, markdown,"
-                " plain, comment_ranges) VALUES (?,?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE"
-                " SET snapshot=excluded.snapshot, updated_at=excluded.updated_at,"
+                " plain, comment_ranges, refs) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(session_id)"
+                " DO UPDATE SET snapshot=excluded.snapshot, updated_at=excluded.updated_at,"
                 " markdown=excluded.markdown, plain=excluded.plain,"
-                " comment_ranges=excluded.comment_ranges,"
+                " comment_ranges=excluded.comment_ranges, refs=excluded.refs,"
                 " folded_seq=MAX(folded_seq, excluded.folded_seq)",
                 (
                     session_id,
@@ -2449,6 +2471,7 @@ class SessionRepository:
                     markdown,
                     plain,
                     _ranges_json(comments),
+                    _refs_json(refs),
                 ),
             )
             if notes is not None:
@@ -2471,10 +2494,32 @@ class SessionRepository:
             return None
         return row["plain"], ranges if isinstance(ranges, dict) else {}
 
-    def set_notes_markdown(self, session_id: str, markdown: str) -> None:
+    def notes_refs(self, session_id: str, markdown: str | None = None) -> list[dict] | None:
+        """The line refs of the document as last folded (the sidecar's `refs` list: {line, ref,
+        index, md_line}, md_line a line of that fold's markdown); None when none were stored
+        (no document, or a sidecar that did not report them). With `markdown`: None too when
+        the stored markdown is not that text (the notes were written around the document, so
+        the md_lines do not describe it)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT markdown, refs FROM shared_notes WHERE session_id=?", (session_id,)
+            ).fetchone()
+        if row is None or row["refs"] is None:
+            return None
+        if markdown is not None and row["markdown"] != markdown:
+            return None
+        try:
+            refs = json.loads(row["refs"])
+        except ValueError:
+            return None
+        return refs if isinstance(refs, list) else None
+
+    def set_notes_markdown(self, session_id: str, markdown: str, refs: list | None = None) -> None:
+        """The document's markdown as last folded, and its line refs (None: not known)."""
         with self._lock, self._conn:
             self._conn.execute(
-                "UPDATE shared_notes SET markdown=? WHERE session_id=?", (markdown, session_id)
+                "UPDATE shared_notes SET markdown=?, refs=? WHERE session_id=?",
+                (markdown, _refs_json(refs), session_id),
             )
 
     def notes_drift(self, session_id: str) -> str | None:

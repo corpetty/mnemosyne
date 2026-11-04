@@ -16,7 +16,7 @@ from starlette.websockets import WebSocketDisconnect
 from mnemosyne import access
 from mnemosyne.api.app import create_app
 from mnemosyne.models.session import Session
-from mnemosyne.services import shared_notes, sharing
+from mnemosyne.services import notes_sections, shared_notes, sharing, sync_notes
 from tests import fake_link
 from tests.fake_link import doc_frame
 from tests.test_combine import _meeting, _wait, needs_ffmpeg
@@ -235,7 +235,7 @@ def test_notes_route_goes_through_the_document(client, ctx, sidecar):
         r = client.post(f"/api/sessions/{sid}/notes", json={"notes": "from the api\n"})
         assert r.status_code == 200 and r.json()["notes"] == "from the api\n"
         got = json.loads(a.receive_bytes()[1:])
-        assert got["ops"] == [["set", "from the api\n"]]
+        assert got["ops"] == [["set", "from the api\n", ""]]  # (against the empty text)
         assert a.receive_json()["by"] == "api"
     assert ctx.repo.get(sid).notes == "from the api\n"
     assert [o["author"] for o in ctx.repo.notes_ops(sid)] == ["api"]
@@ -1005,3 +1005,183 @@ def test_a_task_line_typed_over_the_socket_is_an_action_item(client, ctx, sideca
     (after,) = client.get(f"/api/sessions/{sid}").json()["notes_items"]
     assert after["id"] == item["id"] and after["line"] != item["line"]
     assert [e["kind"] for e in ctx.repo.events(sid)].count("notes_task_added") == 1
+
+
+# ---- line refs and the backend's own lines (docs/plans/2026-11-04-summaries-in-notes.md) -------
+
+
+def stored_refs(ctx, sid) -> list[tuple[str, int]]:
+    return [(r["ref"], r["md_line"]) for r in ctx.repo.notes_refs(sid) or []]
+
+
+def hooked(monkeypatch) -> list[tuple]:
+    """Every AFTER_FOLD call as (session, markdown, refs, seqs, author); a failing hook beside
+    it must not stop anything."""
+    calls: list[tuple] = []
+
+    def record(app, sid, reply, seqs, author):
+        calls.append((sid, reply["markdown"], [r["ref"] for r in reply["refs"]], seqs, author))
+
+    monkeypatch.setattr(shared_notes, "AFTER_FOLD", [lambda *a: 1 / 0, record])
+    return calls
+
+
+def append_copilot(*lines: tuple[str, str]):
+    def compose(markdown, refs, tasks):
+        s = notes_sections.split(markdown, refs)
+        return notes_sections.compose(s.lines, [notes_sections.append(*lines)])
+
+    return compose
+
+
+def test_refs_are_stored_at_every_local_fold_site(ctx, sidecar, monkeypatch):
+    calls = hooked(monkeypatch)
+    sid = meeting(ctx)
+    # A fold of typed frames.
+    typed = [frame("f1", ["ins", 0, "Mine\n## Copilot\n"]), frame("f2", ["ref", 1, "sec:copilot"])]
+    ctx.repo.append_notes_ops(sid, typed, "u1", "Ann", True)
+    assert shared_notes.fold_blocking(ctx, sid)
+    assert stored_refs(ctx, sid) == [("sec:copilot", 1)]
+    assert calls[-1] == (sid, "Mine\n## Copilot\n", ["sec:copilot"], [1, 2], None)
+
+    # The notes route (set_text without refs): the reworded heading keeps its ref.
+    assert shared_notes.set_markdown_blocking(ctx, sid, "Mine\n## Copilot notes\n- [ ] a task\n")
+    assert stored_refs(ctx, sid) == [("sec:copilot", 1)]
+    assert calls[-1][4] == "api" and len(calls) == 2
+
+    # A tick from outside the editor, and a reader's comment mark.
+    shared_notes.set_kind_blocking(ctx, sid, format(2, "064x"), "task_done", "u1", "Ann")
+    assert calls[-1][4] == "Ann" and stored_refs(ctx, sid) == [("sec:copilot", 1)]
+    shared_notes.mark_comment_blocking(ctx, sid, "c1", "0", "3", "u2", "Rita")
+    assert calls[-1][4] is None and len(calls) == 4
+
+    # The backend's own line, with its ref; its task entry carries the ref too.
+    out = shared_notes.edit_blocking(
+        ctx, sid, append_copilot(("- [ ] a point", "cp:0")), shared_notes.COPILOT_AUTHOR
+    )
+    assert len(out) == 1
+    assert ctx.repo.get(sid).notes == "Mine\n## Copilot notes\n- [x] a task\n- [ ] a point\n"
+    assert stored_refs(ctx, sid) == [("sec:copilot", 1), ("cp:0", 3)]
+    assert calls[-1][2:] == (["sec:copilot", "cp:0"], [], "Copilot")
+    assert ctx.repo.notes_doc(sid)["last_by"] == "Copilot"
+    assert ctx.repo.notes_ops(sid)[-1]["author"] == "Copilot"
+    request = sidecar.doc_requests[-1]  # the set_text: refs by line of the new markdown
+    assert request["op"] == "set_text"
+    assert request["refs"] == {"0": "", "1": "sec:copilot", "2": "", "3": "cp:0"}
+    snapshot = base64.b64encode(ctx.repo.notes_doc(sid)["snapshot"]).decode()
+    reply = shared_notes._run_doc(
+        str(sidecar.path),
+        {"op": "fold", "notes": shared_notes.notes_origin(sid), "snapshot": snapshot, "frames": []},
+    )
+    assert [(t["text"], t["ref"]) for t in reply["tasks"]] == [
+        ("a task", None),
+        ("a point", "cp:0"),
+    ]
+    # Refs describe the stored markdown only.
+    notes = ctx.repo.get(sid).notes
+    assert ctx.repo.notes_refs(sid, notes) == ctx.repo.notes_refs(sid)
+    assert ctx.repo.notes_refs(sid, notes + "more\n") is None
+    assert notes_sections.own_notes(ctx.repo, sid, notes) == "Mine\n"
+
+
+def test_refs_are_stored_by_sync_adoption_and_union(ctx, sidecar, monkeypatch):
+    calls = hooked(monkeypatch)
+    sid = meeting(ctx)
+    first = {"id": "x", "ops": [["set", "Hi\n## Summary\n"], ["ref", 1, "sec:summary"]]}
+
+    def theirs(*frames) -> str:
+        state = {"frames": list(frames), "artifacts": []}
+        return base64.b64encode(json.dumps(state).encode()).decode()
+
+    with shared_notes.hub(ctx).lock(sid):
+        assert sync_notes.adopt(ctx, sid, theirs(first), "Desk")
+    assert stored_refs(ctx, sid) == [("sec:summary", 1)]
+    assert calls[-1] == (sid, "Hi\n## Summary\n", ["sec:summary"], [], "sync (Desk)")
+
+    more = {"id": "y", "ops": [["ins", 14, "- Ship it\n"], ["ref", 2, "sum:d1"]]}
+    with shared_notes.hub(ctx).lock(sid):
+        united = sync_notes.union(ctx, sid, theirs(first, more))
+        sync_notes.store_union(ctx, sid, united, "Desk")
+    assert ctx.repo.get(sid).notes == "Hi\n## Summary\n- Ship it\n"
+    assert stored_refs(ctx, sid) == [("sec:summary", 1), ("sum:d1", 2)]
+    assert calls[-1][2:] == (["sec:summary", "sum:d1"], [], "sync (Desk)")
+    # The same document again: nothing stored, the hooks still see it.
+    with shared_notes.hub(ctx).lock(sid):
+        again = sync_notes.union(ctx, sid, theirs(first, more))
+        assert not again.changed
+        sync_notes.store_union(ctx, sid, again, "Desk")
+    assert len(calls) == 3
+
+
+def test_edit_blocking_keeps_a_frame_typed_between_its_fold_and_its_write(ctx, sidecar):
+    sid = meeting(ctx)
+    ctx.repo.append_notes_ops(sid, [frame("f1", ["ins", 0, "one\ntwo\n"])], "u1", "Ann", True)
+    seen = []
+
+    def compose(markdown, refs, tasks):
+        seen.append(markdown)
+        # Ann types meanwhile: logged after edit_blocking read the state.
+        ctx.repo.append_notes_ops(sid, [frame("f2", ["ins", 0, "zero\n"])], "u1", "Ann", True)
+        return append_copilot(("## Copilot", "sec:copilot"), ("- a point", "cp:0"))(
+            markdown, refs, tasks
+        )
+
+    out = shared_notes.edit_blocking(ctx, sid, compose, shared_notes.COPILOT_AUTHOR)
+    assert seen == ["one\ntwo\n"]
+    assert [seq for seq, _ in out] == [3]
+    # Both: the typed line and the composed ones, merged (the fold ran again with all three).
+    assert ctx.repo.get(sid).notes == "zero\none\ntwo\n## Copilot\n- a point\n"
+    assert not ctx.repo.has_unfolded_notes(sid)
+    assert stored_refs(ctx, sid) == [("sec:copilot", 3), ("cp:0", 4)]
+    assert [o["author"] for o in ctx.repo.notes_ops(sid)] == ["Ann", "Ann", "Copilot"]
+    fold, write = sidecar.doc_requests[-3:-1]  # then the fold again
+    assert (fold["op"], write["op"]) == ("fold", "set_text")
+    assert fold["snapshot"] == write["snapshot"] and fold["frames"] == write["frames"]
+    assert len(write["frames"]) == 1  # the same state: without Ann's second frame
+
+
+def test_edit_blocking_seeds_catches_up_and_may_change_nothing(ctx, sidecar):
+    sid = meeting(ctx, notes="Written before\n")
+    assert shared_notes.edit_blocking(ctx, sid, lambda md, refs, tasks: None, "Summary") == []
+    assert [o["author"] for o in ctx.repo.notes_ops(sid)] == ["seed"]
+    assert [r["op"] for r in sidecar.doc_requests][-2:] == ["set_text", "fold"]
+
+    out = shared_notes.edit_blocking(
+        ctx, sid, append_copilot(("## Summary", "sec:summary")), shared_notes.SUMMARY_AUTHOR
+    )
+    assert out and ctx.repo.get(sid).notes == "Written before\n## Summary\n"
+    assert notes_sections.own_notes(ctx.repo, sid, ctx.repo.get(sid).notes) == "Written before\n"
+
+    # Written around the document (e.g. sync's text merge): caught up first, then edited.
+    ctx.repo.update_fields(sid, notes="Written before\nand after\n## Summary\n")
+    out = shared_notes.edit_blocking(
+        ctx, sid, append_copilot(("- Ship it", "sum:d1")), shared_notes.SUMMARY_AUTHOR
+    )
+    assert out
+    assert ctx.repo.get(sid).notes == "Written before\nand after\n## Summary\n- Ship it\n"
+    assert [o["author"] for o in ctx.repo.notes_ops(sid)] == ["seed", "Summary", "api", "Summary"]
+    assert stored_refs(ctx, sid) == [("sec:summary", 2), ("sum:d1", 3)]
+
+    # Only a ref changes: a frame of its own, the text stays.
+    def clear(markdown, refs, tasks):
+        s = notes_sections.split(markdown, refs)
+        line = s.find("sum:d1")
+        assert line is not None
+        return notes_sections.compose(s.lines, [notes_sections.retag(line, "")])
+
+    assert shared_notes.edit_blocking(ctx, sid, clear, shared_notes.SUMMARY_AUTHOR)
+    assert ctx.repo.get(sid).notes.endswith("- Ship it\n")
+    assert stored_refs(ctx, sid) == [("sec:summary", 2)]
+    # Nothing to change: no frame.
+    n = len(ctx.repo.notes_ops(sid))
+    assert shared_notes.edit_blocking(ctx, sid, lambda md, refs, tasks: (md, {}), "x") == []
+    assert len(ctx.repo.notes_ops(sid)) == n
+
+
+def test_edit_blocking_leaves_a_meeting_waiting_for_its_document(ctx, sidecar):
+    sid = meeting(ctx, notes="from the other computer\n", origin="otherdevice1")
+    called = []
+    out = shared_notes.edit_blocking(
+        ctx, sid, lambda *a: called.append(a), shared_notes.COPILOT_AUTHOR
+    )
+    assert out == [] and called == [] and ctx.repo.notes_ops(sid) == []
