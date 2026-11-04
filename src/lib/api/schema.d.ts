@@ -4926,6 +4926,24 @@ export interface components {
              */
             reason: string;
         };
+        /**
+         * CopilotAdded
+         * @description One line the copilot added to the meeting's notes (services/copilot_notes.py). Its
+         *     line in the document has the ref `cp:<n>`.
+         */
+        CopilotAdded: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "summary" | "decision" | "action" | "question";
+            /** N */
+            n: number;
+            /** Owner */
+            owner: string | null;
+            /** Text */
+            text: string;
+        };
         /** CopilotAskRequest */
         CopilotAskRequest: {
             /** Question */
@@ -4945,6 +4963,8 @@ export interface components {
         CopilotNotes: {
             /** Action Items */
             action_items: components["schemas"]["CopilotItem"][];
+            /** Added */
+            added: components["schemas"]["CopilotAdded"][];
             /** Agenda Covered */
             agenda_covered: number[];
             /** Decisions */
@@ -7080,6 +7100,8 @@ export interface components {
              * @default
              */
             origin: string;
+            /** Own Notes */
+            own_notes: string | null;
             /**
              * Owner Id
              * @default
@@ -7314,6 +7336,8 @@ export interface components {
             copilot?: boolean | null;
             /** Copilot Interval Seconds */
             copilot_interval_seconds?: number | null;
+            /** Copilot To Notes */
+            copilot_to_notes?: boolean | null;
             /** Default Model */
             default_model?: string | null;
             /** Default Provider */
@@ -7520,6 +7544,8 @@ export interface components {
             speaker_match_threshold?: number | null;
             /** Summary Chunk Chars */
             summary_chunk_chars?: number | null;
+            /** Summary In Notes */
+            summary_in_notes?: boolean | null;
             /** Summary Instructions */
             summary_instructions?: string | null;
             /** Summary Style */
@@ -7613,6 +7639,8 @@ export interface components {
             copilot: boolean;
             /** Copilot Interval Seconds */
             copilot_interval_seconds: number;
+            /** Copilot To Notes */
+            copilot_to_notes: boolean;
             /** Data Dir */
             data_dir: string;
             /** Default Model */
@@ -7831,6 +7859,8 @@ export interface components {
             speaker_match_threshold: number;
             /** Summary Chunk Chars */
             summary_chunk_chars: number;
+            /** Summary In Notes */
+            summary_in_notes: boolean;
             /** Summary Instructions */
             summary_instructions: string;
             /** Summary Style */

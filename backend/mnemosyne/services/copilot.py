@@ -21,6 +21,7 @@ from ..models.session import CopilotItem, CopilotNotes
 from ..models.transcript import TranscriptSegment
 from ..summarization.privacy import is_cloud
 from ..summarization.prompts import extract_json, transcript_lines
+from .copilot_notes import add_new
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -170,6 +171,7 @@ async def update_notes(
     fresh = parse_notes(raw, session_id, len(segments), len(agenda or []))
     if fresh is not None and previous is not None:
         fresh.agenda_covered = sorted(set(fresh.agenda_covered) | set(previous.agenda_covered))
+        fresh.added = list(previous.added)  # what is in the notes already (copilot_notes.py)
     return fresh
 
 
@@ -271,6 +273,11 @@ def copilot_runner(app: AppContext, session_id: str, tick: float = 5.0):
                 last = time.monotonic()
                 if fresh is None:
                     continue
+                if notes is None and current is not None and current.copilot_notes is not None:
+                    # A new recording of the meeting: its notes start afresh, but what the
+                    # copilot added to the meeting's notes before is still there.
+                    fresh.added = list(current.copilot_notes.added)
+                await add_new(app, session_id, fresh)  # into the meeting's notes, once
                 app.copilot_notes[session_id] = fresh
                 app.repo.update_fields(session_id, copilot_notes=fresh)  # outlives the meeting
                 if current is not None and current.agenda and fresh.agenda_covered:

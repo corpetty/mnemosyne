@@ -182,6 +182,9 @@ class Settings(BaseSettings):
     # model. Needs the live transcript.
     copilot: bool = True
     copilot_interval_seconds: int = 180
+    # Each new point, decision, action item or question of the copilot is added once as a line
+    # under a Copilot heading at the end of the meeting's live notes (services/copilot_notes.py).
+    copilot_to_notes: bool = True
 
     # Alert (toast + desktop notification) when one of these comma-separated words is
     # heard in the live transcript from anyone but your own mic. Usually your name.
@@ -390,6 +393,9 @@ class Settings(BaseSettings):
     # Transcripts longer than this (formatted characters, about 4 per token) are summarized
     # in parts and then merged, so small context windows still work. 0 never splits.
     summary_chunk_chars: int = 40000
+    # A Summary section at the end of the meeting's live notes follows the summary (and
+    # replaces the copilot's lines); edits made there change the summary.
+    summary_in_notes: bool = True
 
     # Auto-record: "off", "ask" (offer to record when a meeting app starts using the mic or a
     # calendar meeting starts) or "auto" (just start). Auto-started recordings stop after the

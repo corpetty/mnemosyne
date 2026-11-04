@@ -28,7 +28,13 @@ from ...audio.levels import Level, SelfTestResult, sample_level, self_test
 from ...audio.mixer import mix_audio_files
 from ...audio.streams import CaptureApp
 from ...models.base import ApiModel
-from ...models.session import DEFAULT_SESSION_NAME, Recording, Session, SessionStatus
+from ...models.session import (
+    DEFAULT_SESSION_NAME,
+    CopilotNotes,
+    Recording,
+    Session,
+    SessionStatus,
+)
 from ...models.transcript import TranscriptSegment
 from ...services import guest_notes, history
 from ...services.copilot import copilot_runner
@@ -366,8 +372,16 @@ async def begin_recording(
         live_job_id = job.id
         if ctx.settings.copilot:
             if not keep_notes:  # a new recording; a restarted capture carries on
-                ctx.copilot_notes.pop(session.id, None)
-                ctx.repo.update_fields(session.id, copilot_notes=None)
+                old = ctx.copilot_notes.pop(session.id, None)
+                if old is None:
+                    stored = ctx.sessions.get_session(session.id)
+                    old = stored.copilot_notes if stored else None
+                # What the copilot added to the meeting's notes stays known, or the next
+                # notes would add it all again (services/copilot_notes.py).
+                kept = CopilotNotes(session_id=session.id, added=old.added) if old else None
+                ctx.repo.update_fields(
+                    session.id, copilot_notes=kept if kept and kept.added else None
+                )
             ctx.jobs.submit("copilot", copilot_runner(ctx, session.id), session.id)
 
     return StartRecordingResponse(

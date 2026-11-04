@@ -85,6 +85,19 @@ class CopilotItem(ApiModel):
     owner: str | None = None
 
 
+CopilotKind = Literal["summary", "decision", "action", "question"]
+
+
+class CopilotAdded(ApiModel):
+    """One line the copilot added to the meeting's notes (services/copilot_notes.py). Its
+    line in the document has the ref `cp:<n>`."""
+
+    kind: CopilotKind
+    text: str
+    owner: str | None = None  # an action item's
+    n: int
+
+
 class CopilotNotes(ApiModel):
     """The live copilot's running notes (services/copilot.py), kept with the session."""
 
@@ -96,6 +109,10 @@ class CopilotNotes(ApiModel):
     agenda_covered: list[int] = Field(default_factory=list)  # agenda points (1-based) discussed
     lines: int = 0  # transcript lines covered
     updated_at: datetime = Field(default_factory=datetime.now)
+    # Everything the copilot ever added to this meeting's notes, over all its recordings: an
+    # item is added only when none of these is the same (so a deleted or reworded line is
+    # never added again).
+    added: list[CopilotAdded] = Field(default_factory=list)
 
 
 class Chapter(ApiModel):
@@ -210,6 +227,10 @@ class Session(ApiModel):
     summary: str = ""
     summary_data: SummaryData | None = None
     notes: str = ""
+    # `notes` above the backend's sections (copilot lines, the summary; services/
+    # notes_sections.py `own_notes`); filled by the single-meeting read only, else None
+    # (not worked out: readers fall back to `notes`).
+    own_notes: str | None = None
     participants: list[str] = Field(default_factory=list)
     # Invitees from the calendar event this session was recorded during (names).
     attendees: list[str] = Field(default_factory=list)
