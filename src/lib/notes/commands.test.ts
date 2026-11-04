@@ -729,3 +729,252 @@ describe('image lines', () => {
     });
   });
 });
+
+describe('line refs', () => {
+  const V = '3f0c5aa1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5ca9.webp@1600x900';
+
+  /** One entry per line: `text:kind` and `@ref` when it has one. */
+  const shape = (A: Client) =>
+    lines(A.doc)
+      .map((l) => `${l.text}:${l.kind ?? '-'}${l.ref ? '@' + l.ref : ''}`)
+      .join(' | ');
+
+  /** docOf, then the given lines (by index) carry a ref, as the backend sets it. */
+  function withRefs(refs: Record<number, string>, ...spec: string[]): Client {
+    const A = docOf(...spec);
+    const ls = lines(A.doc);
+    for (const [i, ref] of Object.entries(refs)) A.web.markRangeClosed(A.doc.obj, ls[+i].end, ls[+i].end + 1, 'ref', ref);
+    return A;
+  }
+
+  it('reads the first live ref; an empty one is none', () => {
+    const A = withRefs({ 0: 'sum:abc' }, 'one', 'two');
+    expect(lines(A.doc).map((l) => l.ref)).toEqual(['sum:abc', null]);
+    A.web.markRangeClosed(A.doc.obj, 7, 8, 'ref', '');
+    expect(lines(A.doc)[1].ref).toBeNull();
+  });
+
+  describe('splitLine', () => {
+    it('Enter at the end keeps the ref on the line; the new line has none', () => {
+      const A = withRefs({ 0: 'sum:a' }, 'abc', 'next');
+      const r = splitLine(A.doc, 3);
+      expect(r.caret).toBe(4);
+      expect(shape(A)).toBe('abc:-@sum:a | :- | next:-');
+    });
+
+    it('Enter at the end of a list line continues the list without the ref', () => {
+      const A = withRefs({ 0: 'sum:a' }, 'item:bullet', 'task:task');
+      splitLine(A.doc, 4);
+      expect(shape(A)).toBe('item:bullet@sum:a | :bullet | task:task');
+    });
+
+    it('Enter on an empty list line clears the kind and keeps the ref', () => {
+      const A = withRefs({ 1: 'sum:a' }, 'one', '', 'two');
+      setLineKind(A.doc, 4, 4, 'bullet');
+      const r = splitLine(A.doc, 4);
+      expect(r.caret).toBe(4);
+      expect(shape(A)).toBe('one:- | :-@sum:a | two:-');
+    });
+
+    it('Enter in the middle: the first half keeps the ref, the second has none', () => {
+      const A = withRefs({ 0: 'sum:a' }, 'abcdef', 'next');
+      const undo = new UndoStack(A.doc);
+      undo.push(splitLine(A.doc, 2).inverse);
+      expect(shape(A)).toBe('ab:-@sum:a | cdef:- | next:-');
+      undo.undo();
+      expect(shape(A)).toBe('abcdef:-@sum:a | next:-');
+    });
+
+    it('Enter in the middle of a heading or list line: first half keeps kind and ref', () => {
+      const A = withRefs({ 0: 'sec:x', 1: 'sum:b' }, 'Heading:h2', 'item:bullet');
+      splitLine(A.doc, 4);
+      splitLine(A.doc, 11);
+      expect(shape(A)).toBe('Head:h2@sec:x | ing:- | it:bullet@sum:b | em:bullet');
+    });
+
+    it('Enter at the line start pushes the text down with its ref (no ref on the empty line)', () => {
+      const A = withRefs({ 0: 'sum:a' }, 'abc');
+      splitLine(A.doc, 0);
+      expect(shape(A)).toBe(':- | abc:-@sum:a');
+    });
+
+    it('a table row or an image line keeps its ref; the new line has none', () => {
+      const A = docOf('a', 'b');
+      insertTable(A.doc, 0, 2, 1);
+      const row = lines(A.doc)[0];
+      A.web.markRangeClosed(A.doc.obj, row.end, row.end + 1, 'ref', 'tbl');
+      splitLine(A.doc, row.start + 1);
+      expect(lines(A.doc).map((l) => l.ref).slice(0, 2)).toEqual(['tbl', null]);
+
+      const B = withRefs({ 0: 'img' }, 'cap');
+      const end = lines(B.doc)[0].end;
+      B.web.markRangeClosed(B.doc.obj, end, end + 1, 'block', 'image');
+      B.web.markRangeClosed(B.doc.obj, end, end + 1, IMAGE, V);
+      splitLine(B.doc, 1);
+      expect(lines(B.doc).map((l) => l.ref)).toEqual(['img', null]);
+    });
+  });
+
+  describe('deleteRange', () => {
+    it('a join keeps the ref of the line where the deletion starts', () => {
+      const A = withRefs({ 0: 'sum:a', 1: 'sum:b' }, 'one', 'two', 'three');
+      deleteRange(A.doc, 3, 4); // the first terminator
+      expect(shape(A)).toBe('onetwo:-@sum:a | three:-');
+    });
+
+    it('survivor ref is replaced by the first line\'s, as the kind is', () => {
+      const A = withRefs({ 1: 'sum:b' }, 'one:h2', 'two', 'three');
+      deleteRange(A.doc, 1, 6); // "ne\ntw"
+      expect(shape(A)).toBe('oo:h2 | three:-');
+      const B = withRefs({ 0: 'sum:a' }, 'one', 'two:bullet', 'three');
+      deleteRange(B.doc, 2, 6); // "e\ntw"
+      expect(shape(B)).toBe('ono:-@sum:a | three:-');
+    });
+
+    it('across several lines the survivor takes the first line\'s ref', () => {
+      const A = withRefs({ 0: 'sum:a', 2: 'sum:c' }, 'one', 'two', 'three', 'four');
+      deleteRange(A.doc, 1, 9); // "ne\ntwo\nth"
+      expect(shape(A)).toBe('ohree:-@sum:a | four:-');
+    });
+
+    it('to the end of the doc the fresh terminator carries the first line\'s ref', () => {
+      const A = withRefs({ 0: 'sum:a', 1: 'sum:b' }, 'one', 'two');
+      deleteRange(A.doc, 1, A.web.textLen(A.doc.obj));
+      expect(shape(A)).toBe('o:-@sum:a');
+    });
+
+    it('inside one line changes no ref', () => {
+      const A = withRefs({ 0: 'sum:a' }, 'abcd', 'next');
+      deleteRange(A.doc, 1, 3);
+      expect(shape(A)).toBe('ad:-@sum:a | next:-');
+    });
+  });
+
+  describe('joinWithPrevious', () => {
+    it('clearing the kind keeps the ref', () => {
+      const A = withRefs({ 1: 'sum:b' }, 'one', 'two:h2');
+      const r = joinWithPrevious(A.doc, 4);
+      expect(r.caret).toBe(4);
+      expect(shape(A)).toBe('one:- | two:-@sum:b');
+    });
+
+    it('a join into the previous line takes the previous line\'s ref', () => {
+      const A = withRefs({ 0: 'sum:a', 1: 'sum:b' }, 'one', 'two');
+      const undo = new UndoStack(A.doc);
+      undo.push(joinWithPrevious(A.doc, 4).inverse);
+      expect(shape(A)).toBe('onetwo:-@sum:a');
+      undo.undo();
+      expect(shape(A)).toBe('one:-@sum:a | two:-@sum:b');
+    });
+  });
+
+  describe('setLineKind and other commands', () => {
+    it('setLineKind (also clearing, and code lang) keeps the ref', () => {
+      const A = withRefs({ 0: 'sum:a', 1: 'sum:b' }, 'one', 'two');
+      setLineKind(A.doc, 0, 4, 'bullet');
+      expect(shape(A)).toBe('one:bullet@sum:a | two:bullet@sum:b');
+      setLineKind(A.doc, 0, 4, 'code');
+      setLineKind(A.doc, 0, 4, null);
+      expect(shape(A)).toBe('one:-@sum:a | two:-@sum:b');
+    });
+
+    it('toggleTask keeps the ref', () => {
+      const A = withRefs({ 0: 'sum:a' }, 'one:task');
+      toggleTask(A.doc, 0);
+      expect(shape(A)).toBe('one:task_done@sum:a');
+    });
+
+    it('insertImageLine: a new line has no ref, an empty host line keeps its own', () => {
+      const A = withRefs({ 0: 'sum:a' }, 'one', 'two');
+      insertImageLine(A.doc, 1, V);
+      expect(lines(A.doc).map((l) => l.ref)).toEqual(['sum:a', null, null]);
+      const B = withRefs({ 1: 'sum:b' }, 'one', '');
+      insertImageLine(B.doc, 4, V);
+      expect(lines(B.doc).map((l) => [l.kind, l.ref])).toEqual([[null, null], ['image', 'sum:b']]);
+    });
+
+    it('removeRow handing the head role to the next row keeps that row\'s ref', () => {
+      const A = docOf('a');
+      insertTable(A.doc, 0, 3, 2);
+      const ls = lines(A.doc);
+      const t = ls.filter((l) => l.cells);
+      A.web.markRangeClosed(A.doc.obj, t[1].end, t[1].end + 1, 'ref', 'row2');
+      removeRow(A.doc, t[0].start);
+      expect(lines(A.doc).filter((l) => l.cells)[0].ref).toBe('row2');
+    });
+  });
+
+  describe('copy and paste never carry a ref', () => {
+    it('selectionModel entries have no ref', () => {
+      const A = withRefs({ 0: 'sum:a', 1: 'sum:b' }, 'one:bullet', 'two');
+      const model = selectionModel(lines(A.doc), 0, A.web.textLen(A.doc.obj));
+      expect(model.lines).toEqual([{ kind: 'bullet' }, { kind: null }]);
+      expect(JSON.stringify(model)).not.toContain('sum:');
+      expect(selectionMarkdown(lines(A.doc), 0, A.web.textLen(A.doc.obj))).toBe('- one\n\ntwo\n');
+    });
+
+    it('a pasted copy has no ref and the host line keeps its own', () => {
+      const A = withRefs({ 0: 'sum:a', 1: 'sum:b' }, 'one:bullet', 'two');
+      const md = selectionMarkdown(lines(A.doc), 0, A.web.textLen(A.doc.obj));
+      const plan = parsePaste(md);
+      expect(plan.kind).toBe('block');
+      const B = withRefs({ 0: 'host' }, 'host line', 'tail');
+      insertModel(B.doc, 0, plan.model);
+      expect(shape(B)).toBe('one:bullet | two:- | host line:-@host | tail:-');
+    });
+
+    describe('a multi-line paste into a ref\'d line', () => {
+      const paste = (A: Client, at: number, text: string, lines_: { kind: null }[]) =>
+        insertModel(A.doc, at, { text, lines: lines_, inline: [] });
+      const plain = [{ kind: null }];
+
+      it('at the end: the ref stays on the first line, the pasted pieces have none', () => {
+        const A = withRefs({ 0: 'sum:a' }, 'Decided X', 'tail');
+        const undo = new UndoStack(A.doc);
+        undo.push(paste(A, 9, 'a\nb', plain).inverse);
+        expect(shape(A)).toBe('Decided Xa:-@sum:a | b:- | tail:-');
+        undo.undo();
+        expect(shape(A)).toBe('Decided X:-@sum:a | tail:-');
+        undo.redo();
+        expect(shape(A)).toBe('Decided Xa:-@sum:a | b:- | tail:-');
+      });
+
+      it('in the middle: the ref stays on the first line', () => {
+        const A = withRefs({ 0: 'sum:a' }, 'abcd', 'tail');
+        const undo = new UndoStack(A.doc);
+        undo.push(paste(A, 2, 'x\ny\nz', [{ kind: null }, { kind: null }]).inverse);
+        expect(shape(A)).toBe('abx:-@sum:a | y:- | zcd:- | tail:-');
+        undo.undo();
+        expect(shape(A)).toBe('abcd:-@sum:a | tail:-');
+      });
+
+      it('at the start: the ref stays on the line that ends with the host text', () => {
+        const A = withRefs({ 0: 'sum:a' }, 'abcd', 'tail');
+        paste(A, 0, 'a\nb', plain);
+        expect(shape(A)).toBe('a:- | babcd:-@sum:a | tail:-');
+      });
+
+      it('a block ending in a newline: the ref stays on the first line, the host text line is plain', () => {
+        const A = withRefs({ 0: 'sum:a' }, 'host', 'tail');
+        const undo = new UndoStack(A.doc);
+        undo.push(paste(A, 4, 'a\nb\n', [{ kind: 'bullet' as never }, { kind: null }]).inverse);
+        expect(shape(A)).toBe('hosta:bullet@sum:a | b:- | :- | tail:-');
+        undo.undo();
+        expect(shape(A)).toBe('host:-@sum:a | tail:-');
+        // At the start the host text keeps its ref.
+        const B = withRefs({ 0: 'sum:a' }, 'host');
+        paste(B, 0, 'a\nb\n', [{ kind: null }, { kind: null }]);
+        expect(shape(B)).toBe('a:- | b:- | host:-@sum:a');
+      });
+
+      it('a single-line paste and a paste into a line without a ref change no ref', () => {
+        const A = withRefs({ 0: 'sum:a' }, 'abcd', 'tail');
+        paste(A, 2, 'xy', []);
+        expect(shape(A)).toBe('abxycd:-@sum:a | tail:-');
+        const B = docOf('abcd');
+        paste(B, 2, 'x\ny', plain);
+        expect(lines(B.doc).map((l) => l.ref)).toEqual([null, null]);
+      });
+    });
+  });
+});

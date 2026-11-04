@@ -12,6 +12,7 @@ import {
   ensureTerminated,
   lineAt,
   lines,
+  REF,
   resolveKind,
   utf16Index
 } from './model.js';
@@ -186,5 +187,30 @@ describe('align values', () => {
     const a = ['left', null, 'center', 'right'] as const;
     expect(encodeAlign(a)).toBe('l-cr');
     expect(decodeAlign('l-cr')).toEqual([...a]);
+  });
+});
+
+describe('Line.ref', () => {
+  it('is the first live ref mark on the terminator, null when absent or empty', () => {
+    const A = single();
+    const obj = A.doc.obj;
+    A.web.textInsert(obj, 0, 'one\ntwo\nthree\n');
+    A.web.markRangeClosed(obj, 3, 4, REF, 'sum:abc');
+    A.web.markRangeClosed(obj, 3, 4, BLOCK, 'bullet');
+    A.web.markRangeClosed(obj, 13, 14, REF, '');
+    const ls = lines(A.doc);
+    expect(ls.map((l) => l.ref)).toEqual(['sum:abc', null, null]);
+    // Kept beside any line kind, and no part of the text or the other marks.
+    expect(ls[0].kind).toBe('bullet');
+    expect(ls.map((l) => l.text)).toEqual(['one', 'two', 'three']);
+  });
+
+  it('reaches the other replica', () => {
+    const { relay, A, B } = pair();
+    A.web.textInsert(A.doc.obj, 0, 'one\ntwo\n');
+    relay.settle();
+    A.web.markRangeClosed(A.doc.obj, 7, 8, REF, 'cp:3');
+    relay.settle();
+    expect(lines(B.doc).map((l) => l.ref)).toEqual([null, 'cp:3']);
   });
 });

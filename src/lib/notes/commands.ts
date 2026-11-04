@@ -17,8 +17,14 @@
 //   the second half is plain (at the line start the heading is pushed down whole); continuing
 //   kinds are copied to the first half (both halves keep the kind); `lang` moves to the first
 //   half.
-// - Deleting one or more terminators joins lines: the merged line takes the kind, lang and
-//   align of the line where the deletion starts (re-marked after the join).
+// - A line's `ref` (model.ts, set only by the backend) is its identity: Enter splits it so the
+//   FIRST half keeps it and the new line has none (Enter at the end: the old terminator stays
+//   with the line; in the middle it moves to the first half; at the line start the text keeps
+//   it, as a heading does). Clearing a kind, changing it or a table's head role never touches
+//   it, nothing inserted (paste, images, rows) copies it, and a join takes the ref of the line
+//   where the deletion starts, as it does the kind.
+// - Deleting one or more terminators joins lines: the merged line takes the kind, lang, align
+//   and ref of the line where the deletion starts (re-marked after the join).
 // - Backspace at a line start first clears the line's kind; a second Backspace joins.
 // - Image lines (images.ts) never split or join: Enter anywhere in the caption adds a plain
 //   line after the image; Backspace at the start of an empty caption removes the image line,
@@ -38,6 +44,7 @@ import {
   IMAGE,
   LANG,
   LIST_KINDS,
+  REF,
   TABLE_KINDS,
   cpLen,
   cpSlice,
@@ -82,16 +89,18 @@ interface TerminatorMarks {
   lang: string | null;
   align: string | null;
   image: string | null;
+  ref: string | null;
 }
 
-const PLAIN: TerminatorMarks = { kind: null, lang: null, align: null, image: null };
+const PLAIN: TerminatorMarks = { kind: null, lang: null, align: null, image: null, ref: null };
 
 function setTerminatorMarks(doc: Doc, end: number, want: TerminatorMarks): Inverse[] {
   return [
     ...applyMark(doc, BLOCK, want.kind, end, end + 1),
     ...applyMark(doc, LANG, want.lang, end, end + 1),
     ...applyMark(doc, ALIGN, want.align, end, end + 1),
-    ...applyMark(doc, IMAGE, want.image, end, end + 1)
+    ...applyMark(doc, IMAGE, want.image, end, end + 1),
+    ...applyMark(doc, REF, want.ref, end, end + 1)
   ];
 }
 
@@ -101,7 +110,8 @@ const marksOf = (line: Line): TerminatorMarks => ({
   kind: line.kind,
   lang: line.lang,
   align: alignValue(line),
-  image: line.image
+  image: line.image,
+  ref: line.ref
 });
 
 // ---- text ----------------------------------------------------------------------------------
@@ -172,7 +182,7 @@ export function splitLine(doc: Doc, at: number): CommandResult {
   if (at >= line.end) {
     if (line.kind && CONTINUING.has(line.kind)) {
       if (line.start === line.end) {
-        inv.push(...setTerminatorMarks(doc, line.end, PLAIN));
+        inv.push(...setTerminatorMarks(doc, line.end, { ...PLAIN, ref: line.ref }));
         return { inverse: inv, caret: line.start };
       }
       inv.push({ op: 'removeIds', ids: insertPlain(doc, line.end + 1, '\n') });
@@ -195,6 +205,10 @@ export function splitLine(doc: Doc, at: number): CommandResult {
     inv.push(...applyMark(doc, LANG, line.lang, at, at + 1));
     inv.push(...applyMark(doc, LANG, null, line.end + 1, line.end + 2));
   }
+  if (line.ref && at > line.start) {
+    inv.push(...applyMark(doc, REF, line.ref, at, at + 1));
+    inv.push(...applyMark(doc, REF, null, line.end + 1, line.end + 2));
+  }
   return { inverse: inv, caret: at + 1 };
 }
 
@@ -208,7 +222,7 @@ export function joinWithPrevious(doc: Doc, lineStart: number): CommandResult {
     return { inverse: [], caret: line.start };
   }
   if (line.kind || line.lang || line.align) {
-    const inv = setTerminatorMarks(doc, line.end, PLAIN);
+    const inv = setTerminatorMarks(doc, line.end, { ...PLAIN, ref: line.ref });
     return { inverse: inv, caret: line.start };
   }
   if (line.index === 0) return { inverse: [], caret: line.start };
@@ -258,7 +272,7 @@ export function insertImageLine(doc: Doc, at: number, value: string): CommandRes
   const ls = lines(doc);
   const line = lineAt(ls, at);
   if (!line.cells && !line.image && line.start === line.end && line.id !== null) {
-    inv.push(...setTerminatorMarks(doc, line.end, { ...PLAIN, kind: 'image', image: value }));
+    inv.push(...setTerminatorMarks(doc, line.end, { ...PLAIN, kind: 'image', image: value, ref: line.ref }));
     return { inverse: inv, caret: line.start };
   }
   const rows = tableOf(ls, line);
@@ -379,7 +393,7 @@ export function removeRow(doc: Doc, pos: number): CommandResult {
   const inv: Inverse[] = [removeRange(doc, line.start, line.end + 1)];
   if (line.kind === 'table_head' && next?.cells) {
     const end = line.start + (next.end - next.start);
-    inv.push(...setTerminatorMarks(doc, end, { ...PLAIN, kind: 'table_head', align: alignValue(line) }));
+    inv.push(...setTerminatorMarks(doc, end, { ...PLAIN, kind: 'table_head', align: alignValue(line), ref: next.ref }));
   }
   terminate(doc, inv);
   return { inverse: inv, caret: Math.min(line.start, doc.web.textLen(doc.obj) - 1) };
@@ -534,10 +548,13 @@ export interface ModelMark {
 /**
  * Insert a model at `at`: its terminators carry their kinds, the host line keeps its own, and
  * the text gets the model's inline marks only (an expanding mark ending at `at` would grow
- * over it, as it does for typing, but a paste brings its own formatting).
+ * over it, as it does for typing, but a paste brings its own formatting). The host's `ref`
+ * stays with the first line the paste leaves it (never the last pasted piece, never a copy).
  */
 export function insertModel(doc: Doc, at: number, model: NotesModel): CommandResult {
   const before = at > 0 ? spanAt(spansOf(doc), at - 1) : null;
+  // Undefined in a doc with no text yet.
+  const host: Line | undefined = lineAt(lines(doc), at);
   const ids = insertPlain(doc, at, model.text);
   if (!ids.length) return { inverse: [], caret: at };
   const end = at + cpLen(model.text);
@@ -546,10 +563,12 @@ export function insertModel(doc: Doc, at: number, model: NotesModel): CommandRes
   }
   let k = 0;
   let i = 0;
+  let firstEnd = -1;
   for (const ch of model.text) {
     if (ch === '\n') {
       const line = model.lines[k++];
       const end = at + i;
+      if (firstEnd < 0) firstEnd = end;
       // An image line without a valid value would read as a paragraph anyway: leave it one.
       const image = line?.kind === 'image' && isImageValue(line.image) ? line.image : null;
       if (line?.kind && (line.kind !== 'image' || image)) doc.web.markRangeClosed(doc.obj, end, end + 1, BLOCK, line.kind);
@@ -560,7 +579,16 @@ export function insertModel(doc: Doc, at: number, model: NotesModel): CommandRes
     i++;
   }
   for (const m of model.inline) markKind(doc, m.kind, m.value ?? FLAG, at + m.from, at + m.to);
-  return { inverse: [{ op: 'removeIds', ids }], caret: end };
+  const inv: Inverse[] = [{ op: 'removeIds', ids }];
+  // The host's old terminator now ends the last pasted piece. A ref names the host's first line
+  // (as Enter does): it goes to the first new terminator, every other new line has none. At the
+  // host's start the old terminator still ends the host's text, so it keeps the ref.
+  if (host?.ref && firstEnd >= 0 && (at > host.start || at === host.end)) {
+    doc.web.markRangeClosed(doc.obj, firstEnd, firstEnd + 1, REF, host.ref);
+    const old = host.end + cpLen(model.text);
+    inv.push(...applyMark(doc, REF, null, old, old + 1));
+  }
+  return { inverse: inv, caret: end };
 }
 
 // ---- input rules --------------------------------------------------------------------------
@@ -651,7 +679,7 @@ export function applyInputRule(doc: Doc, line: Line, rule: InputRule): CommandRe
     }
     case 'endFence': {
       inv.push(...deleteRange(doc, line.start, line.end).inverse);
-      inv.push(...setTerminatorMarks(doc, line.start, PLAIN));
+      inv.push(...setTerminatorMarks(doc, line.start, { ...PLAIN, ref: line.ref }));
       return { inverse: inv, caret: line.start };
     }
     case 'table': {

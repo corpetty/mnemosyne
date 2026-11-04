@@ -17,6 +17,7 @@ export const PASTE_LIMIT = 40_000;
  */
 export function selectionModel(ls: readonly Line[], from: number, to: number): NotesModel {
   const model: NotesModel = { text: '', lines: [], inline: [] };
+  // Never the line's `ref`: it names one line for the backend, a copy is a new line (plan C6).
   const entry = (line: Line) => ({
     kind: line.kind,
     ...(line.lang ? { lang: line.lang } : {}),

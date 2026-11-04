@@ -23,6 +23,11 @@ export interface Doc {
 
 export const BLOCK = 'block';
 export const LANG = 'lang';
+/**
+ * A line's identity for the backend (summaries in the notes, plan 2026-11-04): a closed `ref` mark on
+ * the terminator, set only by the backend, kept on every line kind, never rendered or parsed.
+ */
+export const REF = 'ref';
 export const ALIGN = 'align';
 export const COMMENT_PREFIX = 'comment:';
 /** The value of a flag mark (bold, code, comments): MARKS.md's `value_id(true)`. */
@@ -174,6 +179,11 @@ export interface Line {
   /** Every live `block` value (more than one = an unresolved concurrent conflict). */
   kinds: string[];
   lang: string | null;
+  /**
+   * The line's `ref`: the first live `ref` value (as `lang`; an empty value is none, as in
+   * notes-core). Set only by the backend. Nothing renders it, so it is not in the DOM's `lineSig`.
+   */
+  ref: string | null;
   align: Align[] | null;
   /**
    * An image line's picture: the first live `image` value (as `lang`), when it matches the
@@ -252,6 +262,7 @@ export function linesFromSpans(doc: Doc, spans: Span[]): Line[] {
   const push = (terminator: Map<string, string[]> | null) => {
     const kinds = terminator?.get(BLOCK) ?? [];
     const lang = terminator?.get(LANG)?.[0] ?? null;
+    const ref = terminator?.get(REF)?.[0] || null;
     const alignRaw = terminator?.get(ALIGN)?.[0] ?? null;
     let kind = resolveKind(kinds);
     const imageRaw = terminator?.get(IMAGE)?.[0] ?? null;
@@ -265,6 +276,7 @@ export function linesFromSpans(doc: Doc, spans: Span[]): Line[] {
       kind,
       kinds,
       lang,
+      ref,
       align: alignRaw === null ? null : decodeAlign(alignRaw),
       image,
       text: runs.map((r) => r.text).join(''),
