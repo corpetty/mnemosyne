@@ -16,8 +16,9 @@ from mnemosyne.api.app import create_app
 from mnemosyne.models.publication import PublicationSelection, QuoteSpan
 from mnemosyne.models.session import ActionItem, Chapter, Session, SummaryData
 from mnemosyne.models.transcript import TranscriptSegment
-from mnemosyne.services import clips, publishing
+from mnemosyne.services import clips, notes_media, publishing
 from mnemosyne.services import publication_format as pf
+from tests.test_notes_media import jpeg, sha, value, webp
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 
@@ -401,6 +402,206 @@ def test_a_real_clip(client, ctx, tmp_path, seals):
     blob = client.get(f"/pub/{pub['id']}/{clip.sha256}").content
     ogg = pf.open_clip(pub["id"], clip, blob, _key_and_id(pub["url"])[1])
     assert ogg.startswith(b"OggS") and clip.seconds == pytest.approx(6.3)
+
+
+# ---- images in the notes ----
+
+
+def _picture_meeting(ctx, *pictures, captions=("Whiteboard", "Bo Chen's sketch")):
+    """A meeting whose notes embed `pictures` (bytes, stored in its media store), one line each.
+    Returns (session, [plain hashes])."""
+    s = _meeting(ctx)
+    lines = []
+    for data, caption in zip(pictures, captions, strict=False):
+        info = notes_media.store(ctx, s.id, sha(data), data)
+        lines.append(
+            f"![{caption}](mnemosyne:image/{value(data, info.ext, info.width, info.height)})"
+        )
+    s.notes = "Intro\n" + "\n".join(lines) + "\nOutro\n"
+    ctx.repo.update_fields(s.id, notes=s.notes)
+    return s, [sha(p) for p in pictures]
+
+
+def test_notes_images_are_kept_or_left_out_as_selected(ctx):
+    pics = (webp(640, 480), jpeg(800, 600))
+    s, (a, b) = _picture_meeting(ctx, *pics)
+    people = ["Ana Lopez", "Bo Chen", "Cy Park"]
+
+    def notes(**kw):
+        sel = PublicationSelection(notes=True, attendees=people, **kw)
+        content, _ = publishing.build_content(ctx, s, sel)
+        return content
+
+    everything = notes()
+    assert [i["id"] for i in everything["images"]] == [a, b]
+    assert everything["images"][1] == {"id": b, "ext": "jpeg", "width": 800, "height": 600}
+    assert everything["notes"] == (
+        "Intro\n"
+        f"![Whiteboard](mnemosyne:image/{a}.webp@640x480)\n"
+        f"![Bo Chen's sketch](mnemosyne:image/{b}.jpeg@800x600)\n"
+        "Outro\n"
+    )
+    # A left-out image is its caption, never a URL; the other stays.
+    only_b = notes(images=[b])
+    assert [i["id"] for i in only_b["images"]] == [b]
+    assert "[image: Whiteboard]" in only_b["notes"] and a not in only_b["notes"]
+    # None left: no `images` key at all, so the digest is what it was before images existed.
+    none = notes(images=[])
+    assert "images" not in none and "mnemosyne:" not in none["notes"]
+    assert none["notes"].count("[image: ") == 2
+    # Without the notes there is nothing, whatever `images` says.
+    off, _ = publishing.build_content(ctx, s, PublicationSelection(images=[a]))
+    assert off["notes"] is None and "images" not in off
+    # Names and identifiers in a caption are redacted like the rest; escapes survive.
+    s.notes = f"![Bo Chen \\[v2\\] 123456789012](mnemosyne:image/{value(pics[0])})\n"
+    shown, _ = publishing.build_content(
+        ctx, s, PublicationSelection(notes=True, attendees=["Ana Lopez"])
+    )
+    assert "Bo Chen" not in shown["notes"] and "123456789012" not in shown["notes"]
+    assert shown["notes"].startswith("![Person 1 \\[v2\\] \\[account ••9012\\]](")
+    assert f"](mnemosyne:image/{value(pics[0])})" in shown["notes"]  # the URL is untouched
+    # The same image twice is one entry.
+    s.notes = f"![x](mnemosyne:image/{value(pics[0])})\n![y](mnemosyne:image/{value(pics[0])})\n"
+    twice, _ = publishing.build_content(ctx, s, PublicationSelection(notes=True, attendees=people))
+    assert [i["id"] for i in twice["images"]] == [a]
+
+
+def test_a_meeting_without_images_digests_as_before(ctx):
+    s = _meeting(ctx)
+    s.notes = "Plain [site](https://example.com) notes"
+    sel = PublicationSelection(notes=True, attendees=["Ana Lopez"])
+    content, specs = publishing.build_content(ctx, s, sel)
+    assert "images" not in content and content["notes"] == s.notes
+    manifest, _ = publishing.build_manifest(ctx, s, sel, "0" * 16, 1)
+    assert manifest.images == [] and b'"images"' not in pf.manifest_bytes(manifest)
+
+
+def test_defaults_list_the_notes_images_and_preview_shows_them(client, ctx):
+    s, (a, b) = _picture_meeting(ctx, webp(), jpeg())
+    d = client.get(f"/api/sessions/{s.id}/publication/defaults").json()
+    assert d["images"] is None
+    assert [(i["sha256"], i["caption"], i["width"], i["height"]) for i in d["notes_images"]] == [
+        (a, "Whiteboard", 640, 480),
+        (b, "Bo Chen's sketch", 800, 600),
+    ]
+    assert d["notes_images"][0]["size"] == len(webp())
+    # The defaults go back as a selection.
+    p = client.post(f"/api/sessions/{s.id}/publication/preview", json={**d, "notes": True}).json()
+    assert [(i["id"], i["mime"]) for i in p["images"]] == [(a, "image/webp"), (b, "image/jpeg")]
+    assert p["images"][0]["preview_url"] == f"/api/sessions/{s.id}/notes/media/{a}"
+    left = client.post(
+        f"/api/sessions/{s.id}/publication/preview", json={**d, "notes": True, "images": [b]}
+    ).json()
+    assert [i["id"] for i in left["images"]] == [b] and "[image: Whiteboard]" in left["notes"]
+    plain = client.post(f"/api/sessions/{s.id}/publication/preview", json={}).json()
+    assert plain["images"] == []
+
+
+def test_publishing_seals_the_images_and_reuses_them(client, ctx, seals):
+    pics = (webp(640, 480), jpeg(800, 600))
+    s, (a, b) = _picture_meeting(ctx, *pics)
+    pub = _publish(client, s.id, notes=True, attendees=["Ana Lopez", "Bo Chen"])
+    pub_id, key = _key_and_id(pub["url"])
+    m = _open(client, pub["url"])
+    assert [(i.id, i.mime, i.width, i.height, i.size, i.v) for i in m.images] == [
+        (a, "image/webp", 640, 480, len(pics[0]), 1),
+        (b, "image/jpeg", 800, 600, len(pics[1]), 1),
+    ]
+    for ref, data in zip(m.images, pics, strict=True):
+        r = client.get(f"/pub/{pub_id}/{ref.sha256}")
+        assert r.status_code == 200 and "immutable" in r.headers["cache-control"]
+        assert pf.open_image(pub_id, ref, r.content, key) == data
+        assert len(r.content) % pf.IMAGE_BLOCK == pf.NONCE_SIZE + pf.TAG_SIZE
+    assert f"mnemosyne:image/{a}.webp@640x480" in m.notes
+    stored = ctx.repo.live_publication(s.id)["clip_blobs"]
+    assert set(stored) == {f"image:{a}", f"image:{b}"} and not any(
+        pf.b64url_encode(d) in str(stored) for d in pics
+    )
+    # No plain hash or caption outside the sealed manifest: meta.json lists blob addresses only.
+    meta = json.loads((publishing.pub_dir(ctx, pub_id) / "meta.json").read_text())
+    assert sorted(meta["blobs"]) == sorted(i.sha256 for i in m.images)
+    assert [e for e in ctx.repo.events(s.id) if e["kind"] == "published"][0]["detail"][
+        "images"
+    ] == 2
+
+    # An update keeps the sealed blobs (the files are not read again), leaves one image out,
+    # and the blob nobody references any more goes.
+    first = {i.id: i for i in m.images}
+    read = []
+    real = notes_media.read
+    ctx_read = lambda app, sid, h: (read.append(h), real(app, sid, h))[1]  # noqa: E731
+    notes_media.read, saved = ctx_read, real
+    try:
+        pub2 = _publish(client, s.id, notes=True, attendees=["Ana Lopez"], images=[b])
+    finally:
+        notes_media.read = saved
+    assert read == [] and pub2["version"] == 2
+    m2 = _open(client, pub2["url"])
+    assert [i.id for i in m2.images] == [b] and m2.images[0] == first[b]
+    assert "[image: Whiteboard]" in m2.notes and a not in m2.notes
+    assert client.get(f"/pub/{pub_id}/{first[a].sha256}").status_code == 404
+    assert client.get(f"/pub/{pub_id}/{first[b].sha256}").status_code == 200
+    assert set(ctx.repo.live_publication(s.id)["clip_blobs"]) == {f"image:{b}"}
+    # Putting it back seals it again, as of this version.
+    m3 = _open(client, _publish(client, s.id, notes=True, attendees=["Ana Lopez"])["url"])
+    again = next(i for i in m3.images if i.id == a)
+    assert again.v == 3 and again.sha256 != first[a].sha256
+
+
+def test_the_publication_is_behind_when_an_image_is_taken_out_of_the_notes(client, ctx, seals):
+    s, (a, b) = _picture_meeting(ctx, webp(), jpeg())
+    pub = _publish(client, s.id, notes=True)
+    assert not pub["behind"]
+    ctx.repo.update_fields(s.id, notes="Intro only\n")
+    assert client.get(f"/api/sessions/{s.id}/publication").json()["behind"]
+    assert _open(client, _publish(client, s.id, notes=True)["url"]).images == []
+
+
+def test_an_image_that_is_not_here_is_refused_before_the_job(client, ctx, seals):
+    s, (a, b) = _picture_meeting(ctx, webp(), jpeg())
+    notes_media.remove_blob(ctx, s.id, a)
+    r = client.put(f"/api/sessions/{s.id}/publication", json={"where": "local", "notes": True})
+    assert r.status_code == 400 and "not on this computer" in r.json()["detail"]
+    # Leaving it out, or not publishing the notes, is fine.
+    ok = _publish(client, s.id, notes=True, images=[b])
+    assert [i.id for i in _open(client, ok["url"]).images] == [b]
+
+
+def test_images_and_clips_share_the_total_cap(client, ctx, seals, fake_cut, monkeypatch):
+    s, _ = _picture_meeting(ctx, webp(), jpeg())
+    s = ctx.repo.update_fields(s.id, audio_file="/nowhere/mixed.ogg")
+    # Room for one 64 KiB block of image or clip and no more: two images do not fit...
+    monkeypatch.setattr(pf, "MAX_CLIPS_TOTAL", pf.IMAGE_BLOCK)
+    r = client.put(f"/api/sessions/{s.id}/publication", json={"where": "local", "notes": True})
+    job = _wait(client, r.json()["id"])
+    assert job["status"] == "failed" and "clips and images may total at most" in job["error"]
+    # ... nor one image and one clip.
+    quotes = [{"start": 0, "end": 6, "with_clip": True}]
+    r = client.put(
+        f"/api/sessions/{s.id}/publication",
+        json={"where": "local", "notes": True, "images": [sha(webp())], "quotes": quotes},
+    )
+    job = _wait(client, r.json()["id"])
+    assert job["status"] == "failed" and "total at most" in job["error"]
+    ok = _publish(client, s.id, notes=True, images=[sha(webp())])
+    assert len(_open(client, ok["url"]).images) == 1
+
+
+def test_images_go_to_the_host_once(client, ctx, settings, seals):
+    host = FakeHost()
+    ctx.http_transport = httpx.MockTransport(host.handler)
+    settings.publish_host = "https://pub.example.org"
+    s, (a, b) = _picture_meeting(ctx, webp(), jpeg())
+    pub = _publish(client, s.id, where="host", notes=True)
+    pub_id, key = _key_and_id(pub["url"])
+    m = pf.open_manifest(pub_id, 1, host.manifest, key)
+    assert len(m.images) == 2 and set(host.blobs) == {i.sha256 for i in m.images}
+    put_blobs = [p for mth, p, _ in host.calls if mth == "PUT" and p.count("/") == 3]
+    assert len(put_blobs) == 2
+    assert host.calls[-1][2]["x-pub-blobs"].split(",") == [i.sha256 for i in m.images]
+    host.calls.clear()
+    _publish(client, s.id, where="host", notes=True, summary=False)
+    assert [(mth, p) for mth, p, _ in host.calls] == [("PUT", f"/pub/{pub_id}")]
 
 
 # ---- the publish host ----

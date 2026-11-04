@@ -138,6 +138,38 @@ async def test_the_key_travels_so_b_can_make_the_hosted_link(nodes, host, fake_c
     assert on_b["served_by"] is None
 
 
+async def test_images_of_a_hosted_publication_travel_and_b_reuses_them(nodes, host):  # noqa: F811
+    from mnemosyne.services import notes_media
+    from tests.test_notes_media import sha, value, webp
+
+    a, b = nodes
+    data = webp(64, 48)
+    sid = talk(a)
+    info = notes_media.store(a.ctx, sid, sha(data), data)
+    a.repo.update_fields(
+        sid, notes=f"Intro\n![Board](mnemosyne:image/{value(data, info.ext, 64, 48)})\n"
+    )
+    pub = await publish(a, sid, where="host", expires_days=30, notes=True, attendees=["Ann"])
+    (image,) = [k for k in row(a, sid)["clip_blobs"] if k.startswith("image:")]
+    assert image == f"image:{sha(data)}" and len(host.blobs) == 1
+    blob_sha = next(iter(host.blobs))
+
+    await pull(b, a)
+    assert row(b, sid)["clip_blobs"] == row(a, sid)["clip_blobs"]
+    assert not folder(b, pub["id"]).exists()
+    # B has the notes but not the sealed image: it fetches it from the host, seals nothing new.
+    host.calls.clear()
+    upd = await publish(b, sid, where="host", expires_days=30, notes=True, attendees=["Ann"])
+    assert upd["version"] == 2 and set(host.blobs) == {blob_sha}
+    assert ("GET", f"/pub/{pub['id']}/{blob_sha}") in [(m, p) for m, p, _ in host.calls]
+    assert [(m, p) for m, p, _ in host.calls if m == "PUT"] == [("PUT", f"/pub/{pub['id']}")]
+    key = row(b, sid)["key"]
+    m = pf.open_manifest(pub["id"], 2, host.manifest, key)
+    assert [(i.id, i.sha256, i.v) for i in m.images] == [(sha(data), blob_sha, 1)]
+    await pull(a, b)
+    assert row(a, sid)["clip_blobs"] == row(b, sid)["clip_blobs"]
+
+
 # ---- hosted: either machine ------------------------------------------------------------------
 
 

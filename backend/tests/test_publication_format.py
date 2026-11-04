@@ -1,5 +1,6 @@
 """The publication bundle format (services/publication_format.py) and its test vectors."""
 
+import hashlib
 import importlib.util
 import json
 import re
@@ -207,6 +208,71 @@ def test_clips_total_cap():
         pf.check_clips_total([pf.MAX_CLIPS_TOTAL // 2, pf.MAX_CLIPS_TOTAL // 2, pf.CLIP_BLOCK])
 
 
+def test_image_cap_and_blocks():
+    key = pf.new_key()
+    fits = b"\2" * (pf.MAX_CLIP - 4)
+    blob, _ = pf.seal("image", ID, 1, fits, key)
+    assert len(blob) == 12 + pf.MAX_CLIP + 16
+    with pytest.raises(pf.PublicationFormatError, match="An image may be at most 20 MiB"):
+        pf.seal("image", ID, 1, fits + b"x", key)
+    small, _ = pf.seal_image(ID, 1, b"RIFFxxxxWEBP", key)
+    assert (len(small) - 28) % pf.IMAGE_BLOCK == 0 and pf.IMAGE_BLOCK == 65536
+
+
+def test_images_and_clips_share_one_total():
+    half = pf.MAX_CLIPS_TOTAL // 2
+    pf.check_clips_total([half, half])  # e.g. one clip and one image
+    with pytest.raises(pf.PublicationFormatError, match="clips and images may total at most"):
+        pf.check_clips_total([half, half, pf.IMAGE_BLOCK])
+
+
+def test_an_image_round_trips_and_is_bound_to_its_slot():
+    key = pf.new_key()
+    data = b"RIFF\x10\x00\x00\x00WEBP" + bytes(range(200))
+    blob, sha = pf.seal_image(ID, 2, data, key)
+    ref = pf.ImageRef(
+        id=hashlib.sha256(data).hexdigest(),
+        sha256=sha,
+        size=len(data),
+        mime="image/webp",
+        v=2,
+        width=3,
+        height=4,
+    )
+    assert pf.open_image(ID, ref, blob, key) == data
+    assert pf.aad(ID, "image", 2) == f"mnemosyne/pub/1|{ID}|image|2".encode()
+    with pytest.raises(pf.PublicationFormatError):
+        pf.open_image(ID, ref.model_copy(update={"v": 3}), blob, key)  # another version's AAD
+    with pytest.raises(pf.PublicationFormatError):
+        pf.open_blob("clip", ID, 2, blob, key)  # a clip slot does not open an image
+    with pytest.raises(pf.PublicationFormatError, match="address"):
+        pf.open_image(ID, ref.model_copy(update={"sha256": "0" * 64}), blob, key)
+    with pytest.raises(pf.PublicationFormatError, match="hash"):
+        pf.open_image(ID, ref.model_copy(update={"id": "1" * 64}), blob, key)
+
+
+def test_the_manifest_lists_images_only_when_there_are_some():
+    # Additive: without images the canonical JSON has no `images`, as before this field.
+    assert b"images" not in pf.manifest_bytes(manifest())
+    ref = {
+        "id": "a" * 64,
+        "sha256": "b" * 64,
+        "size": 5,
+        "mime": "image/jpeg",
+        "v": 1,
+        "width": 2,
+        "height": 3,
+    }
+    m = manifest(images=[ref])
+    parsed = json.loads(pf.manifest_bytes(m))
+    assert parsed["images"] == [ref]
+    assert pf.parse_manifest(pf.manifest_bytes(m)) == m
+    # An old manifest (no `images`) parses; an unknown field in an image ref is still refused.
+    assert pf.parse_manifest(pf.manifest_bytes(manifest())).images == []
+    with pytest.raises(pf.PublicationFormatError):
+        pf.parse_manifest(pf.canonical_json({**parsed, "images": [{**ref, "extra": 1}]}))
+
+
 # ---- password ----
 
 
@@ -244,6 +310,34 @@ def test_vectors_open(vec):
     assert ref is not None and ref.sha256 == c["sha256"] and ref.v == c["first_version"]
     assert ref.v < parsed.version  # reused from an earlier version
     assert pf.open_clip(vec["id"], ref, cblob, key).hex() == c["plaintext_hex"]
+
+    # The image sample: one blob (version 1) that a later manifest (version 3) lists and reuses.
+    img = vec["image"]
+    iblob = pf.b64url_decode(img["blob_b64url"])
+    assert pf.blob_hash(iblob) == img["sha256"]
+    assert pf.aad(vec["id"], "image", img["first_version"]).decode() == img["aad"]
+    idata = pf.open_blob("image", vec["id"], img["first_version"], iblob, key)
+    assert idata.hex() == img["plaintext_hex"]
+    assert hashlib.sha256(idata).hexdigest() == img["plaintext_sha256"]
+    assert len(pf.pad(idata, pf.IMAGE_BLOCK)) == img["padded_length"]
+    im = vec["images_manifest"]
+    mblob = pf.b64url_decode(im["blob_b64url"])
+    assert pf.blob_hash(mblob) == im["sha256"]
+    iplain = pf.open_blob("manifest", vec["id"], im["version"], mblob, key)
+    assert iplain.decode() == im["json"] and iplain.hex() == im["json_hex"]
+    imanifest = pf.open_manifest(vec["id"], im["version"], mblob, key)
+    assert pf.manifest_bytes(imanifest) == iplain
+    (ref,) = imanifest.images
+    assert (ref.id, ref.sha256, ref.v) == (
+        img["plaintext_sha256"],
+        img["sha256"],
+        img["first_version"],
+    )
+    assert (ref.mime, ref.width, ref.height) == (img["mime"], img["width"], img["height"])
+    assert ref.v < imanifest.version  # reused from an earlier version
+    assert pf.open_image(vec["id"], ref, iblob, key) == idata
+    assert f"mnemosyne:image/{ref.id}.webp@{ref.width}x{ref.height}" in imanifest.notes
+    assert "[image: Left out]" in imanifest.notes
 
     p = vec["password"]
     pkey = pf.derive_key(p["password"], bytes.fromhex(p["salt_hex"]), p["iterations"])

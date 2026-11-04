@@ -1,4 +1,5 @@
-"""The publication bundle format (phase 7): a padded JSON manifest and clip blobs, each sealed
+"""The publication bundle format (phase 7): a padded JSON manifest, clip blobs and (images in
+the notes, docs/plans/2026-11-04-images-tasks.md task 13a) image blobs, each sealed
 with AES-256-GCM under one random key that lives only in the link fragment.
 
 The viewer (viewer/src/format.ts) implements the reading half of this file; the two are tied
@@ -11,14 +12,21 @@ Rules, exactly as implemented:
   keys are 32 random bytes written as unpadded base64url (43 characters); the publisher token
   a host uses to authorize updates is 32 random bytes in the same encoding.
 - plaintext = canonical JSON (sorted keys, no whitespace, UTF-8, non-ASCII kept as is) for the
-  manifest, raw Ogg Opus bytes for a clip.
+  manifest, raw Ogg Opus bytes for a clip, the stored WebP or JPEG bytes for an image.
 - padded = 4-byte big-endian length of the plaintext, the plaintext, zero bytes up to a multiple
-  of 4096 (manifest) or 65536 (clip). Reading checks the length and that the padding is zeros.
+  of 4096 (manifest) or 65536 (clip, image). Reading checks the length and that the padding is
+  zeros.
 - blob = nonce(12, random) || AES-256-GCM ciphertext || tag(16).
-- AAD = UTF-8 of "mnemosyne/pub/1|<id>|<kind>|<version>", kind `manifest` or `clip`. A clip's
-  version is the one that FIRST uploaded it (`ClipRef.v`), so it can be reused by later versions.
+- AAD = UTF-8 of "mnemosyne/pub/1|<id>|<kind>|<version>", kind `manifest`, `clip` or `image`.
+  A clip's or image's version is the one that FIRST uploaded it (`ClipRef.v`, `ImageRef.v`), so
+  it can be reused by later versions.
 - blob address = lowercase hex SHA-256 of the whole blob.
-- caps are on the padded size: manifest 1 MiB, one clip 20 MiB, all clips of a publication 20 MiB.
+- caps are on the padded size: manifest 1 MiB, one clip or one image 20 MiB, all clips and images
+  of a publication together 20 MiB.
+- `Manifest.images` (additive; absent from the canonical JSON when empty, so a publication
+  without images is byte for byte what it was before) lists the images the notes show. The notes
+  text keeps `![caption](mnemosyne:image/<sha>.<webp|jpeg>@<w>x<h>)` for each of them; the
+  reader maps the `<sha>` to the `ImageRef` with that `id`. A left-out image is `[image: caption]`.
 - a key from a password (single-file export): PBKDF2-HMAC-SHA256, 16-byte salt, 32-byte key;
   the file carries salt and iteration count.
 """
@@ -48,16 +56,18 @@ MANIFEST_BLOCK = 4096
 CLIP_BLOCK = 65536
 MAX_MANIFEST = 1024 * 1024
 MAX_CLIP = 20 * 1024 * 1024
-MAX_CLIPS_TOTAL = 20 * 1024 * 1024
+MAX_CLIPS_TOTAL = 20 * 1024 * 1024  # clips and images together
+IMAGE_BLOCK = 65536
 
 PBKDF2_ITERATIONS = 600_000
 PBKDF2_MIN_ITERATIONS = 100_000
 PBKDF2_MAX_ITERATIONS = 10_000_000
 SALT_SIZE = 16
 
-Kind = Literal["manifest", "clip"]
-_BLOCK = {"manifest": MANIFEST_BLOCK, "clip": CLIP_BLOCK}
-_CAP = {"manifest": MAX_MANIFEST, "clip": MAX_CLIP}
+Kind = Literal["manifest", "clip", "image"]
+_BLOCK = {"manifest": MANIFEST_BLOCK, "clip": CLIP_BLOCK, "image": IMAGE_BLOCK}
+_CAP = {"manifest": MAX_MANIFEST, "clip": MAX_CLIP, "image": MAX_CLIP}
+_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _ID_RE = re.compile(r"^[0-9a-f]{16}$")
 _B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -136,6 +146,16 @@ class ClipRef(_Strict):
     v: int  # the version that first uploaded this clip: part of its AAD
 
 
+class ImageRef(_Strict):
+    id: str  # the image's own content hash, as in the notes' `mnemosyne:image/<id>.<ext>@..` URLs
+    sha256: str  # address of the sealed image blob
+    size: int  # bytes of the (unsealed) WebP or JPEG
+    mime: str  # image/webp or image/jpeg
+    v: int  # the version that first uploaded this image: part of its AAD
+    width: int
+    height: int
+
+
 class Decision(_Strict):
     id: str
     text: str
@@ -190,6 +210,7 @@ class Manifest(_Strict):
     topics: list[str] = []
     notes: str | None = None
     quotes: list[Quote] = []
+    images: list[ImageRef] = []
 
 
 def canonical_json(value: object) -> bytes:
@@ -200,7 +221,10 @@ def canonical_json(value: object) -> bytes:
 
 
 def manifest_bytes(manifest: Manifest) -> bytes:
-    return canonical_json(manifest.model_dump(mode="json"))
+    value = manifest.model_dump(mode="json")
+    if not value["images"]:
+        del value["images"]  # additive: a manifest without images is what it always was
+    return canonical_json(value)
 
 
 def parse_manifest(data: bytes) -> Manifest:
@@ -254,6 +278,10 @@ def aad(pub_id: str, kind: Kind, version: int) -> bytes:
     return f"{AAD_PREFIX}|{pub_id}|{kind}|{version}".encode()
 
 
+def _a(kind: str) -> str:
+    return f"{'an' if kind[0] in 'aeiou' else 'a'} {kind}"
+
+
 def blob_hash(blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()
 
@@ -281,7 +309,7 @@ def seal(
     padded = pad(plaintext, _BLOCK[kind])
     if len(padded) > _CAP[kind]:
         limit = _CAP[kind] // (1024 * 1024)
-        raise PublicationFormatError(f"A {kind} may be at most {limit} MiB")
+        raise PublicationFormatError(f"{_a(kind).capitalize()} may be at most {limit} MiB")
     if nonce is None:
         nonce = secrets.token_bytes(NONCE_SIZE)
     elif len(nonce) != NONCE_SIZE:
@@ -335,11 +363,28 @@ def open_clip(pub_id: str, clip: ClipRef, blob: bytes, key: bytes) -> bytes:
     return open_blob("clip", pub_id, clip.v, blob, key)
 
 
+def seal_image(
+    pub_id: str, first_version: int, data: bytes, key: bytes, *, nonce: bytes | None = None
+) -> tuple[bytes, str]:
+    return seal("image", pub_id, first_version, data, key, nonce=nonce)
+
+
+def open_image(pub_id: str, image: ImageRef, blob: bytes, key: bytes) -> bytes:
+    if blob_hash(blob) != image.sha256:
+        raise PublicationFormatError("The image does not match its address")
+    data = open_blob("image", pub_id, image.v, blob, key)
+    if not _SHA_RE.match(image.id) or hashlib.sha256(data).hexdigest() != image.id:
+        raise PublicationFormatError("The image does not match its hash")
+    return data
+
+
 def check_clips_total(padded_sizes: Iterable[int]) -> None:
-    """Raise when the clips of one publication (padded sizes) exceed MAX_CLIPS_TOTAL."""
+    """Raise when the clips and images of one publication (padded sizes, together) exceed
+    MAX_CLIPS_TOTAL."""
     if sum(padded_sizes) > MAX_CLIPS_TOTAL:
         raise PublicationFormatError(
-            f"A publication's clips may total at most {MAX_CLIPS_TOTAL // (1024 * 1024)} MiB"
+            f"A publication's clips and images may total at most "
+            f"{MAX_CLIPS_TOTAL // (1024 * 1024)} MiB"
         )
 
 

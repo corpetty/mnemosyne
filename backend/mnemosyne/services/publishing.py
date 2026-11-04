@@ -35,15 +35,16 @@ from fastapi import HTTPException
 
 from .. import access
 from ..models.publication import (
+    NotesImage,
     Publication,
     PublicationDefaults,
     PublicationSelection,
     QuoteSpan,
 )
 from ..models.session import Session
-from . import clips, history, ours
+from . import clips, history, notes_media, ours
 from . import publication_format as pf
-from .notes_chips import plain_notes
+from .notes_chips import image_lines, plain_notes
 from .origin import audio_elsewhere, device_name, is_foreign
 
 if TYPE_CHECKING:
@@ -55,6 +56,9 @@ logger = logging.getLogger(__name__)
 MAX_HOST_DAYS = 365
 TOMBSTONE_DAYS = 30
 CLIP_MIME = "audio/ogg"
+# A publication's images are kept in the row's `clip_blobs` next to the clips', under this prefix
+# and the image's plain hash (a clip's key is a quote span, never this).
+IMAGE_PREFIX = "image:"
 PARTS = ("summary", "decisions", "questions", "action_items", "chapters", "topics", "notes")
 _GENERIC_SPEAKER = re.compile(r"^(SPEAKER_\d+|UNKNOWN|Speaker \d+)$", re.IGNORECASE)
 # Why a record version is sealed (services/records.py EVENT_SEALS), as the records list shows it.
@@ -198,7 +202,24 @@ def defaults(app: AppContext, session: Session) -> PublicationDefaults:
         local_url=url,
         host_url=host,
         host_is_ours=ours.is_our_host(host),
+        notes_images=notes_images(app, session),
     )
+
+
+def notes_images(app: AppContext, session: Session) -> list[NotesImage]:
+    """The images of the meeting's notes, in order, each once, for the Publish dialog."""
+    sizes = {r["sha256"]: r["size"] for r in app.repo.media_rows(session.id)}
+    found: dict[str, NotesImage] = {}
+    for line in image_lines(session.notes or ""):
+        if line.sha not in found:
+            found[line.sha] = NotesImage(
+                sha256=line.sha,
+                caption=" ".join(line.caption.split()),
+                width=line.width,
+                height=line.height,
+                size=sizes.get(line.sha, 0),
+            )
+    return list(found.values())
 
 
 def default_selection(app: AppContext, session: Session) -> PublicationSelection:
@@ -283,12 +304,14 @@ def build_content(
         "action_items": [],
         "chapters": [],
         "topics": [],
-        "notes": (
-            text(plain_notes(session.notes)) if sel.notes and session.notes.strip() else None
-        ),
+        "notes": None,
         "attendees": [names.name(p) for p in people if p.casefold() in wanted],
         "quotes": [],
     }
+    if sel.notes and session.notes.strip():
+        content["notes"], shown = _notes_text(session.notes, sel, text)
+        if shown:  # only when there are some: a publication without images digests as it did
+            content["images"] = shown
     if data is not None:
         if sel.decisions:
             content["decisions"] = [
@@ -376,6 +399,38 @@ def build_content(
     return content, specs
 
 
+def _escape_caption(caption: str) -> str:
+    return re.sub(r"([\\\[\]])", r"\\\1", " ".join(caption.split()))
+
+
+def _notes_text(md: str, sel: PublicationSelection, text) -> tuple[str, list[dict[str, Any]]]:
+    """The notes as readers get them (`text`: names and identifiers redacted) and the images
+    they show: chips become their text; an image line the selection keeps stays
+    `![caption](mnemosyne:image/<value>)` (the caption redacted too), one it leaves out is
+    `[image: caption]`. The shown images: [{id: plain hash, ext, width, height}], each once."""
+    lines = image_lines(md)
+    if not lines:
+        return text(plain_notes(md)), []
+    chosen = None if sel.images is None else set(sel.images)
+    out: list[str] = []
+    shown: dict[str, dict[str, Any]] = {}
+    last = 0
+    for line in lines:
+        out.append(text(plain_notes(md[last : line.start])))
+        if chosen is None or line.sha in chosen:
+            value = f"{line.sha}.{line.ext}@{line.width}x{line.height}"
+            out.append(f"![{_escape_caption(text(line.caption))}](mnemosyne:image/{value})")
+            shown.setdefault(
+                line.sha,
+                {"id": line.sha, "ext": line.ext, "width": line.width, "height": line.height},
+            )
+        else:
+            out.append(text(plain_notes(md[line.start : line.end])))
+        last = line.end
+    out.append(text(plain_notes(md[last:])))
+    return "".join(out), list(shown.values())
+
+
 def _real_name(name: str | None) -> str | None:
     """A person's name, or None when it is empty or still a diarizer label (SPEAKER_01,
     UNKNOWN): those are never published. Renaming a speaker rewrites the transcript and the
@@ -416,11 +471,15 @@ def build_manifest(
     published_at: datetime | None = None,
     expires_at: datetime | None = None,
     clip_refs: dict[str, pf.ClipRef] | None = None,
+    image_refs: dict[str, pf.ImageRef] | None = None,
 ) -> tuple[pf.Manifest, list[dict[str, Any]]]:
-    """The manifest for this selection (clips from `clip_refs`, by quote id) and the quotes'
-    clip specs. The Manifest model has no field a transcript could ride in."""
+    """The manifest for this selection (clips from `clip_refs`, by quote id; images from
+    `image_refs`, by plain hash; an image without one is not listed) and the quotes' clip
+    specs. The Manifest model has no field a transcript could ride in."""
     content, specs = build_content(app, session, selection)
     refs = clip_refs or {}
+    images = image_refs or {}
+    shown = content.pop("images", [])
     for q in content["quotes"]:
         q["clip"] = refs.get(q["id"])
     manifest = pf.Manifest(
@@ -428,6 +487,7 @@ def build_manifest(
         version=version,
         published_at=_iso(published_at or _now()),
         expires_at=_iso(expires_at) if expires_at else None,
+        images=[images[i["id"]] for i in shown if i["id"] in images],
         **content,
     )
     return manifest, specs
@@ -436,7 +496,8 @@ def build_manifest(
 def preview(app: AppContext, session: Session, selection: PublicationSelection) -> dict:
     """The manifest as readers would get it, unsealed, for the Publish dialog. A quote with a
     clip carries `clip.preview_url` (this backend's audio, with a media fragment for the span)
-    instead of a sealed blob; it needs the API token like any /api URL."""
+    instead of a sealed blob; an image carries `preview_url` (the notes' media route) instead of
+    its sealed blob's fields. Both need the API token like any /api URL."""
     live = app.repo.live_publication(session.id)  # the version a publish would make
     version = (live["version"] if live else 0) + 1
     manifest, specs = build_manifest(app, session, selection, _PREVIEW_ID, version)
@@ -453,6 +514,17 @@ def preview(app: AppContext, session: Session, selection: PublicationSelection) 
                 "seconds": round(spec["end"] - spec["start"], 1),
                 "mime": CLIP_MIME,
             }
+    content, _ = build_content(app, session, selection)
+    out["images"] = [
+        {
+            "id": i["id"],
+            "width": i["width"],
+            "height": i["height"],
+            "mime": notes_media.MEDIA_TYPES[i["ext"]],
+            "preview_url": f"/api/sessions/{session.id}/notes/media/{i['id']}",
+        }
+        for i in content.get("images", [])
+    ]
     return out
 
 
@@ -545,7 +617,7 @@ def _host_message(status: int, body: dict, what: str) -> str:
             f"(was it published from another app?){': ' + code if code else ''}"
         )
     if status == 409 and body.get("missing"):
-        return f"The publish host is missing {len(body['missing'])} clip(s) of this publication"
+        return f"The publish host is missing {len(body['missing'])} file(s) of this publication"
     if status == 409:
         return f"The publish host has a newer version (version {body.get('current')})"
     if status == 413:
@@ -664,16 +736,16 @@ async def _host_delete(app: AppContext, host_url: str, pub_id: str, token: str) 
 async def _fetch_blob(
     app: AppContext, host_url: str, pub_id: str, sha: str, blobs_dir: Path
 ) -> str:
-    """Fetch a sealed clip from the publish host into `blobs_dir`, checking its SHA-256 (the
-    name it is stored under). "" when it is there, else what went wrong."""
+    """Fetch a sealed clip or image from the publish host into `blobs_dir`, checking its
+    SHA-256 (the name it is stored under). "" when it is there, else what went wrong."""
     try:
         resp = await _host(app, "GET", f"{host_url}/pub/{pub_id}/{sha}", "")
     except PublishError as e:
         return str(e)
     if resp.status_code != 200:
-        return _host_message(resp.status_code, _body(resp), "download of a clip")
+        return _host_message(resp.status_code, _body(resp), "download of a file")
     if hashlib.sha256(resp.content).hexdigest() != sha:
-        return "The publish host sent a clip that does not match; try again"
+        return "The publish host sent a file that does not match; try again"
     blobs_dir.mkdir(parents=True, exist_ok=True)
     tmp = blobs_dir / f"{sha}.tmp"
     tmp.write_bytes(resp.content)
@@ -799,6 +871,78 @@ def check_request(app: AppContext, session: Session, sel: PublicationSelection) 
         reusable = (row or {}).get("clip_blobs", {})
         if any(s["with_clip"] and s["key"] not in reusable for s in specs):
             require_local_audio(app, session)
+    if sel.notes:
+        content, _ = build_content(app, session, sel)
+        reusable_images = {
+            k[len(IMAGE_PREFIX) :]
+            for k in ((app.repo.live_publication(session.id) or {}).get("clip_blobs") or {})
+            if k.startswith(IMAGE_PREFIX)
+        }
+        require_images(app, session, content, reusable_images)
+
+
+def require_images(
+    app: AppContext, session: Session, content: dict[str, Any], reusable: set[str] = frozenset()
+) -> None:
+    """PublishError when an image the notes show here (`content["images"]`) is neither among
+    the `reusable` hashes (already in the publication) nor stored on this computer."""
+    for item in content.get("images", []):
+        if item["id"] not in reusable and notes_media.path(app, session.id, item["id"]) is None:
+            raise PublishError(
+                "An image of the notes is not on this computer yet; "
+                "leave it out of the publication, or try again once it has arrived"
+            )
+
+
+async def read_image(app: AppContext, session: Session, sha: str) -> bytes:
+    """The stored bytes of one of the notes' images (decrypted), checked against its hash."""
+    try:
+        data = await asyncio.to_thread(notes_media.read, app, session.id, sha)
+    except FileNotFoundError as e:
+        raise PublishError(
+            "An image of the notes is not on this computer yet; "
+            "leave it out of the publication, or try again once it has arrived"
+        ) from e
+    except PermissionError as e:
+        raise PublishError("The notes' images are locked; unlock Mnemosyne first") from e
+    if hashlib.sha256(data).hexdigest() != sha:
+        raise PublishError("An image of the notes is damaged on this computer")
+    return data
+
+
+async def seal_image(
+    app: AppContext, session: Session, item: dict[str, Any], pub_id: str, version: int, key: bytes
+) -> tuple[bytes, str, dict[str, Any]]:
+    """Seal one of `content["images"]` for the publication: (blob, its address, the record kept
+    in the row's clip_blobs)."""
+    data = await read_image(app, session, item["id"])
+    try:
+        blob, sha = pf.seal_image(pub_id, version, data, key)
+    except pf.PublicationFormatError as e:
+        raise PublishError(str(e)) from e
+    return (
+        blob,
+        sha,
+        {
+            "sha256": sha,
+            "size": len(data),
+            "mime": notes_media.MEDIA_TYPES[item["ext"]],
+            "v": version,
+            "padded": len(blob) - pf.NONCE_SIZE - pf.TAG_SIZE,
+        },
+    )
+
+
+def image_ref(item: dict[str, Any], rec: dict[str, Any]) -> pf.ImageRef:
+    return pf.ImageRef(
+        id=item["id"],
+        sha256=rec["sha256"],
+        size=rec["size"],
+        mime=rec["mime"],
+        v=rec["v"],
+        width=item["width"],
+        height=item["height"],
+    )
 
 
 async def _cut(app: AppContext, session: Session, spec: dict, tmp: Path) -> bytes:
@@ -869,8 +1013,14 @@ async def publish(
 
     # Clips: reused when their span is unchanged and their blob is here, else cut (origin only).
     content, specs = build_content(app, session, sel)
-    old_clips: dict[str, dict] = row.get("clip_blobs") or {}
+    stored: dict[str, dict] = row.get("clip_blobs") or {}
+    old_clips = {k: v for k, v in stored.items() if not k.startswith(IMAGE_PREFIX)}
+    old_images = {
+        k[len(IMAGE_PREFIX) :]: v for k, v in stored.items() if k.startswith(IMAGE_PREFIX)
+    }
     new_clips: dict[str, dict] = {}
+    new_images: dict[str, dict] = {}
+    image_refs: dict[str, pf.ImageRef] = {}
     refs: dict[str, pf.ClipRef] = {}
     fresh: dict[str, bytes] = {}  # sha -> blob, sealed in this version
     wanted = [s for s in specs if s["with_clip"]]
@@ -916,8 +1066,24 @@ async def publish(
             )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+    # Images of the notes: reused when sealed already (here, or on the host), else sealed now.
+    shown = content.get("images", [])
+    for n, item in enumerate(shown):
+        job.update(f"Image {n + 1} of {len(shown)}", 0.6 + 0.05 * n / max(1, len(shown)))
+        prev = old_images.get(item["id"])
+        have = prev is not None and (blobs_dir / prev["sha256"]).is_file()
+        if prev is not None and not have and row["place"] == "host" and row["host_url"]:
+            have = not await _fetch_blob(app, row["host_url"], pub_id, prev["sha256"], blobs_dir)
+        if prev is not None and have:
+            new_images[item["id"]] = prev
+        else:
+            blob, sha, rec = await seal_image(app, session, item, pub_id, version, key)
+            fresh[sha] = blob
+            new_images[item["id"]] = rec
+        image_refs[item["id"]] = image_ref(item, new_images[item["id"]])
     try:
-        pf.check_clips_total(c["padded"] for c in new_clips.values())
+        pf.check_clips_total(c["padded"] for c in [*new_clips.values(), *new_images.values()])
         manifest, _ = build_manifest(
             app,
             session,
@@ -927,12 +1093,15 @@ async def publish(
             published_at=now,
             expires_at=expires_at,
             clip_refs=refs,
+            image_refs=image_refs,
         )
         job.update("Sealing", 0.65)
         manifest_blob, manifest_sha = pf.seal_manifest(manifest, key)
     except pf.PublicationFormatError as e:
         raise PublishError(str(e)) from e
-    referenced = list(dict.fromkeys(c["sha256"] for c in new_clips.values()))
+    referenced = list(
+        dict.fromkeys(c["sha256"] for c in [*new_clips.values(), *new_images.values()])
+    )
 
     # Blobs are content-addressed: writing new ones first is harmless if the rest fails.
     for sha, blob in fresh.items():
@@ -957,7 +1126,7 @@ async def publish(
             manifest_blob,
             upload,
             referenced,
-            progress=lambda i, n: job.update(f"Uploading clip {i} of {n}", 0.7 + 0.2 * i / n),
+            progress=lambda i, n: job.update(f"Uploading file {i} of {n}", 0.7 + 0.2 * i / n),
         )
 
     # The new version, here: manifest and meta last, then blobs no version references.
@@ -988,14 +1157,21 @@ async def publish(
         updated_at=now.isoformat(),
         expires_at=expires_at.isoformat() if expires_at else None,
         unpublished_at=None,
-        clip_blobs=new_clips,
+        clip_blobs={**new_clips, **{IMAGE_PREFIX + sha: rec for sha, rec in new_images.items()}},
         published_digest=digest(content, specs),
         published_by=who.name if who else "",
     )
     if sel.where == "local":
         row["origin"] = ""  # the files that serve it are here
     app.repo.put_publication(row)
-    _log(app, session_id, "published" if version == 1 else "publication_updated", row, sel)
+    _log(
+        app,
+        session_id,
+        "published" if version == 1 else "publication_updated",
+        row,
+        sel,
+        len(new_images),
+    )
     from .records import seal_later
 
     seal_later(app, session_id, SEAL_PUBLISHED if version == 1 else SEAL_UPDATED)
@@ -1003,7 +1179,14 @@ async def publish(
     return {"publication": to_model(app, row, session, local_base).model_dump(mode="json")}
 
 
-def _log(app: AppContext, session_id: str, kind: str, row: dict, sel: PublicationSelection):
+def _log(
+    app: AppContext,
+    session_id: str,
+    kind: str,
+    row: dict,
+    sel: PublicationSelection,
+    images: int = 0,
+):
     who = access.principal()
     parts = ["title", *[p for p in PARTS if getattr(sel, p)]]
     if sel.attendees:
@@ -1017,6 +1200,7 @@ def _log(app: AppContext, session_id: str, kind: str, row: dict, sel: Publicatio
         parts=parts,
         quotes=len(sel.quotes),
         clips=sum(1 for q in sel.quotes if q.with_clip),
+        **({"images": images} if images else {}),
         names=sel.names,
         hide_identifiers=sel.hide_identifiers,
         where="publish host" if row["place"] == "host" else "this computer",
