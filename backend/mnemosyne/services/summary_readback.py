@@ -408,4 +408,7 @@ def announce(ctx: AppContext, before: Session, kind: str, taken: Taken, **extra)
         questions=taken.counts["open_questions"], body=taken.body_changed, **extra,
     )  # fmt: skip
     records.seal_later(ctx, sid, "summary_edited")
-    ctx.bus.publish({"type": "session", "session_id": sid, "status": before.status.value})
+    # `changed`: an open copy of the meeting reloads its summary (controller.svelte.ts).
+    ctx.bus.publish(
+        {"type": "session", "session_id": sid, "status": before.status.value, "changed": "summary"}
+    )

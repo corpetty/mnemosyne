@@ -732,7 +732,10 @@ function onConnected(): () => void {
     if (active && active.id === msg.session_id && msg.status !== 'deleted' && msg.status !== 'audio_deleted') {
       active.status = msg.status;
     }
-    if (msg.status === 'audio_deleted' && sessionState.activeSession?.id === msg.session_id) {
+    if (
+      (msg.status === 'audio_deleted' || msg.changed === 'summary') &&
+      sessionState.activeSession?.id === msg.session_id
+    ) {
       sessionState.refreshActive();
     }
   });
