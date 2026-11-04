@@ -122,6 +122,10 @@ class AppContext:
         self.repo.on_new_session = self._new_session
         self.repo.after_summary = self._summary_changed
         self.sessions.before_delete = self._forget_publications
+        # Edits in the notes' Summary section flow back into the summary from the first fold.
+        from ..services import notes_summary
+
+        notes_summary.register()
 
     def _summary_changed(self, session_id: str) -> None:
         """The repository wrote a meeting's summary (from any thread): its notes' Summary

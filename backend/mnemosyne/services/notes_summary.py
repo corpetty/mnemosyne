@@ -32,6 +32,29 @@ written again and again.
 
 Only the origin machine writes (library sync's union would double the section), never a meeting
 shared with this person; nothing with `summary_in_notes` off, without the sidecar or a summary.
+
+The other way, `read_back` (a shared_notes.AFTER_FOLD hook; `register` is called by
+AppContext and on import): what people changed in the section is taken into the summary as
+Obsidian edits are (services/summary_readback.py, by the author of the fold's frames): a
+reworded, re-owned or re-dated line is the item edited (three-way when the summary moved too),
+a deleted line the item deleted (tombstoned), a new bullet under a sub-section a new entry, the
+lines under `## Summary` the body. A sub-section whose heading is gone changes nothing. A box
+ticked or cleared ticks the task (item_flags: its other mentions, history, the vault note), in a
+thread once the notes lock is free, since the fan-out may take another meeting's notes lock;
+text edits take only this meeting's summary doc lock and the repository's. A task line with a
+person chip is a notes item, never a summary item. The section is handed to
+export/note_parse.py rebuilt from the refs (`_view`): canonical `## Decisions` / `## Action
+Items` / `## Open Questions` headings, ` ^m-<id>` after each `sum:` line, only the top-level
+bullets of each sub-section (so nothing typed there is ever taken for a heading); the body is
+read here, never parsed.
+
+Loops: `written` (with `shown`, the document's line) is what the read-back compares with, so a
+line as we wrote it is never an edit, and after taking an edit it records the line as the
+document has it (its `md` our rendering only when the line says what the summary now says, else
+None, so the sync writes the merge result). Fold results stored while this machine writes the
+section (or reads it back) are held and read back once after, against the new `written`
+(`_holding`). A sync first folds what is pending, so the person's edits are read back before
+a rendering could overwrite them.
 """
 
 from __future__ import annotations
@@ -39,6 +62,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -229,6 +254,7 @@ def plan(
         return True
 
     by_id = {b.id: b for b in w.all()}
+    adopted: set[int] = set()  # md_lines of the person's lines that became a block's
     first: dict[str, ns.Line] = {}
     for x in s.with_prefix(ns.SUM):
         block_id = ns.sum_id(x.ref)
@@ -302,6 +328,13 @@ def plan(
                     edits.append(ns.replace(x.md_line, b.md))
                     wrote.add(b.id)
                 prev = x.md_line
+            elif (y := _adoptable(head, blocks_w.get(b.id), adopted)) is not None:
+                # A line the person typed that the read-back took as this block: it gets the ref.
+                md = b.md if stale(b.md, y.md, blocks_w.get(b.id)) else y.md
+                edits.append(ns.replace(y.md_line, md, ns.sum_ref(b.id)))
+                adopted.add(y.md_line)
+                wrote.add(b.id)
+                prev = y.md_line
             elif create or b.id not in blocks_w:
                 at = end if prev is None else prev
                 put(at, [ns.New(b.md, ns.sum_ref(b.id))])
@@ -312,6 +345,18 @@ def plan(
             if not left:
                 drop(head.heading)  # nothing left under it
     return edits
+
+
+def _adoptable(head: ns.Section | None, w: dict | None, taken: set[int]) -> ns.Line | None:
+    """The person's line (no ref) under `head` that the read-back recorded as this block's
+    (`shown`), not taken by another block."""
+    shown = w.get("shown") if w else None
+    if head is None or not isinstance(shown, str):
+        return None
+    return next(
+        (x for x in head.lines if x.ref is None and x.md_line not in taken and x.md == shown),
+        None,
+    )
 
 
 # ---- the write -----------------------------------------------------------------------------
@@ -444,8 +489,7 @@ def _sync(app: AppContext, session_id: str, create: bool) -> bool:
         edits = plan(s, w, written, create=create, copilot=copilot, wrote=wrote)
         return ns.compose(s.lines, edits) if edits else None
 
-    # One writer at a time per meeting, `written` included (edit_blocking takes it again).
-    with shared_notes.hub(app).lock(session_id):
+    def write() -> list:
         if _unchanged(app, session_id, compose):
             out = []
         else:
@@ -453,6 +497,14 @@ def _sync(app: AppContext, session_id: str, create: bool) -> bool:
             out = shared_notes.edit_blocking(app, session_id, compose, shared_notes.SUMMARY_AUTHOR)
         if "wanted" in state:
             _record(app, session_id, state["wanted"], state["written"], state["wrote"])
+        return out
+
+    # One writer at a time per meeting, `written` included (edit_blocking takes it again).
+    with shared_notes.hub(app).lock(session_id):
+        # What people typed and is not folded yet is read back first (the fold's hook), so
+        # the rendering below never overwrites an edit the summary has not taken.
+        shared_notes.fold_blocking(app, session_id)
+        out = _holding(app, session_id, write)
     if out and create:
         history.log(app, session_id, "notes_summary_written")
     return bool(out)
@@ -466,3 +518,454 @@ async def after_summarize(app: AppContext, session_id: str) -> bool:
         cancel(session_id)
     shared_notes._remember_loop(app)
     return await asyncio.to_thread(sync, app, session_id, create=True)
+
+
+# ---- the read-back (notes -> summary) ------------------------------------------------------
+
+# Fold results of a meeting stored while this machine writes its section or reads it back (the
+# meeting's notes lock held, so only that thread adds here): read back once after (`_holding`).
+_held: dict[str, list[tuple[dict, list[int], str | None]]] = {}
+
+_CANON = {
+    ns.DECISIONS: "## Decisions",
+    ns.ACTION_ITEMS: "## Action Items",
+    ns.OPEN_QUESTIONS: "## Open Questions",
+}  # note_parse's headings
+_BULLET = re.compile(r"^[-*+] ")  # a top-level bullet: note_parse's entries
+_TASK = re.compile(r"^[-*+] \[[ xX]\]")
+
+
+def _holding(app: AppContext, session_id: str, fn):
+    """fn() with the meeting's fold results held (the read-back then compares them with a
+    `written` that is not up to date yet); the last one held is read back after. Nested: fn()."""
+    if session_id in _held:
+        return fn()
+    _held[session_id] = held = []
+    try:
+        result = fn()
+    finally:
+        _held.pop(session_id, None)
+    if held:
+        _held[session_id] = []  # what this read-back's own writes fold is its own
+        try:
+            _read_back(app, session_id, *held[-1])
+        finally:
+            _held.pop(session_id, None)
+    return result
+
+
+def read_back(
+    app: AppContext, session_id: str, reply: dict, seqs: list[int], author: str | None
+) -> None:
+    """shared_notes.AFTER_FOLD: take what people changed in the notes' Summary section into
+    the summary (see the module doc). Never raises."""
+    if session_id in _held:
+        _held[session_id].append((reply, seqs, author))
+        return
+    try:
+        _holding(app, session_id, lambda: _read_back(app, session_id, reply, seqs, author))
+    except Exception as e:  # the notes must not break a fold
+        logger.warning("Could not read the summary back from the notes of %s: %s", session_id, e)
+        logger.debug("Reading back the notes of %s failed", session_id, exc_info=True)
+
+
+def _item_text(text: str) -> str:
+    """An item's text as its line reads back (note_parse): what `item_md` rendered of it."""
+    from .vault_sync import strip_links
+
+    return strip_links(_clean(text)).strip()
+
+
+def _body_text(summary: str) -> str:
+    """The summary's body as the section shows it."""
+    return wanted(None, summary).body_text
+
+
+def _is_notes_item(md: str) -> bool:
+    """A task line with a person chip: an action item of the notes (services/notes_items.py)."""
+    from .notes_chips import task_line_parts
+
+    return bool(_TASK.match(md)) and task_line_parts(md)[0] is not None
+
+
+def _parse_line(sec: str, md: str, block_id: str, known: tuple[str | None, str]):
+    """note_parse's entry for one of our lines, or None."""
+    from ..export.note_parse import parse
+    from .notes_chips import plain_notes
+
+    alias = "0" * 8  # note_parse reads hex ids only
+    note = parse(f"{_CANON[sec]}\n{plain_notes(md)} ^m-{alias}", {alias: known})
+    entries = note.sections.get(sec) or []
+    return entries[0] if entries else None
+
+
+def _base(written: dict) -> dict:
+    """`written` as summary_readback compares with it: per block what its line reads as (the
+    document's line when it says otherwise than our rendering), the body as shown."""
+    blocks: dict[str, dict] = {}
+    for block_id, w in (written.get("blocks") or {}).items():
+        if not isinstance(w, dict) or w.get("section") not in ITEM_SECTIONS:
+            continue
+        b = {
+            "section": w["section"],
+            "text": w.get("text") or "",
+            "owner": w.get("owner"),
+            "due": w.get("due"),
+            "box": bool(w.get("box")),
+            "exact": True,
+        }
+        line = w.get("shown") if isinstance(w.get("shown"), str) else w.get("md")
+        if isinstance(line, str):
+            e = _parse_line(w["section"], line, block_id, (b["owner"], b["text"]))
+            if e is not None:
+                b.update(text=e.text, owner=e.owner, due=e.due, box=e.box)
+        blocks[block_id] = b
+    body = written.get("body_shown")
+    if body is None:
+        body = written.get("body")
+    return {"blocks": blocks, "body": body, "body_exact": True}
+
+
+@dataclass
+class _View:
+    """The section as note_parse reads it, and each entry's line in the notes."""
+
+    note: object  # export/note_parse.py Note
+    lines: dict[int, ns.Line]  # id(entry) -> its line
+
+
+def _view(s: ns.Sections, blocks: dict[str, dict], current: dict[str, str]) -> _View:
+    """The adapter (C10 of the plan): each item sub-section whose heading is there, as note_parse
+    expects it: its canonical `## ` heading, then only its top-level bullets: our lines (`sum:`
+    ref) with ` ^m-<id>` appended, those of another sub-section's block left out with the
+    person's lines after them (the lines of a sub-section whose heading went); the person's
+    bullets as they are, except task lines with a person chip (notes items). Nothing else is
+    passed on, so no line typed there can be taken for a heading. The body is the Summary
+    heading's lines up to the first ref'd line (as written), read here."""
+    from ..export.note_parse import parse
+    from .notes_chips import plain_notes
+
+    text: list[str] = []
+    order: list[tuple[str, ns.Line, str]] = []
+    alias: dict[str, str] = {}  # block id -> the hex id note_parse reads (`^m-` + hex only)
+    for name in ITEM_SECTIONS:
+        sec = s.section(name)
+        if sec is None:
+            continue
+        text.append(_CANON[name])
+        foreign = False
+        for x in sec.lines:
+            if x.ref:
+                block_id = ns.sum_id(x.ref)
+                home = (blocks.get(block_id) or {}).get("section") or current.get(block_id or "")
+                if block_id is None or home is None:
+                    continue  # not a summary block's line (or one of a block long gone)
+                foreign = home != name
+                if foreign:
+                    continue
+                md = f"{plain_notes(x.md)} ^m-{alias.setdefault(block_id, f'{len(alias):08x}')}"
+            elif foreign or not _BULLET.match(x.md) or _is_notes_item(x.md):
+                continue
+            else:
+                md = plain_notes(x.md)
+            text.append(md)
+            order.append((name, x, md))
+    known = {alias[i]: (b["owner"], b["text"]) for i, b in blocks.items() if i in alias}
+    note = parse("\n".join(text) + "\n", known) if text else parse("")
+    real = {v: k for k, v in alias.items()}
+    for entries in note.sections.values():
+        for e in entries:
+            e.id = real.get(e.id, "")
+    summary = s.section(ns.SUMMARY)
+    note.body = _shown_body(summary)
+    lines: dict[int, ns.Line] = {}
+    for name, entries in note.sections.items():
+        rest = [(x, md) for sec, x, md in order if sec == name]
+        k = 0
+        for e in entries:
+            while k < len(rest) and rest[k][1] != e.line:
+                k += 1
+            if k < len(rest):
+                lines[id(e)] = rest[k][0]
+                k += 1
+    return _View(note, lines)
+
+
+def _as_written(s: ns.Sections, written: dict) -> bool:
+    """The section is as `written` recorded it: no line of it changed, went or came (the
+    read-back's cheap exit, before any parsing)."""
+    blocks = written.get("blocks") or {}
+    summary = s.section(ns.SUMMARY)
+    if summary is not None:
+        body = written.get("body_shown")
+        if body is None:
+            body = written.get("body")
+        if (_shown_body(summary) or "") != (body or ""):
+            return False
+    for name in ITEM_SECTIONS:
+        sec = s.section(name)
+        if sec is None:
+            continue
+        seen: set[str] = set()
+        for x in sec.lines:
+            block_id = ns.sum_id(x.ref)
+            if block_id is not None:
+                w = blocks.get(block_id)
+                if not isinstance(w, dict):
+                    return False
+                shown = w.get("shown") if isinstance(w.get("shown"), str) else w.get("md")
+                if x.md != shown:
+                    return False
+                seen.add(block_id)
+            elif x.ref is None and _BULLET.match(x.md) and not _is_notes_item(x.md):
+                return False  # a bullet of the person's: maybe a new entry
+        for block_id, w in blocks.items():
+            if isinstance(w, dict) and w.get("section") == name and block_id not in seen:
+                return False
+    return True
+
+
+def _who(authors: list[str], frame, author: str | None) -> str:
+    """Who made a change: the author of the frame that made the line, else the one author of
+    the fold's frames, else the fold's own author, else "notes"."""
+    if isinstance(frame, int) and not isinstance(frame, bool) and 0 <= frame < len(authors):
+        if authors[frame]:
+            return authors[frame]
+    names = {a for a in authors if a}
+    if len(names) == 1:
+        return names.pop()
+    return author or "notes"
+
+
+def _read_back(
+    app: AppContext, session_id: str, reply: dict, seqs: list[int], author: str | None
+) -> bool:
+    if not app.settings.summary_in_notes:
+        return False
+    with shared_notes.unrestricted():  # whoever may edit the notes was checked at their frame
+        session = app.repo.get(session_id)
+        if session is None or is_foreign(session):  # origin only; never a meeting shared with me
+            return False
+        if session.summary_data is None and not (session.summary or "").strip():
+            return False
+        markdown, refs = reply.get("markdown"), shared_notes.refs_of(reply)
+        if not isinstance(markdown, str) or refs is None:
+            return False
+        written = _written(app, session_id)
+        if not written.get("blocks") and written.get("body") is None:
+            return False  # nothing of the summary written into these notes yet
+        s = ns.split(markdown, refs)
+        if _as_written(s, written):
+            return False
+        try:
+            authors = app.repo.notes_op_authors(session_id, seqs)
+        except Exception:
+            logger.warning("Could not read the notes authors of %s", session_id, exc_info=True)
+            authors = []
+        tasks = reply.get("tasks")
+        ticked = _take_ticks(
+            app, session, tasks if isinstance(tasks, list) else [], written, authors, author
+        )
+        return _take_edits(app, session_id, s, written, _who(authors, None, author)) or ticked
+
+
+def _take_ticks(
+    app: AppContext,
+    session,
+    tasks: list,
+    written: dict,
+    authors: list[str],
+    author: str | None,
+) -> bool:
+    """A box of our action item lines ticked or cleared in the notes ticks the task
+    (item_flags: fan-out to its other mentions, the vault note). Only a box that differs from
+    both what we wrote and what the item says now is a person's doing (a stale line is not).
+    The ticks are only collected here: they run once the meeting's notes lock is free
+    (`_later`), as the fan-out may take another meeting's. True when any was collected."""
+    blocks = written.get("blocks") or {}
+    items = session.summary_data.action_items if session.summary_data else []
+    ticks: list[tuple[str, bool, str]] = []
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        block_id = ns.sum_id(t.get("ref"))
+        w = blocks.get(block_id or "")
+        if not isinstance(w, dict) or w.get("section") != ns.ACTION_ITEMS:
+            continue
+        item = next((a for a in items if a.id == block_id), None)
+        done = bool(t.get("done"))
+        if item is None or done == bool(w.get("done")) or done == item.done:
+            continue
+        ticks.append((item.id, done, _who(authors, t.get("frame"), author)))
+    _later(app, session.id, ticks)
+    return bool(ticks)
+
+
+# Ticks read back and not run yet: (meeting, block id, done), so a fold meanwhile does not
+# collect them again; the threads running them (`wait_ticks`).
+_pending: set[tuple[str, str, bool]] = set()
+_tick_threads: set[threading.Thread] = set()
+_tick_guard = threading.Lock()
+
+
+def _later(app: AppContext, session_id: str, ticks: list[tuple[str, bool, str]]) -> None:
+    """Run the ticks in a thread of their own, which waits for the meeting's notes lock to be
+    free (the fold that read them is over) and never holds it: no notes lock is held while
+    the fan-out takes another meeting's (two people ticking one task in two meetings' notes
+    would deadlock both)."""
+    with _tick_guard:
+        fresh = [t for t in ticks if (session_id, t[0], t[1]) not in _pending]
+        _pending.update((session_id, block_id, done) for block_id, done, _ in fresh)
+        if not fresh:
+            return
+        thread = threading.Thread(
+            target=_run_ticks, args=(app, session_id, fresh), name="notes-ticks", daemon=True
+        )
+        _tick_threads.add(thread)
+    thread.start()
+
+
+def _run_ticks(app: AppContext, session_id: str, ticks: list[tuple[str, bool, str]]) -> None:
+    try:
+        with shared_notes.hub(app).lock(session_id):
+            pass  # after the fold that read them, holding nothing while ticking
+        with shared_notes.unrestricted():
+            for block_id, done, by in ticks:
+                try:
+                    _tick(app, session_id, block_id, done, by)
+                except Exception:
+                    logger.warning("Could not take a tick from the notes of %s", session_id,
+                                   exc_info=True)  # fmt: skip
+    finally:
+        with _tick_guard:
+            for block_id, done, _ in ticks:
+                _pending.discard((session_id, block_id, done))
+            _tick_threads.discard(threading.current_thread())
+
+
+def _tick(app: AppContext, session_id: str, block_id: str, done: bool, by: str) -> None:
+    """One tick from the notes, unless the item says so already (or is gone)."""
+    from . import item_flags
+
+    session = app.repo.get(session_id)
+    if session is None or is_foreign(session) or session.summary_data is None:
+        return
+    items = session.summary_data.action_items
+    idx = next((i for i, a in enumerate(items) if a.id == block_id), None)
+    if idx is None or items[idx].done == done:
+        return
+    kinds = ("task_done", "task_reopened")
+    logged = sum(e["kind"] in kinds for e in app.repo.events(session_id))
+    item = item_flags.set_item_flags(app, session, idx, done=done, by=by)
+    if sum(e["kind"] in kinds for e in app.repo.events(session_id)) == logged:
+        # item_flags logs only a tick by someone other than the owner (the signed-in person);
+        # a tick in the notes is always someone's: theirs.
+        history.log(app, session_id, kinds[0] if done else kinds[1], task=item.text, by=by)
+
+
+def wait_ticks(timeout: float = 10.0) -> bool:
+    """Wait for the ticks read back so far to have run (tests, shutdown). False on timeout."""
+    deadline = time.monotonic() + timeout
+    while True:
+        with _tick_guard:
+            threads = list(_tick_threads)
+        if not threads:
+            return True
+        for thread in threads:
+            thread.join(max(0.0, deadline - time.monotonic()))
+        if time.monotonic() >= deadline:
+            with _tick_guard:
+                return not _tick_threads
+
+
+def _take_edits(app: AppContext, session_id: str, s: ns.Sections, written: dict, by: str) -> bool:
+    """Text edits (summary_readback.take, by `by`) and `written` brought up to the lines."""
+    from . import summary_readback as rb
+    from .summary_doc import SummaryDocUnavailable, ensure_doc, section
+    from .summary_doc import _lock as doc_lock
+
+    try:
+        with doc_lock(session_id):
+            if ensure_doc(app, session_id) is None:
+                return False
+            before = app.repo.get(session_id)
+            if before is None:
+                return False
+            data = before.summary_data or SummaryData()
+            current = {i: sec for sec in ITEM_SECTIONS for i, _ in section(data, sec) if i}
+            base = _base(written)
+            view = _view(s, base["blocks"], current)
+            taken = rb.take(
+                app, before, view.note, base, by=by, body_of=_body_text, text_of=_item_text
+            )
+            if not taken.taken:
+                return False
+            _remember_taken(app, session_id, view, taken)
+    except SummaryDocUnavailable:
+        return False
+    logger.info("Edits in the notes taken into the summary of %s", session_id)
+    rb.announce(app, before, "notes_summary_edits_taken", taken, by=by)
+    return True
+
+
+def _remember_taken(app: AppContext, session_id: str, view: _View, taken) -> None:
+    """`written` after edits were taken: each changed, merged or new block as its line says now
+    (`shown`: the line; `md`: our rendering when the line says what the summary now says, else
+    None, so the next sync writes the merge result); deleted blocks forgotten; the body as
+    shown."""
+    from .summary_doc import update_slot
+
+    now = wanted(taken.data, taken.body)
+    by_id = {b.id: b for b in now.all()}
+    edits = taken.edits
+
+    def says(sec: str, e, b: Block) -> bool:
+        if sec != ns.ACTION_ITEMS:
+            return e.text == b.text
+        return (e.text, e.owner, e.due, bool(e.done)) == (b.text, b.owner, b.due, bool(b.done))
+
+    def change(slot: dict) -> None:
+        written = slot.get("written")
+        if not isinstance(written, dict):
+            written = slot["written"] = {"body": None, "blocks": {}}
+        wb = written.setdefault("blocks", {})
+        for sec, rows in edits.sections.items():
+            for block_id, e in rows:
+                key = block_id or taken.ids.get(id(e), "")
+                if not key or not (
+                    key in edits.changed or key in edits.merges or id(e) in taken.ids
+                ):
+                    continue
+                b, x = by_id.get(key), view.lines.get(id(e))
+                if b is None or x is None:
+                    wb.pop(key, None)
+                    continue
+                wb[key] = {
+                    "section": sec,
+                    "text": e.text,
+                    "owner": e.owner,
+                    "due": e.due,
+                    "box": e.box,
+                    "done": e.done if e.box else b.done,
+                    "exact": True,
+                    "md": b.md if says(sec, e, b) else None,
+                    "shown": x.md,
+                }
+        for block_id in edits.deleted:
+            wb.pop(block_id, None)
+        if taken.body_changed:
+            shown = view.note.body
+            written["body"] = now.body_text if now.body_text == shown else None
+            written["body_shown"] = shown
+            written["body_exact"] = True
+
+    update_slot(app, session_id, SLOT, change)
+
+
+def register() -> None:
+    """`read_back` among shared_notes.AFTER_FOLD (once)."""
+    if read_back not in shared_notes.AFTER_FOLD:
+        shared_notes.AFTER_FOLD.append(read_back)
+
+
+register()
