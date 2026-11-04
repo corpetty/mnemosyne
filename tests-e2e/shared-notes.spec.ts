@@ -317,7 +317,17 @@ test('the copilot writes into the notes, the summary replaces it, and edits and 
   await page.getByRole('button', { name: 'Everyone', exact: true }).click(); // Mine is the default
   await page.getByPlaceholder('Filter…').fill(ACTION);
   await page.getByRole('button', { name: 'done', exact: true }).click(); // the Open list hides it
-  await expect(page.getByRole('checkbox', { name: `Done: ${ACTION}` })).toBeChecked();
+  // Other specs' demo meetings (release-sync, task-link-a, ...) share this backend and the demo's
+  // action item, done there too: only this meeting's group counts. One row in it: the summary's
+  // item, never a second task from the notes' Summary section.
+  const group = page.locator('section').filter({ has: page.getByRole('button', { name: new RegExp(`^${NAME} · `) }) });
+  await expect(group.getByRole('checkbox', { name: `Done: ${ACTION}` })).toHaveCount(1);
+  await expect(group.getByRole('checkbox', { name: `Done: ${ACTION}` })).toBeChecked();
+  const tasks = (await (await request.get(`${BACKEND}/api/tasks?status=all`)).json()) as {
+    mentions: { session_id: string; source: string }[];
+  }[];
+  const ours = tasks.filter((t) => t.mentions.some((m) => m.session_id === id));
+  expect(ours.map((t) => t.mentions.filter((m) => m.session_id === id).map((m) => m.source))).toEqual([['summary']]);
 
   // Editing the decision's text in the notes changes it in the summary after the fold.
   const notes2 = await openNotes(page);

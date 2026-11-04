@@ -378,6 +378,38 @@ def test_an_unlinked_tick_and_a_stale_box(ctx, sidecar):
     assert events(ctx, sid, "task_done") == [{"task": "Update the docs", "by": "Bob"}]
 
 
+def test_a_ticked_summary_line_is_one_task_never_a_notes_item(ctx, sidecar):
+    # The e2e's case (CI, 2026-11-04): an earlier meeting already has the same action item,
+    # done, so the new one stays its own task (linking reaches open tasks only). Ticking the
+    # Summary section's line gives the meeting exactly one task, the summary's item.
+    earlier = ctx.repo.save(
+        Session(
+            name="earlier",
+            created_at=datetime(2026, 10, 1, 10),
+            summary="s",
+            summary_data=SummaryData(
+                action_items=[
+                    ActionItem(id="b1bbbbbb", text="Update the docs", owner="Ada", done=True)
+                ]
+            ),
+        )
+    ).id
+    sid = written_meeting(ctx)
+    assert task_links.link_items(ctx, sid, "exact") == []
+    _tick(ctx, sid, "bob1", "Bob")
+    sync(ctx, sid, create=False)
+    shared_notes.fold_blocking(ctx, sid)
+    assert ctx.repo.get(sid).notes_items == []
+    objs = task_links.index(ctx.repo, ctx.repo.visible_ids()).values()
+    ours = [
+        [(m.source, m.item_id) for m in o.mentions] for o in objs if o.mentions[0].session_id == sid
+    ]
+    assert ours == [[("summary", A1)]]
+    # Two rows in Tasks with the same text, one per meeting: the e2e must look in its own group.
+    assert sorted(o.mentions[0].session_id for o in objs) == sorted([sid, earlier])
+    assert summary(ctx, sid).action_items[0].done is True
+
+
 def _noted_meeting(ctx) -> str:
     """An earlier meeting whose action item was typed in its notes (a notes item, Ada's)."""
     sid = ctx.repo.save(
