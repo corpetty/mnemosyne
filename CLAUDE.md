@@ -206,6 +206,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - Notes clients must `applyFrontier(encodeFrontier())` after applying remote frames or opening a
   snapshot (hashseq QUEUE 39) or the next drain ships everything back; mark strings over 14 bytes
   (URLs, `comment:<id>`) travel as 0xAF artifact frames beside the 0xDE delta, never inside it.
+- Never put an image's bytes in a notes frame, snapshot or fold: they stay in the media store and travel by their sha
+  (a snapshot with images in it would ship every image to every client on every join). Anything reading an image
+  must check the sha and the type by magic number first, and `src` comes from the host's object URLs only.
 - Indexes in the notes model and the sidecar are code points, not UTF-16 (src/lib/notes/model.ts
   `cpLen`/`cpIndex`/`utf16Index`); an astral character is 1 there and 2 in a JS string.
 - Notes chips are `link` marks with `mnemosyne:` URLs; dom.ts gives an `href` only to http(s) and mailto, so a chip
@@ -584,6 +587,26 @@ shows the effective one). Guest notes: iroh through our relay plus the mirror on
 gained `--write-bytes-per-day` (200 MiB per client, 429 `write_budget`, rooms close 4429) and `--metrics-listen`. link:
 `rooms --no-relay`, `home --no-relay` (mDNS stays), `home --no-lan`, `relay-check --relay` (`MNEMOSYNE_RELAY_CA`). No
 migration: computers paired under n0 are paired again. CI: job "Our relay and host (deploy/ours)" and ours-health.yml.
+
+Images in the notes (unreleased, docs/plans/2026-10-26-images-in-notes.md, build order and changes in
+2026-11-04-images-tasks.md, use in docs/api-reference.md "Images in the notes", guest-notes.md, publishing.md): paste,
+drop or `/Image` a picture into the notes; guests too, a phone's camera included. An image is a notes line of kind `image`
+(notes-core `Block::Image`: the caption is the text, a closed `image` mark on the `\n` holds `<sha256>.<webp|jpeg>@<w>x<h>`;
+markdown `![caption](mnemosyne:image/<value>)`; two live values resolve to the first). The bytes live beside the document,
+never in it: services/notes_media.py (`<data_dir>/notes_media/<session>/<sha>.<ext>`, sealed with encryption at rest, a
+`notes_media` row each, `notes_media` bus event) behind `PUT|GET /api/sessions/{id}/notes/media/{sha}`
+(api/routes/notes_media.py, the notes' own access rules). The browser decodes, shrinks to 1600 px and re-encodes
+(src/lib/notes/prepareImage.ts, images.ts; the line goes in at once, the upload runs beside it), the desktop's provider is
+src/lib/app/notesMedia.ts, the guest page's guest/src/media.ts. Guests have only the room socket: guest_format kind MEDIA
+(6, padded to 64 KiB, the plaintext sha in the AAD, stored under an HMAC of the sha), publish-host socket kinds 0x04/0x05 and
+`get_media`, HTTP `/live/{room}/media/{name}` for the owner's bridge, which waits up to 30 s for an upload before a frame
+naming it. Travelling: `SyncSession.media` + `GET /api/sync/media/...`, `SharedMeeting.media` + `GET /api/share/media/...`
+(recipients cannot add images in v1), a publication's third blob kind `image` (kept in `clip_blobs` as `image:<sha>`;
+`PublicationSelection.images`, null = all; left out = `[image: caption]`), Obsidian `attachments/`, `plain_notes` =
+`[image: caption]`. Rules: type by magic number, WebP and JPEG only; the sha is checked on every receive path (upload,
+sync, share, bridge, viewer, guest); `img.src` is set only from the provider's object URLs, never from a `mnemosyne:`
+address; a blob nothing has shown for 7 days is swept (after one more fold of the meeting); caps 2,000,000 bytes an image,
+50,000,000 a meeting, 25,000,000 a room (2 MiB + 128 KiB sealed a blob), 20 MiB per publication with clips.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

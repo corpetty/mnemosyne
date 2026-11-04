@@ -1,6 +1,6 @@
 # Images in the notes: tasks
 
-Status: draft 2026-11-04, nothing built. The design is docs/plans/2026-10-26-images-in-notes.md
+Status: built 2026-11-04, unreleased (branch images-in-notes; changes while building below). Was a draft. The design is docs/plans/2026-10-26-images-in-notes.md
 (Corey's decisions: guests may add images, phone camera included; publications include notes images,
 chosen per image, all on by default; caps 2 MB an image, 50 MB a meeting, 25 MB a guest room). This file
 is the build order, drafted against b82ce4d (branch images-in-notes, origin/main) and checked against the
@@ -59,6 +59,18 @@ Decided while planning (safe defaults; the ones Corey may want to revisit are ma
   what the document references.
 - The backend tells open editors about a new blob with a bus event `{"type":"notes_media","session_id",
   "sha256"}` (hand-written WS type), so a grey box fills in without polling.
+
+## Changed while building
+
+- A publication's images are kept in the row's `clip_blobs` under `image:<sha>` (a clip's key is a quote
+  span, never that): no new column, no `SyncPublication` change.
+- Task 11b (optional) was dropped.
+- The sweep folds a meeting once more before deleting its stale blobs, so a meeting nobody opened keeps its images.
+- `put_media_row` touches the meeting (a new version for library sync) only for a new row.
+- Combining moves the other meeting's images after the notes are joined, before that meeting is deleted.
+- Obsidian attachment tags are 8 hex digits of the sha that are not all digits, so `redact_exports` does not
+  take them for a number.
+- The bridge waits up to 30 s for an upload before it sends a frame that names the image.
 
 ## Corrections to the design (from reading the code)
 

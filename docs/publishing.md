@@ -11,7 +11,7 @@ interface, [api-reference.md](api-reference.md) (Publishing).
 
 A publication is a snapshot of parts of the meeting: the title, date and length, the summary,
 decisions, open questions, action items (with owner, due date, done), chapters, topics, the
-attendees you list, the meeting's live notes, and quotes. Each of those is a tick box; everything
+attendees you list, the meeting's live notes (with the pictures in them), and quotes. Each of those is a tick box; everything
 except the notes and quotes is on by default.
 
 It **never contains the transcript**. The only transcript text in it is the quotes you pick one by
@@ -25,6 +25,10 @@ audio is never in it either, except a short clip for each quote you choose to at
 - **Quotes and clips**: mark a stretch of the meeting; the transcript lines whose middle falls
   inside it become a quote. With "clip", the audio of that stretch (a third of a second of padding either
   side) goes with it. Listen to each clip in the dialog before you publish.
+- **Images**: with the notes ticked, the dialog lists the notes' images, each with a thumbnail and a tick, all
+  ticked. A ticked image is encrypted and published like a clip; one you leave out reads `[image: caption]`
+  to readers. Images and clips share one limit: 20 MiB together (padded to 64 KiB steps); a publish over it is refused. An image is not redacted: text in a
+  screenshot is published as it is, so look at each one. (EXIF and GPS are already removed when an image is added to the notes.)
 - **Names**: as they are, first names only, or "Person 1, Person 2…". The attendees you tick are
   the people listed; anyone of the meeting you do not list is replaced by "Person N" in every
   text (summary, quotes, owners), not only in the attendee list. Speaker labels the diarizer
@@ -61,8 +65,8 @@ through the desktop app's save dialog, or downloads it in a browser.
 
 The link looks like `https://<host>/p/<id>#<key>`. The part after `#` is the key; browsers never
 send it to a server. The page fetches the encrypted copy and decrypts it in the browser
-(WebCrypto): title, date, summary, decisions, questions, action items, chapters, topics, notes and
-the quotes, each with a play button when it has a clip. Readers cannot write, comment or see
+(WebCrypto): title, date, summary, decisions, questions, action items, chapters, topics, notes (with their images)
+and the quotes, each with a play button when it has a clip. Readers cannot write, comment or see
 anything you did not tick. A wrong or shortened key, a deleted publication and an expired one each
 get their own plain message.
 
@@ -70,7 +74,7 @@ get their own plain message.
 
 Whoever serves the copy (this computer, a team server, or a publish host) holds only ciphertext.
 A publish host can see publication ids, the **padded** sizes of the parts (the manifest is rounded
-up to 4 KiB, each clip to 64 KiB), upload, update and expiry times, and the IP address of whoever
+up to 4 KiB, each clip and image to 64 KiB), upload, update and expiry times, and the IP address of whoever
 uploads or opens a link, as any web server does. It cannot see the text, the title, the names, the
 clips or the key, and cannot alter what a reader sees without the reader's browser rejecting it.
 
@@ -113,8 +117,9 @@ travels with the meeting, key included (the computers are one person's; library 
 team servers).
 
 - **Hosted publications** can be updated or unpublished from either computer. A computer without
-  the clip files fetches the sealed clips from the host; a clip that is new needs the audio, which
-  only the recording computer has, so that update answers `409` "The audio is on <name>".
+  the clip files fetches the sealed clips and images from the host. A clip that is new needs the audio, which
+  only the recording computer has, so that update answers `409` "The audio is on <name>". An image that is new needs its bytes: until sync has brought them the update fails
+  with "An image of the notes is not on this computer yet"; leave it out or try again later.
 - **This-computer publications** are served by the computer that made them, and only by it. On
   the other one the meeting shows "served by <name>" with no link, and changing or unpublishing it
   answers `409` "Published from <name>". Do that on the computer that serves it.
