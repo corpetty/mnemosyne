@@ -4,7 +4,9 @@ the WebSocket on 127.0.0.1); the sidecar is the toy `notes doc` of tests/fake_li
 
 import asyncio
 import base64
+import hashlib
 import json
+import struct
 import time
 
 import httpx
@@ -12,10 +14,17 @@ import pytest
 
 from mnemosyne.models.session import AgendaItem, Session
 from mnemosyne.services import guest_format as gf
-from mnemosyne.services import guest_notes, shared_notes
+from mnemosyne.services import guest_notes, notes_media, shared_notes
 from mnemosyne.services import publication_format as pf
 from tests import fake_link
-from tests.fake_guest_room import T_NOTES, T_PRESENCE, FakeRoomHost, GuestClient, routed
+from tests.fake_guest_room import (
+    T_MEDIA_PUT,
+    T_NOTES,
+    T_PRESENCE,
+    FakeRoomHost,
+    GuestClient,
+    routed,
+)
 from tests.fake_link import doc_frame
 
 pytestmark = pytest.mark.anyio
@@ -1723,3 +1732,256 @@ async def test_a_host_room_does_not_keep_the_computer_awake(ctx, host):
     sid = meeting(ctx)
     await started(ctx, host, sid)
     assert not guest_notes.needs_awake(ctx) and awake.reason(ctx) == ""
+
+
+# ---- images of the notes (images task 9) -----------------------------------------------------
+
+
+def webp(w: int = 640, h: int = 480, pad: bytes = b"") -> bytes:
+    """A WebP header (VP8X) notes_media's sniffer and size reader accept."""
+    body = b"VP8X" + struct.pack("<I", 10) + b"\0\0\0\0"
+    body += (w - 1).to_bytes(3, "little") + (h - 1).to_bytes(3, "little") + pad
+    return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WEBP" + body
+
+
+def image_value(data: bytes) -> str:
+    return f"{hashlib.sha256(data).hexdigest()}.webp@640x480"
+
+
+def image_line(data: bytes) -> str:
+    return f"![chart](mnemosyne:image/{image_value(data)})\n"
+
+
+def media_of(row: dict, room, data: bytes) -> bytes | None:
+    """The blob stored in a fake room under `data`'s name, opened with the key; None if absent."""
+    digest = hashlib.sha256(data).hexdigest()
+    env = room.media.get(gf.media_name(row["key"], digest))
+    return None if env is None else gf.unseal_media(row["key"], row["room"], digest, env)
+
+
+async def guest_puts(client: GuestClient, row: dict, data: bytes, sealed: bytes | None = None):
+    """A guest page storing a blob over the socket (0x04 name || envelope), acknowledged."""
+    digest = hashlib.sha256(data).hexdigest()
+    name = gf.media_name(row["key"], digest)
+    env = sealed if sealed is not None else gf.seal_media(row["key"], row["room"], digest, data)
+    await client.send(bytes([T_MEDIA_PUT]) + bytes.fromhex(name) + env)
+    await until(lambda: any(t.get("name") == name and t.get("ok") for t in client.texts()))
+
+
+def guest_frame(row: dict, frame_id: str, text: str) -> bytes:
+    f = frame(frame_id, ["ins", 0, text])
+    return bytes([T_NOTES]) + gf.seal_notes(row["key"], row["room"], "abc", "Ana", f)
+
+
+def kept(ctx, sid: str, data: bytes):
+    return notes_media.path(ctx, sid, hashlib.sha256(data).hexdigest())
+
+
+async def test_a_desktop_image_reaches_both_rooms_sealed_under_its_name(ctx, iroh, mirror):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, iroh, sid)
+    other = guest_notes.bridge_for(ctx, sid, guest_notes.MIRROR)
+    data = webp(pad=b"desk")
+    notes_media.store(ctx, sid, hashlib.sha256(data).hexdigest(), data, by="Corey")
+    (_, l_room), (_, m_room) = iroh.room(), mirror.room()
+    await until(lambda: media_of(row, l_room, data) and media_of(row, m_room, data))
+    assert media_of(row, l_room, data) == media_of(row, m_room, data) == data
+    # The host sees an opaque name, not the sha; each room with its own publisher token.
+    name = gf.media_name(row["key"], hashlib.sha256(data).hexdigest())
+    assert hashlib.sha256(data).hexdigest() not in l_room.media
+    puts = [(h, c) for h in (iroh, mirror) for c in h.calls if c[1].endswith(f"/media/{name}")]
+    assert {c[2]["authorization"] for _, c in puts} == {
+        f"Bearer {row['token']}",
+        f"Bearer {row['mirror_token']}",
+    }
+    assert len(puts) == 2  # once per room
+    # Stored again (or a frame naming it): nothing goes up again.
+    notes_media.store(ctx, sid, hashlib.sha256(data).hexdigest(), data, by="Corey")
+    assert await bridge.upload_media(hashlib.sha256(data).hexdigest())
+    assert await other.upload_media(hashlib.sha256(data).hexdigest())
+    assert len([c for h in (iroh, mirror) for c in h.calls if c[1].endswith(name)]) == 2
+
+
+async def test_an_image_already_in_the_meeting_goes_up_when_the_bridge_starts(ctx, host):
+    sid = meeting(ctx)
+    data = webp(pad=b"before")
+    notes_media.store(ctx, sid, hashlib.sha256(data).hexdigest(), data, by="Corey")
+    row, bridge = await started(ctx, host, sid)
+    _, room = host.room()
+    await until(lambda: media_of(row, room, data))
+    assert media_of(row, room, data) == data
+    # A bridge after a restart puts it again: the room answers 204, nothing changes.
+    await bridge.stop()
+    host.calls.clear()
+    assert await guest_notes.resume(ctx) == 1
+    await until(lambda: any(c[1].endswith("/media/" + next(iter(room.media))) for c in host.calls))
+    assert len(room.media) == 1
+
+
+async def test_the_upload_precedes_the_frame_that_names_it(ctx, host, monkeypatch):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    inner = host.handler
+
+    async def slow(request):
+        if "/media/" in request.url.path:
+            await asyncio.sleep(0.2)
+        return await inner(request)
+
+    ctx.http_transport = httpx.MockTransport(slow)
+    # Stored without the hook (as if its upload had not started): the frame must wait for it.
+    monkeypatch.setattr(notes_media, "ON_STORED", [])
+    data = webp(pad=b"order")
+    notes_media.store(ctx, sid, hashlib.sha256(data).hexdigest(), data, by="Corey")
+    f = frame("o1", ["ins", 0, image_line(data)])
+    shared_notes.accept_frames(ctx, sid, [f], "", "Corey", can_edit=True)
+    _, room = host.room()
+    await until(lambda: notes_in(row, room))
+    name = gf.media_name(row["key"], hashlib.sha256(data).hexdigest())
+    assert notes_in(row, room) == [("", "Corey", f)]
+    seq = next(s for s, e in room.log if gf.unseal(row["key"], row["room"], e)[0] is gf.Kind.NOTES)
+    assert f"media:{name}" in host.order
+    assert host.order.index(f"media:{name}") < host.order.index(f"frame:{seq}")
+
+
+async def test_a_frame_goes_even_when_its_image_did_not(ctx, host, monkeypatch):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    monkeypatch.setattr(notes_media, "ON_STORED", [])
+    data = webp(pad=b"refused")
+    digest = hashlib.sha256(data).hexdigest()
+    notes_media.store(ctx, sid, digest, data, by="Corey")
+    host.status[("PUT", f"media/{gf.media_name(row['key'], digest)}")] = 503
+    f = frame("o1", ["ins", 0, image_line(data)])
+    shared_notes.accept_frames(ctx, sid, [f], "", "Corey", can_edit=True)
+    _, room = host.room()
+    await until(lambda: notes_in(row, room))
+    assert room.media == {} and bridge.running and digest not in bridge.media_uploaded
+    # Tried again on the next occasion (a network failure is not a refusal).
+    del host.status[("PUT", f"media/{gf.media_name(row['key'], digest)}")]
+    assert await bridge.upload_media(digest)
+    assert media_of(row, room, data) == data
+
+
+async def test_a_guests_image_and_frame_make_the_owner_keep_it(ctx, host):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    ana = await guest(host, row)
+    data = webp(pad=b"from Ana")
+    await guest_puts(ana, row, data)
+    await ana.send(guest_frame(row, "g1", image_line(data)))
+    file = await until(lambda: kept(ctx, sid, data))
+    assert notes_media.read(ctx, sid, hashlib.sha256(data).hexdigest()) == data
+    assert file.name.startswith(hashlib.sha256(data).hexdigest())
+    rows = ctx.repo.media_rows(sid)
+    assert [(r["sha256"], r["by"]) for r in rows] == [(hashlib.sha256(data).hexdigest(), "guest")]
+    # Fetched from the room it came from: not put back there.
+    await asyncio.sleep(0.05)
+    assert not [c for c in host.calls if c[0] == "PUT" and "/media/" in c[1]]
+    await ana.close()
+
+
+async def test_a_fold_that_lacks_an_image_fetches_it_from_the_room(ctx, host):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    data = webp(pad=b"pasted")
+    # The line came from the owner's side (a paste), the bytes from a guest afterwards.
+    f = frame("o1", ["ins", 0, image_line(data)])
+    shared_notes.accept_frames(ctx, sid, [f], "", "Corey", can_edit=True)
+    ana = await guest(host, row)
+    await guest_puts(ana, row, data)
+    assert not kept(ctx, sid, data)
+    assert await shared_notes.fold_now(ctx, sid)  # the sidecar's `media` names it
+    await until(lambda: kept(ctx, sid, data))
+    assert notes_media.read(ctx, sid, hashlib.sha256(data).hexdigest()) == data
+    await ana.close()
+
+
+async def test_an_image_landing_after_its_frame_is_fetched_when_the_room_says_so(ctx, host):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    ana = await guest(host, row)
+    data = webp(pad=b"late")
+    digest = hashlib.sha256(data).hexdigest()
+    await ana.send(guest_frame(row, "g1", image_line(data)))
+    # Asked at once, not there yet: wanted.
+    name = gf.media_name(row["key"], digest)
+    await until(lambda: any(c[0] == "GET" and c[1].endswith(name) for c in host.calls))
+    reg = ctx.guest_bridges
+    await until(lambda: (sid, digest) not in reg.media_fetching)
+    assert digest in reg.media_wanted[sid] and not kept(ctx, sid, data)
+    await guest_puts(ana, row, data)  # the room tells the bridge: {"type":"media","name"}
+    await until(lambda: kept(ctx, sid, data))
+    assert digest not in reg.media_wanted[sid]
+    await ana.close()
+
+
+async def test_a_wrong_blob_under_a_name_is_refused(ctx, host):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    ana = await guest(host, row)
+    data, other = webp(pad=b"named"), webp(pad=b"something else")
+    other_sha = hashlib.sha256(other).hexdigest()
+    # `other`, sealed as itself, stored under `data`'s name.
+    await guest_puts(ana, row, data, gf.seal_media(row["key"], row["room"], other_sha, other))
+    await ana.send(guest_frame(row, "g1", image_line(data)))
+    digest = hashlib.sha256(data).hexdigest()
+    await until(lambda: digest in bridge.media_refused)
+    assert not kept(ctx, sid, data) and not kept(ctx, sid, other)
+    assert ctx.repo.media_rows(sid) == []
+    assert bridge.running
+    await ana.close()
+
+
+async def test_caps_refusals_are_logged_and_the_bridge_goes_on(ctx, host, monkeypatch, caplog):
+    sid = meeting(ctx)
+    row, bridge = await started(ctx, host, sid)
+    # Our image, the room full: refused once, not tried again, its frame still goes.
+    host.media_total = 10
+    data = webp(pad=b"big")
+    digest = hashlib.sha256(data).hexdigest()
+    notes_media.store(ctx, sid, digest, data, by="Corey")
+    await until(lambda: digest in bridge.media_refused)
+    f = frame("o1", ["ins", 0, image_line(data)])
+    shared_notes.accept_frames(ctx, sid, [f], "", "Corey", can_edit=True)
+    _, room = host.room()
+    await until(lambda: notes_in(row, room))
+    puts = [c for c in host.calls if c[0] == "PUT" and "/media/" in c[1]]
+    assert len(puts) == 1 and room.media == {}
+    assert "room_media_full" in caplog.text
+    # A guest's image over the meeting's cap: not kept, logged, not fetched again.
+    host.media_total = 25_000_000
+    monkeypatch.setattr(notes_media, "MEETING_MEDIA_MAX_BYTES", len(data) + 10)
+    ana = await guest(host, row)
+    theirs = webp(pad=b"Ana's, too much")
+    await guest_puts(ana, row, theirs)
+    await ana.send(guest_frame(row, "g1", image_line(theirs)))
+    their_sha = hashlib.sha256(theirs).hexdigest()
+    await until(lambda: their_sha in bridge.media_refused)
+    assert not kept(ctx, sid, theirs) and "not kept" in caplog.text
+    assert bridge.running and bridge.connected.is_set()
+    await ana.close()
+
+
+async def test_an_old_host_without_media_does_not_stop_the_bridge(ctx, host, caplog):
+    host.media_routes = False
+    sid = meeting(ctx)
+    first = webp(pad=b"one")
+    notes_media.store(ctx, sid, hashlib.sha256(first).hexdigest(), first, by="Corey")
+    row, bridge = await started(ctx, host, sid)
+    await until(lambda: bridge.media_off)
+    second = webp(pad=b"two")
+    notes_media.store(ctx, sid, hashlib.sha256(second).hexdigest(), second, by="Corey")
+    f = frame("o1", ["ins", 0, image_line(second)])
+    shared_notes.accept_frames(ctx, sid, [f], "", "Corey", can_edit=True)
+    _, room = host.room()
+    await until(lambda: notes_in(row, room))
+    assert bridge.running and bridge.connected.is_set()
+    assert caplog.text.count("takes no images") == 1
+    puts = [c for c in host.calls if c[0] == "PUT" and "/media/" in c[1]]
+    assert len(puts) == 1  # the first 404 turned images off for this room
+    # Guests' frames still come in.
+    ana = await guest(host, row)
+    await ana.send(guest_frame(row, "g1", "from Ana\n"))
+    await until(lambda: [o for o in ctx.repo.notes_ops(sid) if o["author_id"] == "guest:abc"])
+    await ana.close()
