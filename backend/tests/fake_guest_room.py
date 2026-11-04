@@ -9,16 +9,24 @@ ended/deleted) shared by two faces:
   existing), `PUT /live/{room}/snapshot` (X-Room-Since required, 409 since_ahead or
   snapshot_stale; the log up to it is dropped), `POST /live/{room}/end` (optional
   X-Room-Expires; connected clients hear `{"type":"ended"}`), `DELETE /live/{room}` (clients
-  closed with 4410; 410 on everything afterwards). Every
+  closed with 4410; 410 on everything afterwards), `PUT /live/{room}/media/{name}` (publisher
+  token; 201 new, 204 already there and kept as it is, 413 `media_too_large` over `media_max` /
+  `room_media_full` over `media_total`, 409 `room_ended`; every client of the room hears
+  `{"type":"media","name"}`) and `GET /live/{room}/media/{name}` (200 the sealed blob, 404
+  `media_missing`). `media_routes = False` plays an old host without them (404). Every
   request is in `calls` as (method, path, headers, body).
 - a real `websockets` server (`await host.start()`, `host.url`) for `GET /live/{room}`: the join
   message, `welcome`, the snapshot (0x03) when `since` is older, the log after `since` (0x01),
   then live: a client's 0x01 is given the next seq, logged, relayed to the OTHER clients and
-  acknowledged to the sender; 0x02 (presence) is relayed, not logged; "ping" gets "pong". Close
-  codes 4401 (bad token), 4403 (frames to an ended room), 4410 (no such room or deleted),
-  4429 (`room.full`: at its connection cap). Like the real host, an unknown, deleted or full room
-  is upgraded and then closed at once (a browser cannot see an HTTP status); an empty or
-  unknown frame gets `{"type":"error","code":"bad_frame"}`. `joins` lists (room, since).
+  acknowledged to the sender; 0x02 (presence) is relayed, not logged; 0x04 `name(32) || envelope`
+  stores a blob (the sender hears `{"type":"media","name","ok":true}`, the others
+  `{"type":"media","name"}`); the text `{"type":"get_media","name"}` is answered `0x05 ||
+  name(32) || envelope` or `{"type":"error","code":"media_missing","name"}`; "ping" gets
+  "pong". Close codes 4401 (bad token), 4403 (frames to an ended room), 4410 (no such room or
+  deleted), 4429 (`room.full`: at its connection cap). Like the real host, an unknown, deleted
+  or full room is upgraded and then closed at once (a browser cannot see an HTTP status); an
+  empty or unknown frame gets `{"type":"error","code":"bad_frame"}`. `joins` lists (room,
+  since); `order` lists "media:<name>" and "frame:<seq>" as blobs and frames land, in order.
 
 `GuestClient` is a guest page's socket for tests: it records everything it receives. `routed`
 puts several hosts behind one transport (an iroh room's loopback host and its mirror).
@@ -28,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 
 import httpx
@@ -36,6 +45,8 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 T_NOTES, T_PRESENCE, T_SNAPSHOT = 0x01, 0x02, 0x03
+T_MEDIA_PUT, T_MEDIA = 0x04, 0x05
+_NAME = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass
@@ -52,6 +63,7 @@ class FakeRoom:
     deleted: bool = False
     full: bool = False  # refused with 4429, as a room at its connection cap is
     clients: set = field(default_factory=set)
+    media: dict[str, bytes] = field(default_factory=dict)  # name (64 hex) -> sealed blob
 
 
 class FakeRoomHost:
@@ -60,6 +72,10 @@ class FakeRoomHost:
         self.calls: list[tuple[str, str, dict, bytes]] = []
         self.joins: list[tuple[str, int]] = []
         self.status: dict[tuple[str, str], int] = {}  # (method, suffix) -> forced status
+        self.order: list[str] = []  # "media:<name>" / "frame:<seq>" as they land
+        self.media_routes = True  # False: an old host, 404 on the media routes
+        self.media_max = 2_000_000 + 65_536 + 1024  # a sealed blob
+        self.media_total = 25_000_000  # a room's sealed blobs
         self._server = None
         self.url = ""
 
@@ -154,7 +170,44 @@ class FakeRoomHost:
             for ws in list(room.clients):
                 await ws.close(4410)
             return httpx.Response(204)
+        if len(parts) == 4 and parts[2] == "media" and request.method in ("PUT", "GET"):
+            if not self.media_routes:
+                return httpx.Response(404, json={"error": "not_found"})
+            name = parts[3]
+            if not _NAME.match(name):
+                return httpx.Response(400, json={"error": "bad_name"})
+            if request.method == "GET":
+                if name not in room.media:
+                    return httpx.Response(404, json={"error": "media_missing"})
+                return httpx.Response(200, content=room.media[name])
+            if room.ended:
+                return httpx.Response(409, json={"error": "room_ended"})
+            if name in room.media:
+                return httpx.Response(204)
+            code = self._put_media(room, name, body)
+            if code:
+                return httpx.Response(413, json={"error": code})
+            await self._media_landed(room, name, None)
+            return httpx.Response(201)
         return httpx.Response(405)
+
+    def _put_media(self, room: FakeRoom, name: str, env: bytes) -> str:
+        """Store a blob unless one is there; the refusal's code, or "" when it is kept."""
+        if name in room.media:
+            return ""
+        if len(env) > self.media_max:
+            return "media_too_large"
+        if sum(len(b) for b in room.media.values()) + len(env) > self.media_total:
+            return "room_media_full"
+        room.media[name] = env
+        return ""
+
+    async def _media_landed(self, room: FakeRoom, name: str, sender) -> None:
+        self.order.append(f"media:{name}")
+        told = json.dumps({"type": "media", "name": name})
+        for ws in list(room.clients):
+            if ws is not sender:
+                await _send(ws, told)
 
     # ---- WebSocket --------------------------------------------------------------------------
 
@@ -203,6 +256,19 @@ class FakeRoomHost:
                 if isinstance(msg, str):
                     if msg == "ping":
                         await ws.send("pong")
+                    elif msg.startswith("{"):
+                        await self._get_media(ws, room, msg)
+                    continue
+                if msg and msg[0] == T_MEDIA_PUT and len(msg) > 33:
+                    name = bytes(msg[1:33]).hex()
+                    had = name in room.media
+                    code = self._put_media(room, name, bytes(msg[33:]))
+                    if code:
+                        await ws.send(json.dumps({"type": "error", "code": code, "name": name}))
+                        continue
+                    await ws.send(json.dumps({"type": "media", "name": name, "ok": True}))
+                    if not had:
+                        await self._media_landed(room, name, ws)
                     continue
                 if not msg or msg[0] not in (T_NOTES, T_PRESENCE):
                     await ws.send(json.dumps({"type": "error", "code": "bad_frame"}))
@@ -215,6 +281,7 @@ class FakeRoomHost:
                     seq = room.seq
                     env = bytes(msg[1:])
                     room.log.append((seq, env))
+                    self.order.append(f"frame:{seq}")
                     out = bytes([T_NOTES]) + seq.to_bytes(8, "big") + env
                     # The ack goes out as the frame passes the relay, in seq order.
                     for other in list(room.clients):
@@ -231,6 +298,24 @@ class FakeRoomHost:
         finally:
             room.clients.discard(ws)
             await self._count(room)
+
+    async def _get_media(self, ws, room: FakeRoom, text: str) -> None:
+        try:
+            req = json.loads(text)
+        except ValueError:
+            req = None
+        name = req.get("name") if isinstance(req, dict) else None
+        if (
+            not isinstance(req, dict)
+            or req.get("type") != "get_media"
+            or not _NAME.match(str(name or ""))
+        ):
+            await ws.send(json.dumps({"type": "error", "code": "bad_frame"}))
+            return
+        if name not in room.media:
+            await ws.send(json.dumps({"type": "error", "code": "media_missing", "name": name}))
+            return
+        await ws.send(bytes([T_MEDIA]) + bytes.fromhex(name) + room.media[name])
 
     async def _count(self, room: FakeRoom) -> None:
         msg = json.dumps({"type": "count", "present": len(room.clients)})

@@ -24,7 +24,19 @@ per live room (`Bridge`):
   `guest_caret` messages; the hidden member is a presence tap, and each owner-side member of the
   notes room goes to the room as PRESENCE gid "o:<member key>" (coalesced to one per 150 ms, a
   heartbeat every 10 s, `gone` when it leaves) beside the "" owner heartbeat; a guest's PRESENCE
-  heard in one of the meeting's rooms is forwarded byte for byte into the others.
+  heard in one of the meeting's rooms is forwarded byte for byte into the others;
+- images of the notes (docs/plans/2026-11-04-images-tasks.md, task 9): every blob of the meeting
+  (services/notes_media.py) is sealed (`gf.seal_media`) and PUT to each room under its HMAC name
+  (`gf.media_name`) once per bridge run (`Bridge.media_uploaded`): all of them when the bridge
+  starts or the notes reload, a new one when it is stored (`notes_media.ON_STORED`), and before
+  an owner-side frame that names it goes out (`_convert` scans the frame for image values and
+  waits for the upload, at most MEDIA_WAIT: a frame whose blob did not go up still goes, guests
+  show it missing until it does). A host without the media routes (404, C22) is logged once and
+  sent none. Guests' blobs come the other way (`_fetch_media`): a fold that lacks one
+  (`notes_media.MISSING_HOOKS`), a guest frame that names one, or the room's
+  `{"type":"media","name"}` for a name the meeting is waiting for, GETs it from the meeting's
+  rooms, opens it with its sha (a wrong blob under a name does not open) and stores it
+  (`notes_media.store`, `by="guest"`, its caps). A fold asks again at most every MEDIA_RETRY.
 
 The room protocol (HTTP for the publisher, a WebSocket for everyone) is in the Phase 9 task
 notes (docs/plans/2026-10-24-phase-9-tasks.md, G6) and publish-host/src/rooms.rs.
@@ -66,7 +78,7 @@ from urllib.parse import urlsplit
 
 from .. import access
 from ..models.comment import Comment, CommentCreate
-from . import comments, history, ours, shared_notes
+from . import comments, history, notes_media, ours, shared_notes
 from . import guest_format as gf
 from . import publication_format as pf
 from . import tunnel as tunnels
@@ -103,6 +115,10 @@ JOIN_TIMEOUT = 15.0  # seconds to wait for `welcome`
 RETRY_DELAY = 1.0  # before the one retry of an HTTP request to the host
 MAX_MESSAGE = 16 * 1024 * 1024  # a 0x03 snapshot can be 8 MiB, a notes frame 2 MiB
 MAX_ENVELOPE = 2 * 1024 * 1024 + 1024  # what the host takes in one frame (G6)
+MEDIA_WAIT = 30.0  # seconds a frame waits for the upload of an image it names
+MEDIA_RETRY = 30.0  # seconds before a fold asks the rooms again for an image they lacked
+# An image mark's value inside a frame's bytes (an 0xAF artifact carries it as text).
+_IMAGE_IN_FRAME = re.compile(rb"(?<![0-9a-f])([0-9a-f]{64})\.(?:webp|jpeg)@[1-9][0-9]{0,4}x[1-9]")
 
 T_NOTES, T_PRESENCE, T_SNAPSHOT = 0x01, 0x02, 0x03
 CLOSE_BAD_TOKEN, CLOSE_ENDED, CLOSE_DELETED, CLOSE_TOO_LARGE = 4401, 4403, 4410, 4413
@@ -650,6 +666,11 @@ class _Registry:
     tunnel_port: int = 0
     tunnel_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     tunnel_watch: asyncio.Task | None = None
+    # Guests' images the meeting lacks (sha by session), when each was last asked for, and the
+    # fetches running now ((session, sha)).
+    media_wanted: dict[str, set[str]] = field(default_factory=dict)
+    media_asked: dict[tuple[str, str], float] = field(default_factory=dict)
+    media_fetching: set[tuple[str, str]] = field(default_factory=set)
 
     def lock(self, session_id: str) -> asyncio.Lock:
         return self.locks.setdefault(session_id, asyncio.Lock())
@@ -792,6 +813,12 @@ class Bridge:
         self._last_auto_check = -1e18
         self._snap_lock = asyncio.Lock()
         self._sub: asyncio.Queue | None = None
+        # Images (by sha) this room has: put by this bridge run or fetched from it.
+        self.media_uploaded: set[str] = set()
+        # Images this room refused (too large, full) or holds wrong: not tried again this run.
+        self.media_refused: set[str] = set()
+        self.media_off = False  # the host has no media routes (an old one): none sent
+        self._uploads: dict[str, asyncio.Task] = {}
 
     # -- life --
 
@@ -827,12 +854,21 @@ class Bridge:
             if o.timer is not None:
                 o.timer.cancel()
         self.owners.clear()
+        for task in self._uploads.values():
+            if task is not asyncio.current_task():
+                task.cancel()
+        self._uploads.clear()
         if self.guests:
             self.guests.clear()
             self._announce_guests()
 
     async def _run(self, initial_snapshot: bool) -> None:
-        helpers = [asyncio.create_task(self._convert()), asyncio.create_task(self._events())]
+        helpers = [
+            asyncio.create_task(self._convert()),
+            asyncio.create_task(self._events()),
+            # Beside the rest: a frame that names an image waits for its upload (`_convert`).
+            asyncio.create_task(self.upload_all()),
+        ]
         try:
             self.send_meta(force=True)
             if initial_snapshot:
@@ -1018,6 +1054,8 @@ class Bridge:
             self._advance(msg.get("seq"))
         elif kind == "count":
             self.present_count = int(msg.get("present") or 0)
+        elif kind == "media":
+            self._media_landed(str(msg.get("name") or ""))
         elif kind == "ended":
             await self._host_ended(msg.get("expires"), msg.get("ended_at"))
             return True
@@ -1090,6 +1128,10 @@ class Bridge:
             logger.info("Guest notes of %s: a guest frame was refused: %s", self.session_id, e)
             return
         self.dirty = True
+        # An image the guest put in: fetched now, not at the next fold (the fetch skips one
+        # that is here already).
+        if shas := _image_shas(frame):
+            _want_media(self.app, self.session_id, shas, force=True)
 
     async def _on_comment(self, obj: dict) -> None:
         gid = str(obj.get("gid") or "")
@@ -1326,13 +1368,19 @@ class Bridge:
                         "Guest notes of %s: presence failed", self.session_id, exc_info=True
                     )
             elif kind == "bytes":
-                env = gf.seal_notes(self.key, self.room, "", self._owner, bytes(data))
+                frame = bytes(data)
+                # The images it names reach the room first (waited for in order: the frames
+                # behind it wait too, so none overtakes it).
+                for sha in _image_shas(frame):
+                    await self.upload_media(sha)
+                env = gf.seal_notes(self.key, self.room, "", self._owner, frame)
                 self._queue(T_NOTES, env)
                 self.dirty = True
             elif kind == "close":
                 shared_notes.detach(self.app, self.session_id, self.member)
                 shared_notes.attach(self.app, self.session_id, self.member)
                 self.dirty = True
+                self._spawn_upload_all()  # the new document may show images that came with it
                 await self.snapshot()
 
     def send_meta(self, *, force: bool = False) -> None:
@@ -1383,6 +1431,120 @@ class Bridge:
                 return False
             self._last_snapshot = time.monotonic()
             return True
+
+    # -- images --
+
+    def _upload_task(self, sha: str) -> asyncio.Task | None:
+        """The upload of one image to this room: the running one, or a new one; None when there
+        is nothing to do (the room has it, refused it, takes none, or the bridge stopped)."""
+        if (
+            not self.running
+            or self.media_off
+            or sha in self.media_uploaded
+            or sha in self.media_refused
+        ):
+            return None
+        task = self._uploads.get(sha)
+        if task is None or task.done():
+            task = _spawn(self.app, self._upload(sha))
+            self._uploads[sha] = task
+
+            def done(t: asyncio.Task, sha: str = sha) -> None:
+                if self._uploads.get(sha) is t:
+                    del self._uploads[sha]
+
+            task.add_done_callback(done)
+        return task
+
+    async def upload_media(self, sha: str) -> bool:
+        """Put the meeting's image `sha` into this room, if it is not there yet; waits at most
+        MEDIA_WAIT (the upload goes on). True when the room has it. Never raises."""
+        task = self._upload_task(sha)
+        if task is None:
+            return sha in self.media_uploaded
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), MEDIA_WAIT)
+        except TimeoutError:
+            logger.info("Guest notes of %s: an image is still going up", self.session_id)
+            return False
+        except asyncio.CancelledError:
+            me = asyncio.current_task()
+            if me is not None and me.cancelling():
+                raise
+            return False  # the upload was cancelled (the bridge stopped), not this caller
+
+    async def upload_all(self) -> None:
+        """Every image of the meeting that is here into this room, one at a time (at a start or
+        a reload). Never raises."""
+        try:
+            shas = await asyncio.to_thread(_local_media, self.app, self.session_id)
+        except Exception:
+            logger.warning("Guest notes of %s: images not listed", self.session_id, exc_info=True)
+            return
+        for sha in shas:
+            if not self.running or self.media_off:
+                return
+            await self.upload_media(sha)
+
+    def _spawn_upload_all(self) -> None:
+        _spawn(self.app, self.upload_all())
+
+    async def _upload(self, sha: str) -> bool:
+        """Seal and PUT one image (201 new, 204 there already: both fine). Never raises."""
+        try:
+            data = await asyncio.to_thread(notes_media.read, self.app, self.session_id, sha)
+        except FileNotFoundError:
+            return False  # not here (yet): its store brings it (ON_STORED)
+        except (PermissionError, OSError, ValueError) as e:
+            logger.warning("Guest notes of %s: an image not readable: %s", self.session_id, e)
+            return False
+        try:
+            env = await asyncio.to_thread(gf.seal_media, self.key, self.room, sha, data)
+        except gf.GuestFormatError as e:
+            logger.warning("Guest notes of %s: an image not sealed: %s", self.session_id, e)
+            self.media_refused.add(sha)
+            return False
+        name = gf.media_name(self.key, sha)
+        try:
+            resp = await _call(
+                self.app, self.target, "PUT", f"/live/{self.room}/media/{name}", content=env
+            )
+        except GuestNotesError as e:
+            logger.info("Guest notes of %s: an image not sent: %s", self.session_id, e)
+            return False
+        status = resp.status_code
+        if status in (200, 201, 204):
+            self.media_uploaded.add(sha)
+            return True
+        code = str(_body(resp).get("error") or "")
+        if status == 404:  # a host without the media routes (C22): guests see "missing"
+            if not self.media_off:
+                self.media_off = True
+                logger.warning(
+                    "Guest notes of %s: the %s host takes no images (it may need an update)",
+                    self.session_id,
+                    self.target.kind,
+                )
+            return False
+        if status == 413:
+            self.media_refused.add(sha)
+        logger.warning(
+            "Guest notes of %s: the %s room did not take an image: %s %s",
+            self.session_id,
+            self.target.kind,
+            status,
+            code,
+        )
+        return False
+
+    def _media_landed(self, name: str) -> None:
+        """The room says a blob landed (`{"type":"media","name"}`): fetched at once when it is
+        an image the meeting is waiting for."""
+        reg = _registry(self.app)
+        for sha in list(reg.media_wanted.get(self.session_id, ())):
+            if gf.media_name(self.key, sha) == name:
+                _spawn(self.app, _fetch_media(self.app, self.session_id, [sha], only=self))
+                return
 
     # -- housekeeping --
 
@@ -1484,6 +1646,160 @@ def _seal(app: AppContext, session_id: str, reason: str) -> None:
     from .records import seal_later
 
     seal_later(app, session_id, reason)
+
+
+# ---- images of the notes ----------------------------------------------------------------------
+
+
+def _image_shas(frame: bytes) -> list[str]:
+    """The shas of the image values a notes frame carries, distinct, in order."""
+    return list(dict.fromkeys(m[1].decode("ascii") for m in _IMAGE_IN_FRAME.finditer(frame)))
+
+
+def _local_media(app: AppContext, session_id: str) -> list[str]:
+    """The meeting's images whose bytes are here, oldest first. Blocking (the database)."""
+    return [
+        r["sha256"]
+        for r in app.repo.media_rows(session_id)
+        if notes_media.path(app, session_id, r["sha256"]) is not None
+    ]
+
+
+def _media_stored(app: AppContext, session_id: str, info: notes_media.MediaInfo) -> None:
+    """`notes_media.ON_STORED` (from the storing thread): the meeting's running bridges put the
+    new image into their rooms."""
+    if getattr(app, "guest_bridges", None) is None:
+        return
+    shared_notes._on_loop(app, _upload_stored, app, session_id, info.sha256)
+
+
+def _upload_stored(app: AppContext, session_id: str, sha: str) -> None:
+    reg = app.guest_bridges
+    if reg is None:
+        return
+    reg.media_wanted.get(session_id, set()).discard(sha)
+    try:
+        for b in bridges_of(app, session_id):
+            b._upload_task(sha)
+    except RuntimeError:  # no event loop (the hub has none yet): no bridge runs either
+        logger.info("Guest notes of %s: an image not sent (no event loop)", session_id)
+
+
+def _media_missing(app: AppContext, session_id: str, values: list[str]) -> None:
+    """`notes_media.MISSING_HOOKS` (inside a fold, its lock held, any thread): a meeting with a
+    live room asks its rooms for the images it lacks. Only notes and schedules."""
+    reg = getattr(app, "guest_bridges", None)
+    if reg is None or not any(k[0] == session_id for k in list(reg.bridges)):
+        return
+    shas = [p[0] for v in values if (p := notes_media.parse_value(v)) is not None]
+    if shas:
+        _want_media(app, session_id, shas)
+
+
+def _want_media(app: AppContext, session_id: str, shas: list[str], *, force: bool = False) -> None:
+    """Note the images as wanted (a room's `media` broadcast for one fetches it at once) and
+    fetch them from the meeting's rooms: each at most once per MEDIA_RETRY unless `force` (a
+    guest frame that names it). From any thread."""
+    reg = getattr(app, "guest_bridges", None)
+    if reg is None:
+        return
+    now = time.monotonic()
+    reg.media_asked = {k: t for k, t in reg.media_asked.items() if now - t < MEDIA_RETRY}
+    wanted = reg.media_wanted.setdefault(session_id, set())
+    due = []
+    for sha in dict.fromkeys(shas):
+        wanted.add(sha)
+        if force or (session_id, sha) not in reg.media_asked:
+            reg.media_asked[(session_id, sha)] = now
+            due.append(sha)
+    if due:
+        shared_notes._on_loop(app, _spawn_fetch, app, session_id, due)
+
+
+def _spawn_fetch(app: AppContext, session_id: str, shas: list[str]) -> None:
+    try:
+        _spawn(app, _fetch_media(app, session_id, shas))
+    except RuntimeError:  # no event loop: the next fold asks again
+        logger.info("Guest notes of %s: images not fetched (no event loop)", session_id)
+
+
+async def _fetch_media(
+    app: AppContext, session_id: str, shas: list[str], only: Bridge | None = None
+) -> None:
+    """Fetch guests' images from the meeting's rooms (or `only` one) and store them. Never
+    raises: what no room has stays wanted (the broadcast, or a fold after MEDIA_RETRY, asks
+    again)."""
+    reg = _registry(app)
+    for sha in shas:
+        key = (session_id, sha)
+        if key in reg.media_fetching:
+            continue
+        reg.media_fetching.add(key)
+        try:
+            bridges = [only] if only is not None else bridges_of(app, session_id)
+            if await _fetch_one(app, session_id, sha, bridges):
+                reg.media_wanted.get(session_id, set()).discard(sha)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Guest notes of %s: an image fetch failed", session_id, exc_info=True)
+        finally:
+            reg.media_fetching.discard(key)
+
+
+def _store_guest_media(app: AppContext, session_id: str, sha: str, data: bytes) -> None:
+    with shared_notes.unrestricted():
+        notes_media.store(app, session_id, sha, data, by="guest")
+
+
+async def _fetch_one(app: AppContext, session_id: str, sha: str, bridges: list[Bridge]) -> bool:
+    """One image from the first room that has it, opened with its sha and stored. True when it
+    is here now or will never be (refused by the caps: logged)."""
+    if await asyncio.to_thread(notes_media.path, app, session_id, sha) is not None:
+        return True
+    for b in bridges:
+        if not b.running or b.media_off or sha in b.media_refused:
+            continue
+        name = gf.media_name(b.key, sha)
+        try:
+            resp = await _call(app, b.target, "GET", f"/live/{b.room}/media/{name}")
+        except GuestNotesError as e:
+            logger.info("Guest notes of %s: an image not fetched: %s", session_id, e)
+            continue
+        if resp.status_code != 200:  # 404: not there (yet), or an old host
+            continue
+        try:
+            data = await asyncio.to_thread(gf.unseal_media, b.key, b.room, sha, resp.content)
+        except gf.GuestFormatError as e:
+            # A wrong blob under the name (names are never replaced): not from this room again.
+            logger.warning(
+                "Guest notes of %s: an image in the %s room did not open: %s",
+                session_id,
+                b.target.kind,
+                e,
+            )
+            b.media_refused.add(sha)
+            continue
+        b.media_uploaded.add(sha)  # the room has it: not put back there when it is stored
+        try:
+            await asyncio.to_thread(_store_guest_media, app, session_id, sha, data)
+        except notes_media.MediaError as e:
+            logger.warning("Guest notes of %s: a guest's image not kept: %s", session_id, e)
+            for other in bridges_of(app, session_id):
+                other.media_refused.add(sha)  # the caps: not fetched again this run
+            return True
+        return True
+    return False
+
+
+def _register_media_hooks() -> None:
+    if _media_missing not in notes_media.MISSING_HOOKS:
+        notes_media.MISSING_HOOKS.append(_media_missing)
+    if _media_stored not in notes_media.ON_STORED:
+        notes_media.ON_STORED.append(_media_stored)
+
+
+_register_media_hooks()
 
 
 # ---- the owner's actions ----------------------------------------------------------------------
