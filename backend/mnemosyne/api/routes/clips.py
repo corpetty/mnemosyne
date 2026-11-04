@@ -68,6 +68,15 @@ async def make_quote(session_id: str, request: ClipRequest, ctx: AppContext = De
     return Quote(text=text, clip=clip)
 
 
+def _require(ctx: AppContext, session_id: str):
+    """The meeting, with its audio here; 404 when it is unknown or hidden from the caller."""
+    session = ctx.sessions.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    require_local_audio(ctx, session)
+    return session
+
+
 def _clip_path(ctx: AppContext, session_id: str, clip_id: str) -> Path:
     if not CLIP_ID.match(clip_id):
         raise HTTPException(status_code=404, detail="Clip not found")
@@ -80,12 +89,10 @@ def _clip_path(ctx: AppContext, session_id: str, clip_id: str) -> Path:
 
 @router.get("/{session_id}/clips/{clip_id}")
 async def get_clip(session_id: str, clip_id: str, ctx: AppContext = Depends(get_ctx)):
-    session = ctx.sessions.get_session(session_id)
-    if session is not None:
-        require_local_audio(ctx, session)
+    session = _require(ctx, session_id)
     path = _clip_path(ctx, session_id, clip_id)
     first = int(clip_id.split("-")[0])
-    if session is None or first >= len(session.transcript):
+    if first >= len(session.transcript):
         name = path.name
     else:
         name = clip_filename(session, session.transcript[first].start)
@@ -115,9 +122,7 @@ async def save_clip(
     computer: in server mode the path would be on the server."""
     if request.client is None or request.client.host not in ("127.0.0.1", "::1", "testclient"):
         raise HTTPException(status_code=403, detail="Saving to a path only works on this computer")
-    session = ctx.sessions.get_session(session_id)
-    if session is not None:
-        require_local_audio(ctx, session)
+    _require(ctx, session_id)
     source = _clip_path(ctx, session_id, clip_id)
     target = Path(body.path).expanduser()
     if not target.parent.is_dir():

@@ -5,7 +5,10 @@ import subprocess
 from datetime import datetime
 
 import pytest
+from fastapi.testclient import TestClient
 
+from mnemosyne import access
+from mnemosyne.api.app import create_app
 from mnemosyne.models.session import Session
 from mnemosyne.models.transcript import TranscriptSegment
 
@@ -79,3 +82,33 @@ def test_quote_without_audio_and_bad_ranges(client, ctx, tmp_path):
         assert r.status_code == 400
     assert client.get(f"/api/sessions/{s.id}/clips/..%2Fmixed").status_code == 404
     assert client.get(f"/api/sessions/{s.id}/clips/0-0").status_code == 404
+
+
+def test_a_hidden_meeting_has_no_clips(settings, keystore, tmp_path):
+    settings.team_mode = True
+    app = create_app(settings, keystore=keystore)
+    ctx = app.state.ctx
+    people = {}
+    for name in ("Ann", "Bob"):
+        user = ctx.users.add(name, f"{name.lower()}@team.test", "member")
+        code, _ = ctx.users.invite(user.id)
+        people[name] = (user, {"Authorization": f"Bearer {ctx.users.redeem(code, 'test')[1]}"})
+    ann = people["Ann"][0]
+    reset = access.current.set(access.Principal(ann.id, ann.name, ann.role))
+    try:
+        sid = _session(ctx, tmp_path, audio=False).id
+    finally:
+        access.current.reset(reset)
+    clips = ctx.settings.recordings_dir / sid / "clips"
+    clips.mkdir(parents=True)
+    (clips / "0-1.ogg").write_bytes(b"OggS not really")
+    with TestClient(app) as client:
+        url = f"/api/sessions/{sid}/clips/0-1"
+        assert client.get(url, headers=people["Ann"][1]).status_code == 200
+        r = client.get(url, headers=people["Bob"][1])
+        assert (r.status_code, r.json()["detail"]) == (404, "Session not found")
+        target = tmp_path / "saved.ogg"
+        r = client.post(f"{url}/save", json={"path": str(target)}, headers=people["Bob"][1])
+        assert r.status_code == 404 and not target.exists()
+        unknown = client.get("/api/sessions/feedfacecafe/clips/0-1", headers=people["Ann"][1])
+        assert unknown.status_code == 404
