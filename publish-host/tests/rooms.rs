@@ -1250,3 +1250,472 @@ async fn snap(h: &Host, bytes: usize) -> Reply {
     )
     .await
 }
+
+// ---- media: sealed blobs beside the log, over HTTP (the owner's bridge) and the socket (guests) ----
+
+/// A media name of 64 hex characters ending in byte `n`, and its 32 raw bytes.
+fn mname(n: u8) -> String {
+    format!("{n:064x}")
+}
+
+fn mraw(n: u8) -> Vec<u8> {
+    let mut raw = vec![0u8; 32];
+    raw[31] = n;
+    raw
+}
+
+/// `0x04 || name || envelope` / `0x05 || name || envelope`.
+fn media_msg(kind: u8, n: u8, env: &[u8]) -> Vec<u8> {
+    tagged(kind, &[mraw(n), env.to_vec()].concat())
+}
+
+async fn get_media(ws: &mut Ws, n: u8) {
+    let msg = json!({ "type": "get_media", "name": mname(n) }).to_string();
+    ws.send(Message::text(msg)).await.unwrap();
+}
+
+impl Host {
+    async fn put_media(&self, room: &str, n: u8, bytes: &[u8]) -> Reply {
+        self.owner(
+            "PUT",
+            &format!("/live/{room}/media/{}", mname(n)),
+            &[],
+            bytes,
+        )
+        .await
+    }
+
+    async fn media_dir_len(&self, room: &str) -> usize {
+        std::fs::read_dir(self.tmp.path().join("data/rooms").join(room).join("media"))
+            .map_or(0, |rd| rd.count())
+    }
+}
+
+#[tokio::test]
+async fn media_stored_over_http_are_read_over_http_and_the_socket() {
+    let h = host().await;
+    h.create(ROOM).await;
+    let r = h.put_media(ROOM, 1, b"sealed one").await;
+    assert_eq!((r.status, r.body.len()), (StatusCode::CREATED, 0));
+    // Again: kept, 204, not counted twice, and never overwritten.
+    let r = h.put_media(ROOM, 1, b"something else").await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let disk = h.app.rooms.check_guest(ROOM, ROOM_TOKEN).await.unwrap();
+    assert_eq!(disk.media_bytes, 10);
+
+    let uri = format!("/live/{ROOM}/media/{}", mname(1));
+    let r = h.owner("GET", &uri, &[], b"").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.body, b"sealed one");
+    assert_eq!(r.header("content-type"), "application/octet-stream");
+    assert_eq!(r.header("content-length"), "10");
+    assert_eq!(
+        r.header("cache-control"),
+        "public, max-age=31536000, immutable"
+    );
+
+    // Over the socket, the same bytes.
+    let (mut ws, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    get_media(&mut ws, 1).await;
+    assert_eq!(
+        next_but_counts(&mut ws).await,
+        Got::Bin(media_msg(0x05, 1, b"sealed one"))
+    );
+    get_media(&mut ws, 2).await;
+    assert_eq!(
+        next_but_counts(&mut ws).await.json(),
+        json!({ "type": "error", "code": "media_missing", "name": mname(2) })
+    );
+    // A malformed get is a bad_frame; other text is not ours. The connection stays.
+    ws.send(Message::text(r#"{"type":"get_media","name":"zz"}"#))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_but_counts(&mut ws).await.json(),
+        json!({ "type": "error", "code": "bad_frame" })
+    );
+    ws.send(Message::text(r#"{"type":"hello"}"#)).await.unwrap();
+    nothing_more(&mut ws).await;
+
+    // HTTP: the publisher's token, valid names, an existing blob.
+    let r = h.get(&uri).await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (StatusCode::UNAUTHORIZED, "token_required")
+    );
+    let r = h
+        .send(
+            Request::get(&uri)
+                .header("authorization", "Bearer someone-else")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (StatusCode::FORBIDDEN, "wrong_token")
+    );
+    let r = h
+        .send(
+            Request::put(&uri)
+                .header("authorization", "Bearer someone-else")
+                .body(Body::from("x"))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = h
+        .owner("GET", &format!("/live/{ROOM}/media/{}", mname(9)), &[], b"")
+        .await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (StatusCode::NOT_FOUND, "media_missing")
+    );
+    for bad in ["abc", &"A".repeat(64), &"g".repeat(64)] {
+        let r = h
+            .owner("PUT", &format!("/live/{ROOM}/media/{bad}"), &[], b"x")
+            .await;
+        assert_eq!(
+            (r.status, r.code().as_str()),
+            (StatusCode::BAD_REQUEST, "bad_name")
+        );
+        let r = h
+            .owner("GET", &format!("/live/{ROOM}/media/{bad}"), &[], b"")
+            .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    }
+    let r = h.put_media(ROOM, 3, b"").await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (StatusCode::BAD_REQUEST, "empty_media")
+    );
+    let r = h.put_media("fedcba9876543210", 1, b"x").await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_socket_put_is_stored_acknowledged_and_broadcast_to_the_others() {
+    let h = host().await;
+    h.create(ROOM).await;
+    let (mut a, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    let (mut b, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+
+    send_bin(&mut a, media_msg(0x04, 7, b"from a")).await;
+    assert_eq!(
+        next_but_counts(&mut a).await.json(),
+        json!({ "type": "media", "name": mname(7), "ok": true })
+    );
+    assert_eq!(
+        next_but_counts(&mut b).await.json(),
+        json!({ "type": "media", "name": mname(7) })
+    );
+    nothing_more(&mut a).await;
+    nothing_more(&mut b).await;
+
+    // The same bytes over both transports.
+    let r = h
+        .owner("GET", &format!("/live/{ROOM}/media/{}", mname(7)), &[], b"")
+        .await;
+    assert_eq!(r.body, b"from a");
+    get_media(&mut b, 7).await;
+    assert_eq!(
+        next_but_counts(&mut b).await,
+        Got::Bin(media_msg(0x05, 7, b"from a"))
+    );
+
+    // Again: acknowledged, kept, not announced, not counted twice.
+    send_bin(&mut a, media_msg(0x04, 7, b"other")).await;
+    assert_eq!(
+        next_but_counts(&mut a).await.json(),
+        json!({ "type": "media", "name": mname(7), "ok": true })
+    );
+    nothing_more(&mut b).await;
+    let meta = h.app.rooms.check_guest(ROOM, ROOM_TOKEN).await.unwrap();
+    assert_eq!(meta.media_bytes, 6);
+    // Media do not enter the log.
+    assert_eq!(meta.last_seq, 0);
+
+    // The owner's bridge storing one over HTTP tells everyone.
+    assert_eq!(
+        h.put_media(ROOM, 8, b"from the owner").await.status,
+        StatusCode::CREATED
+    );
+    for ws in [&mut a, &mut b] {
+        assert_eq!(
+            next_but_counts(ws).await.json(),
+            json!({ "type": "media", "name": mname(8) })
+        );
+    }
+
+    // Too short for a name, or no envelope.
+    send_bin(&mut a, tagged(0x04, &[1; 10])).await;
+    assert_eq!(
+        next_but_counts(&mut a).await.json(),
+        json!({ "type": "error", "code": "bad_frame" })
+    );
+    send_bin(&mut a, media_msg(0x04, 9, b"")).await;
+    assert_eq!(
+        next_but_counts(&mut a).await.json(),
+        json!({ "type": "error", "code": "empty_media", "name": mname(9) })
+    );
+    nothing_more(&mut a).await;
+}
+
+#[tokio::test]
+async fn media_caps_refuse_with_their_codes() {
+    let h = host_with(|c| {
+        c.room_media_max_bytes = 64;
+        c.room_media_total_bytes = 100;
+    })
+    .await;
+    h.create(ROOM).await;
+    let (mut ws, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+
+    let r = h.put_media(ROOM, 1, &[1; 65]).await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (StatusCode::PAYLOAD_TOO_LARGE, "media_too_large")
+    );
+    // Over the limit by the header alone, too.
+    let r = h
+        .owner(
+            "PUT",
+            &format!("/live/{ROOM}/media/{}", mname(1)),
+            &[("content-length", "65")],
+            &[1; 65],
+        )
+        .await;
+    assert_eq!(r.code(), "media_too_large");
+    send_bin(&mut ws, media_msg(0x04, 1, &[1; 65])).await;
+    assert_eq!(
+        next_but_counts(&mut ws).await.json(),
+        json!({ "type": "error", "code": "media_too_large", "name": mname(1) })
+    );
+
+    assert_eq!(
+        h.put_media(ROOM, 2, &[2; 60]).await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(next_but_counts(&mut ws).await.json()["type"], "media");
+    // 60 + 41 > 100, over HTTP and over the socket; the connection stays.
+    let r = h.put_media(ROOM, 3, &[3; 41]).await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (StatusCode::PAYLOAD_TOO_LARGE, "room_media_full")
+    );
+    send_bin(&mut ws, media_msg(0x04, 3, &[3; 41])).await;
+    assert_eq!(
+        next_but_counts(&mut ws).await.json(),
+        json!({ "type": "error", "code": "room_media_full", "name": mname(3) })
+    );
+    // What fits still goes in, and an existing name is no new weight.
+    send_bin(&mut ws, media_msg(0x04, 3, &[3; 40])).await;
+    assert_eq!(next_but_counts(&mut ws).await.json()["ok"], true);
+    send_bin(&mut ws, media_msg(0x04, 2, &[2; 60])).await;
+    assert_eq!(next_but_counts(&mut ws).await.json()["ok"], true);
+    assert_eq!(h.media_dir_len(ROOM).await, 2);
+    let meta = h.app.rooms.check_guest(ROOM, ROOM_TOKEN).await.unwrap();
+    assert_eq!(meta.media_bytes, 100);
+    nothing_more(&mut ws).await;
+}
+
+#[tokio::test]
+async fn media_in_an_ended_room_are_refused_but_still_read() {
+    let h = host().await;
+    h.create(ROOM).await;
+    h.put_media(ROOM, 1, b"sealed").await;
+    let (mut ws, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    let (mut late, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    let r = h
+        .owner("POST", &format!("/live/{ROOM}/end"), &[], b"")
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(next_but_counts(&mut ws).await.json()["type"], "ended");
+
+    let r = h.put_media(ROOM, 2, b"x").await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (StatusCode::CONFLICT, "room_ended")
+    );
+    get_media(&mut ws, 1).await;
+    assert_eq!(
+        next_but_counts(&mut ws).await,
+        Got::Bin(media_msg(0x05, 1, b"sealed"))
+    );
+    // A socket put is told, then closed like a frame.
+    assert_eq!(next_but_counts(&mut late).await.json()["type"], "ended");
+    send_bin(&mut late, media_msg(0x04, 2, b"x")).await;
+    assert_eq!(
+        next_but_counts(&mut late).await.json(),
+        json!({ "type": "error", "code": "room_ended", "name": mname(2) })
+    );
+    assert_eq!(next(&mut late).await, Got::Closed(4403, "ended".into()));
+}
+
+#[tokio::test]
+async fn deleting_the_room_removes_its_media_folder() {
+    let h = host().await;
+    h.create(ROOM).await;
+    let (mut ws, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    h.put_media(ROOM, 1, b"one").await;
+    assert_eq!(next_but_counts(&mut ws).await.json()["type"], "media");
+    send_bin(&mut ws, media_msg(0x04, 2, b"two")).await;
+    assert_eq!(next_but_counts(&mut ws).await.json()["ok"], true);
+    assert_eq!(h.media_dir_len(ROOM).await, 2);
+    assert_eq!(
+        h.owner("DELETE", &format!("/live/{ROOM}"), &[], b"")
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    assert!(!h
+        .tmp
+        .path()
+        .join("data/rooms")
+        .join(ROOM)
+        .join("media")
+        .exists());
+    let r = h
+        .owner("GET", &format!("/live/{ROOM}/media/{}", mname(1)), &[], b"")
+        .await;
+    assert_eq!(r.status, StatusCode::GONE);
+    // A recreate after the grace starts with no media and no count.
+    h.clock.advance(31 * DAY);
+    h.app.sweep().await;
+    let bearer = format!("Bearer {TOKEN}");
+    let expires = (T0 + 32 * DAY).to_string();
+    let r = h
+        .create_with(
+            ROOM,
+            &[
+                ("authorization", &bearer),
+                ("x-room-token", ROOM_TOKEN),
+                ("x-room-expires", &expires),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    assert_eq!(h.media_dir_len(ROOM).await, 0);
+    assert_eq!(
+        h.app
+            .rooms
+            .check_guest(ROOM, ROOM_TOKEN)
+            .await
+            .unwrap()
+            .media_bytes,
+        0
+    );
+}
+
+#[tokio::test]
+async fn the_write_budget_counts_media_over_both_transports() {
+    let h = host_with(|c| {
+        c.trust_proxy = true;
+        c.write_bytes_per_day = 500;
+    })
+    .await;
+    h.create(ROOM).await;
+    let (mut ws, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    send_bin(&mut ws, media_msg(0x04, 1, &[1u8; 200])).await;
+    assert_eq!(next_but_counts(&mut ws).await.json()["ok"], true);
+
+    assert_eq!(put_as_client(&h, 2).await.status, StatusCode::CREATED);
+    assert_eq!(next_but_counts(&mut ws).await.json()["type"], "media");
+    // A name already stored costs what was sent all the same.
+    let refused = put_as_client(&h, 2).await;
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(refused.code(), "write_budget");
+    assert!(refused.header("retry-after").parse::<u64>().unwrap() > 0);
+
+    send_bin(&mut ws, media_msg(0x04, 3, &[3u8; 200])).await;
+    let err = next(&mut ws).await.json();
+    assert_eq!(
+        (err["type"].as_str(), err["code"].as_str()),
+        (Some("error"), Some("write_budget"))
+    );
+    assert!(err["retry_after"].as_u64().unwrap() > 0, "{err}");
+    assert_eq!(
+        next(&mut ws).await,
+        Got::Closed(4429, "write_budget".into())
+    );
+    assert_eq!(h.media_dir_len(ROOM).await, 2);
+    assert_eq!(h.app.metrics.budget_refusals.load(Relaxed), 2);
+
+    // Reading is free.
+    let (mut ws2, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    get_media(&mut ws2, 1).await;
+    assert!(matches!(next_but_counts(&mut ws2).await, Got::Bin(_)));
+}
+
+#[tokio::test]
+async fn a_burst_of_gets_is_answered_once_each() {
+    // The cap of gets in flight (`media_busy`) is unit-tested in live.rs, where the count is
+    // deterministic; here a burst far over it must still get exactly one answer per get, a blob
+    // or `media_busy`, and the connection must go on.
+    let h = host().await;
+    h.create(ROOM).await;
+    let blob = vec![7u8; 100_000];
+    h.put_media(ROOM, 1, &blob).await;
+    let (mut ws, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    let n = 120;
+    for _ in 0..n {
+        get_media(&mut ws, 1).await;
+    }
+    let (mut blobs, mut busy) = (0, 0);
+    for _ in 0..n {
+        match next_but_counts(&mut ws).await {
+            Got::Bin(b) => {
+                assert_eq!(b, media_msg(0x05, 1, &blob));
+                blobs += 1;
+            }
+            Got::Text(t) => {
+                let v: Value = serde_json::from_str(&t).unwrap();
+                assert_eq!(
+                    v,
+                    json!({ "type": "error", "code": "media_busy", "name": mname(1) })
+                );
+                busy += 1;
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(blobs + busy, n);
+    assert!(blobs >= 1);
+    nothing_more(&mut ws).await;
+    // Once answered, asking again works.
+    get_media(&mut ws, 1).await;
+    assert!(matches!(next_but_counts(&mut ws).await, Got::Bin(_)));
+}
+
+#[tokio::test]
+async fn a_blob_over_the_frame_cap_still_fits_the_socket() {
+    // The message limit follows the larger of the two caps: a media blob bigger than a frame
+    // may be.
+    let h = host_with(|c| {
+        c.room_frame_max_bytes = 64;
+        c.room_media_max_bytes = 200_000;
+        c.room_media_total_bytes = 1_000_000;
+    })
+    .await;
+    h.create(ROOM).await;
+    let (mut ws, _) = h.join(ROOM, ROOM_TOKEN, 0).await;
+    let blob = vec![5u8; 190_000];
+    send_bin(&mut ws, media_msg(0x04, 1, &blob)).await;
+    assert_eq!(next_but_counts(&mut ws).await.json()["ok"], true);
+    get_media(&mut ws, 1).await;
+    assert_eq!(
+        next_but_counts(&mut ws).await,
+        Got::Bin(media_msg(0x05, 1, &blob))
+    );
+}
+
+/// A 200-byte media put over HTTP from client 127.0.0.1 (the sockets' address, behind a proxy).
+async fn put_as_client(h: &Host, n: u8) -> Reply {
+    h.owner(
+        "PUT",
+        &format!("/live/{ROOM}/media/{}", mname(n)),
+        &[("x-forwarded-for", "127.0.0.1")],
+        &[n; 200],
+    )
+    .await
+}

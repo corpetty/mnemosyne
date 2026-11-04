@@ -1,4 +1,4 @@
-//! Guest-notes rooms on disk: `<data_dir>/rooms/<room>/{meta.json, log, snapshot}`.
+//! Guest-notes rooms on disk: `<data_dir>/rooms/<room>/{meta.json, log, snapshot, media/<name>}`.
 //!
 //! A room is a mailbox of sealed frames: the host never holds the key, so it cannot read,
 //! merge or check what it relays. The log is a run of records `seq u64 BE || len u32 BE ||
@@ -13,6 +13,10 @@
 //! `meta.json` is rewritten when the owner acts (create, snapshot, end, delete), by the
 //! sweeper and once its `updated` lags by a minute while frames arrive; after a crash the log's last
 //! record is the truth for `last_seq`, and a half-written record at its end is cut off.
+//!
+//! Media are sealed blobs (notes images) stored whole under `media/`, named by 64 hex characters
+//! the host cannot interpret. A name is written once and never replaced; `meta.media_bytes` sums
+//! them against `room_media_total_bytes`. They are outside the log and the snapshot.
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -62,6 +66,8 @@ pub struct RoomMeta {
     pub snapshot_seq: u64,
     /// The snapshot's size; 0 while there is none.
     pub snapshot_bytes: u64,
+    /// The sum of the sealed media blobs under `media/`.
+    pub media_bytes: u64,
     /// The last frame appended (seqs start at 1).
     pub last_seq: u64,
     /// Set when deleted, expired or idle: a re-create of the id is refused for a while.
@@ -82,6 +88,12 @@ pub enum Event {
     Presence {
         from: u64,
         bytes: Vec<u8>,
+    },
+    /// A media blob landed (`from` as in `Frame`: 0 for the owner's bridge over HTTP). It is
+    /// announced so a guest waiting for it asks at once.
+    Media {
+        from: u64,
+        name: String,
     },
     /// Connections now open.
     Count(usize),
@@ -238,10 +250,12 @@ impl RoomStore {
         let root = cfg.data_dir.join("rooms");
         fs::create_dir_all(&root).await?;
         for id in room_ids(&root).await {
-            if let Ok(mut rd) = fs::read_dir(root.join(&id)).await {
-                while let Ok(Some(e)) = rd.next_entry().await {
-                    if e.file_name().to_string_lossy().starts_with(".tmp-") {
-                        let _ = fs::remove_file(e.path()).await;
+            for dir in [root.join(&id), root.join(&id).join("media")] {
+                if let Ok(mut rd) = fs::read_dir(dir).await {
+                    while let Ok(Some(e)) = rd.next_entry().await {
+                        if e.file_name().to_string_lossy().starts_with(".tmp-") {
+                            let _ = fs::remove_file(e.path()).await;
+                        }
                     }
                 }
             }
@@ -612,6 +626,80 @@ impl RoomStore {
         Ok(())
     }
 
+    /// Stores a sealed media blob under `name` (64 lowercase hex characters, opaque to the
+    /// host) and tells the room's sockets, except connection `from`, that it landed. `true` when
+    /// it was new; a name already stored is kept as it is (never overwritten, not counted again)
+    /// and answers `false`, since a name is derived from the content. Refused: a bad name (400
+    /// `bad_name`), an empty blob (400 `empty_media`), one over `room_media_max_bytes` (413
+    /// `media_too_large`), one that would pass `room_media_total_bytes` (413 `room_media_full`),
+    /// an ended room (409 `room_ended`) and a gone one (410). Who may call is the caller's
+    /// business: the owner's token over HTTP, a joined guest over the socket.
+    pub async fn put_media(
+        &self,
+        room: &str,
+        from: u64,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<bool, ApiError> {
+        if !valid_sha(name) {
+            return Err(ApiError::bad("bad_name"));
+        }
+        if bytes.is_empty() {
+            return Err(ApiError::bad("empty_media"));
+        }
+        if bytes.len() as u64 > self.cfg.room_media_max_bytes {
+            return Err(too_large("media_too_large"));
+        }
+        let state = self.open_room(room).await?;
+        let mut s = state.lock().await;
+        self.check_live(&s.meta)?;
+        if s.meta.ended_at.is_some() {
+            return Err(ApiError::new(StatusCode::CONFLICT, "room_ended"));
+        }
+        let dir = self.dir(room).join("media");
+        let path = dir.join(name);
+        if fs::try_exists(&path).await? {
+            return Ok(false);
+        }
+        let len = bytes.len() as u64;
+        if s.meta.media_bytes + len > self.cfg.room_media_total_bytes {
+            return Err(too_large("room_media_full"));
+        }
+        fs::create_dir_all(&dir).await?;
+        write_atomic(&path, bytes).await?;
+        s.meta.media_bytes += len;
+        if let Err(e) = self.save(room, &mut s).await {
+            // The blob is there; the sum is caught up by the next save.
+            s.dirty = true;
+            tracing::warn!("room {room}: meta.json not written: {e}");
+        }
+        s.send(Event::Media {
+            from,
+            name: name.to_string(),
+        });
+        Ok(true)
+    }
+
+    /// A media blob to read and its length: 404 `media_missing` when the room has none by that
+    /// name, 400 `bad_name`, 410 for a room that is gone. The file stays readable if the room
+    /// is deleted meanwhile (the open handle outlives the unlink).
+    pub async fn open_media(&self, room: &str, name: &str) -> Result<(fs::File, u64), ApiError> {
+        if !valid_sha(name) {
+            return Err(ApiError::bad("bad_name"));
+        }
+        let state = self.open_room(room).await?;
+        let s = state.lock().await;
+        self.check_live(&s.meta)?;
+        let missing = || ApiError::new(StatusCode::NOT_FOUND, "media_missing");
+        let file = match fs::File::open(self.dir(room).join("media").join(name)).await {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(missing()),
+            Err(e) => return Err(e.into()),
+        };
+        let len = file.metadata().await?.len();
+        Ok((file, len))
+    }
+
     /// Stores the owner's snapshot covering frames `..= since_seq` and drops those from the
     /// log. `since_seq` may not pass the last frame (409 `since_ahead`) nor go below the
     /// current snapshot's (409 `snapshot_stale`: those frames are already pruned).
@@ -721,6 +809,7 @@ impl RoomStore {
         self.write_meta(room, &tomb).await?;
         let _ = fs::remove_file(dir.join("log")).await;
         let _ = fs::remove_file(dir.join("snapshot")).await;
+        let _ = fs::remove_dir_all(dir.join("media")).await;
         Ok(tomb)
     }
 
@@ -1414,5 +1503,159 @@ mod tests {
                 .connections(),
             2
         );
+    }
+
+    fn name(n: u8) -> String {
+        format!("{n:064x}")
+    }
+
+    #[tokio::test]
+    async fn media_are_stored_once_and_counted() {
+        let r = rig_with(|c| {
+            c.room_media_max_bytes = 100;
+            c.room_media_total_bytes = 250;
+        })
+        .await;
+        r.create(ROOM).await;
+        let (mut rx, _) = r.rooms.join(ROOM, 0).await.unwrap();
+
+        assert!(r
+            .rooms
+            .put_media(ROOM, 7, &name(1), &[1; 100])
+            .await
+            .unwrap());
+        assert_eq!(
+            r.dir(ROOM)
+                .join("media")
+                .join(name(1))
+                .metadata()
+                .unwrap()
+                .len(),
+            100
+        );
+        // The same name again is kept as it was and does not count twice.
+        assert!(!r
+            .rooms
+            .put_media(ROOM, 7, &name(1), &[9; 50])
+            .await
+            .unwrap());
+        assert_eq!(
+            std::fs::read(r.dir(ROOM).join("media").join(name(1))).unwrap(),
+            vec![1; 100]
+        );
+        assert!(r
+            .rooms
+            .put_media(ROOM, 0, &name(2), &[2; 100])
+            .await
+            .unwrap());
+        let disk: RoomMeta =
+            serde_json::from_slice(&std::fs::read(r.dir(ROOM).join("meta.json")).unwrap()).unwrap();
+        assert_eq!(disk.media_bytes, 200);
+
+        let e = r
+            .rooms
+            .put_media(ROOM, 0, &name(3), &[3; 51])
+            .await
+            .unwrap_err();
+        assert_eq!(code(e), (StatusCode::PAYLOAD_TOO_LARGE, "room_media_full"));
+        let e = r
+            .rooms
+            .put_media(ROOM, 0, &name(3), &[3; 101])
+            .await
+            .unwrap_err();
+        assert_eq!(code(e), (StatusCode::PAYLOAD_TOO_LARGE, "media_too_large"));
+        // An existing name answers false even when the room is full.
+        assert!(r
+            .rooms
+            .put_media(ROOM, 0, &name(3), &[3; 50])
+            .await
+            .unwrap());
+        assert!(!r
+            .rooms
+            .put_media(ROOM, 0, &name(3), &[3; 50])
+            .await
+            .unwrap());
+        let e = r.rooms.put_media(ROOM, 0, &name(4), &[]).await.unwrap_err();
+        assert_eq!(code(e), (StatusCode::BAD_REQUEST, "empty_media"));
+        for bad in ["", "abc", &format!("{:064X}", 0xab), &"g".repeat(64)] {
+            let e = r.rooms.put_media(ROOM, 0, bad, b"x").await.unwrap_err();
+            assert_eq!(code(e), (StatusCode::BAD_REQUEST, "bad_name"), "{bad}");
+        }
+
+        // Only new blobs are announced, with who stored them.
+        let events: Vec<Event> = std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|e| (*e).clone())
+            .collect();
+        let media = |from, n| Event::Media {
+            from,
+            name: name(n),
+        };
+        assert_eq!(events, vec![media(7, 1), media(0, 2), media(0, 3)]);
+
+        // The sum survives a reload.
+        r.unload().await;
+        let e = r
+            .rooms
+            .put_media(ROOM, 0, &name(5), &[5; 1])
+            .await
+            .unwrap_err();
+        assert_eq!(code(e), (StatusCode::PAYLOAD_TOO_LARGE, "room_media_full"));
+    }
+
+    #[tokio::test]
+    async fn media_are_read_back_and_refused_in_an_ended_room() {
+        let r = rig().await;
+        r.create(ROOM).await;
+        r.rooms
+            .put_media(ROOM, 0, &name(1), b"sealed")
+            .await
+            .unwrap();
+        let (mut f, len) = r.rooms.open_media(ROOM, &name(1)).await.unwrap();
+        let mut got = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut f, &mut got)
+            .await
+            .unwrap();
+        assert_eq!((got.as_slice(), len), (&b"sealed"[..], 6));
+        let e = r.rooms.open_media(ROOM, &name(2)).await.unwrap_err();
+        assert_eq!(code(e), (StatusCode::NOT_FOUND, "media_missing"));
+        let e = r.rooms.open_media(ROOM, "../meta.json").await.unwrap_err();
+        assert_eq!(code(e), (StatusCode::BAD_REQUEST, "bad_name"));
+
+        r.rooms.end(ROOM, &owner(), T0 + DAY).await.unwrap();
+        let e = r
+            .rooms
+            .put_media(ROOM, 0, &name(2), b"x")
+            .await
+            .unwrap_err();
+        assert_eq!(code(e), (StatusCode::CONFLICT, "room_ended"));
+        // Reading stays possible until it expires.
+        r.rooms.open_media(ROOM, &name(1)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn deleting_a_room_removes_its_media() {
+        let r = rig().await;
+        r.create(ROOM).await;
+        r.rooms
+            .put_media(ROOM, 0, &name(1), b"sealed")
+            .await
+            .unwrap();
+        assert!(r.dir(ROOM).join("media").is_dir());
+        r.rooms.delete(ROOM, &owner()).await.unwrap();
+        assert!(!r.dir(ROOM).join("media").exists());
+        let disk: RoomMeta =
+            serde_json::from_slice(&std::fs::read(r.dir(ROOM).join("meta.json")).unwrap()).unwrap();
+        assert_eq!((disk.media_bytes, disk.deleted_at.is_some()), (0, true));
+
+        // Expiry does the same, loaded or not.
+        r.create(OTHER).await;
+        r.rooms
+            .put_media(OTHER, 0, &name(1), b"sealed")
+            .await
+            .unwrap();
+        r.unload().await;
+        r.clock.advance(2 * DAY);
+        r.rooms.sweep(r.clock.now()).await;
+        assert!(!r.dir(OTHER).join("media").exists());
     }
 }
