@@ -20,8 +20,8 @@ from ...models.share_hub import (
     ShareHello,
     ShareTombstone,
 )
-from ...models.shared_meeting import ContributionBatch, ContributionResponse
-from ...services import contacts
+from ...models.shared_meeting import ContributionBatch, ContributionResponse, ShareParts
+from ...services import contacts, notes_media
 from ...services.shares import (
     ShareNotFound,
     accept_contributions,
@@ -106,6 +106,41 @@ async def changes(
         more=more,
         tombstones=[ShareTombstone(**t) for t in tombstones],
         tombstones_next=max((t["at"] for t in tombstones), default=tombstones_since),
+    )
+
+
+@router.get(
+    "/media/{session_id}/{sha}",
+    response_class=Response,
+    responses={200: {"content": {"image/webp": {}, "image/jpeg": {}}}},
+)
+async def media(session_id: str, sha: str, ctx: AppContext = Depends(get_ctx)):
+    """An image of a shared meeting's notes (raw WebP or JPEG bytes), for a contact whose live
+    share of that meeting includes the notes and whose notes show that image. 404 for anything
+    else, whether or not the meeting or the image exists."""
+    row = _contact(ctx)
+    gone = HTTPException(404, "Not found")
+    if not notes_media.SHA.match(sha):
+        raise gone
+    share = ctx.repo.peer_share(session_id, row["person"])
+    if share is None or share.get("revoked_at") or not ShareParts.from_stored(share["parts"]).notes:
+        raise gone
+    source = ctx.repo.notes_source(session_id)
+    if source is None or sha not in {v[:64] for v in notes_media.values_in(source[0])}:
+        raise gone
+    file = notes_media.path(ctx, session_id, sha)
+    if file is None:
+        raise gone
+    try:
+        data = await asyncio.to_thread(notes_media.read, ctx, session_id, sha)
+    except FileNotFoundError as e:
+        raise gone from e
+    except PermissionError as e:
+        raise HTTPException(423, "Meetings are encrypted and locked") from e
+    return Response(
+        data,
+        media_type=notes_media.MEDIA_TYPES[notes_media.ext_of(file)],
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
     )
 
 

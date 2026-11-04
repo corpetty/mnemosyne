@@ -1,6 +1,8 @@
 """The signed projection of one share (services/shares.py, models/shared_meeting.py)."""
 
 import base64
+import hashlib
+import struct
 from datetime import datetime
 
 import pytest
@@ -8,7 +10,7 @@ import pytest
 from mnemosyne.models.session import ActionItem, Chapter, Session, SummaryData
 from mnemosyne.models.shared_meeting import SharedMeeting, ShareParts
 from mnemosyne.models.transcript import TranscriptSegment
-from mnemosyne.services import shares
+from mnemosyne.services import notes_media, shares
 from mnemosyne.services.person import PersonKeys
 
 ADA = "a" * 64
@@ -118,6 +120,24 @@ def _contact(ctx, person, name):
             "updated_at": "2026-10-23T10:00:00+00:00",
         }
     )
+
+
+def webp(w: int, h: int, pad: bytes = b"") -> bytes:
+    body = b"VP8X" + struct.pack("<I", 10) + b"\0\0\0\0"
+    body += (w - 1).to_bytes(3, "little") + (h - 1).to_bytes(3, "little") + pad
+    return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WEBP" + body
+
+
+def _image(ctx, sid, pad: bytes, w=640, h=480) -> tuple[str, str]:
+    """Store an image of the meeting; (its sha, the value its notes line carries)."""
+    data = webp(w, h, pad)
+    sha = hashlib.sha256(data).hexdigest()
+    notes_media.store(ctx, sid, sha, data, by="me")
+    return sha, f"{sha}.webp@{w}x{h}"
+
+
+def _line(value: str) -> str:
+    return f"![a cat](mnemosyne:image/{value})\n"
 
 
 @pytest.fixture
@@ -359,6 +379,63 @@ def test_other_shares_parts_are_not_in_it(mine):
     assert _build(mine, sid, BOB).transcript
 
 
+# ---- images of the notes (docs/plans/2026-11-04-images-tasks.md, task 11a) -----------------------
+
+
+def _with_images(ctx):
+    """A meeting whose notes show one stored image and one without bytes, with an upload that no
+    line uses. Returns (sid, shown sha, value of the shown one, the unused sha)."""
+    data = webp(640, 480, b"shown")
+    shown = hashlib.sha256(data).hexdigest()
+    value = f"{shown}.webp@640x480"
+    absent = f"{'c' * 64}.webp@10x10"
+    notes = "Intro\n" + _line(value) + _line(absent)
+    sid = ctx.repo.save(Session(name="Pictures", notes=notes)).id
+    assert _image(ctx, sid, b"shown")[0] == shown
+    unused, _ = _image(ctx, sid, b"unused")
+    return sid, shown, value, unused
+
+
+def test_media_lists_the_images_the_shared_notes_show_and_the_owner_has(mine):
+    sid, shown, _value, unused = _with_images(mine)
+    _share(mine, sid)
+    sm = _build(mine, sid)
+    assert [(m.sha256, m.ext, m.width, m.height) for m in sm.media] == [(shown, "webp", 640, 480)]
+    assert sm.media[0].size == len(webp(640, 480, b"shown"))
+    assert unused not in sm.model_dump_json()  # an unused upload is not shared
+    assert shares.verify_shared_meeting(sm, mine.person.public_hex)
+
+
+def test_media_is_empty_without_the_notes_part(mine):
+    sid, *_ = _with_images(mine)
+    _share(mine, sid, notes=False)
+    sm = _build(mine, sid)
+    assert (sm.notes, sm.notes_doc, sm.media) == ("", "", [])
+
+
+def test_tampering_with_media_fails_verification(mine):
+    sid, *_ = _with_images(mine)
+    _share(mine, sid)
+    sm = _build(mine, sid)
+    owner = mine.person.public_hex
+    base = sm.model_dump(mode="json")
+    assert shares.verify_shared_meeting(base, owner)
+    edits = {
+        "sha": lambda d: d["media"][0].update(sha256="d" * 64),
+        "size": lambda d: d["media"][0].update(size=1),
+        "width": lambda d: d["media"][0].update(width=1),
+        "dropped": lambda d: d["media"].clear(),
+        "added": lambda d: d["media"].append(dict(d["media"][0], sha256="e" * 64)),
+    }
+    for label, edit in edits.items():
+        d = SharedMeeting.model_validate(base).model_dump(mode="json")
+        edit(d)
+        assert not shares.verify_shared_meeting(d, owner), label
+        # re-hashed, still not signed
+        d["digest"] = shares.digest_of(SharedMeeting.model_validate(d))
+        assert not shares.verify_shared_meeting(d, owner), label
+
+
 # ---- what can never be in it -------------------------------------------------------------------
 
 FORBIDDEN = (
@@ -393,6 +470,7 @@ def _property_names(schema) -> set[str]:
 def test_the_schema_has_no_field_for_what_never_travels():
     names = _property_names(SharedMeeting.model_json_schema())
     assert {"summary", "notes_doc", "shared_with", "digest", "sig", "text", "task_id"} <= names
+    assert {"media", "sha256", "ext", "width", "height", "size"} <= names
     bad = {n for n in names if any(f in n.lower() for f in FORBIDDEN)}
     assert not bad, bad
 

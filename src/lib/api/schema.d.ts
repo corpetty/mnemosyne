@@ -3039,6 +3039,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/share/media/{session_id}/{sha}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Media
+         * @description An image of a shared meeting's notes (raw WebP or JPEG bytes), for a contact whose live
+         *     share of that meeting includes the notes and whose notes show that image. 404 for anything
+         *     else, whether or not the meeting or the image exists.
+         */
+        get: operations["media_api_share_media__session_id___sha__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/share/poke": {
         parameters: {
             query?: never;
@@ -3250,6 +3272,28 @@ export interface paths {
          * @description Who this computer is and which sync it speaks; a peer asks first in every round.
          */
         get: operations["hello_api_sync_hello_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sync/media/{session_id}/{sha256}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Media
+         * @description The bytes of an image of a meeting's notes (the document only carries its row), for the
+         *     computer that synced the meeting. Decrypted here; the caller seals them when it encrypts.
+         *     404 when the bytes are not here.
+         */
+        get: operations["get_media_api_sync_media__session_id___sha256__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7169,6 +7213,8 @@ export interface components {
             created_at: string;
             /** Has Transcript */
             has_transcript: boolean;
+            /** Media Bytes */
+            media_bytes: number;
             /** Name */
             name: string;
             /** Session Id */
@@ -8015,6 +8061,28 @@ export interface components {
             /** Ticks */
             ticks: number;
         };
+        /**
+         * SharedMedia
+         * @description An image the shared notes show (docs/plans/2026-11-04-images-tasks.md, task 11a). Only a
+         *     description: the bytes come from `GET /api/share/media/<meeting id>/<sha256>`, which checks
+         *     the share again. Filled only when the share includes the notes, and only for images the
+         *     notes document references and whose bytes the owner has.
+         */
+        SharedMedia: {
+            /**
+             * Ext
+             * @enum {string}
+             */
+            ext: "webp" | "jpeg";
+            /** Height */
+            height: number;
+            /** Sha256 */
+            sha256: string;
+            /** Size */
+            size: number;
+            /** Width */
+            width: number;
+        };
         /** SharedMeeting */
         SharedMeeting: {
             /** Attendees */
@@ -8038,6 +8106,8 @@ export interface components {
             format: number;
             /** Id */
             id: string;
+            /** Media */
+            media: components["schemas"]["SharedMedia"][];
             /** Name */
             name: string;
             /**
@@ -8234,6 +8304,8 @@ export interface components {
             database_bytes: number;
             /** Largest */
             largest: components["schemas"]["SessionUsage"][];
+            /** Notes Media Bytes */
+            notes_media_bytes: number;
             /** Recordings Bytes */
             recordings_bytes: number;
             /** Retention Days */
@@ -8605,6 +8677,37 @@ export interface components {
             /** Seq */
             seq: number;
         };
+        /**
+         * SyncMedia
+         * @description An image of the meeting's notes as its row says (`notes_media`): which blob it is, never
+         *     its bytes (they come from `GET /api/sync/media/{session_id}/{sha256}`). `created_at` stays
+         *     the stored ISO text; `last_seen_at` is each machine's own and does not travel.
+         */
+        SyncMedia: {
+            /**
+             * By
+             * @default
+             */
+            by: string;
+            /** Created At */
+            created_at: string;
+            /** Ext */
+            ext: string;
+            /**
+             * Height
+             * @default 0
+             */
+            height: number;
+            /** Sha256 */
+            sha256: string;
+            /** Size */
+            size: number;
+            /**
+             * Width
+             * @default 0
+             */
+            width: number;
+        };
         /** SyncNowResponse */
         SyncNowResponse: {
             /** Started */
@@ -8895,6 +8998,8 @@ export interface components {
              * @default false
              */
             local_only: boolean;
+            /** Media */
+            media: components["schemas"]["SyncMedia"][] | null;
             /**
              * Meeting Type
              * @default
@@ -15223,6 +15328,39 @@ export interface operations {
             };
         };
     };
+    media_api_share_media__session_id___sha__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                sha: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": unknown;
+                    "image/webp": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     poke_api_share_poke_post: {
         parameters: {
             query?: {
@@ -15519,6 +15657,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SyncHello"];
+                };
+            };
+        };
+    };
+    get_media_api_sync_media__session_id___sha256__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                sha256: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

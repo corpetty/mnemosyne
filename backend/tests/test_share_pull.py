@@ -4,6 +4,8 @@ keys, the recipient pulling from the owner through `httpx.ASGITransport`. No net
 notes documents through the stand-in sidecar (tests/fake_link.py)."""
 
 import base64
+import hashlib
+import struct
 from datetime import datetime
 
 import httpx
@@ -14,7 +16,7 @@ from mnemosyne.config import Settings
 from mnemosyne.models.contact import Card
 from mnemosyne.models.session import Session, SummaryData
 from mnemosyne.models.transcript import TranscriptSegment
-from mnemosyne.services import contacts, shared_notes, shares
+from mnemosyne.services import contacts, notes_media, shared_notes, shares
 from mnemosyne.services.person import PersonKeys
 from tests import fake_link
 
@@ -464,3 +466,96 @@ async def test_notes_unshared_drop_the_document(pair, sidecar):
     share(owner, recipient, sid, notes=False)
     await pull(owner, recipient)
     assert not recipient.repo.has_notes_doc(sid) and recipient.repo.get(sid).notes == ""
+
+
+# ---- the images of the notes (docs/plans/2026-11-04-images-tasks.md, task 11a) -------------------
+
+
+def webp(w: int, h: int, pad: bytes = b"") -> bytes:
+    body = b"VP8X" + struct.pack("<I", 10) + b"\0\0\0\0"
+    body += (w - 1).to_bytes(3, "little") + (h - 1).to_bytes(3, "little") + pad
+    return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WEBP" + body
+
+
+def with_image(owner: Node, store: bool = True) -> tuple[str, str, bytes]:
+    """A meeting of the owner whose notes show one image: (id, its sha, its bytes)."""
+    data = webp(320, 200, b"pixels")
+    sha = hashlib.sha256(data).hexdigest()
+    notes = f"Look:\n![a cat](mnemosyne:image/{sha}.webp@320x200)\n"
+    sid = meeting(owner, notes=notes)
+    if store:
+        notes_media.store(owner.ctx, sid, sha, data, by="Owner")
+    return sid, sha, data
+
+
+async def test_the_images_of_shared_notes_arrive_with_the_meeting(pair):
+    owner, recipient = pair
+    sid, sha, data = with_image(owner)
+    share(owner, recipient, sid)
+    st = await pull(owner, recipient)
+    assert st.state == "ok" and st.received == 1
+    assert notes_media.read(recipient.ctx, sid, sha) == data
+    (row,) = recipient.repo.media_rows(sid)
+    assert (row["sha256"], row["ext"], row["width"], row["height"]) == (sha, "webp", 320, 200)
+    assert row["by"] == "p:" + owner.person[:16]
+    # The recipient's own copy is read through the normal notes media route.
+    async with recipient.admin() as c:
+        r = await c.get(f"/api/sessions/{sid}/notes/media/{sha}")
+    assert r.status_code == 200 and r.content == data
+    assert r.headers["content-type"] == "image/webp"
+
+
+async def test_a_share_without_notes_brings_no_images(pair):
+    owner, recipient = pair
+    sid, sha, _data = with_image(owner)
+    share(owner, recipient, sid, notes=False)
+    await pull(owner, recipient)
+    assert recipient.repo.shared_from(sid) == owner.person
+    assert recipient.repo.media_rows(sid) == []
+    assert notes_media.path(recipient.ctx, sid, sha) is None
+
+
+async def test_an_image_the_owner_lacks_is_skipped_and_the_round_is_fine(pair):
+    owner, recipient = pair
+    sid, sha, _data = with_image(owner, store=False)
+    share(owner, recipient, sid)
+    st = await pull(owner, recipient)
+    assert st.state == "ok" and st.received == 1
+    assert notes_media.path(recipient.ctx, sid, sha) is None
+    assert recipient.repo.get(sid).notes.endswith(f"{sha}.webp@320x200)\n")
+
+
+async def test_a_blob_that_does_not_match_its_hash_is_not_kept(pair):
+    owner, recipient = pair
+    sid, sha, data = with_image(owner)
+    share(owner, recipient, sid)
+    file = notes_media.path(owner.ctx, sid, sha)
+    file.write_bytes(webp(320, 200, b"swapped"))  # what the owner serves is not what it names
+    st = await pull(owner, recipient)
+    assert st.state == "ok"
+    assert notes_media.path(recipient.ctx, sid, sha) is None
+
+
+async def test_a_fold_that_misses_images_asks_the_owner_later(pair):
+    owner, recipient = pair
+    sid, sha, data = with_image(owner, store=False)
+    share(owner, recipient, sid)
+    await pull(owner, recipient)
+    assert notes_media.path(recipient.ctx, sid, sha) is None
+    notes_media.store(owner.ctx, sid, sha, data, by="Owner")  # it reaches the owner later
+
+    recipient.puller.media_delay = 0
+    value = f"{sha}.webp@320x200"
+    notes_media.seen(recipient.ctx, sid, [value])  # a fold of the copy finds it missing
+    notes_media.seen(recipient.ctx, sid, [value])  # ... again: scheduled once
+    assert recipient.puller._media_wanted == {sid}
+    await recipient.puller.drain()
+    assert notes_media.read(recipient.ctx, sid, sha) == data
+    assert recipient.puller._media_wanted == set()
+
+
+async def test_a_meeting_of_my_own_never_asks_a_contact_for_images(pair):
+    owner, recipient = pair
+    sid, sha, _data = with_image(recipient, store=False)
+    notes_media.seen(recipient.ctx, sid, [f"{sha}.webp@320x200"])
+    assert recipient.puller._media_wanted == set()
