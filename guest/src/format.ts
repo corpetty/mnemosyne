@@ -1,6 +1,13 @@
 // The guest-notes wire format (phase 9), browser half. The other half is
 // backend/mnemosyne/services/guest_format.py (its docstring has the rules); backend/tests/vectors/
 // guest_v1.json ties them together. Change one, change the other and the vectors. WebCrypto only.
+//
+// MEDIA (kind 6, an image of the notes) is raw bytes (at most MEDIA_MAX) padded to MEDIA_BLOCK, and its
+// AAD has a fourth field: `mnemosyne/guest/1|<room>|6|<sha>`, the plaintext's SHA-256 as 64 lowercase
+// hex characters (required for MEDIA, refused for other kinds). The relay stores a blob under
+// `mediaName` = hex(HMAC-SHA256(mediaNameKey, the sha's 64 ASCII characters)) with mediaNameKey =
+// HKDF-SHA256(key, salt "", info "mnemosyne/guest/media-name"): an opaque name every key holder can
+// compute. `unsealMedia` checks sha256(bytes) === sha. `seal`/`unseal` take the sha as a last argument.
 
 export const FORMAT = 1;
 export const AAD_PREFIX = `mnemosyne/guest/${FORMAT}`;
@@ -11,21 +18,25 @@ export const KEY_B64_LEN = 43;
 export const ROOM_HEX_LEN = 16;
 export const BLOCK = 256;
 export const SNAPSHOT_BLOCK = 4096;
+export const MEDIA_BLOCK = 65536;
+export const MEDIA_MAX = 2_000_000;
 export const MAX_FIELD = 255;
 export const FRAME_START = [0xde, 0xaf];
 
 const INFO_FRAMES = 'mnemosyne/guest/frames';
 const INFO_ROOM = 'mnemosyne/guest/room';
+const INFO_MEDIA_NAME = 'mnemosyne/guest/media-name';
 
 export const Kind = {
   NOTES: 1,
   SNAPSHOT: 2,
   COMMENT: 3,
   META: 4,
-  PRESENCE: 5
+  PRESENCE: 5,
+  MEDIA: 6
 } as const;
 export type Kind = (typeof Kind)[keyof typeof Kind];
-export type JsonKind = Exclude<Kind, typeof Kind.NOTES>;
+export type JsonKind = Exclude<Kind, typeof Kind.NOTES | typeof Kind.MEDIA>;
 const JSON_KINDS: number[] = [Kind.SNAPSHOT, Kind.COMMENT, Kind.META, Kind.PRESENCE];
 
 export class GuestFormatError extends Error {
@@ -40,6 +51,10 @@ export interface GuestKeys {
   /** Raw bytes of the frames key (for tests). */
   framesKeyBytes: Uint8Array;
   roomToken: string;
+  /** HMAC-SHA256 key for `mediaName`. */
+  mediaNameKey: CryptoKey;
+  /** Raw bytes of the media name key (for tests). */
+  mediaNameKeyBytes: Uint8Array;
 }
 
 const enc = new TextEncoder();
@@ -137,24 +152,67 @@ export async function deriveKeys(key: Uint8Array): Promise<GuestKeys> {
     'encrypt',
     'decrypt'
   ]);
-  return { framesKey, framesKeyBytes, roomToken: b64urlEncode(await hkdf(key, INFO_ROOM)) };
+  const mediaNameKeyBytes = await hkdf(key, INFO_MEDIA_NAME);
+  const mediaNameKey = await crypto.subtle.importKey(
+    'raw',
+    buf(mediaNameKeyBytes),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  return {
+    framesKey,
+    framesKeyBytes,
+    roomToken: b64urlEncode(await hkdf(key, INFO_ROOM)),
+    mediaNameKey,
+    mediaNameKeyBytes
+  };
+}
+
+const SHA_RE = /^[0-9a-f]{64}$/;
+
+export function checkSha(sha: string): string {
+  if (typeof sha !== 'string' || !SHA_RE.test(sha)) {
+    throw new GuestFormatError('A media sha is 64 lowercase hex characters');
+  }
+  return sha;
+}
+
+async function sha256Hex(data: Uint8Array): Promise<string> {
+  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', buf(data))));
+}
+
+/** The name a room stores the blob of plaintext `sha` under (64 hex characters). */
+export async function mediaName(keys: GuestKeys, sha: string): Promise<string> {
+  const mac = await crypto.subtle.sign('HMAC', keys.mediaNameKey, buf(enc.encode(checkSha(sha))));
+  return hex(new Uint8Array(mac));
 }
 
 // ---- padding, AAD --------------------------------------------------------------------
 
 function checkKind(kind: number): Kind {
-  if (!Number.isInteger(kind) || kind < 1 || kind > 5) {
+  if (!Number.isInteger(kind) || kind < 1 || kind > 6) {
     throw new GuestFormatError(`Unknown frame kind ${String(kind)}`);
   }
   return kind as Kind;
 }
 
 export function blockFor(kind: number): number {
-  return checkKind(kind) === Kind.SNAPSHOT ? SNAPSHOT_BLOCK : BLOCK;
+  const k = checkKind(kind);
+  if (k === Kind.SNAPSHOT) return SNAPSHOT_BLOCK;
+  return k === Kind.MEDIA ? MEDIA_BLOCK : BLOCK;
 }
 
-export function aad(room: string, kind: number): Uint8Array {
-  return enc.encode(`${AAD_PREFIX}|${checkRoom(room)}|${checkKind(kind)}`);
+/** `sha` (the plaintext's SHA-256, hex) is required for MEDIA and refused for other kinds. */
+export function aad(room: string, kind: number, sha?: string): Uint8Array {
+  const k = checkKind(kind);
+  const base = `${AAD_PREFIX}|${checkRoom(room)}|${k}`;
+  if (k === Kind.MEDIA) {
+    if (sha === undefined) throw new GuestFormatError('A media frame needs its sha');
+    return enc.encode(`${base}|${checkSha(sha)}`);
+  }
+  if (sha !== undefined) throw new GuestFormatError('Only a media frame has a sha');
+  return enc.encode(base);
 }
 
 export function pad(data: Uint8Array, block: number): Uint8Array {
@@ -187,10 +245,11 @@ export async function seal(
   room: string,
   kind: number,
   plaintext: Uint8Array,
-  nonce?: Uint8Array
+  nonce?: Uint8Array,
+  sha?: string
 ): Promise<Uint8Array> {
   const k = checkKind(kind);
-  const additional = aad(room, k);
+  const additional = aad(room, k, sha);
   const padded = pad(plaintext, blockFor(k));
   if (nonce === undefined) nonce = crypto.getRandomValues(new Uint8Array(NONCE_SIZE));
   else if (nonce.length !== NONCE_SIZE) throw new GuestFormatError('A nonce is 12 bytes');
@@ -211,7 +270,8 @@ export async function seal(
 export async function unseal(
   keys: GuestKeys,
   room: string,
-  envelope: Uint8Array
+  envelope: Uint8Array,
+  sha?: string
 ): Promise<{ kind: Kind; plaintext: Uint8Array }> {
   checkRoom(room);
   if (envelope.length < 1 + NONCE_SIZE + TAG_SIZE) {
@@ -223,7 +283,7 @@ export async function unseal(
   try {
     padded = new Uint8Array(
       await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: buf(nonce), additionalData: buf(aad(room, kind)), tagLength: 128 },
+        { name: 'AES-GCM', iv: buf(nonce), additionalData: buf(aad(room, kind, sha)), tagLength: 128 },
         keys.framesKey,
         buf(envelope.slice(1 + NONCE_SIZE))
       )
@@ -375,4 +435,41 @@ export async function unsealJson(
   } catch {
     throw new GuestFormatError('The frame is not valid JSON');
   }
+}
+
+// ---- media frames --------------------------------------------------------------------
+
+/** Seal an image's bytes under the sha they must hash to (checked here too). */
+export async function sealMedia(
+  keys: GuestKeys,
+  room: string,
+  sha: string,
+  data: Uint8Array,
+  nonce?: Uint8Array
+): Promise<Uint8Array> {
+  if (data.length > MEDIA_MAX) throw new GuestFormatError(`A media blob is at most ${MEDIA_MAX} bytes`);
+  if ((await sha256Hex(data)) !== checkSha(sha)) {
+    throw new GuestFormatError('The media bytes do not match their sha');
+  }
+  return seal(keys, room, Kind.MEDIA, data, nonce, sha);
+}
+
+/** The bytes of the blob sealed under `sha`; refuses another kind, a wrong sha, and bytes that do not
+ * hash to `sha`. */
+export async function unsealMedia(
+  keys: GuestKeys,
+  room: string,
+  sha: string,
+  envelope: Uint8Array
+): Promise<Uint8Array> {
+  checkSha(sha);
+  if (envelope.length > 0 && envelope[0] !== Kind.MEDIA) {
+    throw new GuestFormatError('That is not a media frame');
+  }
+  const { plaintext } = await unseal(keys, room, envelope, sha);
+  if (plaintext.length > MEDIA_MAX) throw new GuestFormatError(`A media blob is at most ${MEDIA_MAX} bytes`);
+  if ((await sha256Hex(plaintext)) !== sha) {
+    throw new GuestFormatError('The media bytes do not match their sha');
+  }
+  return plaintext;
 }

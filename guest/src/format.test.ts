@@ -6,6 +6,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   GuestFormatError,
   Kind,
+  MEDIA_BLOCK,
+  MEDIA_MAX,
   aad,
   b64urlDecode,
   b64urlEncode,
@@ -16,15 +18,18 @@ import {
   hex,
   keyFromFragment,
   keyToFragment,
+  mediaName,
   newKey,
   newRoom,
   notesPlaintext,
   parseNotes,
   seal,
   sealJson,
+  sealMedia,
   sealNotes,
   unseal,
   unsealJson,
+  unsealMedia,
   unsealNotes,
   unpad,
   type GuestKeys
@@ -51,6 +56,7 @@ describe('keys', () => {
     expect(keyToFragment(key)).toBe(vec.key_b64url);
     expect(hex(keys.framesKeyBytes)).toBe(vec.frames_key_hex);
     expect(keys.roomToken).toBe(vec.room_token);
+    expect(hex(keys.mediaNameKeyBytes)).toBe(vec.media_name_key_hex);
   });
   it('refuses malformed fragments', () => {
     for (const bad of ['', 'short', 'A'.repeat(44), 'A'.repeat(42), '!'.repeat(43), 'A'.repeat(42) + 'B']) {
@@ -71,15 +77,23 @@ describe('vectors', () => {
     const plain = fromHex(s.plaintext_hex);
 
     it(`${name}: aad, size, and byte-for-byte envelope`, async () => {
-      expect(dec.decode(aad(room, s.kind))).toBe(s.aad);
+      expect(dec.decode(aad(room, s.kind, s.sha256))).toBe(s.aad);
       expect(blockFor(s.kind)).toBe(s.padded_length);
-      expect(await seal(keys, room, s.kind, plain, nonce)).toEqual(envelope);
-      const opened = await unseal(keys, room, envelope);
+      expect(await seal(keys, room, s.kind, plain, nonce, s.sha256)).toEqual(envelope);
+      const opened = await unseal(keys, room, envelope, s.sha256);
       expect(opened.kind).toBe(s.kind);
       expect(opened.plaintext).toEqual(plain);
     });
 
-    if (s.frame_hex !== undefined) {
+    if (s.sha256 !== undefined) {
+      it(`${name}: media name, seal and unseal`, async () => {
+        expect(s.padded_length).toBe(MEDIA_BLOCK);
+        expect(plain.length).toBe(1000);
+        expect(await mediaName(keys, s.sha256)).toBe(s.name);
+        expect(await sealMedia(keys, room, s.sha256, plain, nonce)).toEqual(envelope);
+        expect(await unsealMedia(keys, room, s.sha256, envelope)).toEqual(plain);
+      });
+    } else if (s.frame_hex !== undefined) {
       it(`${name}: notes plaintext, seal and unseal`, async () => {
         const frame = fromHex(s.frame_hex);
         expect(notesPlaintext(s.gid, s.name, frame)).toEqual(plain);
@@ -115,12 +129,13 @@ describe('errors', () => {
   it('refuses short data and unknown kinds', async () => {
     await bad(unseal(keys, room, envelope.slice(0, 28)));
     await bad(unseal(keys, room, envelope.slice(0, 100)));
-    for (const k of [0, 6, 255]) {
+    for (const k of [0, 7, 255]) {
       const e = envelope.slice();
       e[0] = k;
       await bad(unseal(keys, room, e));
     }
     await bad(seal(keys, room, 9, new Uint8Array(1)));
+    await bad(seal(keys, room, 7, new Uint8Array(1)));
     await bad(unseal(keys, 'NOT-A-ROOM', envelope));
   });
   it('refuses bad padding even when it decrypts', async () => {
@@ -147,6 +162,74 @@ describe('errors', () => {
     await bad(sealJson(keys, room, Kind.NOTES as never, {}));
     await bad(unsealJson(keys, room, envelope));
     await bad(unsealNotes(keys, room, await sealJson(keys, room, Kind.META, { a: 1 })));
+  });
+});
+
+describe('media', () => {
+  const image = Uint8Array.from({ length: 5000 }, (_, i) => (i * 31 + 7) % 256);
+  const sha = async (d: Uint8Array) =>
+    hex(new Uint8Array(await crypto.subtle.digest('SHA-256', d as BufferSource)));
+  const bad = async (p: Promise<unknown>) => expect(p).rejects.toBeInstanceOf(GuestFormatError);
+
+  it('round-trips and pads to one 64 KiB block', async () => {
+    const s = await sha(image);
+    const env = await sealMedia(keys, room, s, image);
+    expect(env[0]).toBe(Kind.MEDIA);
+    expect(env.length).toBe(1 + 12 + 65536 + 16);
+    expect(await unsealMedia(keys, room, s, env)).toEqual(image);
+    const big = new Uint8Array(70_000).fill(1);
+    expect((await sealMedia(keys, room, await sha(big), big)).length).toBe(env.length + 65536);
+  });
+  it('refuses a blob over the limit and a sha that does not match', async () => {
+    const atLimit = new Uint8Array(MEDIA_MAX).fill(7);
+    const env = await sealMedia(keys, room, await sha(atLimit), atLimit);
+    expect(await unsealMedia(keys, room, await sha(atLimit), env)).toEqual(atLimit);
+    const over = new Uint8Array(MEDIA_MAX + 1).fill(7);
+    await bad(sealMedia(keys, room, await sha(over), over));
+    await bad(sealMedia(keys, room, await sha(enc.encode('other')), image));
+  });
+  it('requires the sha for MEDIA only', async () => {
+    const s = await sha(image);
+    expect(() => aad(room, Kind.MEDIA)).toThrow(GuestFormatError);
+    expect(() => aad(room, Kind.NOTES, s)).toThrow(GuestFormatError);
+    expect(dec.decode(aad(room, Kind.MEDIA, s))).toBe(`mnemosyne/guest/1|${room}|6|${s}`);
+    await bad(seal(keys, room, Kind.MEDIA, image));
+    await bad(seal(keys, room, Kind.NOTES, image, undefined, s));
+    for (const wrong of ['', 'abc', s.toUpperCase(), s.slice(1), s + '0', 'g'.repeat(64)]) {
+      expect(() => aad(room, Kind.MEDIA, wrong)).toThrow(GuestFormatError);
+      await bad(mediaName(keys, wrong));
+    }
+  });
+  it('refuses a wrong sha, room, key, kind, tampering and lying plaintext', async () => {
+    const s = await sha(image);
+    const other = await sha(enc.encode('other'));
+    const env = await sealMedia(keys, room, s, image);
+    await bad(unsealMedia(keys, room, other, env));
+    await bad(unseal(keys, room, env));
+    await bad(unsealMedia(keys, '0123456789abcdef', s, env));
+    await bad(unsealMedia(await deriveKeys(newKey()), room, s, env));
+    await bad(unsealMedia(keys, room, s, new Uint8Array(0)));
+    const asNotes = env.slice();
+    asNotes[0] = Kind.NOTES;
+    await bad(unsealMedia(keys, room, s, asNotes));
+    const flipped = env.slice();
+    flipped[100] ^= 1;
+    await bad(unsealMedia(keys, room, s, flipped));
+    const liar = await seal(keys, room, Kind.MEDIA, enc.encode('not the image'), undefined, s);
+    await bad(unsealMedia(keys, room, s, liar));
+    await bad(unsealNotes(keys, room, env));
+    await bad(sealJson(keys, room, Kind.MEDIA as never, {}));
+    await bad(unsealMedia(keys, room, s, await sealNotes(keys, room, '', '', Uint8Array.from([0xde]))));
+  });
+  it('names a blob by an HMAC of its sha, per key', async () => {
+    const s = await sha(image);
+    const name = await mediaName(keys, s);
+    expect(name).toMatch(/^[0-9a-f]{64}$/);
+    expect(name).not.toBe(s);
+    expect(await mediaName(keys, s)).toBe(name);
+    expect(await mediaName(await deriveKeys(newKey()), s)).not.toBe(name);
+    expect(await mediaName(keys, await sha(enc.encode('other')))).not.toBe(name);
+    expect(name).not.toBe(await sha(await sealMedia(keys, room, s, image)));
   });
 });
 
