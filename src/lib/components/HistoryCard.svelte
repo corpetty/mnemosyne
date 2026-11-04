@@ -231,6 +231,21 @@
 				return `Flagged lines reviewed${d.by ? ` by ${d.by}` : ''}${d.note ? `: ${d.note}` : ''}`;
 			case 'consent':
 				return `${CONSENT[d.consent as string] ?? 'Consent recorded'}${d.by ? ` (${d.by})` : ''}`;
+			case 'copilot_notes_added': {
+				const n = (d.count as number | undefined) ?? 0;
+				return `Copilot added ${n} ${n === 1 ? 'point' : 'points'} to the notes`;
+			}
+			case 'notes_summary_written':
+				return 'Summary written into the notes';
+			case 'notes_summary_edits_taken': {
+				const bits = [
+					d.items ? `${d.items} ${d.items === 1 ? 'action item' : 'action items'}` : '',
+					d.decisions ? `${d.decisions} ${d.decisions === 1 ? 'decision' : 'decisions'}` : '',
+					d.questions ? `${d.questions} ${d.questions === 1 ? 'question' : 'questions'}` : '',
+					d.body ? 'the summary text' : ''
+				].filter(Boolean);
+				return `Edits to the notes' summary taken into the summary${bits.length ? ` (${bits.join(', ')})` : ''}${d.by ? ` by ${d.by}` : ''}`;
+			}
 			case 'guest_notes_started':
 				return `Guest notes started${d.by ? ` by ${d.by}` : ''}`;
 			case 'guest_notes_ended':

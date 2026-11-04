@@ -160,6 +160,8 @@
 				live_adaptive: v.live_adaptive,
 				copilot: v.copilot,
 				copilot_interval_seconds: v.copilot_interval_seconds,
+				copilot_to_notes: v.copilot_to_notes,
+				summary_in_notes: v.summary_in_notes,
 				whisper_model_size: v.whisper_model_size,
 				whisper_compute_type: v.whisper_compute_type,
 				publish_host: v.publish_host,
@@ -621,6 +623,13 @@
 					<label class="flex items-center gap-2 col-span-2">
 						<input type="checkbox" bind:checked={form.copilot} disabled={locked('copilot') || !form.live_transcription} class="rounded border-gray-600 bg-gray-800" />
 						<span class="text-sm text-gray-300">Copilot: keep running notes (so far, decided, to do, open) while recording, with the default model</span>
+					</label>
+					<label class="col-span-2">
+						<span class="flex items-center gap-2">
+							<input type="checkbox" bind:checked={form.copilot_to_notes} disabled={locked('copilot_to_notes') || !form.copilot} class="rounded border-gray-600 bg-gray-800" />
+							<span class="text-sm text-gray-300">Add the copilot's points to the notes as it goes</span>
+						</span>
+						<span class="block text-[11px] text-gray-600 mt-1">Under a Copilot heading at the end of the notes; anyone may edit or delete them</span>
 					</label>
 					<label>
 						<span class={labelClass}>Refresh the notes at most every (seconds)</span>
@@ -1134,6 +1143,13 @@
 					<label class="flex items-center gap-2 col-span-2">
 						<input type="checkbox" bind:checked={form.auto_summarize} disabled={locked('auto_summarize')} class="rounded border-gray-600 bg-gray-800" />
 						<span class="text-sm text-gray-300">Summarize automatically after transcription (uses the default provider, model and style)</span>
+					</label>
+					<label class="col-span-2">
+						<span class="flex items-center gap-2">
+							<input type="checkbox" bind:checked={form.summary_in_notes} disabled={locked('summary_in_notes')} class="rounded border-gray-600 bg-gray-800" />
+							<span class="text-sm text-gray-300">Keep the summary at the end of the notes</span>
+						</span>
+						<span class="block text-[11px] text-gray-600 mt-1">A Summary section follows the summary and replaces the copilot's lines; edits made there change the summary</span>
 					</label>
 					<label class="flex items-center gap-2 col-span-2">
 						<input type="checkbox" bind:checked={form.auto_name_sessions} disabled={locked('auto_name_sessions')} class="rounded border-gray-600 bg-gray-800" />
