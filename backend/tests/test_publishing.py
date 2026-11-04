@@ -871,3 +871,16 @@ def test_a_same_version_conflict_is_ours_only_when_the_host_holds_our_manifest(
     r = client.put(f"/api/sessions/{s.id}/publication", json={"where": "host"})
     job = _wait(client, r.json()["id"])
     assert job["status"] == "failed" and "at the same time" in job["error"]
+
+
+def test_publishing_the_notes_leaves_the_backends_sections_out(ctx):
+    from tests.test_notes_items import WITH_SUMMARY, store_doc
+
+    s = _meeting(ctx)
+    store_doc(ctx, s.id, WITH_SUMMARY)
+    s.notes = WITH_SUMMARY
+    manifest = publishing.build_manifest(
+        ctx, s, PublicationSelection(notes=True), "0123456789abcdef", 1
+    )[0]
+    assert manifest.notes.strip() == "My own note"
+    assert "summary line" not in manifest.notes

@@ -180,3 +180,12 @@ async def test_get_meeting_prints_the_notes_chips_as_text(backend, ctx, seeded):
         "\n[image: Whiteboard [v2]]"
     ) in out
     assert "mnemosyne:" not in out
+
+
+@pytest.mark.anyio
+async def test_get_meeting_prints_the_own_notes_not_the_sections(backend, ctx, seeded):
+    from tests.test_notes_items import store_doc
+
+    store_doc(ctx, seeded.id)
+    out = await get_meeting(backend, seeded.id)
+    assert "## Notes\nMy own note" in out and "A summary line" not in out

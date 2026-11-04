@@ -477,9 +477,12 @@ def summarize_session(
         others = NOTES_ONLY if notes_only else notes_hint(session.external_notes)
         if others:
             instr = f"{instr}\n{others}".strip()
+        from . import notes_sections
         from .notes_chips import plain_notes
 
-        own_notes = shared_notes_hint(plain_notes(session.notes or ""))  # chips as their text
+        own_notes = shared_notes_hint(
+            plain_notes(notes_sections.own_notes(app.repo, session_id, session.notes or ""))
+        )  # chips as their text
         if own_notes:
             instr = f"{instr}\n{own_notes}".strip()
         # Action items typed in the notes are the meeting's already (services/notes_items.py).

@@ -98,7 +98,9 @@ class ObsidianExporter:
             participants=session.participants,
             transcript_segments=[seg.model_dump() for seg in transcript],
             summary=session.summary,
-            notes=session.notes,
+            # Without the backend's sections (the summary is rendered from summary_data);
+            # a session not read by repo.get has none worked out: its notes as they are.
+            notes=session.notes if session.own_notes is None else session.own_notes,
             summary_data=session.summary_data,
             tags=self.tags,
             link_people=self.link_people,

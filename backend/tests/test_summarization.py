@@ -251,3 +251,13 @@ def test_an_ownerless_llm_item_matches_a_notes_item_with_an_owner(client, ctx, f
     fake_provider.summary = _llm_reply({"text": "Send the deck to the board"})
     assert run_summarize(client, sid, {"provider": "fake"})["status"] == "completed"
     assert ctx.repo.get(sid).summary_data.action_items == []
+
+
+def test_the_summary_is_not_fed_its_own_section(client, ctx, fake_provider, transcribed_session):
+    from tests.test_notes_items import store_doc
+
+    sid = transcribed_session["id"]
+    store_doc(ctx, sid, "Ana owns the budget\n\n## Summary\n\nZebra summary line\n")
+    assert run_summarize(client, sid, {"provider": "fake"})["status"] == "completed"
+    prompt = fake_provider.calls[-1]["system_prompt"]
+    assert "Ana owns the budget" in prompt and "Zebra summary line" not in prompt
