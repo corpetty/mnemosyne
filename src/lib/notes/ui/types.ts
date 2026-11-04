@@ -7,6 +7,9 @@
 import type { CommentSelection } from '../comments.js';
 import type { Chip } from '../chips.js';
 import type { Doc, LineKind } from '../model.js';
+import type { PreparedImage } from '../prepareImage.js';
+
+export type { PreparedImage };
 
 /** A selection as element ids: the id of the character before each end, null = start of doc. */
 export interface SelectionIds {
@@ -54,6 +57,27 @@ export interface RemoteHooks {
   after(): void;
 }
 
+/**
+ * Where an image line's bytes come from and go to (images in the notes): the desktop's fetches
+ * over the connection, the guest page's sealed room media. The editor never fetches itself; it
+ * shows `url(sha)` and asks again when `subscribe` says something about a sha changed.
+ */
+export interface MediaProvider {
+  /** An object URL when the bytes are here; null = not yet (the provider fetches, then notifies). */
+  url(sha: string): string | null;
+  /** Store a prepared image; rejects when it failed (the editor offers Retry with the kept bytes). */
+  upload(image: PreparedImage): Promise<void>;
+  /** Called with a sha whose bytes arrived or whose upload changed state; returns the unsubscribe. */
+  subscribe(fn: (sha: string) => void): () => void;
+  /**
+   * An upload in flight or failed, or `missing`: the provider gave up fetching the bytes (the
+   * editor says "Image not available"). null = none of these.
+   */
+  state?(sha: string): 'uploading' | 'failed' | 'missing' | null;
+  /** A picker of the host's own instead of the editor's file input (null: nothing chosen). */
+  pick?(): Promise<File | null>;
+}
+
 export interface NotesHost {
   /** The document; null while it loads. The editor mounts again when its identity changes. */
   readonly doc: Doc | null;
@@ -89,6 +113,8 @@ export interface NotesHost {
   say(message: string, level?: 'info' | 'error'): void;
   presence?: PresenceSource;
   inserts?: InsertProvider;
+  /** Images: without it there is no `/Image`, pasted or dropped files are not taken, and image lines stay grey boxes. */
+  media?: MediaProvider;
 }
 
 /** What the toolbar shows as on: the caret's line kind (a done task counts as a task) and marks. */

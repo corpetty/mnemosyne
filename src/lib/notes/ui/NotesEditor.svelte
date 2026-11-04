@@ -9,16 +9,22 @@
 	// line), its buttons act on the last selection the editor had, Comment opens a sheet above the
 	// keyboard (CommentSheet.svelte, when the host can post: `postComment`), and the line being
 	// typed is kept above the bar.
+	// Images (host.media): pasted, dropped or picked (`/Image`) files are prepared one at a time
+	// (prepareImage.ts), each goes in at once as an image line with its final mark (one undo entry)
+	// and is uploaded beside it; an observer fills every image line's <img> from the provider and
+	// sets its state; a ready picture opens full size in the lightbox (click, Enter or Space).
 	import { onMount, tick, untrack, type Snippet } from 'svelte';
 	import { parseChip } from '../chips.js';
 	import { commentRange, commentSelection, type CommentSelection } from '../comments.js';
-	import { toggleTask } from '../commands.js';
+	import { insertImageLine, removeImageLine, toggleTask } from '../commands.js';
+	import { imageValue } from '../images.js';
+	import { ImageRefused, prepareImage, UNREADABLE, type PreparedImage } from '../prepareImage.js';
 	import { PASTE_LIMIT } from '../editor/clipboard.js';
 	import '../editor/editor.css';
 	import { attachInput, type EditorInput, type LinkRequest } from '../editor/input.js';
 	import { caretRect } from '../editor/rects.js';
 	import { createEditorView, restoredOffset, type EditState, type EditorView } from '../editor/view.js';
-	import { ensureTerminated, lineAt, spansOf, valuesAt, type Doc, type Line, type LineKind } from '../model.js';
+	import { ensureTerminated, lineAt, lines, spansOf, valuesAt, type Doc, type Line, type LineKind } from '../model.js';
 	import { UndoStack } from '../undo.js';
 	import CaretOverlay from './CaretOverlay.svelte';
 	import { leafRects, placeToolbar, type Rect } from './placement.js';
@@ -28,7 +34,8 @@
 	import CommentSheet from './CommentSheet.svelte';
 	import { caretScroll, isCoarse, scrollParent, watchCoarse } from './viewport.js';
 	import SlashMenu from './SlashMenu.svelte';
-	import type { NotesHost, SelectionIds, ToolbarActive } from './types.js';
+	import Lightbox from './Lightbox.svelte';
+	import type { MediaProvider, NotesHost, SelectionIds, ToolbarActive } from './types.js';
 
 	let {
 		host,
@@ -63,19 +70,21 @@
 	const doc = $derived(host.doc);
 	const readOnly = $derived(host.readOnly);
 	const canComment = $derived(host.canComment);
+	const media = $derived(host.media);
 
 	let rootEl = $state<HTMLElement>();
 	let boxEl = $state<HTMLElement>();
 	let input = $state.raw<EditorInput | null>(null);
 	/** Everything the handlers below need from the mounted editor (not reactive). */
-	let ctx: {
+	interface Mounted {
 		doc: Doc;
 		view: EditorView;
 		input: EditorInput;
 		undo: UndoStack;
 		root: HTMLElement;
 		paint: () => void;
-	} | null = null;
+	}
+	let ctx: Mounted | null = null;
 	let canUndo = $state(false);
 	let canRedo = $state(false);
 
@@ -132,6 +141,7 @@
 			requestLink: openLink,
 			onTyped: (char, caret) => slash?.typed(char, caret),
 			interceptKey: (e) => slash?.key(e) ?? false,
+			onFiles: (files, from) => (ctx ? takeFiles(files, whereAt(doc, from), ctx) : false),
 			onPasteTooLarge: (n) =>
 				host.say(
 					`That paste is too long for the notes (${n.toLocaleString('en-US')} characters; the limit is ${PASTE_LIMIT.toLocaleString('en-US')})`,
@@ -165,10 +175,41 @@
 		};
 		const painter = new MutationObserver(paint);
 		painter.observe(root, { childList: true, subtree: true });
+		// Image lines: a rendered (or rebuilt) line starts at `loading` without a src; fill it. Our
+		// own changes inside a picture (its note and buttons) are not renders.
+		const imager = new MutationObserver((records) => {
+			if (records.some((r) => !(r.target instanceof Element && r.target.closest('figure.ne-image')))) fillImages();
+		});
+		imager.observe(root, { childList: true, subtree: true });
+		// A mousedown on a picture keeps the caret where it is (the click opens it or runs a button).
+		const onImageDown = (e: MouseEvent) => {
+			if (e.target instanceof Element && e.target.closest('figure.ne-image')) e.preventDefault();
+		};
+		root.addEventListener('mousedown', onImageDown);
+		// A focused picture is a button: Enter or Space opens it; no key reaches the input layer
+		// (the text selection may be anywhere meanwhile). Tab moves on as usual.
+		const onImageKey = (e: KeyboardEvent) => {
+			const fig = e.target instanceof HTMLElement && e.target.matches('figure.ne-image') ? e.target : null;
+			if (!fig) return;
+			e.stopPropagation();
+			if ((e.key === 'Enter' || e.key === ' ') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+				e.preventDefault();
+				openLightbox(fig);
+			}
+		};
+		root.addEventListener('keydown', onImageKey, true);
 		// A click on a highlight (not the end of a drag) opens its threads; a click on a chip goes
 		// to the host's InsertProvider (also when read-only; a host without onChipClick: nothing).
 		const onClick = (e: MouseEvent) => {
 			const target = e.target instanceof Element ? e.target : null;
+			const fig = target?.closest<HTMLElement>('figure.ne-image');
+			if (fig && root.contains(fig)) {
+				e.preventDefault();
+				const act = target?.closest<HTMLElement>('button[data-act]')?.dataset.act;
+				if (act === 'retry' || act === 'remove') imageAction(fig, act);
+				else openLightbox(fig);
+				return;
+			}
 			const sel = document.getSelection();
 			if (sel && !sel.isCollapsed) return;
 			const chipEl = target?.closest<HTMLElement>('a.ne-chip[data-chip]');
@@ -193,6 +234,7 @@
 		ctx = { doc, view, input: inp, undo, root, paint };
 		lastSel = null;
 		paint();
+		fillImages();
 		input = inp;
 		ready = true;
 		schedule();
@@ -201,6 +243,10 @@
 			root.removeEventListener('focusout', onBlur);
 			root.removeEventListener('click', onClick);
 			painter.disconnect();
+			imager.disconnect();
+			root.removeEventListener('mousedown', onImageDown);
+			root.removeEventListener('keydown', onImageKey, true);
+			lightbox = null;
 			root.removeEventListener('beforeinput', onBeforeInput);
 			host.flush();
 			host.setTyping(false);
@@ -786,6 +832,268 @@
 		return true;
 	}
 
+	// ---- images ------------------------------------------------------------------------------------
+	/**
+	 * Where the next image goes, by element id so typing or remote edits meanwhile do not move it:
+	 * the position after element `prev` (null = the document's start), or after the image line whose
+	 * terminator is `line` (the one inserted before it, so several files keep their order).
+	 */
+	type Where = { prev: string | null } | { line: string };
+
+	function whereAt(d: Doc, pos: number): Where {
+		return { prev: pos > 0 ? (d.web.seqIdAt(d.obj, pos - 1) ?? null) : null };
+	}
+
+	function resolveWhere(c: Mounted, w: Where): number {
+		const d = c.doc;
+		if ('line' in w) {
+			const p = d.web.seqPositionOf(d.obj, w.line);
+			if (p !== undefined) return p;
+		} else if (w.prev === null) return 0;
+		else {
+			const p = d.web.seqPositionOf(d.obj, w.prev);
+			if (p !== undefined) return p + 1;
+		}
+		return c.view.getSelection()?.focus ?? Math.max(0, d.web.textLen(d.obj) - 1);
+	}
+
+	/** Prepared images whose upload has not succeeded yet: Retry sends them again. */
+	const kept = new Map<string, PreparedImage>();
+	/** Upload states seen by this editor, for a provider without `state`. */
+	const uploads = new Map<string, 'uploading' | 'failed'>();
+	/** Images are prepared one at a time, across pastes too. */
+	let imageQueue: Promise<void> = Promise.resolve();
+	const watchedImgs = new WeakSet<HTMLImageElement>();
+	const noteKeys = new WeakMap<HTMLElement, string>();
+
+	/** Take the image files among `files` (false: none, or no media; the text path runs). */
+	function takeFiles(files: File[], where: Where, c: Mounted): boolean {
+		if (!host.media || c.input.readOnly) return false;
+		const images = files.filter((f) => f.type.startsWith('image/'));
+		if (!images.length) return false;
+		imageQueue = imageQueue.then(() => addImages(images, where, c));
+		return true;
+	}
+
+	async function addImages(files: File[], where: Where, c: Mounted) {
+		for (const f of files) {
+			let p: PreparedImage;
+			try {
+				p = await prepareImage(f);
+			} catch (e) {
+				host.say(e instanceof ImageRefused ? e.message : UNREADABLE, 'error');
+				continue;
+			}
+			const m = host.media;
+			// The editor went to another document, or became read-only, meanwhile.
+			if (ctx !== c || !m || c.input.readOnly) return;
+			const value = imageValue(p);
+			const r = c.input.command((d) => insertImageLine(d, resolveWhere(c, where), value));
+			if (!r || !r.inverse.length) continue;
+			const id = lineAt(lines(c.doc), r.caret).id;
+			if (id) where = { line: id };
+			upload(m, p);
+		}
+	}
+
+	/** Upload (again), never blocking the line that names it. */
+	function upload(m: MediaProvider, p: PreparedImage) {
+		kept.set(p.sha, p);
+		uploads.set(p.sha, 'uploading');
+		refreshImage(p.sha);
+		let done: Promise<void>;
+		try {
+			done = Promise.resolve(m.upload(p));
+		} catch (e) {
+			done = Promise.reject(e);
+		}
+		done.then(
+			() => {
+				kept.delete(p.sha);
+				uploads.delete(p.sha);
+				refreshImage(p.sha);
+			},
+			() => {
+				uploads.set(p.sha, 'failed');
+				refreshImage(p.sha);
+			}
+		);
+	}
+
+	/** The provider's upload state first, then ours; "missing" only when no upload of ours is pending or failed. */
+	function imageState(m: MediaProvider | undefined, sha: string): 'uploading' | 'failed' | 'missing' | null {
+		const theirs = m?.state?.(sha) ?? null;
+		if (theirs === 'uploading' || theirs === 'failed') return theirs;
+		return uploads.get(sha) ?? theirs;
+	}
+
+	/** Give one picture its src, state, note and buttons from the provider (idempotent). */
+	function fillImage(fig: HTMLElement) {
+		const sha = fig.dataset.sha ?? '';
+		const m = host.media;
+		const img = fig.querySelector('img');
+		const url = m ? m.url(sha) : null;
+		if (img) {
+			if (url) {
+				if (img.getAttribute('src') !== url) img.src = url;
+			} else if (img.hasAttribute('src')) img.removeAttribute('src');
+			if (!watchedImgs.has(img)) {
+				watchedImgs.add(img);
+				img.addEventListener('load', () => fillImage(fig));
+				img.addEventListener('error', () => fillImage(fig));
+			}
+		}
+		const shown = !!url && !!img && img.getAttribute('src') === url && img.complete;
+		const loaded = shown && img!.naturalWidth > 0;
+		const broken = shown && !loaded;
+		const st = imageState(m, sha);
+		const state =
+			st === 'failed'
+				? 'failed'
+				: st === 'uploading'
+					? 'uploading'
+					: loaded
+						? 'ready'
+						: st === 'missing' || broken
+							? 'missing'
+							: 'loading';
+		if (fig.dataset.state !== state) fig.dataset.state = state;
+		if (state === 'ready') {
+			if (fig.getAttribute('tabindex') !== '0') fig.setAttribute('tabindex', '0');
+			if (fig.getAttribute('aria-label') !== 'Open image') fig.setAttribute('aria-label', 'Open image');
+		} else {
+			if (fig.hasAttribute('tabindex')) fig.removeAttribute('tabindex');
+			if (fig.hasAttribute('aria-label')) fig.removeAttribute('aria-label');
+		}
+		const ro = ctx?.input.readOnly ?? readOnly;
+		const retry = state === 'failed' && !ro && kept.has(sha) && !!m;
+		const remove = state === 'failed' && !ro;
+		const key = `${state}|${retry}|${remove}`;
+		if (noteKeys.get(fig) === key) return;
+		noteKeys.set(fig, key);
+		const note = fig.querySelector<HTMLElement>('.ne-image-note');
+		if (!note) return;
+		const text =
+			state === 'uploading' ? 'Uploading…' : state === 'failed' ? 'Not uploaded' : state === 'missing' ? 'Image not available' : '';
+		const parts: Node[] = text ? [document.createTextNode(text)] : [];
+		const button = (act: string, label: string) => {
+			const b = document.createElement('button');
+			b.type = 'button';
+			b.dataset.act = act;
+			b.textContent = label;
+			parts.push(b);
+		};
+		if (retry) button('retry', 'Retry');
+		if (remove) button('remove', 'Remove');
+		note.replaceChildren(...parts);
+	}
+
+	function fillImages() {
+		const root = ctx?.root;
+		if (!root) return;
+		for (const fig of root.querySelectorAll<HTMLElement>('figure.ne-image')) fillImage(fig);
+	}
+
+	function refreshImage(sha: string) {
+		const root = ctx?.root;
+		if (!root || !/^[0-9a-f]+$/.test(sha)) return;
+		for (const fig of root.querySelectorAll<HTMLElement>(`figure.ne-image[data-sha="${sha}"]`)) fillImage(fig);
+	}
+
+	// The provider says when bytes arrive or an upload changes; a new provider or a change of the
+	// read-only flag (the buttons) refills every picture.
+	$effect(() => {
+		const m = media;
+		if (!input) return;
+		untrack(fillImages);
+		return m?.subscribe((sha) => refreshImage(sha));
+	});
+	$effect(() => {
+		void readOnly;
+		if (input) untrack(fillImages);
+	});
+
+	/** The image line a picture belongs to, as it is in the document now. */
+	function lineOfFigure(fig: HTMLElement): Line | null {
+		const c = ctx;
+		const ref = c?.view.lineOf(fig);
+		if (!c || !ref || ref.id === null) return null;
+		return lines(c.doc).find((l) => l.id === ref.id) ?? null;
+	}
+
+	function imageAction(fig: HTMLElement, act: 'retry' | 'remove') {
+		const c = ctx;
+		if (!c || c.input.readOnly) return;
+		if (act === 'retry') {
+			const p = kept.get(fig.dataset.sha ?? '');
+			const m = host.media;
+			if (p && m) upload(m, p);
+			return;
+		}
+		const line = lineOfFigure(fig);
+		if (line?.image) c.input.command((d) => removeImageLine(d, line));
+	}
+
+	// `/Image`: the host's picker, else the editor's own file input (on a phone it offers the camera).
+	let fileInput = $state<HTMLInputElement>();
+	let pickWhere: Where | null = null;
+
+	function pickImage() {
+		const c = ctx;
+		const m = host.media;
+		if (!c || !m || c.input.readOnly) return;
+		const at = c.view.getSelection()?.focus ?? Math.max(0, c.doc.web.textLen(c.doc.obj) - 1);
+		const where = whereAt(c.doc, at);
+		if (m.pick) {
+			void m.pick().then(
+				(f) => {
+					if (f && ctx === c) picked([f], where, c);
+				},
+				() => {}
+			);
+			return;
+		}
+		pickWhere = where;
+		fileInput?.click();
+	}
+
+	function onFileChosen(e: Event) {
+		const el = e.currentTarget as HTMLInputElement;
+		const files = Array.from(el.files ?? []);
+		el.value = '';
+		const where = pickWhere;
+		pickWhere = null;
+		const c = ctx;
+		if (files.length && where && c) picked(files, where, c);
+	}
+
+	/** A file chosen in a picker that is no image the browser names as one: said, not ignored. */
+	function picked(files: File[], where: Where, c: Mounted) {
+		if (!takeFiles(files, where, c)) host.say(UNREADABLE, 'error');
+	}
+
+	// ---- the lightbox --------------------------------------------------------------------------------
+	let lightbox = $state.raw<{ src: string; label: string; fig: HTMLElement; sha: string } | null>(null);
+
+	function openLightbox(fig: HTMLElement) {
+		if (fig.dataset.state !== 'ready') return;
+		const src = fig.querySelector('img')?.getAttribute('src');
+		if (!src) return;
+		const caption = lineOfFigure(fig)?.text.trim() ?? '';
+		lightbox = { src, label: caption || 'Image', fig, sha: fig.dataset.sha ?? '' };
+	}
+
+	/** Close it and give the picture its focus back (the same image's, if its line was rebuilt meanwhile). */
+	function closeLightbox() {
+		const lb = lightbox;
+		lightbox = null;
+		if (!lb) return;
+		let fig: HTMLElement | null = lb.fig;
+		if (!fig.isConnected && /^[0-9a-f]+$/.test(lb.sha))
+			fig = ctx?.root.querySelector<HTMLElement>(`figure.ne-image[data-sha="${lb.sha}"]`) ?? null;
+		fig?.focus({ preventScroll: true });
+	}
+
 	// ---- the link prompt (Ctrl+K) ------------------------------------------------------------------
 	let linkReq = $state<LinkRequest | null>(null);
 	let linkUrl = $state('');
@@ -912,7 +1220,7 @@
 	>
 		<div bind:this={rootEl} class="min-h-[14.5rem]" aria-label={label} data-testid={testid}></div>
 		<CaretOverlay presence={host.presence} {doc} root={rootEl} />
-		<SlashMenu bind:this={slash} editor={() => ctx} box={boxEl} inserts={host.inserts} />
+		<SlashMenu bind:this={slash} editor={() => ctx} box={boxEl} inserts={host.inserts} image={!!media && !readOnly} onimage={pickImage} />
 		{#if barPos}
 			<SelectionToolbar
 				bind:this={selBar}
@@ -950,6 +1258,22 @@
 	{/if}
 	{#if !readOnly && !coarse}
 		<p class="text-[11px] text-gray-600">{HINT}</p>
+	{/if}
+	{#if media && !readOnly}
+		<input
+			bind:this={fileInput}
+			type="file"
+			accept="image/*"
+			capture="environment"
+			hidden
+			tabindex="-1"
+			aria-hidden="true"
+			data-testid="notes-image-input"
+			onchange={onFileChosen}
+		/>
+	{/if}
+	{#if lightbox}
+		<Lightbox src={lightbox.src} label={lightbox.label} onclose={closeLightbox} />
 	{/if}
 </div>
 

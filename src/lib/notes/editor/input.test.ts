@@ -693,6 +693,132 @@ describe('clipboard', () => {
     expect(m.A.text()).toBe('abcd\n');
   });
 
+  describe('files (onFiles)', () => {
+    const png = () => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' });
+    /** A paste carrying files, as `files` or only as items of kind file. */
+    function pasteFiles(root: HTMLElement, files: File[], text = '', asItems = false): Event {
+      const event = new Event('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', {
+        value: {
+          files: asItems ? [] : files,
+          items: files.map((f) => ({ kind: 'file', type: f.type, getAsFile: () => f })),
+          getData: (k: string) => (k === 'text/plain' ? text : ''),
+          setData() {}
+        }
+      });
+      root.dispatchEvent(event);
+      return event;
+    }
+    function drag(root: HTMLElement, type: 'dragover' | 'drop', files: File[], text = ''): Event {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', {
+        value: {
+          types: files.length ? ['Files'] : ['text/plain'],
+          files,
+          items: [],
+          dropEffect: 'none',
+          getData: (k: string) => (k === 'text/plain' ? text : '')
+        }
+      });
+      root.dispatchEvent(event);
+      return event;
+    }
+
+    it('files on a paste go to onFiles and skip the text path', () => {
+      const got: [string[], number, number][] = [];
+      const m = mount(docOf('abcd'), {
+        hooks: {
+          onFiles: (files, from, to) => {
+            got.push([files.map((f) => f.name), from, to]);
+            return true;
+          }
+        }
+      });
+      m.view.setSelection(1, 3);
+      const e = pasteFiles(m.root, [png()], 'IGNORED');
+      expect(e.defaultPrevented).toBe(true);
+      expect(got).toEqual([[['shot.png'], 1, 3]]);
+      expect(m.A.text()).toBe('abcd\n');
+      expect(m.undo.canUndo()).toBe(false);
+      // Items of kind file count when `files` is empty.
+      m.view.setSelection(2);
+      pasteFiles(m.root, [png()], '', true);
+      expect(got[1]).toEqual([['shot.png'], 2, 2]);
+    });
+
+    it('a declined file paste runs the text path', () => {
+      const m = mount(docOf('ab'), { hooks: { onFiles: () => false } });
+      m.view.setSelection(2);
+      pasteFiles(m.root, [png()], 'cd');
+      expect(m.A.text()).toBe('abcd\n');
+    });
+
+    it('a text paste still works and never calls onFiles', () => {
+      let calls = 0;
+      const m = mount(docOf('ab'), {
+        hooks: {
+          onFiles: () => {
+            calls++;
+            return true;
+          }
+        }
+      });
+      m.view.setSelection(1);
+      clipboard(m.root, 'paste', { 'text/plain': 'x' });
+      pasteFiles(m.root, [], 'y');
+      expect(m.A.text()).toBe('axyb\n');
+      expect(calls).toBe(0);
+    });
+
+    it('a drop with files: dragover is accepted, the drop goes to onFiles at the caret', () => {
+      const got: [number, number, number][] = [];
+      const m = mount(docOf('abc'), {
+        hooks: {
+          onFiles: (files, from, to) => {
+            got.push([files.length, from, to]);
+            return true;
+          }
+        }
+      });
+      m.view.setSelection(2);
+      expect(drag(m.root, 'dragover', [png()]).defaultPrevented).toBe(true);
+      // A text drag is the browser's as before.
+      expect(drag(m.root, 'dragover', [], 'x').defaultPrevented).toBe(false);
+      const e = drag(m.root, 'drop', [png(), png()]);
+      expect(e.defaultPrevented).toBe(true);
+      // jsdom has no caretPositionFromPoint: the selection stands in for the drop point.
+      expect(got).toEqual([[2, 2, 2]]);
+      expect(m.A.text()).toBe('abc\n');
+      // A drop without files, or one onFiles declines, is left to the browser.
+      expect(drag(m.root, 'drop', [], 'x').defaultPrevented).toBe(false);
+      const no = mount(docOf('abc'), { hooks: { onFiles: () => false } });
+      no.view.setSelection(1);
+      expect(drag(no.root, 'drop', [png()]).defaultPrevented).toBe(false);
+    });
+
+    it('read-only and editors without onFiles take no files', () => {
+      let calls = 0;
+      const ro = mount(docOf('ab'), {
+        readOnly: true,
+        hooks: {
+          onFiles: () => {
+            calls++;
+            return true;
+          }
+        }
+      });
+      expect(drag(ro.root, 'dragover', [png()]).defaultPrevented).toBe(false);
+      expect(drag(ro.root, 'drop', [png()]).defaultPrevented).toBe(false);
+      pasteFiles(ro.root, [png()]);
+      expect(calls).toBe(0);
+      const bare = mount(docOf('ab'));
+      bare.view.setSelection(2);
+      expect(drag(bare.root, 'dragover', [png()]).defaultPrevented).toBe(false);
+      pasteFiles(bare.root, [png()], 'c');
+      expect(bare.A.text()).toBe('abc\n');
+    });
+  });
+
   it('selection models and markdown', () => {
     const A = docOf('Head:h1', 'a b', 'c:bullet');
     toggleInline(A.doc, 7, 8, 'bold');

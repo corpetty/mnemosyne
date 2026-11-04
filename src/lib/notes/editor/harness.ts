@@ -1,7 +1,8 @@
 // A development harness for the notes editor: a local document (no backend) behind a NotesHost
 // (ui/types.ts) that the page hands to the shared NotesEditor.svelte, plus a second replica behind
 // a fake relay so a "remote" edit can be driven from the console or a test, fake inserts and a
-// fake presence (carets fed from the test). Exposed as `window.__notes` by the dev-only route
+// fake presence (carets fed from the test) and a fake media provider (images: object URLs from the
+// prepared bytes, uploads that can be made to fail). Exposed as `window.__notes` by the dev-only route
 // src/routes/dev/notes-editor (tests-e2e/notes-editor.spec.ts and the WebKitGTK probe use it).
 // Only ever imported under `import.meta.env.DEV`: production builds drop it.
 import { insertModel, insertText, setLink, type NotesModel } from '../commands.js';
@@ -9,7 +10,9 @@ import type { Chip } from '../chips.js';
 import { ensureTerminated, lines, openDoc, type Doc, type Line } from '../model.js';
 import { parseMarkdown, renderMarkdown } from '../pkg/notes_wasm.js';
 import { applyRemote, drain } from '../sync.js';
-import type { CaretView, NotesHost, PresenceSource, RemoteHooks, SelectionIds } from '../ui/types.js';
+import type { CaretView, MediaProvider, NotesHost, PresenceSource, RemoteHooks, SelectionIds } from '../ui/types.js';
+import type { ImageExt } from '../images.js';
+import { prepareImage, type PreparedImage } from '../prepareImage.js';
 import { WasmHashWeb, ensureWasm } from '../wasm.js';
 import { selectionModel } from './clipboard.js';
 import { extractText, getSelectionOffsets, setSelectionOffsets } from './dom.js';
@@ -23,6 +26,22 @@ const MEETINGS = [{ id: '0123456789ab', label: 'Planning · Oct 14' }];
 export interface HarnessControl {
   get(): boolean;
   set(v: boolean): void;
+}
+
+/** The harness's media provider, with handles for tests. */
+export interface FakeMedia extends MediaProvider {
+  /** Uploads from now on fail (Retry then succeeds once this is false again). */
+  failUploads: boolean;
+  /** How long an upload takes, in ms. */
+  uploadMs: number;
+  /** Every upload attempt, in order: "<sha> ok" or "<sha> failed". */
+  uploads: string[];
+  /** Does the provider hold these bytes? */
+  has(sha: string): boolean;
+  /** Bytes arriving from elsewhere (another person's image). */
+  arrive(sha: string, bytes: Uint8Array, ext: ImageExt): void;
+  /** The provider gives up on a sha it does not hold ("Image not available"). */
+  giveUp(sha: string): void;
 }
 
 export interface Harness {
@@ -69,9 +88,63 @@ export interface Harness {
   clearRemoteCarets(): void;
   /** Our own selection as the editor last sent it to presence (null: none). */
   localSel: SelectionIds | null;
+  /** The fake media provider (null when the page was opened with ?nomedia). */
+  media: FakeMedia | null;
+  /** prepareImage, for a test that wants a value or bytes of its own. */
+  prepareImage: typeof prepareImage;
 }
 
-export async function mountHarness(markdown: string, control: HarnessControl): Promise<Harness> {
+/** Object URLs from held bytes; uploads keep the bytes at once and settle after `uploadMs`. */
+export function createFakeMedia(): FakeMedia {
+  const urls = new Map<string, string>();
+  const states = new Map<string, 'uploading' | 'failed' | 'missing'>();
+  const listeners = new Set<(sha: string) => void>();
+  const notify = (sha: string) => listeners.forEach((fn) => fn(sha));
+  const hold = (sha: string, bytes: Uint8Array, ext: ImageExt) => {
+    if (!urls.has(sha)) urls.set(sha, URL.createObjectURL(new Blob([bytes as BlobPart], { type: `image/${ext}` })));
+  };
+  const m: FakeMedia = {
+    failUploads: false,
+    uploadMs: 150,
+    uploads: [],
+    url: (sha) => urls.get(sha) ?? null,
+    state: (sha) => states.get(sha) ?? null,
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    upload(image: PreparedImage) {
+      hold(image.sha, image.bytes, image.ext);
+      states.set(image.sha, 'uploading');
+      notify(image.sha);
+      return new Promise<void>((resolve, reject) => {
+        setTimeout(() => {
+          const fail = m.failUploads;
+          m.uploads.push(`${image.sha} ${fail ? 'failed' : 'ok'}`);
+          if (fail) states.set(image.sha, 'failed');
+          else states.delete(image.sha);
+          notify(image.sha);
+          if (fail) reject(new Error('upload failed'));
+          else resolve();
+        }, m.uploadMs);
+      });
+    },
+    has: (sha) => urls.has(sha),
+    arrive(sha, bytes, ext) {
+      hold(sha, bytes, ext);
+      if (states.get(sha) === 'missing') states.delete(sha);
+      notify(sha);
+    },
+    giveUp(sha) {
+      if (urls.has(sha)) return;
+      states.set(sha, 'missing');
+      notify(sha);
+    }
+  };
+  return m;
+}
+
+export async function mountHarness(markdown: string, control: HarnessControl, opts: { media?: boolean } = {}): Promise<Harness> {
   await ensureWasm();
   const web = new WasmHashWeb();
   const doc = openDoc(web, ORIGIN);
@@ -129,6 +202,8 @@ export async function mountHarness(markdown: string, control: HarnessControl): P
     }).observe(document.body, { childList: true, subtree: true });
   }
 
+  const media = opts.media === false ? null : createFakeMedia();
+
   // ---- fake presence ------------------------------------------------------------------------------
   const carets = new Map<string, CaretView>();
   const listeners = new Set<() => void>();
@@ -177,6 +252,7 @@ export async function mountHarness(markdown: string, control: HarnessControl): P
         log.push(`say ${message}`);
       },
       presence,
+      media: media ?? undefined,
       inserts: {
         time: () => ({ part: 0, seconds: 754, label: '12:34' }),
         people: async (q) => PEOPLE.filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase())),
@@ -248,7 +324,9 @@ export async function mountHarness(markdown: string, control: HarnessControl): P
       carets.clear();
       notify();
     },
-    localSel: null
+    localSel: null,
+    media,
+    prepareImage
   };
   return h;
 }

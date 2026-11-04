@@ -2,7 +2,8 @@
 	// Development-only harness for the notes editor: a local document with the DOM and input
 	// layers, no backend (tests-e2e/notes-editor.spec.ts and the WebKitGTK probe drive it
 	// through `window.__notes`). Everything editor-related is imported under
-	// `import.meta.env.DEV`, so production builds carry only this stub.
+	// `import.meta.env.DEV`, so production builds carry only this stub. Images use the harness's
+	// fake media provider (`?nomedia` mounts without one); "Uploads fail" sets its `failUploads`.
 	import { onMount } from 'svelte';
 	import type { NotesHost } from '$lib/notes/ui/types.js';
 	import type NotesEditorType from '$lib/notes/ui/NotesEditor.svelte';
@@ -23,10 +24,17 @@
 
 	let status = $state('loading');
 	let readOnly = $state(false);
+	let failUploads = $state(false);
+	let hasMedia = $state(false);
 	let ready = $state(false);
 	let host = $state.raw<NotesHost | null>(null);
 	let Editor = $state.raw<typeof NotesEditorType | null>(null);
-	let harness: unknown = null;
+	let harness: { media: { failUploads: boolean } | null } | null = null;
+
+	$effect(() => {
+		const fail = failUploads;
+		if (harness?.media) harness.media.failUploads = fail;
+	});
 
 	// `window.__notes` appears once the editor has mounted on the document.
 	$effect(() => {
@@ -47,7 +55,8 @@
 			import('$lib/notes/editor/harness.js'),
 			import('$lib/notes/ui/NotesEditor.svelte')
 		]);
-		const h = await mountHarness(md, { get: () => readOnly, set: (v) => (readOnly = v) });
+		const h = await mountHarness(md, { get: () => readOnly, set: (v) => (readOnly = v) }, { media: !params.has('nomedia') });
+		hasMedia = !!h.media;
 		harness = h;
 		Editor = ed.default;
 		host = h.host;
@@ -60,6 +69,12 @@
 
 <div class="mx-auto max-w-3xl p-6">
 	<p class="mb-3 text-xs text-gray-400" data-testid="status">{status}</p>
+	{#if hasMedia}
+		<label class="mb-3 flex items-center gap-2 text-xs text-gray-400">
+			<input type="checkbox" bind:checked={failUploads} data-testid="fail-uploads" />
+			Uploads fail
+		</label>
+	{/if}
 	{#if Editor && host}
 		<Editor {host} testid="editor" label="Notes" bind:ready />
 	{/if}

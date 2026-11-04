@@ -127,7 +127,8 @@ export type MenuAction =
   | { kind: 'person' }
   | { kind: 'meeting' }
   | { kind: 'line'; line: LineKind | null }
-  | { kind: 'table' };
+  | { kind: 'table' }
+  | { kind: 'image' };
 
 export type MenuGroup = 'meeting' | 'blocks';
 
@@ -157,11 +158,22 @@ const BLOCKS: MenuItem[] = [
   { key: 'table', name: 'Table', aliases: ['table', 'grid'], group: 'blocks', act: { kind: 'table' } }
 ];
 
+/** `/Image`: a file picker (on a phone, the camera too); listed only when the host has media. */
+const IMAGE_ITEM: MenuItem = {
+  key: 'image',
+  name: 'Image',
+  aliases: ['picture', 'photo', 'screenshot', 'upload', 'camera'],
+  group: 'blocks',
+  act: { kind: 'image' }
+};
+
 export interface MenuContext {
   /** `inserts.time()`'s label, null when there is no moment to insert. */
   time: string | null;
   people: boolean;
   meetings: boolean;
+  /** Can images be added (the host has a media provider)? */
+  image?: boolean;
   /** The caret's line: chips do not go into code, line kinds do not apply to a table row. */
   line: 'text' | 'code' | 'table';
 }
@@ -179,6 +191,7 @@ export function menuItems(c: MenuContext): MenuItem[] {
       out.push({ key: 'meeting', name: 'Earlier meeting', aliases: ['meeting', 'link', '[['], group: 'meeting', act: { kind: 'meeting' } });
   }
   if (c.line !== 'table') out.push(...BLOCKS);
+  if (c.image && c.line === 'text') out.push(IMAGE_ITEM);
   return out;
 }
 

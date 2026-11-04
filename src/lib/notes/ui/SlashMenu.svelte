@@ -44,13 +44,19 @@
 	let {
 		editor,
 		box,
-		inserts
+		inserts,
+		image = false,
+		onimage
 	}: {
 		/** The mounted editor, null while there is none. */
 		editor: () => SlashEditor | null;
 		/** The editor's box (positioning origin). */
 		box: HTMLElement | undefined;
 		inserts: InsertProvider | undefined;
+		/** List `/Image` (the host has a media provider). */
+		image?: boolean;
+		/** `/Image` was picked: the trigger and query are gone, the caret is where the image goes. */
+		onimage?: () => void;
 	} = $props();
 
 	type Mode = 'menu' | 'person' | 'meeting';
@@ -93,7 +99,7 @@
 		let i = 0;
 		if (s.mode === 'menu') {
 			const items = filter(
-				menuItems({ time: timeLabel, people: !!inserts?.people, meetings: !!inserts?.meetings, line: s.line }),
+				menuItems({ time: timeLabel, people: !!inserts?.people, meetings: !!inserts?.meetings, image, line: s.line }),
 				query
 			);
 			const out: Section[] = [];
@@ -363,6 +369,13 @@
 					inv.push(...t.inverse);
 					return t.caret;
 				});
+				return;
+			case 'image':
+				close();
+				// The typed `/` and query go as one command (when there are any); the picker then
+				// opens, and the image line goes in at the caret once a file is chosen.
+				if (from < to) run(() => from);
+				onimage?.();
 				return;
 			case 'time': {
 				const t = inserts?.time?.();
