@@ -138,3 +138,45 @@ def test_no_demo_share_without_demo_mode(client, ctx):
     assert ctx.repo.contact(share_demo.ada_person()) is None
     assert ctx.sessions.list_sessions() == []
     assert share_demo.seed_demo(ctx) is False
+
+
+# ---- the demo copilot: canned notes into a meeting's live notes, once ---------------------
+
+
+def test_demo_copilot_adds_its_points_once(monkeypatch, client, ctx, tmp_path):
+    from mnemosyne.models.session import Session
+    from mnemosyne.services.copilot_notes import CHIP
+    from tests import fake_link
+
+    fake_link.install(tmp_path, monkeypatch)
+    monkeypatch.setenv("MNEMOSYNE_DEMO", "1")
+    sid = ctx.repo.save(Session(name="demo meeting", notes="Mine\n")).id
+
+    r = client.post(f"/api/demo/copilot/{sid}")
+    assert r.status_code == 200
+    assert r.json() == {"added": 4}
+    assert ctx.repo.get(sid).notes == (
+        "Mine\n"
+        "## Copilot\n"
+        f"- {CHIP} The team went over the Waku migration\n"
+        f"- {CHIP} Decided: Hold the beta until the docs are ready\n"
+        f"- [ ] {CHIP} Send the beta invites (Mira)\n"
+        f"- {CHIP} Question: Who tests the Android build?\n"
+    )
+    assert len(ctx.repo.get(sid).copilot_notes.added) == 4
+    assert client.get(f"/api/sessions/{sid}/copilot").json()["added"][0]["n"] == 0
+
+    # The second call adds nothing.
+    before = ctx.repo.get(sid).notes
+    assert client.post(f"/api/demo/copilot/{sid}").json() == {"added": 0}
+    assert ctx.repo.get(sid).notes == before
+    assert len(ctx.repo.get(sid).copilot_notes.added) == 4
+
+
+def test_demo_copilot_needs_demo_mode_and_a_meeting(monkeypatch, client, ctx):
+    from mnemosyne.models.session import Session
+
+    sid = ctx.repo.save(Session(name="demo meeting")).id
+    assert client.post(f"/api/demo/copilot/{sid}").status_code == 404
+    monkeypatch.setenv("MNEMOSYNE_DEMO", "1")
+    assert client.post("/api/demo/copilot/nope").status_code == 404
