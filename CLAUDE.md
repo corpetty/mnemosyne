@@ -588,7 +588,7 @@ gained `--write-bytes-per-day` (200 MiB per client, 429 `write_budget`, rooms cl
 `rooms --no-relay`, `home --no-relay` (mDNS stays), `home --no-lan`, `relay-check --relay` (`MNEMOSYNE_RELAY_CA`). No
 migration: computers paired under n0 are paired again. CI: job "Our relay and host (deploy/ours)" and ours-health.yml.
 
-Images in the notes (unreleased, docs/plans/2026-10-26-images-in-notes.md, build order and changes in
+Images in the notes (released as 0.28.0, docs/plans/2026-10-26-images-in-notes.md, build order and changes in
 2026-11-04-images-tasks.md, use in docs/api-reference.md "Images in the notes", guest-notes.md, publishing.md): paste,
 drop or `/Image` a picture into the notes; guests too, a phone's camera included. An image is a notes line of kind `image`
 (notes-core `Block::Image`: the caption is the text, a closed `image` mark on the `\n` holds `<sha256>.<webp|jpeg>@<w>x<h>`;
