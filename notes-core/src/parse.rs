@@ -14,12 +14,18 @@
 //!   whitespace and closes when not preceded by it; `_` never inside a word) and, instead of
 //!   its "rule of 3", openers consumed innermost part first (`**` closes only with `**`).
 //!
-//! Everything else stays literal text: HTML, images, entities, autolinks, setext headings,
-//! thematic breaks, reference links, indented code, single-tilde strike. Nested lists and
-//! quotes flatten: the indentation (or the inner `>`) goes, the line keeps its list kind.
-//! Leading whitespace a reader would drop is kept only where the line starts with text.
+//! - an image line: a paragraph line that is exactly `![caption](mnemosyne:image/<value>)`
+//!   with a valid value ([`crate::model::IMAGE_VALUE`]); the caption is unescaped and its
+//!   formats dropped.
+//!
+//! Everything else stays literal text: HTML, other images, entities, autolinks, setext
+//! headings, thematic breaks, reference links, indented code, single-tilde strike. Nested
+//! lists and quotes flatten: the indentation (or the inner `>`) goes, the line keeps its list
+//! kind. Leading whitespace a reader would drop is kept only where the line starts with text.
 
-use crate::model::{Block, Fmt, LineAttr, Link, Model, BOLD, CELL, CODE, ITALIC, STRIKE};
+use crate::model::{
+    is_image_value, Block, Fmt, LineAttr, Link, Model, BOLD, CELL, CODE, IMAGE_URL, ITALIC, STRIKE,
+};
 use crate::render::{is_delimiter_row, needs_gap, Sig};
 
 /// Parse markdown into a document (not yet normalized; see [`crate::model::normalize`]).
@@ -92,6 +98,25 @@ pub fn parse(md: &str) -> Model {
                 i += 1;
             }
             Class::Para => {
+                if let Some((caption, value)) = image_line(line) {
+                    // The caption's text without its markup: a scratch model, so links in
+                    // it intern no URLs.
+                    let src: Vec<char> = caption.chars().collect();
+                    let (chars, _) = parse_inline(&src, &mut Model::default());
+                    items.push(Item::Line(DocLine {
+                        attr: LineAttr {
+                            kind: Some(Block::Image),
+                            image: Some(value.to_string()),
+                            ..LineAttr::default()
+                        },
+                        fmt: vec![Fmt::default(); chars.len()],
+                        chars,
+                        md: line.to_string(),
+                        md_line: line.to_string(),
+                    }));
+                    i += 1;
+                    continue;
+                }
                 let head = i + 1 < lines.len()
                     && crate::render::has_unescaped_pipe(line)
                     && is_delimiter_row(lines[i + 1])
@@ -216,7 +241,7 @@ fn code_line(_model: &mut Model, line: &str, lang: Option<String>, fence: &str) 
         attr: LineAttr {
             kind: Some(Block::Code),
             lang: lang.filter(|l| !l.is_empty()),
-            align: None,
+            ..LineAttr::default()
         },
         chars,
         fmt,
@@ -252,6 +277,18 @@ fn table_row(model: &mut Model, line: &str, kind: Block) -> Item {
         md: line.to_string(),
         md_line: line.to_string(),
     })
+}
+
+/// `![caption](mnemosyne:image/<value>)` and nothing else on the line, with a valid value
+/// and the `]` not escaped: (the caption, still escaped; the value).
+pub(crate) fn image_line(line: &str) -> Option<(&str, &str)> {
+    let inner = line.strip_prefix("![")?.strip_suffix(')')?;
+    let tail = format!("]({IMAGE_URL}");
+    // The value holds no `]`: the last such tail is the only candidate.
+    let at = inner.rfind(&tail)?;
+    let (caption, value) = (&inner[..at], &inner[at + tail.len()..]);
+    let backslashes = caption.len() - caption.trim_end_matches('\\').len();
+    (backslashes % 2 == 0 && is_image_value(value)).then_some((caption, value))
 }
 
 /// A table row's cells, trimmed, still escaped (`\|` is not a separator).

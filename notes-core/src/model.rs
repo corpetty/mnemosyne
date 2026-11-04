@@ -6,6 +6,36 @@ use serde::Serialize;
 /// Separates table cells in the text.
 pub const CELL: char = '\u{1f}';
 
+/// The form of an `image` mark's value, `<sha256 hex>.<webp|jpeg>@<w>x<h>`: the stored
+/// bytes' hash and type, and the image's size in pixels. The same pattern is checked by the
+/// client (src/lib/notes/images.ts) and the backend (services/notes_media.py);
+/// [`is_image_value`] is this crate's check.
+pub const IMAGE_VALUE: &str = r"^[0-9a-f]{64}\.(webp|jpeg)@[1-9][0-9]{0,4}x[1-9][0-9]{0,4}$";
+
+/// What an image line's markdown destination starts with; the mark value follows.
+pub const IMAGE_URL: &str = "mnemosyne:image/";
+
+/// Does `value` match [`IMAGE_VALUE`]? Anything else on an `image` mark reads as no image.
+pub fn is_image_value(value: &str) -> bool {
+    let Some((name, size)) = value.split_once('@') else {
+        return false;
+    };
+    let Some((sha, ext)) = name.split_once('.') else {
+        return false;
+    };
+    let Some((w, h)) = size.split_once('x') else {
+        return false;
+    };
+    let dimension = |d: &str| {
+        (1..=5).contains(&d.len()) && !d.starts_with('0') && d.bytes().all(|b| b.is_ascii_digit())
+    };
+    sha.len() == 64
+        && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        && matches!(ext, "webp" | "jpeg")
+        && dimension(w)
+        && dimension(h)
+}
+
 /// A line's kind: the value of the closed `block` mark on its terminating `\n`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,10 +51,12 @@ pub enum Block {
     Code,
     Table,
     TableHead,
+    /// An image: the line's text is the caption, the picture is the line's `image` value.
+    Image,
 }
 
 impl Block {
-    pub const ALL: [Block; 11] = [
+    pub const ALL: [Block; 12] = [
         Block::H1,
         Block::H2,
         Block::H3,
@@ -36,6 +68,7 @@ impl Block {
         Block::Code,
         Block::Table,
         Block::TableHead,
+        Block::Image,
     ];
 
     /// The mark value.
@@ -52,6 +85,7 @@ impl Block {
             Block::Code => "code",
             Block::Table => "table",
             Block::TableHead => "table_head",
+            Block::Image => "image",
         }
     }
 
@@ -79,6 +113,10 @@ pub struct LineAttr {
     pub lang: Option<String>,
     /// A table head row's column alignment: one of `l`, `c`, `r`, `-` per column (`lc-r`).
     pub align: Option<String>,
+    /// An image line's picture: the `image` mark's value, one matching [`IMAGE_VALUE`]
+    /// (anything else reads as `None`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
 }
 
 /// A link state of one character.
@@ -239,14 +277,15 @@ impl Model {
 }
 
 /// Characters whose inline format means nothing: terminators, cell separators in table rows,
-/// and every character of a code line (its text is raw).
+/// and every character of a code line (its text is raw) or of an image line (the caption is
+/// plain text).
 pub fn dont_care(model: &Model) -> Vec<bool> {
     let mut out = vec![false; model.text.len()];
     for (li, (start, end, nl)) in model.line_spans().into_iter().enumerate() {
         let kind = model.lines.get(li).and_then(|l| l.kind);
         for (i, slot) in out.iter_mut().enumerate().take(end).skip(start) {
             *slot = match kind {
-                Some(Block::Code) => true,
+                Some(Block::Code | Block::Image) => true,
                 Some(Block::Table | Block::TableHead) => model.text[i] == CELL,
                 _ => false,
             };
@@ -264,6 +303,8 @@ pub fn dont_care(model: &Model) -> Vec<bool> {
 /// - A table run starts at a `table_head` line or at a `table` line after a non-table line;
 ///   its first line is the head. `align` only on heads, padded or cut to the run's widest
 ///   row, none when every column is `-`. `lang` only on a code run's first line.
+/// - `image` only on `image` lines, which never join a table run; an `image` line without a
+///   valid value ([`is_image_value`]) is a paragraph.
 /// - Inline formats are cleared where they mean nothing ([`dont_care`]).
 /// - Bold, italic and strike never begin or end on whitespace (outside code): markdown
 ///   delimiters next to whitespace do not parse. Runs are cut where the delimiter has to be
@@ -278,6 +319,16 @@ pub fn normalize(model: &Model) -> Model {
     for (li, (_, _, nl)) in spans.iter().enumerate() {
         if nl.is_none() {
             m.lines[li] = LineAttr::default();
+        }
+        // Images: a valid value on an image line, nothing anywhere else.
+        let line = &mut m.lines[li];
+        if line.kind == Some(Block::Image) {
+            line.image = line.image.take().filter(|v| is_image_value(v));
+            if line.image.is_none() {
+                line.kind = None;
+            }
+        } else {
+            line.image = None;
         }
     }
     // Table runs and heads; lang on code-run starts.

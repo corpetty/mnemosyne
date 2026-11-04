@@ -3,13 +3,16 @@
 //! (`renderMarkdown`). JSON, because that is what crosses the wasm boundary:
 //!
 //! ```json
-//! {"text": "...", "lines": [{"kind": "h1"|...|null, "lang": "py", "align": ["left", null]}],
+//! {"text": "...", "lines": [{"kind": "h1"|...|null, "lang": "py", "align": ["left", null],
+//!   "image": "<sha256 hex>.webp@1600x900"}],
 //!  "inline": [{"from": 0, "to": 3, "kind": "bold", "value": "true"}]}
 //! ```
 //!
 //! - `text` has U+001F between table cells and every line ends in `\n`; `lines` has one entry
-//!   per `\n`; offsets are code points. `lang` and `align` are left out when absent; `align`
-//!   is one of `left`, `center`, `right` or `null` per column (the model's `l c r -`).
+//!   per `\n`; offsets are code points. `lang`, `align` and `image` are left out when absent;
+//!   `align` is one of `left`, `center`, `right` or `null` per column (the model's `l c r -`);
+//!   `image` is an `image` line's value ([`crate::model::IMAGE_VALUE`]), which such a line
+//!   must have.
 //! - `inline` kinds are `bold`, `italic`, `strike`, `code` (value `"true"`) and `link` (value
 //!   the URL). A model going the other way may leave a flag's value out and may carry
 //!   `comment:<id>` kinds (ignored: comments are not markdown). Where two links overlap,
@@ -17,7 +20,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{normalize, Block, Fmt, LineAttr, Model, BOLD, CODE, ITALIC, STRIKE};
+use crate::model::{
+    is_image_value, normalize, Block, Fmt, LineAttr, Model, BOLD, CODE, ITALIC, STRIKE,
+};
 use crate::{render, Error, COMMENT_PREFIX, FLAG_VALUE};
 
 #[derive(Serialize, Deserialize)]
@@ -37,6 +42,8 @@ struct WireLine {
     lang: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     align: Option<Vec<Option<String>>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    image: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -81,6 +88,7 @@ pub fn to_json(model: &Model) -> String {
                     .align
                     .as_ref()
                     .map(|a| a.chars().map(align_name).collect()),
+                image: l.image.clone(),
             })
             .collect(),
         inline: parsed
@@ -119,10 +127,14 @@ pub fn from_json(json: &str) -> Result<Model, Error> {
                 .map(|n| align_char(n.as_deref()))
                 .collect::<String>()
         });
+        if kind == Some(Block::Image) && !l.image.as_deref().is_some_and(is_image_value) {
+            return Err(Error(format!("lines[{i}]: an image line needs an image")));
+        }
         model.lines.push(LineAttr {
             kind,
             lang: l.lang.clone(),
             align,
+            image: l.image.clone(),
         });
     }
     for (i, m) in wire.inline.iter().enumerate() {

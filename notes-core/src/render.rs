@@ -3,11 +3,14 @@
 //! document.
 //!
 //! One markdown line per document line, except that consecutive code lines become one fence
-//! and a table gets its separator row after the head. A blank line is added between two
-//! blocks a markdown reader would otherwise join ([`needs_gap`]): the parser drops exactly
-//! that one again.
+//! and a table gets its separator row after the head. An image line is
+//! `![<caption>](mnemosyne:image/<value>)`, the caption escaped as link text. A blank line is
+//! added between two blocks a markdown reader would otherwise join ([`needs_gap`]): the
+//! parser drops exactly that one again.
 
-use crate::model::{normalize, Block, Fmt, Link, Model, BOLD, CELL, CODE, ITALIC, STRIKE};
+use crate::model::{
+    normalize, Block, Fmt, Link, Model, BOLD, CELL, CODE, IMAGE_URL, ITALIC, STRIKE,
+};
 
 /// What a fold or set_text reports: the markdown (what `Session.notes` holds) and the plain
 /// text (search). See [`plain`].
@@ -44,17 +47,19 @@ pub(crate) struct Sig {
 }
 
 /// Would markdown join `b` into `a` (or misread either) without a blank line between them?
-/// List, quote and table lines take a following paragraph line as a continuation; a table
-/// runs into the next table; a paragraph absorbs a table head, turns an empty list item
-/// into a setext underline, and becomes a table head over a line that looks like a
-/// separator row.
+/// List, quote and table lines take a following paragraph or image line as a continuation;
+/// a table runs into the next table; a paragraph absorbs a table head, turns an empty list
+/// item into a setext underline, and becomes a table head over a line that looks like a
+/// separator row; an image line (a paragraph to a markdown reader) is followed by a list or
+/// a table head only after a blank line.
 pub(crate) fn needs_gap(a: &Sig, b: &Sig) -> bool {
     let continues =
         |k: Option<Block>| k.is_some_and(|k| k.is_list() || k.is_table() || k == Block::Quote);
     match (a.kind, b.kind) {
-        (ak, None) if continues(ak) => true,
+        (ak, None | Some(Block::Image)) if continues(ak) => true,
         (Some(ak), Some(Block::TableHead)) if ak.is_table() => true,
         (None, Some(Block::TableHead)) => true,
+        (Some(Block::Image), Some(bk)) if bk.is_list() || bk == Block::TableHead => true,
         (None, Some(Block::Bullet | Block::Number)) if b.empty => true,
         (None, _) => has_unescaped_pipe(&a.md) && is_delimiter_row(&b.md),
         _ => false,
@@ -181,6 +186,22 @@ fn markdown(model: &Model) -> String {
                 };
                 number = 0;
             }
+            Some(Block::Image) => {
+                let value = m.lines[li]
+                    .image
+                    .as_deref()
+                    .expect("normalize keeps a value on image lines");
+                let line = format!("![{}]({IMAGE_URL}{value})", caption(&m.text[s..e]));
+                first_kind = kind;
+                last_sig = Sig {
+                    kind,
+                    empty: s == e,
+                    md: line.clone(),
+                };
+                block.push(line);
+                number = 0;
+                li += 1;
+            }
             _ => {
                 let content = inline(&m, s, e, false);
                 let line = match kind {
@@ -196,7 +217,9 @@ fn markdown(model: &Model) -> String {
                     Some(Block::Task) => prefixed("- [ ]", &escape_line_start(&content, false)),
                     Some(Block::TaskDone) => prefixed("- [x]", &escape_line_start(&content, false)),
                     Some(Block::Quote) => prefixed(">", &escape_line_start(&content, false)),
-                    Some(Block::Code | Block::Table | Block::TableHead) => unreachable!(),
+                    Some(Block::Code | Block::Table | Block::TableHead | Block::Image) => {
+                        unreachable!()
+                    }
                 };
                 if kind != Some(Block::Number) {
                     number = 0;
@@ -337,6 +360,23 @@ fn inline(m: &Model, s: usize, e: usize, in_cell: bool) -> String {
     }
     while let Some(tok) = stack.pop() {
         close(m, tok, in_cell, &mut out);
+    }
+    out
+}
+
+/// An image's caption as link text: plain (formats on it mean nothing), every bracket
+/// escaped, the rest as in any other text.
+fn caption(chars: &[char]) -> String {
+    let edges = Edges {
+        in_link: true,
+        in_cell: false,
+        link_next: false,
+        strike_before: false,
+        strike_after: false,
+    };
+    let mut out = String::new();
+    for k in 0..chars.len() {
+        escape_char(chars, k, &edges, &mut out);
     }
     out
 }
