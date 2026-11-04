@@ -535,6 +535,22 @@ two link URLs render as plain text with "(link conflict)". Mark strings over 14 
 0xAF artifact frames. The markdown renderer is canonical and the parser covers what it renders
 (HTML and images stay literal), shared by the fold and the client's paste.
 
+### Sections the backend writes in the notes
+
+The end of a meeting's notes can hold two sections the backend writes: the copilot's lines and the summary
+(docs/plans/2026-11-04-summaries-in-notes.md). A closed `ref` mark on a line's `\n` (notes-core; never in the markdown)
+says what the line is (`sec:<name>`, `sum:<id>`, `cp:<n>`); every fold stores the refs, and services/notes_sections.py
+splits the notes into the person's text and the sections. The backend is the only writer of ref'd lines, and only on
+the machine that recorded the meeting (never for `shared_from`, never on a guest or phone). It writes through
+`shared_notes.edit_blocking`, which folds, lets a compose function rewrite its own lines and sets the text against
+that same state, so typing in between merges as usual; `AFTER_FOLD` hooks see every fold. The copilot appends its
+points once (services/copilot_notes.py, remembered in `CopilotNotes.added`). The summary section is a projection
+of the summary doc (services/notes_summary.py writes it, debounced, from every write of the summary) and flows back
+the same way the Obsidian note does: edits there are taken as hand edits through `summary_doc.apply_human`, by the
+core both share, services/summary_readback.py. Ticks read from the notes are applied after the notes lock is
+released. Readers that must not see the sections (summary prompt, Obsidian, publishing, combine, MCP) read
+`Session.own_notes`; search and sync keep the whole notes.
+
 ### Guest notes (phase 9)
 
 A link that lets the people in a meeting type into its live notes from a browser (use in

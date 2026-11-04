@@ -563,6 +563,12 @@ the previous notes. Updates arrive as `copilot_notes` events and are saved with 
 (`Session.copilot_notes`, cleared when a new recording of it starts); GET returns the latest (or
 `null`). Summarizing passes the notes to the model as a hint, and copilot to-dos with no matching
 summary item are appended to `action_items` with `live: true`.
+With `copilot_to_notes` (default on) each new point, decision, action item or question is also added once to the
+meeting's live notes, led by the Copilot chip, under a Copilot heading at the end (services/copilot_notes.py; only
+on the recording computer, never for a meeting shared with you). `CopilotNotes.added` lists everything it ever
+added, over all the meeting's recordings: `[{kind, text, owner, n}]` (`n` is the line's ref `cp:<n>`); an item
+the same as one of these is never added again, so a reworded or deleted line stays gone. History:
+`copilot_notes_added` (`count`).
 POST `{"question": "..."}` queues a `copilot_ask` job answering from the transcript so far (the most
 recent ~14k characters and the notes), result `{question, answer, asked_at}`. Local-only meetings get
 no copilot when the default model is a cloud one.
@@ -743,7 +749,8 @@ but not in the meeting yet: an interrupted recording or a failed save, `waiting`
 `events` (`{at, kind, part, detail}`: created, recording_started, recording_stopped with a
 `reason` of stop/capture_restart/app_gone/shutdown, part_saved, save_failed, interrupted,
 recovered, recover_empty, recover_failed, capture_problem, capture_ok, imported, combined,
-transcribed, transcribe_failed, summarized, summarize_failed, audio_deleted). New events publish
+transcribed, transcribe_failed, summarized, summarize_failed, audio_deleted, copilot_notes_added,
+notes_summary_written, notes_summary_edits_taken). New events publish
 `{type: "history", session_id}`. `recover` saves the pending audio as the next part (a `recover`
 job); 404 when nothing is waiting, 409 while the meeting is recording or busy.
 
@@ -1842,9 +1849,10 @@ earliest waiting meeting, so it is tried again next round (`waiting` in the peer
 | `[12:34](mnemosyne:t/<part>/<seconds>)` | a time in the recording: part number and whole seconds into that part |
 | `[@Ada Lovelace](mnemosyne:person/Ada%20Lovelace)` | a person (the name is percent-encoded) |
 | `[Planning, Oct 14](mnemosyne:meeting/<id>)` | a meeting (8 to 32 lowercase hex) |
+| `[Copilot](mnemosyne:by/copilot)` | "Added by the copilot": a muted pill, never a link; leads the lines the copilot adds |
 
 A link that is not exactly one of these is an ordinary link. Everything that reads `Session.notes` outside the editor
-sees text instead (services/notes_chips.py): the summary's hint, MCP and published notes get the chip's
+sees text instead (services/notes_chips.py; the by chip reads as `Copilot:` and is left out of a task line's text): the summary's hint, MCP and published notes get the chip's
 text (`12:34`, `@Ada Lovelace`, the title), the Obsidian note `[[Name]]` for a person when `obsidian_link_people` is on
 and `[[note|title]]` for a meeting that was exported; time chips are plain text there. The stored markdown keeps the
 URLs (full-text search indexes them like any link). Combining meetings retargets time chips to the combined timeline.
@@ -1870,6 +1878,26 @@ lines in order, `[{line, done, text, links: [[start, end, url]], frame}]` (`line
 line or its kind, else null). The op `set_kind` `{notes, snapshot, frames, line, kind: "task"|"task_done"}` makes
 that task line open or done and answers like `mark_comment` (`frames` to broadcast, `[]` when it already shows
 `kind`; an unknown, deleted or non-task line is an error). The backend uses it for a tick made outside the editor.
+
+### Sections the backend writes
+
+Two sections at the end of the notes are the backend's: the copilot's lines (setting `copilot_to_notes`, default on)
+and the summary (setting `summary_in_notes`, default on: after a summarize a Summary section takes the Copilot
+section's place and follows every later write of the summary; edits made there flow back into it). A line is
+the backend's by a closed `ref` mark on its `\n` (notes-core), never in the markdown: `sec:<name>` a heading
+(summary, decisions, action_items, open_questions, copilot), `sum:<id>` a summary block's line, `cp:<n>` a copilot
+line. The sidecar's `set_text` takes an optional `refs` `{"<markdown line>": ref}` (`""` clears; a line without a key
+keeps the ref its terminator has, so a reworded line keeps it, a new one has none). Every `notes doc` answer
+carries `refs`, `[{line, ref, index, md_line}]` in document order (`line` the element id of the `\n`, `index` the
+0-based line, `md_line` the 0-based line of `markdown` where it starts), and each `tasks` entry a `ref` (string or
+null). The backend stores the last fold's refs beside the snapshot.
+
+`Session.own_notes` is `notes` above the first `sec:` line: the person's text. The single-meeting read fills it; every
+other read gives `null` (not worked out), and a reader then falls back to `notes`. The summary prompt, the
+Obsidian note's Notes section, publishing, combining and MCP read it. Task lines of these sections are never
+notes items (`tasks` entries whose ref is `sum:` or `cp:` are skipped); a tick of a summary action item there ticks the task.
+The write-ups are in services/copilot_notes.py and services/notes_summary.py; history `notes_summary_written`, and
+`notes_summary_edits_taken` when edits made in the Summary section were taken into the summary.
 
 ### Images
 
