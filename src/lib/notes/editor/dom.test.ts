@@ -5,6 +5,7 @@ import {
   addComment,
   addRow,
   deleteRange,
+  insertImageLine,
   insertTable,
   insertText,
   setAlign,
@@ -13,9 +14,10 @@ import {
   splitLine,
   toggleInline
 } from '../commands.js';
-import { CELL_SEP, LINE_KINDS, cpLen, ensureTerminated, lines, type LineKind } from '../model.js';
+import { CELL_SEP, IMAGE, LINE_KINDS, cpLen, ensureTerminated, lines, type LineKind } from '../model.js';
 import { removeRange } from '../ops.js';
 import {
+  CAPTION_PLACEHOLDER,
   FILLER,
   extractText,
   getSelectionOffsets,
@@ -62,6 +64,9 @@ function mulberry32(seed: number): () => number {
   };
 }
 
+const IMG_V = '3f0c5aa1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5ca9.webp@1600x900';
+const IMG_W = '00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff.jpeg@640x480';
+
 const ALPHABET = ['a', 'b', 'c', ' ', 'x', 'é', '😀', '👩‍💻', '日', '\n', 'z', 'q', '-', '|'];
 
 /** A random document built with the commands: lines of every kind, marks, tables, emoji. */
@@ -83,7 +88,9 @@ function randomDoc(seed: number, steps = 25): Client {
     } else if (r < 0.45) {
       splitLine(A.doc, at);
     } else if (r < 0.6) {
-      setLineKind(A.doc, at, at, rnd() < 0.15 ? null : pick(LINE_KINDS));
+      const kind = rnd() < 0.15 ? null : pick(LINE_KINDS);
+      if (kind === 'image') insertImageLine(A.doc, at, rnd() < 0.5 ? IMG_V : IMG_W);
+      else setLineKind(A.doc, at, at, kind);
     } else if (r < 0.72) {
       const to = Math.min(n - 1, at + 1 + Math.floor(rnd() * 5));
       toggleInline(A.doc, at, to, pick(['bold', 'italic', 'strike', 'code'] as const));
@@ -496,5 +503,121 @@ describe('selection helpers', () => {
     expect(lineElementOf(root, sel.anchorNode)).toBe(root.firstElementChild);
     sel.removeAllRanges();
     expect(getSelectionOffsets(root)).toBeNull();
+  });
+});
+
+describe('image lines', () => {
+  /** docOf, then line `i` made an image line showing `value`. */
+  function withImage(i: number, value: string, ...spec: string[]): Client {
+    const A = docOf(...spec);
+    const end = lines(A.doc)[i].end;
+    A.web.markRangeClosed(A.doc.obj, end, end + 1, 'block', 'image');
+    A.web.markRangeClosed(A.doc.obj, end, end + 1, IMAGE, value);
+    return A;
+  }
+
+  it('renders a non-editable figure before the caption; the img has no src', () => {
+    const A = withImage(1, IMG_V, 'above', 'The board', '');
+    const root = mount();
+    render(root, lines(A.doc));
+    const line = root.children[1] as HTMLElement;
+    expect(line.className).toBe('ne-line ne-image-line');
+    expect(line.dataset.placeholder).toBe(CAPTION_PLACEHOLDER);
+    const fig = line.firstChild as HTMLElement;
+    expect(fig.tagName).toBe('FIGURE');
+    expect(fig.className).toBe('ne-image');
+    expect(fig.contentEditable).toBe('false');
+    expect(fig.dataset).toMatchObject({ chrome: '1', image: IMG_V, sha: IMG_V.slice(0, 64), state: 'loading' });
+    expect(fig.style.getPropertyValue('--w')).toBe('1600');
+    expect(fig.style.getPropertyValue('--h')).toBe('900');
+    const img = fig.querySelector('img') as HTMLImageElement;
+    expect(img.getAttribute('alt')).toBe('');
+    expect(img.getAttribute('width')).toBe('1600');
+    expect(img.getAttribute('height')).toBe('900');
+    expect(img.hasAttribute('src')).toBe(false);
+    expect(fig.querySelector('.ne-image-note')?.textContent).toBe('');
+    expect(fig.nextSibling?.textContent).toBe('The board');
+    expect(extractText(root)).toBe(A.text());
+    // The caption has no text: the sentinel follows the figure (the placeholder's CSS hook).
+    const B = withImage(0, IMG_W, '');
+    const r2 = mount();
+    render(r2, lines(B.doc));
+    const empty = r2.firstElementChild as HTMLElement;
+    expect(Array.from(empty.childNodes).map((n) => n.nodeName)).toEqual(['FIGURE', 'BR']);
+    expect((empty.lastChild as HTMLElement).dataset.sentinel).toBe('1');
+    expect(extractText(r2)).toBe('\n');
+  });
+
+  it('renders an invalid value as a plain line with no figure', () => {
+    const A = withImage(0, 'not-an-image.png', 'cap');
+    const root = mount();
+    render(root, lines(A.doc));
+    const line = root.firstElementChild as HTMLElement;
+    expect(line.className).toBe('ne-line');
+    expect(line.querySelector('figure')).toBeNull();
+    expect(line.dataset.placeholder).toBeUndefined();
+  });
+
+  it('puts the caret in the caption only; a point in the figure is the line start', () => {
+    const A = withImage(1, IMG_V, 'ab', 'cap', '');
+    const root = mount();
+    render(root, lines(A.doc));
+    const line = root.children[1] as HTMLElement;
+    const fig = line.firstChild as HTMLElement;
+    const caption = fig.nextSibling as Text;
+    expect(locatePoint(root, 3)).toEqual({ node: caption, offset: 0 });
+    expect(locatePoint(root, 6)).toEqual({ node: caption, offset: 3 });
+    expect(offsetOfPoint(root, fig, 0)).toBe(3);
+    expect(offsetOfPoint(root, fig.querySelector('img') as Node, 0)).toBe(3);
+    expect(offsetOfPoint(root, line, 0)).toBe(3);
+    expect(offsetOfPoint(root, line, 1)).toBe(3);
+    // An empty caption: before the sentinel, after the figure.
+    const B = withImage(0, IMG_V, '', 'x');
+    const r2 = mount();
+    render(r2, lines(B.doc));
+    const l0 = r2.firstElementChild as HTMLElement;
+    expect(locatePoint(r2, 0)).toEqual({ node: l0, offset: 1 });
+    expect(offsetOfPoint(r2, l0.firstChild as Node, 0)).toBe(0);
+  });
+
+  it('keeps the figure while the line is unchanged and rebuilds it when the value changes', () => {
+    const A = withImage(0, IMG_V, 'cap', 'other');
+    const root = mount();
+    render(root, lines(A.doc));
+    const fig = root.querySelector('figure') as HTMLElement;
+    fig.dataset.state = 'ready'; // what a host does once the bytes are there
+    insertText(A.doc, lines(A.doc)[1].start, 'more ');
+    render(root, lines(A.doc));
+    expect(root.querySelector('figure')).toBe(fig);
+    const end = lines(A.doc)[0].end;
+    A.web.unmarkRange(A.doc.obj, end, end + 1, IMAGE);
+    A.web.markRangeClosed(A.doc.obj, end, end + 1, IMAGE, IMG_W);
+    render(root, lines(A.doc));
+    const next = root.querySelector('figure') as HTMLElement;
+    expect(next).not.toBe(fig);
+    expect(next.dataset).toMatchObject({ image: IMG_W, state: 'loading' });
+    // Turned into text: the figure goes, the caption stays.
+    setLineKind(A.doc, 0, 0, null);
+    render(root, lines(A.doc));
+    expect(root.querySelector('figure')).toBeNull();
+    expect(extractText(root)).toBe('cap\nmore other\n');
+  });
+
+  it('round-trips every offset around image lines', () => {
+    const A = docOf('one', 'cap', '', 'b😀', 'end');
+    insertImageLine(A.doc, 4, IMG_V); // the line after "one"
+    insertImageLine(A.doc, lines(A.doc)[3].start, IMG_W); // the empty line becomes one
+    toggleInline(A.doc, lines(A.doc)[2].start, lines(A.doc)[2].end, 'bold');
+    expect(lines(A.doc).filter((l) => l.image).length).toBe(2);
+    const root = mount();
+    render(root, lines(A.doc));
+    expect(extractText(root)).toBe(A.text());
+    const n = A.web.textLen(A.doc.obj);
+    for (let off = 0; off < n; off++) {
+      for (const after of [false, true]) {
+        const p = locatePoint(root, off, after);
+        expect(offsetOfPoint(root, p.node, p.offset), `off ${off} after ${after}`).toBe(off);
+      }
+    }
   });
 });

@@ -1,14 +1,18 @@
 // The notes document model over one hashseq seq (phase 6 design,
 // docs/plans/2026-10-12-hashseq-collaboration.md): the text is lines ending in "\n" (the doc
-// always ends with one), a line's kind is a closed `block` mark on its terminating "\n",
-// inline formatting is marks on the characters, table cells are separated by U+001F.
+// always ends with one), a line's kind is a closed `block` mark on its terminating "\n" (an
+// image line's picture a closed `image` mark beside it, images.ts), inline formatting is
+// marks on the characters, table cells are separated by U+001F.
 //
 // Ideas ported by name from hashseq's web/kb.js and APP_NOTES.md (MIT, David Rusu): the
 // code-point/UTF-16 helpers (cpLen, cpIndex, utf16Index, cpSlice), flags from markedSpans
 // (styledSpans/flagsAt), per-comment mark kinds (APP_NOTES 11), and selection anchored to
 // element ids (seqIdAt/seqPositionOf, APP_NOTES 20). Index unit is the Unicode code point
 // everywhere the wasm API is concerned; JS strings are UTF-16, hence the helpers.
+import { IMAGE, isImageValue } from './images.js';
 import type { WasmHashWeb } from './pkg/notes_wasm.js';
+
+export { IMAGE };
 
 export interface Doc {
   web: WasmHashWeb;
@@ -37,7 +41,8 @@ export const LINE_KINDS = [
   'quote',
   'code',
   'table',
-  'table_head'
+  'table_head',
+  'image'
 ] as const;
 export type LineKind = (typeof LINE_KINDS)[number];
 
@@ -170,6 +175,13 @@ export interface Line {
   kinds: string[];
   lang: string | null;
   align: Align[] | null;
+  /**
+   * An image line's picture: the first live `image` value (as `lang`), when it matches the
+   * pattern (images.ts). Null on every other line; a line of kind `image` without a valid
+   * value reads as a paragraph (`kind` null), as notes-core's normalize does.
+   */
+  image: string | null;
+  /** The line's text without its "\n" (on an image line, the caption). */
   text: string;
   runs: Run[];
   /** Table rows only: the cells, padded to the table's column count. */
@@ -241,15 +253,20 @@ export function linesFromSpans(doc: Doc, spans: Span[]): Line[] {
     const kinds = terminator?.get(BLOCK) ?? [];
     const lang = terminator?.get(LANG)?.[0] ?? null;
     const alignRaw = terminator?.get(ALIGN)?.[0] ?? null;
+    let kind = resolveKind(kinds);
+    const imageRaw = terminator?.get(IMAGE)?.[0] ?? null;
+    const image = kind === 'image' && isImageValue(imageRaw) ? imageRaw : null;
+    if (kind === 'image' && image === null) kind = null;
     out.push({
       index: out.length,
       start,
       end: pos,
       id: terminator ? (doc.web.seqIdAt(doc.obj, pos) ?? null) : null,
-      kind: resolveKind(kinds),
+      kind,
       kinds,
       lang,
       align: alignRaw === null ? null : decodeAlign(alignRaw),
+      image,
       text: runs.map((r) => r.text).join(''),
       runs,
       cells: null,

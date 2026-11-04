@@ -7,6 +7,7 @@ import {
   ALIGN,
   BLOCK,
   FLAG,
+  IMAGE,
   LANG,
   cpLen,
   isClosedKind,
@@ -196,13 +197,17 @@ export function applyInverse(doc: Doc, inv: Inverse, aliases?: Aliases): Inverse
   }
 }
 
-/** Terminator-level marks (block, lang, align) of a line, read from its spans. */
-export function terminatorMarks(spans: Span[], end: number): { kind: string | null; lang: string | null; align: string | null } {
+/** Terminator-level marks (block, lang, align, image) of a line, read from its spans. */
+export function terminatorMarks(
+  spans: Span[],
+  end: number
+): { kind: string | null; lang: string | null; align: string | null; image: string | null } {
   const s = spans.find((x) => end >= x.start && end < x.end);
   return {
     kind: resolveValue(BLOCK, s?.marks.get(BLOCK)),
     lang: resolveValue(LANG, s?.marks.get(LANG)),
-    align: resolveValue(ALIGN, s?.marks.get(ALIGN))
+    align: resolveValue(ALIGN, s?.marks.get(ALIGN)),
+    image: resolveValue(IMAGE, s?.marks.get(IMAGE))
   };
 }
 

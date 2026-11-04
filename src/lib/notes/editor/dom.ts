@@ -29,6 +29,10 @@
 //     <div class="ne-line ne-h1" data-line="<id>">text<strong>bold</strong>​</div>
 //     <div class="ne-line ne-task"><span class="ne-check" contenteditable="false" …></span>text</div>
 //     <div class="ne-line"><br data-sentinel></div>
+//     <div class="ne-line ne-image-line" data-line="<id>" data-placeholder="Add a caption">
+//       <figure class="ne-image" contenteditable="false" data-chrome="1" data-image="<value>"
+//               data-sha="<sha>" data-state="loading"><img alt="" width="w" height="h">
+//         <span class="ne-image-note"></span></figure>caption</div>
 //     <table class="ne-table"><tbody>
 //       <tr class="ne-row ne-table_head" data-line="<id>"><th>a</th><th>b</th></tr>
 //       <tr class="ne-row ne-table" data-line="<id>"><td>c</td><td><br data-sentinel></td></tr>
@@ -36,8 +40,11 @@
 //   </div>
 // Cells are joined by U+001F on extraction (the model's CELL_SEP); every line contributes its
 // "\n" (except an unterminated tail, `data-tail`); chrome (`data-chrome`, never editable)
-// contributes nothing.
+// contributes nothing. An image line's <img> never gets a `src` here: the host fills it from
+// its media provider (an object URL) and sets `data-state` (loading | ready | missing |
+// uploading | failed) and the note's text and buttons; a rebuilt line starts at `loading`.
 import { parseChip } from '../chips.js';
+import { parseImageValue } from '../images.js';
 import { CELL_SEP, TABLE_KINDS, type Align, type Line, type Run } from '../model.js';
 import { FILLER, TAIL_KEY, isChrome } from './points.js';
 
@@ -54,6 +61,9 @@ export {
 } from './points.js';
 
 export const ROOT_CLASS = 'notes-editor';
+
+/** Shown under an image while its caption is empty (CSS, from `data-placeholder`). */
+export const CAPTION_PLACEHOLDER = 'Add a caption';
 
 /** Called when a task line's checkbox is clicked: the index of the line in the rendered `lines`. */
 export type ToggleTaskHandler = (lineIndex: number) => void;
@@ -81,7 +91,7 @@ function runSig(r: Run): string {
 }
 
 function lineSig(line: Line): string {
-  return JSON.stringify([line.kind, line.lang, line.id === null, line.runs.map(runSig)]);
+  return JSON.stringify([line.kind, line.lang, line.image, line.id === null, line.runs.map(runSig)]);
 }
 
 function rowSig(line: Line, aligns: readonly Align[]): string {
@@ -231,9 +241,15 @@ export function lineIdOf(el: HTMLElement): string | null {
 
 function buildLine(doc: Document, line: Line): HTMLElement {
   const el = doc.createElement('div');
-  el.className = 'ne-line' + (line.kind ? ` ne-${line.kind}` : '');
+  // `ne-image` is the figure's class; the line is `ne-image-line`.
+  el.className = 'ne-line' + (line.kind ? ` ne-${line.kind === 'image' ? 'image-line' : line.kind}` : '');
   el.dataset.line = keyOf(line);
   if (line.id === null) el.dataset.tail = '1';
+  const image = line.image ? parseImageValue(line.image) : null;
+  if (image) {
+    el.dataset.placeholder = CAPTION_PLACEHOLDER;
+    el.appendChild(buildFigure(doc, image.value, image.sha, image.w, image.h));
+  }
   if (line.kind === 'task' || line.kind === 'task_done') el.appendChild(buildCheckbox(doc, line.kind === 'task_done'));
   if (line.kind === 'code' && line.lang) {
     const lang = doc.createElement('span');
@@ -245,6 +261,33 @@ function buildLine(doc: Document, line: Line): HTMLElement {
   }
   renderInline(doc, el, line.runs);
   return el;
+}
+
+/**
+ * An image line's picture: a non-editable island before the caption, sized from the mark
+ * value (width/height attributes and the `--w`/`--h` ratio) so the box holds its place before
+ * the bytes arrive. The value was checked by `lines()`; it is parsed again here before use.
+ */
+function buildFigure(doc: Document, value: string, sha: string, w: number, h: number): HTMLElement {
+  const fig = doc.createElement('figure');
+  fig.className = 'ne-image';
+  fig.contentEditable = 'false';
+  fig.dataset.chrome = '1';
+  fig.dataset.image = value;
+  fig.dataset.sha = sha;
+  fig.dataset.state = 'loading';
+  fig.style.setProperty('--w', String(w));
+  fig.style.setProperty('--h', String(h));
+  const img = doc.createElement('img');
+  img.alt = '';
+  img.width = w;
+  img.height = h;
+  img.draggable = false;
+  fig.appendChild(img);
+  const note = doc.createElement('span');
+  note.className = 'ne-image-note';
+  fig.appendChild(note);
+  return fig;
 }
 
 function buildCheckbox(doc: Document, done: boolean): HTMLElement {

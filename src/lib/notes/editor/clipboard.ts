@@ -20,7 +20,8 @@ export function selectionModel(ls: readonly Line[], from: number, to: number): N
   const entry = (line: Line) => ({
     kind: line.kind,
     ...(line.lang ? { lang: line.lang } : {}),
-    ...(line.align ? { align: line.align } : {})
+    ...(line.align ? { align: line.align } : {}),
+    ...(line.image ? { image: line.image } : {})
   });
   let last: Line | null = null;
   for (const line of ls) {
@@ -100,6 +101,7 @@ export type PastePlan =
 
 export function parsePaste(text: string): PastePlan {
   const model = JSON.parse(parseMarkdown(text)) as NotesModel;
+  // An image line has a kind, so it always comes in as a whole line (its blob may be missing).
   const only = model.lines.length === 1 ? model.lines[0] : null;
   if (model.lines.length === 0 || (only && !only.kind && !only.lang)) {
     return { kind: 'inline', model: { text: model.text.replace(/\n$/, ''), lines: [], inline: model.inline } };

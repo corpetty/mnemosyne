@@ -20,6 +20,13 @@
 // - Deleting one or more terminators joins lines: the merged line takes the kind, lang and
 //   align of the line where the deletion starts (re-marked after the join).
 // - Backspace at a line start first clears the line's kind; a second Backspace joins.
+// - Image lines (images.ts) never split or join: Enter anywhere in the caption adds a plain
+//   line after the image; Backspace at the start of an empty caption removes the image line,
+//   with a caption it does nothing (the image is not a kind to clear into a paragraph). The
+//   one terminator between an image line and its neighbour never joins them: an empty
+//   neighbour goes instead (Backspace below an image, Delete above one or at the caption's
+//   end), else nothing changes. A range ending inside a caption leaves the image line where it
+//   is (only the caption's selected head goes); a range starting inside one keeps the image.
 import {
   ALIGN,
   BLOCK,
@@ -28,6 +35,7 @@ import {
   EXPANDING_KINDS,
   FLAG,
   HEADING_KINDS,
+  IMAGE,
   LANG,
   LIST_KINDS,
   TABLE_KINDS,
@@ -45,6 +53,7 @@ import {
   type Line,
   type LineKind
 } from './model.js';
+import { isImageValue } from './images.js';
 import { applyMark, idsOf, insertPlain, markKind, removeRange, type Inverse } from './ops.js';
 
 export interface CommandResult {
@@ -68,19 +77,32 @@ function terminate(doc: Doc, inv: Inverse[]): void {
   }
 }
 
-function setTerminatorMarks(
-  doc: Doc,
-  end: number,
-  want: { kind: string | null; lang: string | null; align: string | null }
-): Inverse[] {
+interface TerminatorMarks {
+  kind: string | null;
+  lang: string | null;
+  align: string | null;
+  image: string | null;
+}
+
+const PLAIN: TerminatorMarks = { kind: null, lang: null, align: null, image: null };
+
+function setTerminatorMarks(doc: Doc, end: number, want: TerminatorMarks): Inverse[] {
   return [
     ...applyMark(doc, BLOCK, want.kind, end, end + 1),
     ...applyMark(doc, LANG, want.lang, end, end + 1),
-    ...applyMark(doc, ALIGN, want.align, end, end + 1)
+    ...applyMark(doc, ALIGN, want.align, end, end + 1),
+    ...applyMark(doc, IMAGE, want.image, end, end + 1)
   ];
 }
 
 const alignValue = (line: Line): string | null => (line.align ? encodeAlign(line.align) : null);
+
+const marksOf = (line: Line): TerminatorMarks => ({
+  kind: line.kind,
+  lang: line.lang,
+  align: alignValue(line),
+  image: line.image
+});
 
 // ---- text ----------------------------------------------------------------------------------
 
@@ -95,9 +117,13 @@ export function deleteRange(doc: Doc, from: number, to: number): CommandResult {
   const ls = lines(doc);
   const first = lineAt(ls, from);
   const survivor = to <= ls[ls.length - 1].end ? lineAt(ls, to) : null;
+  if (survivor && survivor.index !== first.index && (first.image || survivor.image)) {
+    if (to === from + 1) return besideImage(doc, first, survivor, from);
+    if (survivor.image) return deleteIntoImage(doc, from, to, first, survivor);
+  }
   inv.push(removeRange(doc, from, to));
   terminate(doc, inv);
-  const want = { kind: first.kind, lang: first.lang, align: alignValue(first) };
+  const want = marksOf(first);
   if (survivor && survivor.index !== first.index) {
     // Joined: the terminator that survives is the later line's; it takes the first line's marks.
     inv.push(...setTerminatorMarks(doc, from + (survivor.end - to), want));
@@ -108,19 +134,45 @@ export function deleteRange(doc: Doc, from: number, to: number): CommandResult {
   return { inverse: inv, caret: from };
 }
 
+/**
+ * Only the terminator between `above` and `below` (one of them an image line) is in the range:
+ * an empty neighbour that is not an image goes whole instead of joining, else nothing changes.
+ */
+function besideImage(doc: Doc, above: Line, below: Line, from: number): CommandResult {
+  const empty = (l: Line) => !l.image && l.start === l.end;
+  // An empty line's own terminator is the whole line: removed raw, nobody inherits marks.
+  if (empty(above)) return { inverse: [removeRange(doc, above.end, above.end + 1)], caret: from };
+  if (empty(below) && below.id !== null) return { inverse: [removeRange(doc, below.end, below.end + 1)], caret: from };
+  return { inverse: [], caret: from };
+}
+
+/**
+ * A range from an earlier line into an image line's caption: the image line keeps its
+ * terminator and marks and loses the caption's selected head; the rest is removed up to the
+ * terminator before the image, which then ends the joined first line (with its marks).
+ */
+function deleteIntoImage(doc: Doc, from: number, to: number, first: Line, image: Line): CommandResult {
+  const inv: Inverse[] = [];
+  if (to > image.start) inv.push(removeRange(doc, image.start, to));
+  const cut = image.start - 1;
+  if (from < cut) inv.push(removeRange(doc, from, cut));
+  inv.push(...setTerminatorMarks(doc, from, marksOf(first)));
+  return { inverse: inv, caret: from };
+}
+
 export function splitLine(doc: Doc, at: number): CommandResult {
   const inv: Inverse[] = [];
   terminate(doc, inv);
   const ls = lines(doc);
   const line = lineAt(ls, at);
-  if (line.kind && TABLE_KINDS.has(line.kind)) {
+  if ((line.kind && TABLE_KINDS.has(line.kind)) || line.image) {
     inv.push({ op: 'removeIds', ids: insertPlain(doc, line.end + 1, '\n') });
     return { inverse: inv, caret: line.end + 1 };
   }
   if (at >= line.end) {
     if (line.kind && CONTINUING.has(line.kind)) {
       if (line.start === line.end) {
-        inv.push(...setTerminatorMarks(doc, line.end, { kind: null, lang: null, align: null }));
+        inv.push(...setTerminatorMarks(doc, line.end, PLAIN));
         return { inverse: inv, caret: line.start };
       }
       inv.push({ op: 'removeIds', ids: insertPlain(doc, line.end + 1, '\n') });
@@ -151,8 +203,12 @@ export function joinWithPrevious(doc: Doc, lineStart: number): CommandResult {
   const ls = lines(doc);
   const line = lineAt(ls, lineStart);
   if (lineStart !== line.start) return deleteRange(doc, lineStart - 1, lineStart);
+  if (line.image) {
+    if (line.start === line.end) return removeImageLine(doc, line);
+    return { inverse: [], caret: line.start };
+  }
   if (line.kind || line.lang || line.align) {
-    const inv = setTerminatorMarks(doc, line.end, { kind: null, lang: null, align: null });
+    const inv = setTerminatorMarks(doc, line.end, PLAIN);
     return { inverse: inv, caret: line.start };
   }
   if (line.index === 0) return { inverse: [], caret: line.start };
@@ -161,23 +217,72 @@ export function joinWithPrevious(doc: Doc, lineStart: number): CommandResult {
 
 // ---- line kinds ----------------------------------------------------------------------------
 
-/** Set (or clear, with null) the kind of every line touching `[from, to]`. */
+/**
+ * Set (or clear, with null) the kind of every line touching `[from, to]`. An image line turned
+ * into another kind keeps its caption as text and loses the picture; `image` itself is never
+ * set here (it needs a value: `insertImageLine`).
+ */
 export function setLineKind(doc: Doc, from: number, to: number, kind: LineKind | null): CommandResult {
   const inv: Inverse[] = [];
+  if (kind === 'image') return { inverse: inv, caret: from };
   terminate(doc, inv);
   for (const line of lines(doc)) {
     if (line.end < from || line.start > to) continue;
     inv.push(...applyMark(doc, BLOCK, kind, line.end, line.end + 1));
     if (kind !== 'code' && line.lang) inv.push(...applyMark(doc, LANG, null, line.end, line.end + 1));
     if ((!kind || !TABLE_KINDS.has(kind)) && line.align) inv.push(...applyMark(doc, ALIGN, null, line.end, line.end + 1));
+    inv.push(...applyMark(doc, IMAGE, null, line.end, line.end + 1));
   }
   return { inverse: inv, caret: from };
 }
 
 export function toggleTask(doc: Doc, pos: number): CommandResult {
   const line = lineAt(lines(doc), pos);
+  if (line.image) return { inverse: [], caret: pos };
   const next: LineKind = line.kind === 'task' ? 'task_done' : 'task';
   return { inverse: applyMark(doc, BLOCK, next, line.end, line.end + 1), caret: pos };
+}
+
+// ---- images -------------------------------------------------------------------------------
+
+/**
+ * An image line for `value` (images.ts) at the caret: an empty host line becomes it; otherwise
+ * a new line goes after the caret's line, or before it when the caret is at the start of a
+ * line with text (a table counts as one line: before or after the whole table). The caret
+ * lands in the empty caption. An invalid value changes nothing.
+ */
+export function insertImageLine(doc: Doc, at: number, value: string): CommandResult {
+  const inv: Inverse[] = [];
+  if (!isImageValue(value)) return { inverse: inv, caret: at };
+  terminate(doc, inv);
+  const ls = lines(doc);
+  const line = lineAt(ls, at);
+  if (!line.cells && !line.image && line.start === line.end && line.id !== null) {
+    inv.push(...setTerminatorMarks(doc, line.end, { ...PLAIN, kind: 'image', image: value }));
+    return { inverse: inv, caret: line.start };
+  }
+  const rows = tableOf(ls, line);
+  const [head, last] = rows.length ? [rows[0], rows[rows.length - 1]] : [line, line];
+  const pos = at === head.start && head.start < last.end ? head.start : last.end + 1;
+  inv.push({ op: 'removeIds', ids: insertPlain(doc, pos, '\n') });
+  doc.web.markRangeClosed(doc.obj, pos, pos + 1, BLOCK, 'image');
+  doc.web.markRangeClosed(doc.obj, pos, pos + 1, IMAGE, value);
+  return { inverse: inv, caret: pos };
+}
+
+/**
+ * Remove the image line `line` names (by its terminator id) whole, caption and terminator. Its
+ * marks are cleared first so no neighbour inherits them; the doc stays terminated. The caret
+ * goes to the end of the line above (the start of the doc for the first line).
+ */
+export function removeImageLine(doc: Doc, line: Line): CommandResult {
+  const ls = lines(doc);
+  const cur = line.id === null ? undefined : ls.find((l) => l.id === line.id);
+  if (!cur?.image || cur.id === null) return { inverse: [], caret: Math.min(line.start, doc.web.textLen(doc.obj) - 1) };
+  const inv = setTerminatorMarks(doc, cur.end, PLAIN);
+  inv.push(removeRange(doc, cur.start, cur.end + 1));
+  terminate(doc, inv);
+  return { inverse: inv, caret: cur.index > 0 ? cur.start - 1 : 0 };
 }
 
 // ---- inline -------------------------------------------------------------------------------
@@ -274,7 +379,7 @@ export function removeRow(doc: Doc, pos: number): CommandResult {
   const inv: Inverse[] = [removeRange(doc, line.start, line.end + 1)];
   if (line.kind === 'table_head' && next?.cells) {
     const end = line.start + (next.end - next.start);
-    inv.push(...setTerminatorMarks(doc, end, { kind: 'table_head', lang: null, align: alignValue(line) }));
+    inv.push(...setTerminatorMarks(doc, end, { ...PLAIN, kind: 'table_head', align: alignValue(line) }));
   }
   terminate(doc, inv);
   return { inverse: inv, caret: Math.min(line.start, doc.web.textLen(doc.obj) - 1) };
@@ -413,6 +518,8 @@ export interface ModelLine {
   kind: LineKind | null;
   lang?: string;
   align?: Align[];
+  /** An `image` line's value (images.ts); notes-core never gives an image line without one. */
+  image?: string;
 }
 
 export interface ModelMark {
@@ -443,7 +550,10 @@ export function insertModel(doc: Doc, at: number, model: NotesModel): CommandRes
     if (ch === '\n') {
       const line = model.lines[k++];
       const end = at + i;
-      if (line?.kind) doc.web.markRangeClosed(doc.obj, end, end + 1, BLOCK, line.kind);
+      // An image line without a valid value would read as a paragraph anyway: leave it one.
+      const image = line?.kind === 'image' && isImageValue(line.image) ? line.image : null;
+      if (line?.kind && (line.kind !== 'image' || image)) doc.web.markRangeClosed(doc.obj, end, end + 1, BLOCK, line.kind);
+      if (image) doc.web.markRangeClosed(doc.obj, end, end + 1, IMAGE, image);
       if (line?.lang) doc.web.markRangeClosed(doc.obj, end, end + 1, LANG, line.lang);
       if (line?.align?.some((a) => a)) doc.web.markRangeClosed(doc.obj, end, end + 1, ALIGN, encodeAlign(line.align));
     }
@@ -541,7 +651,7 @@ export function applyInputRule(doc: Doc, line: Line, rule: InputRule): CommandRe
     }
     case 'endFence': {
       inv.push(...deleteRange(doc, line.start, line.end).inverse);
-      inv.push(...setTerminatorMarks(doc, line.start, { kind: null, lang: null, align: null }));
+      inv.push(...setTerminatorMarks(doc, line.start, PLAIN));
       return { inverse: inv, caret: line.start };
     }
     case 'table': {
