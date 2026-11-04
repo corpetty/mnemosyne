@@ -173,7 +173,10 @@ class SyncService:
         self._announced = self.ctx.repo.current_sync_seq()
         self._locks.clear()
         self._wake = asyncio.Event()
-        self._loop = asyncio.get_running_loop()
+        try:  # where image pulls run; started outside a loop (tests), none are scheduled
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
         if self.sync_interval and self._loop_task is None:
             self._loop_task = asyncio.create_task(self._run())
 
