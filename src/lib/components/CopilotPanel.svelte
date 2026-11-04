@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { askCopilot, getCopilotNotes } from '$lib/api/backend.js';
+	import { askCopilot, getCopilotNotes, getSettings } from '$lib/api/backend.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -15,6 +15,8 @@
 	let notes = $state<CopilotNotes | null>(null);
 	let question = $state('');
 	let asks = $state<{ jobId: string; question: string }[]>([]);
+	// The setting that has the backend add the copilot's points to the notes itself.
+	let toNotes = $state(false);
 
 	const sessionId = $derived(sessionState.activeSession?.id ?? null);
 	const recordingHere = $derived(audioState.isRecording && audioState.activeSessionId === sessionId);
@@ -24,6 +26,11 @@
 		notes = null;
 		asks = [];
 		if (!id) return;
+		getSettings()
+			.then((s) => {
+				if (sessionId === id) toNotes = s.values.copilot_to_notes ?? true;
+			})
+			.catch(() => {});
 		getCopilotNotes(id)
 			.then((n) => {
 				if (sessionId === id) notes = n;
@@ -64,6 +71,9 @@
 		!notes || (!notes.summary.length && !notes.decisions.length && !notes.action_items.length && !notes.open_questions.length)
 	);
 
+	// Nothing to show yet: no notes, or notes that hold only `added` (a new recording's first read).
+	const waiting = $derived(!notes || (notes.lines === 0 && empty));
+
 	// ---- "Add to notes": the meeting's notes document is shared with the notes editor ---------------
 	let notesDoc = $state.raw<NotesDocState | null>(null);
 	let added = $state<string | null>(null);
@@ -97,6 +107,12 @@
 				: !notesDoc.readOnly && notesDoc.status !== 'gone')
 	);
 
+	// The backend adds every point itself while this is on and the notes are live (not the plain-text
+	// fallback): the per-item button would only add a second copy.
+	const autoAdds = $derived(
+		toNotes && !!notesDoc && notesDoc.status !== 'unavailable' && !notesDoc.readOnly && notesDoc.status !== 'gone'
+	);
+
 	async function addToNotes(item: CopilotItem, key: string) {
 		const id = sessionId;
 		const st = notesDoc;
@@ -122,7 +138,7 @@
 </script>
 
 {#snippet add(item: CopilotItem, key: string)}
-		{#if canAdd}
+		{#if canAdd && !autoAdds}
 			<button
 				type="button"
 				onclick={() => addToNotes(item, key)}
@@ -138,7 +154,7 @@
 		<header class="flex items-center gap-2 text-xs">
 			<span class="font-semibold text-purple-200 uppercase tracking-wide">Copilot</span>
 			<span class="text-purple-300/60">
-				{#if notes}updated {clock(notes.updated_at)} · {notes.lines} lines{:else}running notes appear after the first minutes of talk{/if}
+				{#if !waiting && notes}updated {clock(notes.updated_at)} · {notes.lines} lines{#if autoAdds} · adds to the notes{/if}{:else}running notes appear after the first minutes of talk{/if}
 			</span>
 		</header>
 
