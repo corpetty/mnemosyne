@@ -34,6 +34,7 @@ from .routes.live_flags import router as live_flags_router
 from .routes.local_model import router as local_model_router
 from .routes.mobile import router as mobile_router
 from .routes.models import router as models_router
+from .routes.notes_media import router as notes_media_router
 from .routes.organizations import router as organizations_router
 from .routes.pairing import router as pairing_router
 from .routes.peer_shares import router as peer_shares_router
@@ -103,6 +104,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(organizations_router)
     app.include_router(supervision_router)
     app.include_router(sessions_router)
+    app.include_router(notes_media_router)
     app.include_router(clips_router)
     app.include_router(publishing_router)
     app.include_router(guest_notes_router)

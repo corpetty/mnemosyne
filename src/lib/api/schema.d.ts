@@ -2337,6 +2337,34 @@ export interface paths {
         patch: operations["update_notes_item_api_sessions__session_id__notes_items__item_id__patch"];
         trace?: never;
     };
+    "/api/sessions/{session_id}/notes/media/{sha}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Media
+         * @description An image of the meeting's notes, for anyone who may read the meeting. 404 when its bytes
+         *     are not here (yet: they may still be uploading or travelling).
+         */
+        get: operations["get_media_api_sessions__session_id__notes_media__sha__get"];
+        /**
+         * Put Media
+         * @description Store an image of the meeting's notes: the raw WebP or JPEG bytes (Content-Type
+         *     image/webp or image/jpeg, matching them), `sha` their SHA-256. Who may: as for the notes
+         *     (an editor). 201 when stored, 200 when it was here; 400 a wrong hash, 413 over 2 MB or the
+         *     meeting's 50 MB, 415 another type.
+         */
+        put: operations["put_media_api_sessions__session_id__notes_media__sha__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/peer-shares": {
         parameters: {
             query?: never;
@@ -8213,6 +8241,15 @@ export interface components {
             /** Sessions With Audio */
             sessions_with_audio: number;
         };
+        /** StoredMedia */
+        StoredMedia: {
+            /** Ext */
+            ext: string;
+            /** Sha256 */
+            sha256: string;
+            /** Size */
+            size: number;
+        };
         /** SuggestRequest */
         SuggestRequest: {
             /** After */
@@ -13840,6 +13877,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_media_api_sessions__session_id__notes_media__sha__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                sha: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": unknown;
+                    "image/webp": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_media_api_sessions__session_id__notes_media__sha__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                sha: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description It was stored already */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoredMedia"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoredMedia"];
                 };
             };
             /** @description Validation Error */

@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 from .. import access
 from ..models.shared_meeting import ShareParts
-from . import shared_with_me
+from . import notes_media, shared_with_me
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -369,6 +369,7 @@ def _fold_locked(app: AppContext, session_id: str, binary: str) -> bool:
             raise
         return False
     _derive_items(app, session_id, reply, [seq for seq, _ in ops])
+    notes_media.seen(app, session_id, reply.get("media"))
     return _write_notes(app, session_id, markdown)
 
 
@@ -464,6 +465,7 @@ def _set_text_blocking(
                 session_id, folded, seqs[-1] if seqs else last, rendered, *marks_of(reply)
             )
             _derive_items(app, session_id, reply, [seq for seq, _ in ops], author)
+            notes_media.seen(app, session_id, reply.get("media"))
             _write_notes(app, session_id, rendered)
         else:
             _fold_locked(app, session_id, binary)
@@ -514,6 +516,7 @@ def mark_comment_blocking(
             # Nothing came in meanwhile: the reply's snapshot is the whole log.
             app.repo.store_notes_fold(session_id, folded, seqs[-1], rendered, *marks_of(reply))
             _derive_items(app, session_id, reply, [seq for seq, _ in ops])
+            notes_media.seen(app, session_id, reply.get("media"))
             _write_notes(app, session_id, rendered)
         else:
             _fold_locked(app, session_id, binary)
@@ -564,6 +567,7 @@ def set_kind_blocking(
             # Nothing came in meanwhile: the reply's snapshot is the whole log.
             app.repo.store_notes_fold(session_id, folded, seqs[-1], rendered, *marks_of(reply))
             _derive_items(app, session_id, reply, [seq for seq, _ in ops], author)
+            notes_media.seen(app, session_id, reply.get("media"))
             _write_notes(app, session_id, rendered)
         else:
             _fold_locked(app, session_id, binary)

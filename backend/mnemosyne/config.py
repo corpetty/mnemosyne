@@ -484,6 +484,11 @@ class Settings(BaseSettings):
         return self.data_dir / "assets"
 
     @property
+    def notes_media_dir(self) -> Path:
+        """Images in the meetings' notes, a folder per meeting (services/notes_media.py)."""
+        return self.data_dir / "notes_media"
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "mnemosyne.db"
 
