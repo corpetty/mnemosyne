@@ -1,6 +1,7 @@
 # Images in the notes
 
-Status: proposal, 2026-10-26, nothing built. Drafted against main at 0.25.1. Asked for by Corey after
+Status: built 2026-11-04 on branch images-in-notes, unreleased; build order in 2026-11-04-images-tasks.md.
+Proposed 2026-10-26, drafted against main at 0.25.1. Asked for by Corey after
 comparing our editor with David's kb (hashseq web/kb.js, APP_NOTES 19 "Images: the value side store earns
 its keep", 21 "A big image broke page load"): paste or drop a screenshot into the notes, encrypted for
 guests, written to Obsidian. Decided by Corey (2026-10-26): guests may add images, from a phone camera
@@ -9,6 +10,23 @@ too; publications include the notes' images, chosen per image, all on by default
 
 Why: meetings show slides, whiteboards and screens. Today the notes hold only text; a screenshot has to
 live somewhere else and loses its place in the meeting.
+
+## Changed while building
+
+The text below is the design as proposed; where the code differs:
+
+- Two live `image` values on one line resolve to the first (as `lang` and `align` do), not the newest: marks
+  carry no clock.
+- Guests never use HTTP: their only path is the room WebSocket, so media travel on binary kinds `0x04` (store)
+  and `0x05` (answer to `get_media`). The owner's bridge uses `PUT/GET /live/{room}/media/{name}` with the
+  publisher token; a route checking the room token does not exist.
+- A room's blob name is `HMAC-SHA256(media_name_key, plaintext sha)`, not the sha256 of the sealed bytes
+  (AES-GCM nonces are random, so a reader could not find that). The plaintext sha is in the AAD.
+- A publication's total is 20 MiB (`MAX_CLIPS_TOTAL`, clips and images together), not 32.
+- Recipients of a share (phase 8) cannot add images in v1; they read the owner's.
+- The line is inserted at once with its final mark (the hash is known in the browser) and the upload runs
+  beside it; the block shows the local picture while it uploads, and "Not uploaded: Retry / Remove" on failure.
+- The embedded host (iroh rooms) has no daily write budget; the room's 25,000,000 bytes is its only limit.
 
 ## The model: an image line, the bytes beside the document
 

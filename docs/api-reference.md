@@ -619,6 +619,27 @@ another machine whose document has not arrived by library sync yet) it is stored
 may: as for live notes (owner, admin, anyone it is shared with); others get 403, a meeting they
 cannot see 404.
 
+### Images in the notes: `PUT|GET /api/sessions/{session_id}/notes/media/{sha}`
+
+The bytes of an image line (services/notes_media.py; the line itself is in the notes document, see
+"Images" under "Live notes"). `{sha}` is the SHA-256 of the stored bytes, 64 lowercase hex characters.
+
+- `PUT`: the raw image as the body, `Content-Type: image/webp` or `image/jpeg`, matching the bytes.
+  → `{sha256, ext: "webp"|"jpeg", size}`: `201` when stored, `200` when it was here. Who may: as for
+  the notes (owner, admin, anyone it is shared with; `403` for a reader). `400` not a hash, or the
+  bytes do not hash to `{sha}`; `404` meeting; `409` on a meeting shared with you (its images go to
+  its owner); `413` over 2,000,000 bytes (refused from `Content-Length` before the body is read) or
+  over the meeting's 50,000,000 bytes in all; `415` a type other than WebP or JPEG, or bytes whose
+  magic number is not the type sent (the type is read from the bytes, not trusted). Stored under
+  `<data_dir>/notes_media/<session>/<sha>.<ext>`, sealed (`.enc`) when encryption at rest is on.
+- `GET`: the bytes, for anyone who may read the meeting, with `Cache-Control: private, max-age=31536000,
+  immutable`. `404` when the meeting is hidden or the bytes are not here (they may still be uploading
+  or travelling; wait for the `notes_media` event), `423` while locked.
+
+A blob nothing has shown for 7 days is deleted by a daily sweep (an upload no line used too); each fold
+of the document notes which blobs it shows, and the sweep folds the meeting once more before deleting.
+Deleting the meeting deletes its images; deleting audio does not. Backups and the records export carry them.
+
 ### `PUT /api/sessions/{session_id}/summary`
 
 A summary edited by hand, saved together (services/summary_edit.py): `{summary, topics: [str],
@@ -820,7 +841,9 @@ otherwise). `400` for lines outside the transcript.
 
 A curated, encrypted copy of a meeting (services/publishing.py, format in
 services/publication_format.py). A `PublicationSelection` says what it shows: `title`, the
-booleans `summary decisions questions action_items chapters topics notes`, `attendees` (names to
+booleans `summary decisions questions action_items chapters topics notes`, `images` (with `notes`: the plain
+hashes of the notes' images to include; `null` = all, `[]` = none; a left-out image reads `[image: caption]`),
+`attendees` (names to
 list; everyone else of the meeting becomes "Person N" everywhere), `names`
 (`as_is|first|hidden`), `hide_identifiers` (also hides e-mail addresses and phone numbers), `quotes` (`{start, end, part?, with_clip}`: joined-
 timeline seconds, or seconds into `part`; the transcript lines whose middle is inside), `where`
@@ -828,8 +851,10 @@ timeline seconds, or seconds into `part`; the transcript lines whose middle is i
 `GET …/defaults` gives the live publication's selection, else the defaults (`publish_default_expiry_days`,
 host when `publish_host` is set or `use_our_servers` is on: ours), plus `local_reach` (`team|phone_url|this_device`: who could open a
 link to this computer) and `local_url` (the base such a link uses; `""` for `this_device`, where only
-127.0.0.1 works). `POST …/preview` returns the unsealed manifest, a quote's clip as
-`{preview_url, seconds, mime}` (`/api/audio/file/{id}#t=start,end`). `PUT` starts a `publish` job
+127.0.0.1 works), and `notes_images`: `[{sha256, caption, width, height, size}]`, the notes' images in order,
+each once, for the dialog's list. `POST …/preview` returns the unsealed manifest, a quote's clip as
+`{preview_url, seconds, mime}` (`/api/audio/file/{id}#t=start,end`) and `images` as `[{id, width, height, mime,
+preview_url}]` (`/api/sessions/{id}/notes/media/{id}`; the sealed `ImageRef` fields are not there). `PUT` starts a `publish` job
 (`result.publication`); an update keeps the id, key and link and bumps `version`. `DELETE`
 unpublishes (`404` when not published). `Publication.url` (link with the key in the fragment) is
 `null` for anyone but the owner or an admin; `behind` is true when publishing again would show
@@ -864,7 +889,9 @@ answer has `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`;
 - `GET /pub/{id}`: the sealed manifest (`application/octet-stream`) with `ETag` (its SHA-256),
   `X-Pub-Version`, `X-Pub-Expires` (unix seconds; absent when it never expires) and `Cache-Control: no-cache`;
   `304` on a matching `If-None-Match`; `404` unknown, `410` unpublished, expired or deleted (a tombstone for 30 days).
-- `GET /pub/{id}/{sha256}`: a sealed clip, `Cache-Control: public, max-age=31536000, immutable`; `404` if the current
+- `GET /pub/{id}/{sha256}`: a sealed clip or image (the manifest's `images` lists `{id, sha256, size, mime, v,
+  width, height}`; an image is sealed like a clip with kind `image`, 64 KiB blocks, and counts with the clips in
+  the 20 MiB total; the 20 MiB limit is on padded sizes), `Cache-Control: public, max-age=31536000, immutable`; `404` if the current
   version does not hold it.
 
 ### Guest notes: `GET|PUT|DELETE /api/sessions/{session_id}/guest-notes` · `POST …/guest-notes/end` · `POST …/guest-notes/new-link`
@@ -911,7 +938,18 @@ gone?}` where `sel` is `{a, f}` (element ids, 64 hex, or null) or null and `gone
 "" is the owner's heartbeat, `o:<member key>` one of the owner-side editors, whose carets and typing the guests see);
 META `clock?: {part, offset, started_at}` is the recording in progress (as in `POST /api/audio/start`) and is absent
 while nothing records, so the guest page can insert time chips. A guest's PRESENCE heard in one of the meeting's rooms
-is forwarded unchanged into the others. The exact messages, close codes and limits are in the header of `publish-host/src/live.rs`.
+is forwarded unchanged into the others.
+
+Images (MEDIA frames, guest_format kind 6): a sealed image is not in the log or the snapshot but stored beside
+them under an opaque 64-hex name, `hex(HMAC-SHA256(media_name_key, sha))` (every holder of the link computes
+it; the host cannot). The owner's bridge uses HTTP with the publisher token: `PUT /live/{room}/media/{name}`
+(the sealed blob; `201` stored, `204` the name was there and is kept, `400` `bad_name`|`empty_media`, `409`
+`room_ended`, `413` `media_too_large`|`room_media_full`) and `GET` (`404` `media_missing`). Guests use only
+the socket: `0x04 || name(32) || envelope` stores (answered `{"type":"media","name","ok":true}`; every other
+connection is told `{"type":"media","name"}`), the text `{"type":"get_media","name"}` is answered with
+`0x05 || name(32) || envelope`; errors `{"type":"error","code","name"}` (`media_missing`, `media_too_large`,
+`room_media_full`, `media_busy`, `empty_media`) leave the connection open. Limits: 2 MiB + 128 KiB a blob,
+25,000,000 bytes a room, the daily write budget; removed with the room. The exact messages, close codes and limits are in the header of `publish-host/src/live.rs`.
 
 ### Transcript editing
 
@@ -1535,6 +1573,7 @@ under pairing above.
 | GET | `/api/sessions/{id}/share-status` | `ShareStatus` for a meeting shared with you: `owner {person, name}`, `waiting {comments, ticks, notes}` (what has not reached the owner's computer yet) and `rejected [{kind: comment\|item_flag\|notes, reason, excerpt (first 80 characters), at}]`. `404` for any other meeting. Admin / the desktop |
 | GET | `/api/share/hello` | Who this is and the sharing protocol version. A contact's CONTACT token |
 | GET | `/api/share/changes?since=&limit=` | Signed `SharedMeeting`s changed for the calling contact, plus tombstones. A contact |
+| GET | `/api/share/media/{session_id}/{sha}` | The raw WebP or JPEG bytes of an image a shared meeting's notes show (`Cache-Control: private, max-age=31536000, immutable`). A contact whose live share of that meeting includes the notes; `404` for anything else (no share, revoked, notes not shared, an image the notes do not show, bytes missing), whether or not it exists; `423` while locked |
 | POST | `/api/share/card` | The contact's newer signed card (its machines changed). A contact |
 | POST | `/api/share/poke` | The contact has news: pull from it now, in the background. A contact |
 | POST | `/api/share/contributions` | `ContributionBatch`: signed comments, ticks and notes frames, checked at the hub (`413` over 200 records or 2 MB). A contact |
@@ -1546,6 +1585,12 @@ after a local write, and at the start of every pull round. A transport failure l
 a refusal is final and shows in `share-status`. WebSocket event `{type: "share_outbox",
 session_id, pending}` after each change. Until the owner has accepted them, pending comments and
 ticks are shown again on the pulled copy.
+
+`SharedMeeting.media` (in the signed digest, filled only when the share includes the notes) lists the images
+the notes show: `[{sha256, ext, width, height, size}]`, description only; the recipient pulls each blob from
+`/api/share/media/…` after the meeting, like the meeting itself, and stores it through the same checks
+(hash, type, caps). A recipient cannot add images to a meeting shared with you (`PUT …/notes/media/…`
+answers `409`); the editor offers no image there.
 
 A CONTACT token reaches only `/api/share/`; the admin token is refused there (`403`). In demo
 mode (`MNEMOSYNE_DEMO=1`) a contact "Ada Lovelace" and one meeting she shared, "Shared: Waku
@@ -1585,6 +1630,14 @@ with the token the peer gave it. The routes a peer calls know which peer asks fr
   notes document carries it as `notes_doc` (base64 of the canonical snapshot, folded and caught up
   with text written around it just before serving; `null` without one); the kept base leaves it
   out. Two documents are merged by union, not by the three-way text merge (see "Live notes").
+  `SyncSession.media` (`[{sha256, ext, width, height, size, created_at, by}]`; `null` from an older peer)
+  lists the meeting's image rows, never bytes. `last_seen_at` does not travel.
+- `GET /api/sync/media/{session_id}/{sha256}` → the raw image bytes, decrypted here (`Content-Type`
+  `image/webp` or `image/jpeg`), for a paired computer. `404` when the bytes are not here, `423` while
+  locked. A computer that lacks a blob pulls it after applying the meeting, from the computer that served
+  the page; a blob a fold finds missing later is asked for from the origin, then the other peers. The
+  puller stores it through the normal checks (hash, type, caps) and seals it when it encrypts. A blob
+  pulled for a row it already had does not make a new version of the meeting.
 - `GET /api/sync/contacts` → `{person, has_people_data, contacts: [{person, name, my_name, card,
   secret, created_at, updated_at, removed_at}]}`: every contact, removed ones too, complete (the shared
   secret and card included: the caller is another of this person's computers), without the
@@ -1668,6 +1721,7 @@ Then every backend event, in order:
 | `copilot_notes` | `session_id`, `notes` | The live copilot's running notes were updated |
 | `shares` | — | A meeting was shared or unshared; reload the meeting list |
 | `notes` | `session_id` | The meeting's live shared notes were folded into `Session.notes` (see "Live notes"); reload it |
+| `notes_media` | `session_id`, `sha256` | The bytes of an image of the meeting's notes were stored here (uploaded, or pulled by library sync or a share); an editor showing a grey box for it can load it now |
 | `sync` | `peer`, `state`, `done`, `total` | Library sync with a peer: a round started, a page was taken in, or it ended (`state` as in `GET /api/sync/status`); meetings it changed also get a `session` event |
 | `live_partial` | `session_id`, `source`, `speaker`, `text` | The still-changing tail for that source; replaces the previous partial (may be empty) |
 | `recovered` | `RecoveredRecording` fields | An interrupted recording was recovered (also listed in the next `hello`) |
@@ -1816,3 +1870,20 @@ lines in order, `[{line, done, text, links: [[start, end, url]], frame}]` (`line
 line or its kind, else null). The op `set_kind` `{notes, snapshot, frames, line, kind: "task"|"task_done"}` makes
 that task line open or done and answers like `mark_comment` (`frames` to broadcast, `[]` when it already shows
 `kind`; an unknown, deleted or non-task line is an error). The backend uses it for a tick made outside the editor.
+
+### Images
+
+An image is a line of kind `image` (notes-core `Block::Image`): its text is the caption and a closed `image`
+mark on its terminator holds `<sha256>.<webp|jpeg>@<width>x<height>` (the sha is of the stored bytes; the
+size lets a reader hold the place before the bytes arrive). Markdown is `![caption](mnemosyne:image/<value>)`
+on a line of its own; any other `![]()` stays literal text. Two live values on one line (concurrent edits)
+resolve to the first, as `lang` and `align` do. The bytes never enter the document, a frame or a snapshot:
+they are in the media store (above), fetched by the hash. Every `notes doc` answer carries `media`, the
+distinct values the document shows, in order.
+
+Outside the editor an image is text: `Session.notes` keeps the markdown line (search finds the caption); `plain_notes` gives `[image: caption]` to the
+summary, Ask, MCP and publishing; the Obsidian export writes each image the note shows, decrypted, to
+`attachments/<note stem>-<tag>.<ext>` beside the note and embeds `![[file|caption]]` (`tag` is 8 hex digits of
+the sha that are not all digits, so identifier redaction leaves the embed alone); files of that stem the note no
+longer uses are removed. Combining meetings moves the other meeting's images into the combined one after the
+notes are joined.

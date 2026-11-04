@@ -32,6 +32,12 @@ time. Meetings shared with you by someone else cannot be opened to guests.
   you.
 - **Notes**: the same editor you have (headings, lists, bold, tables, paste, undo of their own
   edits). Everyone, you included, sees changes as they happen.
+- **Images**: paste or drop a picture, or choose `/Image` (on a phone it offers the camera, for a whiteboard).
+  The page shrinks it to 1600 px and re-encodes it as WebP (JPEG where the browser cannot), which also removes
+  EXIF and GPS, and refuses one still over 2 MB. It appears at once and uploads beside the line; a failed upload
+  shows Retry / Remove. Your images reach guests before the line that names them, and guests' images reach
+  your meeting's notes and are kept with it. A picture that has not arrived shows a grey box, then
+  "Image not available" after a few tries.
 - **Comments**: select text and comment, reply, and edit or delete their own. They cannot resolve
   threads; that stays with you.
 - **Agenda**: the meeting's title, date, your name and the agenda (the calendar event's
@@ -98,8 +104,8 @@ recording). Close the laptop and guests lose the connection; they reconnect when
 
 ## What guests keep
 
-A guest's browser keeps the last copy of the notes it saw, sealed (still encrypted, opened with
-the key in the link each time), until the link expires. So a guest who already opened the link can
+A guest's browser keeps the last copy of the notes it saw, with the images it showed, sealed (still encrypted,
+opened with the key in the link each time), until the link expires. So a guest who already opened the link can
 reread the notes when your computer is off, without you. It is removed when the link expires, when
 the guest page learns the room is gone (you pressed **Stop sharing the notes** or **New link**), or
 when the key does not open it. The page's name card says that a copy stays in the browser.
@@ -117,7 +123,9 @@ ciphertext and cannot merge or read it.
   it handles is only our ciphertext, plus addresses, timing and sizes. Tailscale sees the same
   for a Funnel.
 - **A publish host** sees room ids (random, not your meeting id), sizes, times and IP addresses,
-  as any web server does.
+  as any web server does. An image is stored there as a sealed blob padded to 64 KiB steps under an opaque
+  name (an HMAC of the image's hash under a key derived from the link's key): the host sees that a blob
+  exists and about how big it is, never the picture, its hash or which line shows it.
 - GitHub Pages sees that the page was fetched, and by whom, as for any web page; the key is in the
   `#` part and never sent.
 
@@ -179,6 +187,9 @@ meeting's owner or an admin can start them. See [team-server.md](team-server.md#
 
 ## Limits
 
+- An image is at most 2 MB (2 MiB + 128 KiB sealed on the host); a room keeps at most 25,000,000 bytes of
+  images. Only WebP and JPEG are kept. Images count towards the host's
+  daily write budget.
 - One notes frame (a paste, say) is at most 2 MiB; the room's log and snapshot are each at most
   8 MiB. An owner offline for a long time while guests type through a host can fill the log; new
   edits are then refused until you reconnect.
