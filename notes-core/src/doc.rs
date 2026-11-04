@@ -16,11 +16,11 @@ use crate::model::{
     dont_care, is_image_value, normalize, same, same_link, Block, Fmt, LineAttr, Link, Model, BOLD,
     CODE, ITALIC, STRIKE,
 };
-use crate::parse::parse;
-use crate::render::{plain, render, Rendered};
+use crate::parse::parse_lines;
+use crate::render::{md_lines, plain, render, Rendered};
 use crate::{
     Error, COMMENT_PREFIX, FLAG_VALUE, KIND_ALIGN, KIND_BLOCK, KIND_BOLD, KIND_CODE, KIND_IMAGE,
-    KIND_ITALIC, KIND_LANG, KIND_LINK, KIND_STRIKE,
+    KIND_ITALIC, KIND_LANG, KIND_LINK, KIND_REF, KIND_STRIKE,
 };
 
 /// One meeting's notes: the store and the seq opened at the notes origin.
@@ -54,6 +54,8 @@ pub struct TaskLine {
     /// The live `block` marks that show the line's kind (those whose value is `task` or
     /// `task_done`, whichever won), for [`TaskLine::frame`].
     pub kind_marks: Vec<Id>,
+    /// The line's `ref` (see [`Notes::refs`]).
+    pub r#ref: Option<String>,
 }
 
 impl TaskLine {
@@ -65,6 +67,20 @@ impl TaskLine {
             .filter_map(|id| arrivals.get(id).copied())
             .max()
     }
+}
+
+/// A line with a `ref`, as [`Notes::refs`] reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineRef {
+    /// The element id of the line's terminating `\n`.
+    pub line: Id,
+    /// The ref (never empty).
+    pub value: String,
+    /// The line's number in the document (0-based; the same line of `plain`).
+    pub index: usize,
+    /// The line of the rendered markdown where the line's rendering starts
+    /// ([`crate::render::md_lines`]).
+    pub md_line: usize,
 }
 
 /// What [`Notes::read_marks`] gives: the document as stored, comment ranges and, per line,
@@ -288,6 +304,31 @@ impl Notes {
                 text: model.text[start..end].iter().collect(),
                 links,
                 kind_marks: marks[li].clone(),
+                r#ref: model.lines[li].r#ref.clone(),
+            });
+        }
+        out
+    }
+
+    /// Every line with a `ref`, in document order, with where its rendering starts in
+    /// [`Notes::render`]'s markdown. Read from the document as rendered (normalized), so a
+    /// last line that lost its `\n` has none.
+    pub fn refs(&self) -> Vec<LineRef> {
+        let shown = normalize(&self.model());
+        let starts = md_lines(&shown);
+        let mut out = Vec::new();
+        for (li, (_, _, nl)) in shown.line_spans().into_iter().enumerate() {
+            let (Some(nl), Some(value)) = (nl, shown.lines[li].r#ref.as_ref()) else {
+                continue;
+            };
+            let Some(line) = self.seq().id_at(nl) else {
+                continue;
+            };
+            out.push(LineRef {
+                line,
+                value: value.clone(),
+                index: li,
+                md_line: starts[li],
             });
         }
         out
@@ -362,6 +403,8 @@ impl Notes {
                     }
                     KIND_LANG => line.lang = first,
                     KIND_ALIGN => line.align = first,
+                    // The first value, as `lang`; an empty one is no ref.
+                    KIND_REF => line.r#ref = first.filter(|r| !r.is_empty()),
                     KIND_IMAGE => {
                         // The first value, as `lang`; one that is not an image value is no
                         // image (the line reads as a paragraph).
@@ -427,9 +470,18 @@ impl Notes {
     /// Make the document say `markdown`. Returns the frames for the clients, artifacts
     /// (0xAF) first and then one delta (0xDE) of only the new ops, or none when nothing
     /// changed. The text is diffed by lines, then words; kept lines keep their terminators
-    /// (and so their kinds). Then marks are added or removed where the formats differ.
-    pub fn set_text(&mut self, markdown: &str) -> Vec<Vec<u8>> {
-        let desired = normalize(&parse(markdown));
+    /// (and so their kinds and refs). Then marks are added or removed where the formats
+    /// differ.
+    ///
+    /// `refs` sets line refs, keyed by the 0-based number of the markdown line where the
+    /// document line starts (the `md_line` of [`Notes::refs`]; see
+    /// [`crate::parse::parse_lines`]): a value sets the line's ref, `""` clears it. A line
+    /// without a key keeps what its terminator has after the diff: a kept or reworded line
+    /// its ref, a new line none. Keys that start no line (a blank line the parser drops, a
+    /// table's separator row, a closing fence, past the end) are ignored.
+    pub fn set_text(&mut self, markdown: &str, refs: &BTreeMap<usize, String>) -> Vec<Vec<u8>> {
+        let (parsed, starts) = parse_lines(markdown);
+        let mut desired = normalize(&parsed);
         let before = self.web.clock();
         let mut minted = Vec::new();
         let old: String = self.text();
@@ -439,6 +491,15 @@ impl Notes {
             diff::apply(self.seq_mut(), &script);
         }
         debug_assert!(self.seq().iter().eq(new.chars()));
+        // The parser sets no refs: the wanted one is the request's, else what is there.
+        let raw = self.model();
+        for (li, line) in desired.lines.iter_mut().enumerate() {
+            line.r#ref = match starts.get(li).and_then(|n| refs.get(n)) {
+                Some(r) if r.is_empty() => None,
+                Some(r) => Some(r.clone()),
+                None => raw.lines.get(li).and_then(|l| l.r#ref.clone()),
+            };
+        }
         self.reconcile(&desired, &mut minted);
         self.new_frames(&before, &minted)
     }
@@ -569,6 +630,11 @@ impl Notes {
                     && was.align != want.align
                 {
                     self.mark_line(nl, KIND_ALIGN, want.align.as_deref(), minted);
+                    changed = true;
+                }
+                // On any kind.
+                if (all || have.r#ref != want.r#ref) && was.r#ref != want.r#ref {
+                    self.mark_line(nl, KIND_REF, want.r#ref.as_deref(), minted);
                     changed = true;
                 }
             }

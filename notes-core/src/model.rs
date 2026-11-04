@@ -117,6 +117,11 @@ pub struct LineAttr {
     /// (anything else reads as `None`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    /// What the line is for the backend: the `ref` mark's value, on a line of any kind
+    /// (`sum:<id>`, `sec:summary`...). Never rendered or parsed: markdown has no place for
+    /// it, so [`crate::parse`] leaves it `None` and only `set_text`'s `refs` set it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r#ref: Option<String>,
 }
 
 /// A link state of one character.
@@ -305,6 +310,7 @@ pub fn dont_care(model: &Model) -> Vec<bool> {
 ///   row, none when every column is `-`. `lang` only on a code run's first line.
 /// - `image` only on `image` lines, which never join a table run; an `image` line without a
 ///   valid value ([`is_image_value`]) is a paragraph.
+/// - `ref` stays on every line that has a terminator, whatever its kind; an empty one is none.
 /// - Inline formats are cleared where they mean nothing ([`dont_care`]).
 /// - Bold, italic and strike never begin or end on whitespace (outside code): markdown
 ///   delimiters next to whitespace do not parse. Runs are cut where the delimiter has to be
@@ -320,8 +326,9 @@ pub fn normalize(model: &Model) -> Model {
         if nl.is_none() {
             m.lines[li] = LineAttr::default();
         }
-        // Images: a valid value on an image line, nothing anywhere else.
         let line = &mut m.lines[li];
+        line.r#ref = line.r#ref.take().filter(|r| !r.is_empty());
+        // Images: a valid value on an image line, nothing anywhere else.
         if line.kind == Some(Block::Image) {
             line.image = line.image.take().filter(|v| is_image_value(v));
             if line.image.is_none() {

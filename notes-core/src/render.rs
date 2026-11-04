@@ -6,7 +6,8 @@
 //! and a table gets its separator row after the head. An image line is
 //! `![<caption>](mnemosyne:image/<value>)`, the caption escaped as link text. A blank line is
 //! added between two blocks a markdown reader would otherwise join ([`needs_gap`]): the
-//! parser drops exactly that one again.
+//! parser drops exactly that one again. A line's `ref` is never written ([`md_lines`] says
+//! where each line went instead).
 
 use crate::model::{
     normalize, Block, Fmt, Link, Model, BOLD, CELL, CODE, IMAGE_URL, ITALIC, STRIKE,
@@ -89,25 +90,45 @@ pub(crate) fn is_delimiter_row(line: &str) -> bool {
         })
 }
 
+/// Per document line (of `model` normalized: one per line, the last one even without its
+/// `\n`), the 0-based line of [`render`]'s markdown where its rendering starts: its own line;
+/// for a code run's first line the opening fence; for a table's head the head row (the
+/// separator row after it is no line's); for an empty line one of the blank lines before
+/// the next block, the gap the renderer adds being the last of them. What
+/// [`crate::parse::parse_lines`] gives back for that markdown.
+pub fn md_lines(model: &Model) -> Vec<usize> {
+    markdown_lines(model).1
+}
+
 fn markdown(model: &Model) -> String {
+    markdown_lines(model).0
+}
+
+/// The markdown and [`md_lines`].
+fn markdown_lines(model: &Model) -> (String, Vec<usize>) {
     let m = normalize(model);
     let spans = m.line_spans();
     let mut out: Vec<String> = Vec::new();
+    let mut starts: Vec<usize> = vec![0; spans.len()];
     let mut last: Option<Sig> = None;
-    let mut pending = 0usize;
+    // The empty lines waiting for the next block.
+    let mut pending: Vec<usize> = Vec::new();
     let mut number = 0usize;
     let mut li = 0;
     while li < spans.len() {
         let (s, e, _) = spans[li];
         let kind = m.lines[li].kind;
         if kind.is_none() && s == e {
-            pending += 1;
+            pending.push(li);
             number = 0;
             li += 1;
             continue;
         }
         // Render this line (or run) first: the gap depends on its first markdown line.
+        let first_line = li;
         let mut block: Vec<String> = Vec::new();
+        // Where each document line of the block starts, from the block's first line.
+        let mut offsets: Vec<usize> = Vec::new();
         let first_kind;
         let last_sig;
         match kind {
@@ -133,6 +154,8 @@ fn markdown(model: &Model) -> String {
                     .unwrap_or(0);
                 let fence: String = std::iter::repeat_n(fence_char, (longest + 1).max(3)).collect();
                 block.push(format!("{fence}{lang}"));
+                // The first line starts at the fence, the others at their own lines.
+                offsets.extend((0..texts.len()).map(|j| if j == 0 { 0 } else { j + 1 }));
                 block.extend(texts);
                 block.push(fence);
                 first_kind = Some(Block::Code);
@@ -178,6 +201,8 @@ fn markdown(model: &Model) -> String {
                 for row in &rows[1..] {
                     block.push(row_md(row));
                 }
+                // The head at its row, the rows after the separator.
+                offsets.extend((0..rows.len()).map(|j| if j == 0 { 0 } else { j + 1 }));
                 first_kind = Some(Block::TableHead);
                 last_sig = Sig {
                     kind: Some(Block::Table),
@@ -240,14 +265,25 @@ fn markdown(model: &Model) -> String {
             md: block[0].clone(),
         };
         let gap = last.as_ref().is_some_and(|a| needs_gap(a, &first));
-        for _ in 0..pending + usize::from(gap) {
+        for &empty in &pending {
+            starts[empty] = out.len();
             out.push(String::new());
         }
-        pending = 0;
+        if gap {
+            out.push(String::new());
+        }
+        pending.clear();
+        if offsets.is_empty() {
+            offsets.push(0); // a single line
+        }
+        for (j, offset) in offsets.into_iter().enumerate() {
+            starts[first_line + j] = out.len() + offset;
+        }
         out.extend(block);
         last = Some(last_sig);
     }
-    for _ in 0..pending {
+    for &empty in &pending {
+        starts[empty] = out.len();
         out.push(String::new());
     }
     let mut md = String::new();
@@ -255,7 +291,7 @@ fn markdown(model: &Model) -> String {
         md.push_str(&line);
         md.push('\n');
     }
-    md
+    (md, starts)
 }
 
 fn prefixed(prefix: &str, content: &str) -> String {

@@ -220,26 +220,29 @@ fn blank_lines_keep_lists_and_tables_apart_from_images() {
 #[test]
 fn set_text_adds_changes_and_removes_an_image() {
     let mut doc = Notes::new(origin(1));
-    doc.set_text("# Board\nafter\n");
+    doc.set_text("# Board\nafter\n", &Default::default());
     // Add: a new line with its value; the value is over 14 bytes, so an artifact.
     let with_a = format!("# Board\n{}\nafter\n", line("cap", A));
-    let frames = doc.set_text(&with_a);
+    let frames = doc.set_text(&with_a, &Default::default());
     assert!(frames.iter().any(|f| f[0] == ARTIFACT_TAG));
     assert_eq!(doc.render().markdown, with_a);
     assert_eq!(doc.media(), [A]);
-    assert!(doc.set_text(&with_a).is_empty(), "idempotent");
+    assert!(
+        doc.set_text(&with_a, &Default::default()).is_empty(),
+        "idempotent"
+    );
     // Change the picture, the caption kept.
     let with_b = with_a.replace(A, B);
-    assert!(!doc.set_text(&with_b).is_empty());
+    assert!(!doc.set_text(&with_b, &Default::default()).is_empty());
     assert_eq!(doc.render().markdown, with_b);
     assert_eq!(doc.media(), [B]);
-    assert!(doc.set_text(&with_b).is_empty());
+    assert!(doc.set_text(&with_b, &Default::default()).is_empty());
     // Change the caption only.
     let recaptioned = with_b.replace("![cap]", "![new caption]");
-    doc.set_text(&recaptioned);
+    doc.set_text(&recaptioned, &Default::default());
     assert_eq!(doc.render().markdown, recaptioned);
     // Remove: the line becomes a paragraph with the same text; the picture goes with it.
-    doc.set_text("# Board\nnew caption\nafter\n");
+    doc.set_text("# Board\nnew caption\nafter\n", &Default::default());
     assert_eq!(doc.render().markdown, "# Board\nnew caption\nafter\n");
     assert!(doc.media().is_empty());
     // Making it an image again needs the value again: no stale mark comes back.
@@ -255,9 +258,12 @@ fn set_text_adds_changes_and_removes_an_image() {
 #[test]
 fn a_line_turned_into_an_image_keeps_its_terminator() {
     let mut doc = Notes::new(origin(1));
-    doc.set_text("a whiteboard\n");
+    doc.set_text("a whiteboard\n", &Default::default());
     let nl_before = doc.seq().id_at(12);
-    doc.set_text(&format!("{}\n", line("a whiteboard", A)));
+    doc.set_text(
+        &format!("{}\n", line("a whiteboard", A)),
+        &Default::default(),
+    );
     assert_eq!(doc.seq().id_at(12), nl_before, "same line, now an image");
     assert_eq!(doc.model().lines[0].kind, Some(Block::Image));
 }
@@ -265,13 +271,13 @@ fn a_line_turned_into_an_image_keeps_its_terminator() {
 #[test]
 fn two_live_values_resolve_to_the_first() {
     let mut base = Notes::new(origin(4));
-    base.set_text(&format!("{}\n", line("cap", A)));
+    base.set_text(&format!("{}\n", line("cap", A)), &Default::default());
     let snap = base.snapshot();
     let mut x = Notes::from_snapshot(origin(4), &snap).unwrap();
     let mut y = Notes::from_snapshot(origin(4), &snap).unwrap();
     let c = &A.replace(".webp@1600x900", ".jpeg@1x1");
-    let fx = x.set_text(&format!("{}\n", line("cap", B)));
-    let fy = y.set_text(&format!("{}\n", line("cap", c)));
+    let fx = x.set_text(&format!("{}\n", line("cap", B)), &Default::default());
+    let fy = y.set_text(&format!("{}\n", line("cap", c)), &Default::default());
     let xy = fold(origin(4), Some(&snap), &[fx.clone(), fy.clone()].concat()).unwrap();
     let yx = fold(origin(4), Some(&snap), &[fy, fx].concat()).unwrap();
     assert_eq!(xy.render(), yx.render(), "the same on every replica");
@@ -292,7 +298,7 @@ fn two_live_values_resolve_to_the_first() {
 #[test]
 fn an_unknown_image_value_is_a_paragraph_and_its_marks_stay() {
     let mut doc = Notes::new(origin(5));
-    doc.set_text("cap\nnext\n");
+    doc.set_text("cap\nnext\n", &Default::default());
     let mut minted = Vec::new();
     doc.mark_line(3, KIND_BLOCK, Some("image"), &mut minted);
     // No value: a paragraph.
@@ -302,7 +308,7 @@ fn an_unknown_image_value_is_a_paragraph_and_its_marks_stay() {
     assert_eq!(doc.model().lines[0].image, None);
     assert!(doc.media().is_empty());
     // Setting the rendering back changes nothing: the marks are kept, not dropped.
-    assert!(doc.set_text("cap\nnext\n").is_empty());
+    assert!(doc.set_text("cap\nnext\n", &Default::default()).is_empty());
     // A valid value later makes it an image.
     doc.mark_line(3, KIND_IMAGE, Some(A), &mut minted);
     assert_eq!(doc.render().markdown, format!("{}\nnext\n", line("cap", A)));
@@ -342,7 +348,7 @@ fn every_answer_lists_the_media() {
         line("two", B),
         line("one again", A)
     );
-    let frames = doc.set_text(&md);
+    let frames = doc.set_text(&md, &Default::default());
     let notes = id_to_hex(&origin(6));
     let b64 = |f: &[u8]| STANDARD.encode(f);
     let frames: Vec<String> = frames.iter().map(|f| b64(f)).collect();

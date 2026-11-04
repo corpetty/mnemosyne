@@ -159,7 +159,7 @@ fn tables() {
 #[test]
 fn ragged_rows_render_padded() {
     let mut doc = Notes::new(origin(7));
-    doc.set_text("| a | b |\n| --- | --- |\n| 1 | 2 |\n");
+    doc.set_text("| a | b |\n| --- | --- |\n| 1 | 2 |\n", &Default::default());
     // A concurrent column edit: a third cell in the last row only.
     let text = doc.text();
     let end = text.chars().count() - 1;
@@ -202,23 +202,23 @@ fn parse_gives_text_kinds_and_ranges() {
 #[test]
 fn unterminated_document_renders_as_if_terminated() {
     let mut doc = Notes::new(origin(3));
-    doc.set_text("- a\n");
+    doc.set_text("- a\n", &Default::default());
     doc.remove(1, 1); // a client deletes the last `\n`
     assert_eq!(doc.text(), "a");
     assert_eq!(doc.render().markdown, "a\n");
     // set_text puts the terminator back.
-    assert!(!doc.set_text("a\n").is_empty());
+    assert!(!doc.set_text("a\n", &Default::default()).is_empty());
     assert_eq!(doc.text(), "a\n");
     // Everything deleted: an empty document.
     doc.remove(0, 2);
     assert_eq!(doc.render().markdown, "");
-    assert!(doc.set_text("").is_empty());
+    assert!(doc.set_text("", &Default::default()).is_empty());
 }
 
 #[test]
 fn concurrent_values_resolve_the_same_everywhere() {
     let mut base = Notes::new(origin(4));
-    base.set_text("item\nother\n");
+    base.set_text("item\nother\n", &Default::default());
     let (mut a, mut b) = (base.clone(), base.clone());
     let mut minted = Vec::new();
     a.mark_line(4, KIND_BLOCK, Some("task"), &mut minted);
@@ -236,13 +236,13 @@ fn concurrent_values_resolve_the_same_everywhere() {
     );
     assert!(md == "- [x] item\n- other\n" || md == "- [x] item\n## other\n");
     // Both values stay live: setting the same rendering back changes nothing.
-    assert!(ab.set_text(&md).is_empty());
+    assert!(ab.set_text(&md, &Default::default()).is_empty());
 }
 
 #[test]
 fn link_conflict_renders_as_text() {
     let mut base = Notes::new(origin(5));
-    base.set_text("see docs here\n");
+    base.set_text("see docs here\n", &Default::default());
     let (mut a, b) = (base.clone(), base.clone());
     let mut b = b;
     let mut minted = Vec::new();
@@ -269,7 +269,7 @@ fn link_conflict_renders_as_text() {
 #[test]
 fn comment_ranges_follow_the_text() {
     let mut doc = Notes::new(origin(6));
-    doc.set_text("alpha beta gamma\n");
+    doc.set_text("alpha beta gamma\n", &Default::default());
     let mut minted = Vec::new();
     doc.mark_inline(
         6,
@@ -284,15 +284,17 @@ fn comment_ranges_follow_the_text() {
     doc.insert(0, "new ");
     assert_eq!(doc.comments()["3f2a9c1b7d4e"], Some((10, 14)));
     // Comments are not markdown: set_text leaves them alone.
-    assert!(doc.set_text("new alpha beta gamma\n").is_empty());
-    doc.set_text("new alpha gamma\n");
+    assert!(doc
+        .set_text("new alpha beta gamma\n", &Default::default())
+        .is_empty());
+    doc.set_text("new alpha gamma\n", &Default::default());
     assert_eq!(doc.comments()["3f2a9c1b7d4e"], None);
 }
 
 #[test]
 fn indexes_are_code_points() {
     let mut doc = Notes::new(origin(8));
-    doc.set_text("日本 😀 x\n");
+    doc.set_text("日本 😀 x\n", &Default::default());
     let mut minted = Vec::new();
     // `x` is character 5 (the emoji is one code point, two UTF-16 units).
     doc.mark_inline(5, 6, "bold", Some("true"), true, &mut minted);
