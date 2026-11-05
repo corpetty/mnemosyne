@@ -2,6 +2,8 @@
 // Node has crypto.subtle globally (jsdom, the default here, does not).
 // Live-publication frames: round trips and refusals. The bytes are pinned against the Python side
 // by publication_live_v1.json (task 9 of docs/plans/2026-11-05-live-publications.md).
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import * as env from './envelope';
 import {
@@ -289,5 +291,103 @@ describe('keys and ids', () => {
     expect(parseLiveKeys(undefined)).toBeNull();
     expect(parseLiveKeys({ sign: live.sign })).toBeNull();
     expect(parseLiveKeys({ sign: live.sign.toUpperCase(), box: live.box })).toBeNull();
+  });
+});
+
+describe('publication_live_v1.json vectors', () => {
+  const vec = JSON.parse(
+    readFileSync(
+      fileURLToPath(new URL('../../../backend/tests/vectors/publication_live_v1.json', import.meta.url)),
+      'utf-8'
+    )
+  );
+  const vroom: string = vec.room;
+  const vkey = env.b64urlDecode(vec.key_b64url);
+  const ownerSign = env.fromHex(vec.owner.sign_private_hex);
+  const ownerBoxPriv = env.fromHex(vec.owner.box_private_hex);
+  const ownerSignPub = env.fromHex(vec.owner.sign_public_hex);
+  const readerPriv = env.fromHex(vec.reader.private_hex);
+  let vkeys: Awaited<ReturnType<typeof deriveLiveKeys>>;
+
+  beforeAll(async () => {
+    vkeys = await deriveLiveKeys(vkey);
+  });
+
+  it('derives the frames key and room token', () => {
+    expect(env.hex(vkeys.framesKeyBytes)).toBe(vec.frames_key_hex);
+    expect(vkeys.roomToken).toBe(vec.room_token);
+  });
+
+  it('derives the public keys and rid', async () => {
+    expect(env.hex(signPublic(ownerSign))).toBe(vec.owner.sign_public_hex);
+    expect(env.hex(boxPublic(ownerBoxPriv))).toBe(vec.owner.box_public_hex);
+    expect(env.hex(signPublic(readerPriv))).toBe(vec.reader.public_hex);
+    expect(await ridOf(env.fromHex(vec.reader.public_hex))).toBe(vec.reader.rid);
+    expect(vec.samples.comment.rid).toBe(vec.reader.rid);
+  });
+
+  for (const [name, kind] of [
+    ['version', PubKind.VERSION],
+    ['threads', PubKind.THREADS],
+    ['meta', PubKind.META]
+  ] as const) {
+    it(`${name}: AAD, signed message, signature and envelope bytes match`, async () => {
+      const s = vec.samples[name];
+      const body = enc.encode(s.json);
+      expect(dec.decode(aad(vroom, kind))).toBe(s.aad);
+      expect(env.hex(signedMessage(vroom, kind, body))).toBe(s.signed_message_hex);
+      const plain = signedPlaintext(vroom, kind, JSON.parse(s.json), ownerSign);
+      expect(env.hex(plain)).toBe(s.plaintext_hex);
+      expect(env.hex(plain.slice(0, 64))).toBe(s.sig_hex);
+      const made = await signFrame(vkeys, vroom, kind, JSON.parse(s.json), ownerSign, env.fromHex(s.nonce_hex));
+      expect(env.b64urlEncode(made)).toBe(s.envelope_b64url);
+    });
+
+    it(`${name}: the Python envelope opens and verifies`, async () => {
+      const s = vec.samples[name];
+      const opened = await openSigned(vkeys, vroom, env.b64urlDecode(s.envelope_b64url), ownerSignPub, kind);
+      expect(opened.kind).toBe(kind);
+      expect(opened.obj).toEqual(JSON.parse(s.json));
+    });
+  }
+
+  it('refuses the frames a reader could make', async () => {
+    for (const name of ['threads_signed_by_reader', 'version_unsigned']) {
+      await expect(
+        openSigned(vkeys, vroom, env.b64urlDecode(vec.refused[name]), ownerSignPub)
+      ).rejects.toThrow(PubLiveFormatError);
+    }
+  });
+
+  it('the COMMENT box is byte-equal to the vector and opens', async () => {
+    const c = vec.samples.comment;
+    const op = JSON.parse(c.json);
+    const opBytes = enc.encode(c.json);
+    const readerPub = signPublic(readerPriv);
+    const eph = env.fromHex(c.eph_private_hex);
+    expect(env.hex(boxPublic(eph))).toBe(c.eph_public_hex);
+    const shared = x25519Shared(eph, env.fromHex(vec.owner.box_public_hex));
+    expect(env.hex(shared)).toBe(c.shared_hex);
+    expect(env.hex(await boxKey(shared, vroom))).toBe(c.box_key_hex);
+    expect(dec.decode(boxAad(vroom, boxPublic(eph)))).toBe(c.box_aad);
+    expect(dec.decode(aad(vroom, PubKind.COMMENT))).toBe(c.aad);
+    const msg = readerMessage(vroom, readerPub, opBytes);
+    expect(env.hex(msg)).toBe(c.reader_message_hex);
+    expect(env.hex(ed25519Sign(readerPriv, msg))).toBe(c.reader_sig_hex);
+
+    const opts = {
+      ephPrivate: eph,
+      boxNonce: env.fromHex(c.box_nonce_hex),
+      nonce: env.fromHex(c.nonce_hex)
+    };
+    const plain = await boxPlaintext(vroom, op, readerPriv, env.fromHex(vec.owner.box_public_hex), opts);
+    expect(env.hex(plain)).toBe(c.plaintext_hex);
+    const made = await boxOp(vkeys, vroom, op, readerPriv, env.fromHex(vec.owner.box_public_hex), opts);
+    expect(env.b64urlEncode(made)).toBe(c.envelope_b64url);
+
+    const opened = await openBox(vkeys, vroom, env.b64urlDecode(c.envelope_b64url), ownerBoxPriv);
+    expect(opened.rid).toBe(vec.reader.rid);
+    expect(env.hex(opened.readerPub)).toBe(vec.reader.public_hex);
+    expect(opened.op).toEqual(op);
   });
 });
