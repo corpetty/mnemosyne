@@ -27,7 +27,12 @@
 			{#each publishingState.list as item (item.publication.id)}
 				{@const p = item.publication}
 				<li class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
-					<span class="min-w-0 flex-1 truncate text-gray-200">{item.session_name}</span>
+					<span class="min-w-0 flex-1 truncate text-gray-200">
+						{#if p.live === 'live'}
+							{@const liveText = p.readers > 0 ? `Live · ${p.readers} reading` : 'Live'}
+							<span role="img" class="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" title={liveText} aria-label={liveText}></span>
+						{/if}{item.session_name}
+					</span>
 					<span class="text-xs text-gray-500">
 						{whereLabel(p.where, p.host_url)} · v{p.version} · {p.expires_at ? `expires ${shortDate(p.expires_at)}` : 'no expiry'}
 					</span>

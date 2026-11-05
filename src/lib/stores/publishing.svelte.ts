@@ -234,8 +234,12 @@ export class PublishingState {
 			const pending = this.pending[id] ?? [];
 			delete this.pending[id];
 			this.target = sel.where === 'host' && (this.publishHost || defaults.host_url) ? 'host' : 'local';
+			// A new hosted publication starts with both live switches on; a saved one keeps its own.
+			const fresh = !pub && this.target === 'host';
 			this.selection = {
 				...sel,
+				follow: fresh ? true : !!sel.follow,
+				comments: fresh ? true : !!sel.comments,
 				title: sel.title || session.name,
 				quotes: mergeQuotes(sel.quotes ?? [], pending),
 				expires_days: fitExpiry(this.target, sel.expires_days, this.defaultExpiry)
@@ -285,7 +289,12 @@ export class PublishingState {
 	setTarget(target: Target) {
 		if (!this.selection) return;
 		this.target = target;
-		this.set({ expires_days: fitExpiry(target, this.selection.expires_days, this.defaultExpiry) });
+		// Live updates and comments need a publish host (the backend refuses them elsewhere).
+		const live = target !== 'host' ? false : this.dialogFor && !this.publications[this.dialogFor] ? true : null;
+		this.set({
+			expires_days: fitExpiry(target, this.selection.expires_days, this.defaultExpiry),
+			...(live === null ? {} : { follow: live, comments: live })
+		});
 	}
 
 	toggleAttendee(name: string) {
@@ -351,6 +360,8 @@ export class PublishingState {
 			...s,
 			title: s.title.trim(),
 			where: this.target === 'host' ? 'host' : 'local',
+			follow: this.target === 'host' && !!s.follow,
+			comments: this.target === 'host' && !!s.comments,
 			expires_days: fitExpiry(this.target, s.expires_days, this.defaultExpiry)
 		};
 	}
