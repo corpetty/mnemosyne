@@ -714,6 +714,13 @@ over windows of sentences; the anchor is stored as sent. `changed`: the quoted w
 there as written; `detached`: the place is gone (deleted line, removed item, rewritten text);
 detached comments are kept, with their `quote`.
 
+Comments written through a published link are ordinary comments with `author_id` `reader:<rid>` and `author`
+"<name> (reader)". `POST …/comments/{id}/approve` and `…/hide` (the meeting's owner or an admin; `403`
+otherwise, and for a meeting shared with you) → `Comment`: `approve` sets `approved_at` and clears `hidden_at`,
+`hide` sets `hidden_at` (hidden wins over approved). Both are for readers of a published link: a hidden comment,
+and with `moderate` on an unapproved reader comment, are left out of what readers are sent. A comment carries
+`approved_at`, `hidden_at` and `can_moderate`; history lines `comment_approved` / `comment_hidden`.
+
 `PATCH` `{text}` (the author, or an admin) → `Comment`. `DELETE` (the author, the meeting's owner
 or an admin) → `{deleted: true}`; a first comment with replies stays as an empty `deleted` one
 until its last reply goes. `resolve` / `reopen` (threads only; the meeting's owner, an admin or the
@@ -854,7 +861,13 @@ hashes of the notes' images to include; `null` = all, `[]` = none; a left-out im
 list; everyone else of the meeting becomes "Person N" everywhere), `names`
 (`as_is|first|hidden`), `hide_identifiers` (also hides e-mail addresses and phone numbers), `quotes` (`{start, end, part?, with_clip}`: joined-
 timeline seconds, or seconds into `part`; the transcript lines whose middle is inside), `where`
-(`local|host`) and `expires_days` (`null` = never, only for `local`; at most 365 on a host).
+(`local|host`) and `expires_days` (`null` = never, only for `local`; at most 365 on a host). Live publications
+(use in [publishing.md](publishing.md)): `follow` (publish a new version by itself when the meeting changes, with
+this same selection; with it on, `images: null` is stored as the explicit list), `comments` (readers of the link may
+comment), `moderate` (with `comments`: a reader's comment reaches other readers only after `approve`) and
+`moderated_since` (UTC ISO, set by the server when `moderate` goes on; comments older than it count as approved;
+a value you send is ignored). All default off; `follow` and `comments` need `where: "host"` and a meeting not
+shared with you (`400` otherwise).
 `GET …/defaults` gives the live publication's selection, else the defaults (`publish_default_expiry_days`,
 host when `publish_host` is set or `use_our_servers` is on: ours), plus `local_reach` (`team|phone_url|this_device`: who could open a
 link to this computer) and `local_url` (the base such a link uses; `""` for `this_device`, where only
@@ -874,6 +887,12 @@ is on <name>"), and `409` "Published from <name>" for `PUT`/`DELETE` of a `where
 publication whose files are on another of the person's computers (library sync): such a
 publication has `served_by: <name>` and `url: null` here; a hosted one can be changed from either
 computer. Readers (reviewers, members it is shared with) get the publication with `url: null`.
+
+`Publication.live` is `live` (this computer's bridge is connected to the host's room), `offline` (it is not, or
+cannot reach the host), `unsupported` (an older host without the room pointer, or a place that cannot) or `off`
+(neither `follow` nor `comments` is on); `live_reason` says why when it is not `live` (it also holds why the last
+automatic version failed); `readers` is the number of readers in the room, 0 when unknown. The owner's keys are
+never in the model.
 
 `POST …/publication/file` `{ selection, password? }` (password at least 8 characters, else `400`; `503` when the
 viewer is not built in) starts a `publication_file` job: the publication as one self-contained HTML file,
@@ -896,10 +915,41 @@ answer has `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`;
 - `GET /pub/{id}`: the sealed manifest (`application/octet-stream`) with `ETag` (its SHA-256),
   `X-Pub-Version`, `X-Pub-Expires` (unix seconds; absent when it never expires) and `Cache-Control: no-cache`;
   `304` on a matching `If-None-Match`; `404` unknown, `410` unpublished, expired or deleted (a tombstone for 30 days).
+- A publish host's `GET /pub/{id}` also sends `X-Pub-Room: <room id>` (on the `304` too) when the publication has a
+  live room; the backend's own `/pub/` never does. `PUT /pub/{id}` accepts the same header (publisher token) to set
+  it; `PUT /pub/{id}/room` (publisher token) sets it from the body (a room id), or clears it with an empty body:
+  `204`, `404` when there is no manifest, `400 bad_room`. A host without the route cannot push updates; its
+  readers poll `GET /pub/{id}` once a minute. The room is a guest-notes room (below), made with the
+  publication's own publisher token.
 - `GET /pub/{id}/{sha256}`: a sealed clip or image (the manifest's `images` lists `{id, sha256, size, mime, v,
   width, height}`; an image is sealed like a clip with kind `image`, 64 KiB blocks, and counts with the clips in
   the 20 MiB total; the 20 MiB limit is on padded sizes), `Cache-Control: public, max-age=31536000, immutable`; `404` if the current
   version does not hold it.
+
+#### Live publication frames
+
+Between the owner's backend (services/live_publications.py, the bridge) and readers' browsers, through a room
+on the publication's host (the room protocol is described under Guest notes). Every frame is a room envelope
+sealed under the link's key in a namespace of its own (AAD `mnemosyne/pub-live/1|<room>|<kind>`, so a guest-notes
+frame never opens as one of these), padded to 256-byte blocks; the host sees ids, sizes and counts. Code:
+services/pub_live_format.py (Python), src/lib/sealed/ (TypeScript). The bytes, key derivations and the box are in
+"Data and formats" of docs/plans/2026-11-05-live-publications.md, with fixed vectors in
+backend/tests/vectors/publication_live_v1.json (checked by Python and TypeScript).
+
+| Kind | Name | Direction | Protection | Body |
+| --- | --- | --- | --- | --- |
+| 1 | `VERSION` | owner to readers | signed | `{version, sha256, published_at, expires_at}`: the new manifest's address |
+| 2 | `THREADS` | owner to readers | signed (also the room's snapshot) | reader-started threads, redacted, and `pending` (`{rid: [comment ids]}`) |
+| 3 | `META` | owner to readers | signed | `{comments, follow, at}`; also the heartbeat |
+| 4 | `COMMENT` | reader to owner | boxed to the owner's X25519 key, signed by the reader | `{op: create/reply/edit/delete, id, parent_id, text, name, at, anchor}` |
+
+Owner frames carry an Ed25519 signature that binds the room and the kind; readers check it against the key in the
+sealed manifest (`live: {sign, box}`, public halves) and drop what does not verify, because every reader holds
+the room's key and could otherwise forge them. A COMMENT is encrypted to the owner's `box` key and signed by a
+key the reader's browser made, so other readers can neither read it from the room's log nor reuse it; its `rid` is
+the first 16 hex characters of the SHA-256 of the reader's public key. THREADS is the only way readers learn of
+comments. A reader can see that a COMMENT exists and its padded size. The manifest is still format 1: `live` is an
+optional field, absent when neither switch is on.
 
 ### Guest notes: `GET|PUT|DELETE /api/sessions/{session_id}/guest-notes` · `POST …/guest-notes/end` · `POST …/guest-notes/new-link`
 

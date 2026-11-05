@@ -188,6 +188,11 @@ docker compose up -d --build     # --build also rebuilds publish-host from the c
 
 The guest page and viewer need none of this: the timer does it.
 
+The host itself must be rebuilt (`--build`) for live publications: the pointer route `PUT /pub/{id}/room` is
+in `publish-host/`, not in the page the timer pulls. Until `notes.petty.services` runs it, live publications
+there still upload new versions, but the app says "This host cannot push updates" and readers' pages check once
+a minute and cannot comment. Redeploy before a release that has the feature.
+
 ## Fill in before it is live
 
 - `RELAY_ADDR` and `HOST_ADDR` in `.env`.

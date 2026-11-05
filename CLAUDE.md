@@ -191,6 +191,11 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   guest-wasm/src/frame.rs). They must match.
 - Never hold a notes lock (shared_notes) while calling `item_flags` / `task_links` fan-out: linked meetings take their
   own notes locks and two folds deadlock. `notes_summary.read_back` runs ticks in a daemon thread after the fold.
+- Reader threads and the manifest are redacted by ONE implementation, `publishing.Redaction` (names, identifiers, the attendee
+  list). `threads_for_readers` must keep using it; a second copy would let an owner's reply leak a name the manifest hides.
+- Anything sent to readers of a publication goes through a pub-live frame type with `extra="forbid"` (a test asserts the key set
+  of every outgoing frame). Never add a field to THREADS/META/VERSION that carries text not already in the manifest.
+
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
   killing the `uv` wrapper; kill by port.
@@ -609,6 +614,24 @@ naming it. Travelling: `SyncSession.media` + `GET /api/sync/media/...`, `SharedM
 sync, share, bridge, viewer, guest); `img.src` is set only from the provider's object URLs, never from a `mnemosyne:`
 address; a blob nothing has shown for 7 days is swept (after one more fold of the meeting); caps 2,000,000 bytes an image,
 50,000,000 a meeting, 25,000,000 a room (2 MiB + 128 KiB sealed a blob), 20 MiB per publication with clips.
+
+Live publications (unreleased, docs/plans/2026-11-05-live-publications.md, use in docs/publishing.md, bytes in the plan's "Data
+and formats"): a hosted publication can be kept up to date (`PublicationSelection.follow`) and take reader comments
+(`comments`, `moderate`, `moderated_since`); "this computer" and the file never go live. services/live_publications.py has the
+watcher (polls the change log every 5 s; quiet 10 s, `MAX_WAIT` 60 s, `GAP` 30 s; submits the ordinary `publish` job with the
+STORED selection and `auto=True`: history `publication_auto_updated`, no seal; `images: None` frozen to a list) and `PubBridge`
+(a guest-notes-style room on the publication's host, its id kept by the host as `Meta.room`: `X-Pub-Room`, `PUT /pub/{id}/room`
+in publish-host/src/app.rs; `<pub_dir>/room.json`, `readers.json`). Frames: services/pub_live_format.py (own AAD namespace
+`mnemosyne/pub-live/1`, kinds VERSION/THREADS/META/COMMENT; guest_format's `Space`), TS in src/lib/sealed/, vectors
+backend/tests/vectors/publication_live_v1.json. Security rule: every room member holds the frames key, so owner frames
+(VERSION, THREADS, META) are signed with a per-publication Ed25519 key (`sign_key`/`box_key` on the publications row, never in
+the API, records or history; public halves in the sealed manifest's optional `live`, FORMAT stays 1), the viewer drops what does
+not verify, reader COMMENT ops are boxed to the owner's X25519 key and signed by a key in the reader's browser (`rid` = hash of its
+public key; a cleared browser is a new reader), and THREADS (reader-started threads only, redacted) is the only way readers see
+comments. Comments apply as actor `reader:<rid>`; `comments.approve`/`hide` (`approved_at`/`hidden_at`, owner rights) filter
+THREADS. Viewer: viewer/src/live.ts, ReaderComments.svelte; owner side: PublishDialog.svelte, CommentThread.svelte. Unpublish
+deletes the publication, then the room (the plan says room first; the code's order lets a reader who hears 4410 find 410). An older
+host (no pointer route) gives `live = "unsupported"`: versions still upload, viewers poll each minute.
 
 Summaries in the notes (released as 0.29.0, docs/plans/2026-11-04-summaries-in-notes.md): the live copilot adds each new point
 once to the notes under a Copilot heading (`copilot_to_notes`), and a summarize writes a Summary section in its place that
