@@ -687,3 +687,6 @@ backend suite (locally: single files), the publish-host and link crates' full te
   check matched every value of publication_live_v1.json; task 9 makes it a permanent test.
 - Task 2 note for task 7: the viewer's Vite config has no `$lib` alias (the guest's has
   `$lib: here('../src/lib')`); task 7 adds the same alias to viewer/vite.config.ts.
+- Task 5: the watcher also acts on a meeting whose first unpublished change is `MAX_WAIT` = 60 s old, quiet or not
+  (still subject to GAP, the backoff and the active-job check), so steady typing in the live notes cannot keep
+  readers waiting until everyone stops.
