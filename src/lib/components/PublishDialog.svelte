@@ -303,6 +303,26 @@
 								<p class="mt-1 text-xs text-gray-500">Without a password, anyone with the file can read it.</p>
 							{/if}
 						{/if}
+						{#if pub.target === 'host'}
+							<div class="mt-2 space-y-2">
+								<div>
+									<label class="flex items-center gap-2 text-gray-300">
+										<input type="checkbox" class={check} checked={sel.follow} onchange={(e) => pub.set({ follow: e.currentTarget.checked })} />
+										Keep the link up to date
+									</label>
+									<p class="ml-6 mt-0.5 text-xs text-gray-500">Publishes a new version by itself when the meeting changes, with these same choices; nothing you did not tick is added.</p>
+								</div>
+								<div>
+									<label class="flex items-center gap-2 text-gray-300">
+										<input type="checkbox" class={check} checked={sel.comments} onchange={(e) => pub.set({ comments: e.currentTarget.checked })} />
+										Readers may comment
+									</label>
+									<p class="ml-6 mt-0.5 text-xs text-gray-500">Anyone with the link can comment under a name they type; their comments appear here marked (reader).</p>
+								</div>
+							</div>
+						{:else if pub.target === 'local'}
+							<p class="mt-1.5 text-xs text-gray-500">Live updates and comments need a publish host.</p>
+						{/if}
 					</section>
 
 					<div class="grid grid-cols-2 gap-3">
@@ -349,9 +369,10 @@
 						{#if pub.justPublished}
 							{expiresLine}
 						{:else}
-							Published {shortDate(current.created_at)} · version {current.version}{current.expires_at ? ` · expires ${shortDate(current.expires_at)}` : ''}{#if current.behind}<span class="text-amber-300">{' · behind'}</span>{/if}
+							Published {shortDate(current.created_at)} · version {current.version}{current.expires_at ? ` · expires ${shortDate(current.expires_at)}` : ''}{#if current.behind && !(current.selection.follow && !current.live_reason)}<span class="text-amber-300">{' · behind'}</span>{/if}{#if current.live === 'live'}<span class="text-emerald-300"> · live</span>{#if current.readers > 0}{` · ${current.readers} reading`}{/if}{:else if current.live === 'offline'}<span class="text-amber-300"> · not connected to the host</span>{:else if current.live === 'unsupported'}<span class="text-gray-500"> · this host cannot push updates; readers check every minute</span>{/if}
 						{/if}
 					</p>
+					{#if current.live_reason}<p class="text-xs text-amber-300">{current.live_reason}</p>{/if}
 					<div class="flex gap-2">
 						<input readonly value={current.url} aria-label="Link" onfocus={(e) => e.currentTarget.select()} class="{inputClass} font-mono text-xs" />
 						<button onclick={() => copyText(current.url ?? '', 'Link copied')} class="shrink-0 rounded border border-gray-700 bg-gray-800 px-3 text-xs text-gray-200 hover:bg-gray-700">Copy</button>

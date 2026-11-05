@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getHistory, recoverSession } from '$lib/api/backend.js';
 	import { audioReason } from '$lib/app/access.js';
+	import { groupHistory } from '$lib/app/historyGroups.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -280,6 +281,12 @@
 				return e.kind.replaceAll('_', ' ');
 		}
 	}
+	function rowText(row: { event: HistoryEvent; count: number; last: HistoryEvent }): string {
+		if (row.event.kind !== 'publication_auto_updated') return describe(row.event);
+		if (row.count === 1) return `Link kept up to date (version ${(row.event.detail as Record<string, unknown>).version})`;
+		return `Link kept up to date: ${row.count} versions, last ${new Date(row.last.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+	}
+	const rows = $derived(history ? groupHistory(history.events) : []);
 	const bad = (kind: string) =>
 		['save_failed', 'interrupted', 'recover_failed', 'capture_problem', 'transcribe_failed', 'summarize_failed', 'hubspot_failed'].includes(kind);
 
@@ -385,10 +392,11 @@
 			<div>
 				<h5 class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">What happened</h5>
 				<ol class="space-y-0.5 text-xs" aria-label="What happened">
-					{#each history.events as e, i (i)}
+					{#each rows as row, i (i)}
+						{@const e = row.event}
 						<li class="flex gap-2">
 							<span class="w-24 shrink-0 whitespace-nowrap font-mono text-gray-600" title={new Date(e.at).toLocaleString()}>{clock(e.at)}</span>
-							<span class={bad(e.kind) ? 'text-amber-300' : 'text-gray-300'}>{describe(e)}</span>
+							<span class={bad(e.kind) ? 'text-amber-300' : 'text-gray-300'}>{rowText(row)}</span>
 						</li>
 					{/each}
 				</ol>

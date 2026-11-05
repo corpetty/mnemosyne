@@ -101,6 +101,39 @@ describe('the Publish dialog store', () => {
 		expect(api.previewPublication).toHaveBeenCalledTimes(1); // the first preview is not delayed
 	});
 
+	it('turns follow and comments on for a new hosted publication and off away from a host', async () => {
+		const api = fakeApi({ getPublicationDefaults: vi.fn(async () => defaults({ where: 'host', host_url: 'https://h' })) });
+		const st = new PublishingState(api, 400, 10);
+		await st.open(session);
+		expect(st.target).toBe('host');
+		expect(st.selection).toMatchObject({ follow: true, comments: true });
+		st.setTarget('local');
+		expect(st.selection).toMatchObject({ follow: false, comments: false });
+		expect(st.toSend()).toMatchObject({ where: 'local', follow: false, comments: false });
+		st.setTarget('host');
+		expect(st.selection).toMatchObject({ follow: true, comments: true });
+		st.setTarget('file');
+		expect(st.selection).toMatchObject({ follow: false, comments: false });
+	});
+
+	it('keeps a saved publication\'s switches, and a local new one starts off', async () => {
+		const saved = { id: 'p1', version: 2 } as unknown as Publication;
+		const api = fakeApi({
+			getPublication: vi.fn(async () => saved),
+			getPublicationDefaults: vi.fn(async () => defaults({ where: 'host', host_url: 'https://h', follow: false, comments: true }))
+		});
+		const st = new PublishingState(api, 400, 10);
+		await st.open(session);
+		expect(st.selection).toMatchObject({ follow: false, comments: true });
+		st.setTarget('local');
+		st.setTarget('host'); // not new: nothing is switched on for the person
+		expect(st.selection).toMatchObject({ follow: false, comments: false });
+
+		const local = new PublishingState(fakeApi(), 400, 10);
+		await local.open(session);
+		expect(local.selection).toMatchObject({ follow: false, comments: false });
+	});
+
 	it('debounces the preview: one request with the latest choices', async () => {
 		const api = fakeApi();
 		const st = new PublishingState(api, 400, 10);
