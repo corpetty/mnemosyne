@@ -519,7 +519,7 @@ async def test_an_automatic_version_never_widens_the_selection(
             assert body["sha256"] == hashlib.sha256(host.manifest).hexdigest()
             assert body["published_at"] == m.published_at and body["expires_at"] == m.expires_at
         if kind is plf.Kind.THREADS:
-            assert body["threads"] == []  # task 11 fills them
+            assert body["threads"] == []  # no reader has commented here
     assert kinds == {plf.Kind.VERSION, plf.Kind.THREADS, plf.Kind.META}
 
     # (c) The owner keys are in no history line, records export or API answer, the link key in
@@ -743,7 +743,9 @@ async def test_an_older_host_is_unsupported_and_gets_no_room(ctx, live, seals, o
     assert live.pub.version == 2 and live.rooms.rooms == {}
 
 
-async def test_unpublish_deletes_the_room_before_the_publication(ctx, live, seals):
+async def test_unpublish_deletes_the_room_after_the_publication(ctx, live, seals):
+    """The publication goes first: a reader hearing 4410 re-reads `/pub/<id>` and must find
+    it gone ("No longer published"), not still there (it would fall back to polling)."""
     s = _meeting(ctx)
     await _first(ctx, s.id)
     bridge = await _bridge(ctx, s.id)
@@ -753,11 +755,31 @@ async def test_unpublish_deletes_the_room_before_the_publication(ctx, live, seal
     live.log.clear()
     await publishing.unpublish(ctx, s.id)
     deletes = [(mth, p) for mth, p in live.log if mth == "DELETE"]
-    assert deletes == [("DELETE", f"/live/{room}"), ("DELETE", f"/pub/{row['id']}")]
+    assert deletes == [("DELETE", f"/pub/{row['id']}"), ("DELETE", f"/live/{room}")]
     await _until(lambda: reader.closed_code == 4410, "the reader to hear it")
+    assert live.pub.manifest is None  # what the reader then reads: gone
     assert ctx.live_bridges.get(row["id"]) is None and not bridge.running
     assert live.rooms.rooms[room].deleted
     assert not lp._room_file(ctx, row["id"]).exists()
+
+
+async def test_retire_deletes_the_room_when_the_pointer_is_already_gone(ctx, live, seals):
+    """With the publication (and so its room pointer) gone from the host, retiring still
+    deletes the room it knows, and a pointer route answering 404 raises nothing."""
+    s = _meeting(ctx)
+    await _first(ctx, s.id)
+    bridge = await _bridge(ctx, s.id)
+    row = ctx.repo.live_publication(s.id)
+    room = bridge.room
+    await publishing._host_delete(ctx, row["host_url"], row["id"], row["token"])
+    assert live.pub.manifest is None and live.pub.room is None
+    live.log.clear()
+    await lp.retire(ctx, row, clear_pointer=True)
+    assert ("DELETE", f"/live/{room}") in live.log
+    assert ("PUT", f"/pub/{row['id']}/room") in live.log  # 404 there: nothing raised
+    assert live.rooms.rooms[room].deleted and ctx.live_bridges.get(row["id"]) is None
+    # Without a bridge or the room file either, nothing to find and nothing raised.
+    await lp.retire(ctx, row, clear_pointer=True)
 
 
 async def test_the_room_goes_when_both_switches_turn_off(ctx, live, seals):
@@ -929,3 +951,493 @@ async def test_readers_frames_go_to_the_hook_and_forged_owner_frames_nowhere(
     # Only the owner's box key opens it.
     assert plf.open_box(row["key"], room, comment, row["box_key"]).op == op
     await reader.close()
+
+
+# ---- readers' comments (task 11) ----
+
+ANCHOR = {
+    "target": "",
+    "target_id": None,
+    "quote_id": None,
+    "exact": None,
+    "prefix": None,
+    "suffix": None,
+}
+
+
+def _at_n(n: int) -> str:
+    """The reader's clock: n seconds after 10:00, as `Date.toISOString()` writes it."""
+    return f"2026-11-05T10:{n // 60:02d}:{n % 60:02d}.000Z"
+
+
+def _create(cid: str, text: str, n: int = 0, name: str = "Ana", **anchor) -> dict:
+    return {
+        "op": "create",
+        "id": cid,
+        "parent_id": None,
+        "text": text,
+        "name": name,
+        "at": _at_n(n),
+        "anchor": {**ANCHOR, **anchor},
+    }
+
+
+def _reply(cid: str, parent: str, text: str, n: int = 0, name: str = "Ana") -> dict:
+    op = _create(cid, text, n, name)
+    return {**op, "op": "reply", "parent_id": parent, "anchor": None}
+
+
+def _edit(cid: str, text: str, n: int, name: str = "Ana") -> dict:
+    return {**_create(cid, text, n, name), "op": "edit", "anchor": None}
+
+
+def _delete(cid: str, n: int, name: str = "Ana") -> dict:
+    return {**_create(cid, "x", n, name), "op": "delete", "text": None, "anchor": None}
+
+
+class Reader:
+    """A reader's page: its own Ed25519 key, its room connection, what it sent."""
+
+    def __init__(self, client: GuestClient, row: dict, room: str):
+        self.client, self.row, self.room = client, row, room
+        self.key = plf.new_private()
+        self.rid = plf.rid_of(plf.sign_public(self.key))
+
+    async def send(self, op: dict) -> bytes:
+        env = plf.box_op(
+            self.row["key"], self.room, op, self.key, plf.box_public(self.row["box_key"])
+        )
+        await self.client.send(bytes([T_NOTES]) + env)
+        return env
+
+    def frames(self) -> list[tuple[plf.Kind, dict]]:
+        """Everything it received, opened and VERIFIED under the row's signing key (a frame
+        that does not verify raises: every THREADS and META the bridge sent is signed)."""
+        out = []
+        for _, env in self.client.binary(T_SNAPSHOT) + self.client.binary(T_NOTES):
+            kind, _ = plf.unseal(self.row["key"], self.room, env)
+            if kind is plf.Kind.COMMENT:
+                continue  # another reader's, relayed by the room
+            out.append(plf.open_signed(self.row["key"], self.room, env, _sign_pub(self.row)))
+        return out
+
+    def threads(self) -> list[dict] | None:
+        bodies = [b for k, b in self.frames() if k is plf.Kind.THREADS]
+        return max(bodies, key=lambda b: b["at"])["threads"] if bodies else None
+
+    def metas(self) -> list[dict]:
+        return [b for k, b in self.frames() if k is plf.Kind.META]
+
+
+@pytest.fixture
+def quick(monkeypatch):
+    monkeypatch.setattr(lp, "THREADS_DEBOUNCE", 0.01)
+
+
+async def _room_with_comments(ctx, live, **sel):
+    s = _meeting(ctx)
+    await _first(ctx, s.id, comments=True, **sel)
+    bridge = await _bridge(ctx, s.id)
+    row = ctx.repo.live_publication(s.id)
+    client = await _reader(live, ctx, s.id)
+    return s, bridge, row, Reader(client, row, bridge.room)
+
+
+async def _taken(bridge, n: int) -> dict:
+    await _until(lambda: sum(bridge.outcomes.values()) >= n, f"{n} reader ops")
+    return bridge.outcomes
+
+
+def _comments(ctx, sid):
+    from mnemosyne.services.shared_notes import unrestricted
+
+    with unrestricted():
+        return ctx.repo.list_comments(sid)
+
+
+async def test_a_readers_comment_on_a_decision(ctx, live, seals, quick):
+    s, bridge, row, ana = await _room_with_comments(ctx, live)
+    await ana.send(_create("a" * 12, "Why Friday?", target="decision", target_id="dec1"))
+    assert (await _taken(bridge, 1)) == {"applied": 1}
+    (c,) = _comments(ctx, s.id)
+    assert (c.id, c.author_id, c.author) == ("a" * 12, f"reader:{ana.rid}", "Ana (reader)")
+    assert (c.target, c.target_id, c.text) == ("decision", "dec1", "Why Friday?")
+    # An ordinary comment: in the meeting's history, by the reader.
+    (event,) = [e for e in ctx.repo.events(s.id) if e["kind"] == "commented"]
+    assert event["detail"]["by"] == "Ana (reader)" and event["detail"]["target"] == "decision"
+    # Back to the readers as THREADS (signed: Reader.frames verifies every frame).
+    threads = await _until(ana.threads, "THREADS with the comment")
+    (t,) = threads
+    assert t["replies"] == [] and t["root"]["rid"] == ana.rid
+    assert t["root"]["anchor"] == {
+        "target": "decision",
+        "target_id": "dec1",
+        "quote_id": None,
+        "quote": _opened(live.pub, {"url": row_url(ctx, s.id)}).decisions[0].text,
+    }
+    assert t["root"]["anchor"]["quote"] == "Ship on Friday (Person 1)"  # nobody listed
+    assert set(t["root"]) == {
+        "id",
+        "parent_id",
+        "author",
+        "rid",
+        "text",
+        "anchor",
+        "created_at",
+        "updated_at",
+        "resolved",
+        "deleted",
+        "detached",
+        "changed",
+    }
+    assert t["root"]["author"] == "Ana (reader)" and t["root"]["parent_id"] is None
+    assert t["root"]["created_at"].endswith("Z")
+    # The same THREADS is the room's snapshot.
+    snap = [b for _, p, _, b in live.rooms.calls if p == f"/live/{bridge.room}/snapshot"][-1]
+    kind, body = plf.open_signed(row["key"], bridge.room, snap, _sign_pub(row))
+    assert kind is plf.Kind.THREADS and body["threads"] == threads
+    await ana.client.close()
+
+
+async def test_a_comment_on_a_quote_is_on_its_transcript_lines(ctx, live, seals, quick):
+    s, bridge, row, ana = await _room_with_comments(
+        ctx, live, quotes=[QuoteSpan(start=0.0, end=6.0)]
+    )
+    (quote,) = _opened(live.pub, {"url": row_url(ctx, s.id)}).quotes
+    await ana.send(_create("b" * 12, "Lovely line", target="quote", quote_id=quote.id))
+    assert (await _taken(bridge, 1)) == {"applied": 1}
+    (c,) = _comments(ctx, s.id)
+    assert c.target == "segment" and c.anchor == {"part": 0, "start": 0.0, "end": 6.0}
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    with unrestricted():
+        (t,) = comments.threads(ctx, s.id).threads
+    assert t.root.segment_idx in (0, 1) and not t.root.detached
+    (sent,) = await _until(ana.threads, "THREADS")
+    assert sent["root"]["anchor"] == {
+        "target": "segment",
+        "target_id": None,
+        "quote_id": quote.id,
+        "quote": quote.text,
+    }
+    # A quote the publication does not show: nothing is made.
+    await ana.send(_create("c" * 12, "Hm", 1, target="quote", quote_id="q00000000"))
+    assert (await _taken(bridge, 2))["refused"] == 1 and len(_comments(ctx, s.id)) == 1
+    await ana.client.close()
+
+
+def row_url(ctx, sid) -> str:
+    return publishing.to_model(ctx, ctx.repo.live_publication(sid), ctx.repo.get(sid)).url
+
+
+async def test_summary_text_with_a_redacted_name_stays_on_the_meeting(ctx, live, seals, quick):
+    # Cy Park is not listed: readers read "Person 1 was away."
+    s, bridge, row, ana = await _room_with_comments(ctx, live, attendees=["Ana Lopez", "Bo Chen"])
+    m = _opened(live.pub, {"url": row_url(ctx, s.id)})
+    assert "Person 1 was away." in m.summary
+    await ana.send(
+        _create(
+            "d" * 12,
+            "Who was away?",
+            target="body",
+            exact="Person 1 was away.",
+            prefix="decided to ship Friday. ",
+            suffix="",
+        )
+    )
+    await ana.send(_create("e" * 12, "Friday!", 1, target="body", exact="ship Friday"))
+    assert (await _taken(bridge, 2)) == {"applied": 2}
+    kept, found = sorted(_comments(ctx, s.id), key=lambda c: c.id)
+    assert kept.target == "" and kept.text == "On: “Person 1 was away.”\n\nWho was away?"
+    assert found.target == "body" and found.anchor["exact"] == "ship Friday"
+    threads = await _until(lambda: (t := ana.threads()) and len(t) == 2 and t, "THREADS")
+    by_id = {t["root"]["id"]: t["root"] for t in threads}
+    assert by_id["d" * 12]["anchor"] == {**lp.NO_ANCHOR}
+    assert by_id["e" * 12]["anchor"]["target"] == "body"
+    assert by_id["e" * 12]["anchor"]["quote"] == "ship Friday"
+    assert "Cy" not in json.dumps(threads)
+    await ana.client.close()
+
+
+def _forged_box(row, room, op: dict, signer: bytes, claimed_pub: bytes) -> bytes:
+    """A COMMENT boxed for the owner whose signature is by `signer`, not by the key it
+    carries (`claimed_pub`): what a reader impersonating another would send."""
+    import os
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    op_bytes = pf.canonical_json(op)
+    sig = plf.ed25519_sign(signer, plf.reader_message(room, claimed_pub, op_bytes))
+    content = sig + claimed_pub + op_bytes
+    eph = plf.new_private()
+    eph_pub = plf.box_public(eph)
+    key = plf.box_key(plf.x25519(eph, plf.box_public(row["box_key"])), room)
+    nonce = os.urandom(12)
+    ct = AESGCM(key).encrypt(nonce, content, plf.box_aad(room, eph_pub))
+    return plf.seal(row["key"], room, plf.Kind.COMMENT, eph_pub + nonce + ct)
+
+
+async def test_ops_that_are_not_the_readers_own_are_refused(ctx, live, seals, quick):
+    s, bridge, row, ana = await _room_with_comments(ctx, live)
+    await ana.send(_create("a" * 12, "Mine", target=""))
+    await _taken(bridge, 1)
+    bo = Reader(await _reader(live, ctx, s.id), row, bridge.room)
+    # Bo signs an edit with his key but carries Ana's public key: the box opens, the
+    # signature does not match the key inside.
+    forged = _forged_box(
+        row, bridge.room, _edit("a" * 12, "Not mine", 5), bo.key, plf.sign_public(ana.key)
+    )
+    await bo.client.send(bytes([T_NOTES]) + forged)
+    # Signed as himself, his rid is not the comment's author.
+    await bo.send(_edit("a" * 12, "Not mine", 6, name="Bo"))
+    await bo.send(_delete("a" * 12, 7, name="Bo"))
+    outcomes = await _taken(bridge, 4)
+    assert outcomes == {"applied": 1, "unopened": 1, "not_yours": 2}
+    (c,) = _comments(ctx, s.id)
+    assert c.text == "Mine" and not c.deleted
+    # Ana herself may.
+    await ana.send(_edit("a" * 12, "Mine, edited", 8))
+    await _taken(bridge, 5)
+    assert _comments(ctx, s.id)[0].text == "Mine, edited"
+    await ana.client.close()
+    await bo.client.close()
+
+
+async def test_a_replayed_box_is_a_no_op(ctx, live, seals, quick):
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    s, bridge, row, ana = await _room_with_comments(ctx, live)
+    create = await ana.send(_create("a" * 12, "First", target=""))
+    old_edit = await ana.send(_edit("a" * 12, "Second", 5))
+    await ana.send(_edit("a" * 12, "Third", 9))
+    await _taken(bridge, 3)
+    # Anyone in the room can copy a frame and send it again: the same create, an older edit.
+    for env in (create, old_edit):
+        await ana.client.send(bytes([T_NOTES]) + env)
+    outcomes = await _taken(bridge, 5)
+    assert outcomes == {"applied": 3, "replay": 2}
+    (c,) = _comments(ctx, s.id)
+    assert c.text == "Third"
+    # The owner deletes it; the create sent again does not bring it back, after a restart too.
+    with unrestricted():
+        comments.delete(ctx, s.id, "a" * 12)
+    assert _comments(ctx, s.id) == []
+    await ctx.live_bridges.shutdown()
+    await ctx.live_bridges.resume()
+    bridge = await _bridge(ctx, s.id)
+    await ana.client.send(bytes([T_NOTES]) + create)
+    await _taken(bridge, 1)
+    assert bridge.outcomes == {"replay": 1} and _comments(ctx, s.id) == []
+    await ana.client.close()
+
+
+async def test_the_21st_op_in_ten_minutes_is_dropped(ctx, live, seals, quick):
+    s, bridge, row, ana = await _room_with_comments(ctx, live)
+    clock = Clock()
+    bridge.clock = clock
+    for i in range(21):
+        await ana.send(_create(f"{i:012x}", f"Comment {i}", i))
+    outcomes = await _taken(bridge, 21)
+    assert outcomes == {"applied": 20, "rate": 1}
+    assert len(_comments(ctx, s.id)) == 20
+    clock.t += lp.RATE_WINDOW  # ten minutes on: again
+    await ana.send(_create(f"{99:012x}", "Later", 99))
+    await _taken(bridge, 22)
+    assert bridge.outcomes["applied"] == 21
+    await ana.client.close()
+
+
+async def test_caps_on_text_and_name(ctx, live, seals, quick):
+    s, bridge, row, ana = await _room_with_comments(ctx, live)
+    await ana.send(_create("a" * 12, "x" * (lp.MAX_TEXT + 1)))
+    await ana.send(_create("b" * 12, "   "))
+    await ana.send(_create("c" * 12, "y" * lp.MAX_TEXT, 1, name="N" * 200))
+    outcomes = await _taken(bridge, 3)
+    assert outcomes == {"bad": 2, "applied": 1}
+    (c,) = _comments(ctx, s.id)
+    assert c.author == "N" * lp.MAX_NAME + " (reader)" and len(c.text) == lp.MAX_TEXT
+    await ana.client.close()
+
+
+async def test_comments_off_drops_the_op_and_meta_says_so(ctx, live, seals, quick):
+    s = _meeting(ctx)
+    await _first(ctx, s.id, comments=False)  # follow only
+    bridge = await _bridge(ctx, s.id)
+    row = ctx.repo.live_publication(s.id)
+    ana = Reader(await _reader(live, ctx, s.id), row, bridge.room)
+    await _until(lambda: len(ana.metas()) == 1, "the join's META")
+    bridge._meta_at = float("-inf")  # (the join's META is more than META_NUDGE ago)
+    await ana.send(_create("a" * 12, "Hello?"))
+    assert (await _taken(bridge, 1)) == {"off": 1}
+    assert _comments(ctx, s.id) == []
+    metas = await _until(lambda: len(m := ana.metas()) == 2 and m, "META again")
+    assert metas[-1]["comments"] is False
+    await ana.client.close()
+
+
+async def test_owner_replies_resolves_and_deletes_reach_readers(ctx, live, settings, seals, quick):
+    from mnemosyne.models.comment import CommentCreate
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    s, bridge, row, ana = await _room_with_comments(ctx, live, attendees=["Ana Lopez", "Bo Chen"])
+    await ana.send(_create("a" * 12, "Why Friday?", target="decision", target_id="dec1"))
+    await ana.send(_create("b" * 12, "And the notes?", 1, target="item", target_id="act1"))
+    await _taken(bridge, 2)
+    settings.local_speaker_name = "Me"  # the desktop's default name: "Owner" to readers
+    with unrestricted():
+        comments.create(
+            ctx,
+            s.id,
+            CommentCreate(parent_id="a" * 12, text="Cy Park asked; card 4111111111111111"),
+        )
+        comments.create(ctx, s.id, CommentCreate(text="Our own note on Cy Park"))
+    t = await _until(
+        lambda: (ts := ana.threads()) and any(x["replies"] for x in ts) and ts, "the reply"
+    )
+    assert len(t) == 2  # the owner's own thread stays in the app
+    (reply,) = [x for x in t if x["root"]["id"] == "a" * 12][0]["replies"]
+    assert reply["author"] == "Owner" and reply["rid"] is None
+    assert "Cy" not in reply["text"] and "Person 1 asked" in reply["text"]
+    assert "4111111111111111" not in reply["text"]
+    # The reader replies in the thread; the owner resolves it and deletes the other thread.
+    await ana.send(_reply("c" * 12, "a" * 12, "Thanks", 2))
+    await _taken(bridge, 3)
+    with unrestricted():
+        comments.resolve(ctx, s.id, "a" * 12)
+        comments.delete(ctx, s.id, "b" * 12)
+
+    def settled():
+        ts = ana.threads() or []
+        roots = {x["root"]["id"]: x for x in ts}
+        if "b" * 12 not in roots or not roots["b" * 12]["root"]["deleted"]:
+            return None
+        return roots if roots["a" * 12]["root"]["resolved"] else None
+
+    roots = await _until(settled, "resolved and removed")
+    assert [r["id"] for r in roots["a" * 12]["replies"]] == [reply["id"], "c" * 12]
+    removed = roots["b" * 12]["root"]
+    assert removed["text"] == "" and removed["deleted"] and removed["anchor"]["quote"] is None
+    assert removed["author"] == "Ana (reader)" and roots["b" * 12]["replies"] == []
+    # A reader may not reply to the owner's own thread (it is not theirs to see).
+    with unrestricted():
+        own = [c for c in _comments(ctx, s.id) if not c.author_id.startswith("reader:")]
+    root_id = [c.id for c in own if not c.parent_id][0]
+    await ana.send(_reply("d" * 12, root_id, "Peek", 3))
+    assert (await _taken(bridge, 4))["refused"] == 1
+    await ana.client.close()
+
+
+async def test_threads_for_readers(ctx, settings):
+    from mnemosyne.models.comment import CommentCreate
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    s = _meeting(ctx)
+    ana = ("reader:" + "1" * 16, "Ana (reader)")
+    sel = PublicationSelection(
+        where="host",
+        attendees=["Ana Lopez", "Bo Chen"],
+        questions=False,
+        names="as_is",
+        quotes=[QuoteSpan(start=0.0, end=6.0)],
+    )
+    with unrestricted():
+
+        def make(cid, actor=None, **kw):
+            return comments.create(ctx, s.id, CommentCreate(**kw), comment_id=cid, actor=actor)
+
+        make("a" * 12, ana, target="decision", target_id="dec1", text="Is Cy Park OK?")
+        settings.local_speaker_name = "Cy Park"
+        make("a1" + "0" * 10, parent_id="a" * 12, text="Cy Park said yes")
+        make("b" * 12, text="The owner's own thread")  # never out
+        make("c" * 12, ana, target="question", target_id="que1", text="Unticked part")
+        make("d" * 12, ana, target="segment", idx=3, text="A line no quote covers")
+        make("e" * 12, ana, target="segment", idx=0, idx_to=1, text="In the quote")
+        ctx.repo.add_comment(  # (comments.create needs the sidecar for the notes)
+            s.id,
+            id="f" * 12,
+            text="On the notes",
+            author_id=ana[0],
+            author=ana[1],
+            target="notes",
+            anchor={"mark": "comment:" + "f" * 12},
+            quote="scratch",
+        )
+    threads = lp.threads_for_readers(ctx, s.id, sel)
+    assert [t["root"]["id"] for t in threads] == ["a" * 12, "e" * 12]
+    first = threads[0]
+    assert first["root"]["text"] == "Is Cy Park OK?"  # a reader's words as they wrote them
+    (reply,) = first["replies"]
+    assert reply["author"] == "Person 1" and reply["text"] == "Person 1 said yes"
+    assert reply["anchor"] == lp.NO_ANCHOR and reply["rid"] is None
+    assert first["root"]["rid"] == "1" * 16
+    content, specs = publishing.build_content(ctx, ctx.repo.get(s.id), sel)
+    assert threads[1]["root"]["anchor"]["quote_id"] == specs[0]["id"]
+    assert threads[1]["root"]["anchor"]["quote"] == content["quotes"][0]["text"]
+    # Decisions unticked: that thread goes too.
+    sel2 = sel.model_copy(update={"decisions": False})
+    assert [t["root"]["id"] for t in lp.threads_for_readers(ctx, s.id, sel2)] == ["e" * 12]
+
+
+async def test_leak_a_comment_frames_open_only_for_the_owner(ctx, live, seals, monkeypatch):
+    """Leak test (a): every reader holds the frames key and the room replays its log to every
+    joiner, yet two readers' COMMENT frames open for the bridge (the box key) and for neither
+    reader; and the second reader's edit or delete under the first's comment id is refused."""
+    monkeypatch.setattr(lp, "THREADS_DEBOUNCE", 1000.0)  # no snapshot: the log is kept whole
+    s, bridge, row, ana = await _room_with_comments(ctx, live)
+    bo = Reader(await _reader(live, ctx, s.id), row, bridge.room)
+    sent = [
+        await ana.send(_create("a" * 12, "Ana's secret-ish remark", target="")),
+        await bo.send(_create("b" * 12, "Bo's remark", target="")),
+    ]
+    await _taken(bridge, 2)
+    late = await GuestClient.join(live.rooms, bridge.room, plf.room_token(row["key"]), since=0)
+    logged = await _until(
+        lambda: (
+            len(c := [e for _, e in late.binary(T_NOTES) if e[0] == plf.Kind.COMMENT]) == 2 and c
+        ),
+        "the log's COMMENT frames",
+    )
+    assert logged == sent
+    for env in logged:
+        assert plf.open_box(row["key"], bridge.room, env, row["box_key"]).op["text"]
+        for reader in (ana, bo):
+            with pytest.raises(plf.PubLiveFormatError):
+                plf.open_box(row["key"], bridge.room, env, reader.key)
+            with pytest.raises(plf.PubLiveFormatError):
+                plf.open_signed(row["key"], bridge.room, env, plf.sign_public(reader.key))
+        _, plain = plf.unseal(row["key"], bridge.room, env)  # what the frames key shows
+        assert b"remark" not in plain
+    await bo.send(_edit("a" * 12, "Bo was here", 5, name="Bo"))
+    await bo.send(_delete("a" * 12, 6, name="Bo"))
+    assert (await _taken(bridge, 4))["not_yours"] == 2
+    texts = sorted(c.text for c in _comments(ctx, s.id))
+    assert texts == ["Ana's secret-ish remark", "Bo's remark"]
+    for c in (ana.client, bo.client, late):
+        await c.close()
+
+
+async def test_an_owner_reply_names_people_as_the_manifest_does(ctx):
+    """One Redaction for the manifest and for the threads: someone left off the attendee list
+    is the same "Person N" in an owner's reply as everywhere in the publication."""
+    from mnemosyne.models.comment import CommentCreate
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    s = _meeting(ctx)
+    # Only Ana listed: Bo Chen is "Person 1", Cy Park "Person 2" in the manifest.
+    sel = PublicationSelection(where="host", attendees=["Ana Lopez"])
+    content, _ = publishing.build_content(ctx, ctx.repo.get(s.id), sel)
+    assert "Person 2 was away." in content["summary"]
+    assert content["questions"][0]["text"] == "Does Person 2 know?"
+    reader = ("reader:" + "2" * 16, "Ana (reader)")
+    with unrestricted():
+        comments.create(ctx, s.id, CommentCreate(text="Who?"), comment_id="a" * 12, actor=reader)
+        comments.create(
+            ctx, s.id, CommentCreate(parent_id="a" * 12, text="Cy Park, and Bo Chen too")
+        )
+    (thread,) = lp.threads_for_readers(ctx, s.id, sel)
+    assert thread["replies"][0]["text"] == "Person 2, and Person 1 too"

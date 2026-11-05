@@ -731,3 +731,25 @@ backend suite (locally: single files), the publish-host and link crates' full te
   The one-shot push (C12) joins with `since = 2**53-1`, sends the signed VERSION, waits up to 15 s for the ack and
   never creates a room. A fresh bridge also sends the current VERSION after joining (readers ignore a version
   that is not newer). Snapshots prune the log at most every 10 minutes and only after new frames.
+- Task 11 (comment intake and threads out), decided while building:
+  - Replay state lives in `<pub_dir>/readers.json` (no schema change): the `at` of the last op applied per comment
+    id, and a stub (id, parent, author, rid, anchor without quote, times) of every comment readers were shown. A
+    create/reply with a known id, or an edit/delete whose `at` is not newer, is a no-op; only applied ops count
+    toward the 20-per-10-minutes cap (a copied frame cannot eat another reader's budget), measured by the bridge's
+    clock at receipt. A COMMENT envelope binds the room id, so a new room cannot be fed an old room's frames.
+  - A comment readers were shown that is gone from the meeting (the store hard-deletes a comment nothing replies
+    to) goes out as a "removed" stand-in from that stub (`deleted: true`, text "", quote null), so e2e 14 sees
+    "removed" rather than a vanished thread. Threads hidden by the selection (an unticked part) just go.
+  - THREADS anchors: a quote is only ever the manifest's own text (an item's current redacted text, a quote's text
+    by `quote_id`; a segment thread outside every published quote is dropped); a body thread's quote is the
+    reader's exact through the text rules, null once detached; replies carry `{target: "", target_id: null,
+    quote_id: null, quote: null}`; roots have `parent_id: null`; times are UTC ISO with milliseconds and `Z`.
+  - Reader text and names go out as typed; owner-side comments through Names and the identifier rules, the author
+    "Owner" when it is the desktop's "You"/"Me" default (else `Names.name`). A reader's reply must name a thread
+    `threads_for_readers` shows. Item anchors must name an id the manifest shows; one comments.py cannot place (a
+    fallback `d0` id) is kept on the meeting with "On: “…”" like an unfound body exact. THREADS is re-sealed
+    (2 s debounce) on the meeting's `comments` events and on any selection change, and is skipped when the threads
+    equal the last sent (an owner-only thread changes nothing readers see). Oldest threads are left out past
+    1.5 MB. comments.py is unchanged (`BadComment` is caught in the bridge).
+  - One redaction for the manifest and the threads: `publishing.Redaction(session, sel)` (people, wanted, `names`,
+    `text()`), extracted from `build_content`, which uses it; `threads_for_readers` uses the same class.

@@ -22,8 +22,13 @@ creates that room. It posts the room's snapshot (a signed THREADS), joins with t
 applied, sends META, and then: a VERSION after every publish (`version_published`), META again
 every 12 hours (the room's idle rule) and after every snapshot (a joiner past the snapshot must
 still hear it), the room's expiry moved every 24 hours (never past the publication's), a fresh
-room when the host says this one is gone (4410). Readers' frames (COMMENT) go to
-`_on_reader_frame` (task 11 opens them). Every outgoing frame is a `VersionFrame`,
+room when the host says this one is gone (4410). Readers' frames (COMMENT, task 11) go to
+`_on_reader_frame`: opened with the row's box key, the reader's signature checked, then the op
+(create, reply, edit, delete) applied through services/comments.py as `reader:<rid>`, with the
+anchor rules of C8, the caps (MAX_TEXT, MAX_NAME, RATE_OPS in RATE_WINDOW), the replay rule
+(`readers.json` beside the publication's files) and nothing while comments are off. The
+readers' threads (`threads_for_readers`) go back as THREADS, debounced, after every `comments`
+event of the meeting and every change of the selection. Every outgoing frame is a `VersionFrame`,
 `ThreadsFrame` or `MetaFrame` signed with the row's signing key (pub_live_format.sign_frame).
 A host without the pointer route (or without rooms) makes the publication "unsupported": no
 room, readers poll. A manual Update on the other computer of a library-sync pair (C12) sends
@@ -56,6 +61,7 @@ from . import pub_live_format as plf
 if TYPE_CHECKING:
     from ..api.context import AppContext
     from ..jobs import Job, JobContext
+    from ..models.comment import Comment, CommentCreate
     from ..models.publication import PublicationSelection
     from ..models.session import Session
 
@@ -374,8 +380,8 @@ class VersionFrame(_Frame):
 
 
 class ThreadsFrame(_Frame):
-    """The readers' threads (task 11 fills them; `threads_for_readers`); also the room's
-    snapshot. The newest `at` wins."""
+    """The readers' threads (`threads_for_readers`, plus "removed" stand-ins); also the
+    room's snapshot. The newest `at` wins."""
 
     KIND: ClassVar[plf.Kind] = plf.Kind.THREADS
     threads: list[dict[str, Any]]
@@ -398,10 +404,320 @@ FRAMES: dict[plf.Kind, type[_Frame]] = {
 }
 
 
+# ---- readers' comments (task 11) ------------------------------------------------------------
+
+READER_PREFIX = "reader:"  # a reader's comments: author id "reader:<rid>", name "<name> (reader)"
+MAX_TEXT = 4000  # characters (code points) of a reader's comment
+MAX_NAME = 80  # characters of a reader's name (guest_notes.MAX_NAME)
+MAX_CONTEXT = 200  # characters of a body anchor's prefix or suffix (the viewer sends 32)
+RATE_OPS = 20  # comment operations a reader may make ...
+RATE_WINDOW = 600.0  # ... in this many seconds; more are dropped
+THREADS_DEBOUNCE = 2.0  # seconds: comments that change together make one THREADS
+META_NUDGE = 30.0  # seconds: at most one META in this time for ops sent while comments are off
+ON_QUOTE = 280  # characters of the quote in a thread kept on the meeting as a whole ("On: …")
+MAX_THREADS_BYTES = 1_500_000  # a THREADS stays well inside the host's 2 MiB frame
+OPS = ("create", "reply", "edit", "delete")
+OP_TARGETS = ("", "body", "decision", "question", "item", "quote")
+ITEM_PARTS = {"decision": "decisions", "question": "questions", "item": "action_items"}
+NO_ANCHOR: dict[str, Any] = {"target": "", "target_id": None, "quote_id": None, "quote": None}
+
+
+class _Shown:
+    """What the publication shows of the meeting under a selection (`build_content`), and the
+    names and text rules its manifest went through (publishing.Redaction, the same class), for
+    the comments readers see."""
+
+    def __init__(self, app: AppContext, session: Session, sel: PublicationSelection) -> None:
+        from .publishing import Redaction, build_content
+
+        self.sel = sel
+        self.content, self.specs = build_content(app, session, sel)
+        # The manifest's own names and text rules (build_content uses the same class).
+        self.redaction = Redaction(session, sel)
+        self.names = self.redaction.names
+        c = self.content
+        self.items: dict[str, dict[str, str]] = {
+            "decision": {d["id"]: d["text"] for d in c["decisions"]},
+            "question": {q["id"]: q["text"] for q in c["questions"]},
+            "item": {a["id"]: a["text"] for a in c["action_items"]},
+        }
+        self.quotes: dict[str, str] = {q["id"]: q["text"] for q in c["quotes"]}
+
+    def text(self, value: str) -> str:
+        return self.redaction.text(value)
+
+    def anchor(self, root: Comment) -> dict[str, Any] | None:
+        """Where a reader thread is, as THREADS says it ({target, target_id, quote_id, quote}),
+        or None when it is on a part the publication does not show (a quote is only ever the
+        manifest's own text)."""
+        target = root.target
+        if target == "":
+            return dict(NO_ANCHOR)
+        if target == "segment":
+            idx = root.segment_idx
+            if idx is None:
+                return None
+            for spec in self.specs:
+                if spec["first"] <= idx <= spec["last"]:
+                    return {
+                        **NO_ANCHOR,
+                        "target": "segment",
+                        "quote_id": spec["id"],
+                        "quote": self.quotes.get(spec["id"]),
+                    }
+            return None  # a line no published quote covers
+        if target == "body":
+            if not self.sel.summary:
+                return None
+            quote = None if root.detached or root.deleted else self.text(root.quote) or None
+            return {**NO_ANCHOR, "target": "body", "quote": quote}
+        if target in ITEM_PARTS:
+            if not getattr(self.sel, ITEM_PARTS[target]):
+                return None
+            return {
+                **NO_ANCHOR,
+                "target": target,
+                "target_id": root.target_id or None,
+                "quote": self.items[target].get(root.target_id),
+            }
+        return None  # the notes, and anything readers cannot write on
+
+    def comment(self, c: Comment, anchor: dict[str, Any]) -> dict[str, Any]:
+        """A comment as readers see it: a reader's as they wrote it, with their rid; the owner's
+        side (replies) through the publication's names and text rules."""
+        reader = c.author_id.startswith(READER_PREFIX)
+        if reader:
+            author, text = c.author, c.text
+        else:
+            name = (c.author or "").strip()
+            # "You" / "Me" (the desktop's defaults) would read as the reader themself.
+            plain = name and name.casefold() not in ("you", "me")
+            author = (self.names.name(name) if plain else "") or "Owner"
+            text = self.text(c.text)
+        return {
+            "id": c.id,
+            "parent_id": c.parent_id or None,
+            "author": author,
+            "rid": c.author_id[len(READER_PREFIX) :] if reader else None,
+            "text": "" if c.deleted else text,
+            "anchor": anchor,
+            "created_at": _at_text(c.created_at),
+            "updated_at": _at_text(c.updated_at),
+            "resolved": c.resolved_at is not None,
+            "deleted": c.deleted,
+            "detached": bool(c.detached),
+            "changed": bool(c.changed),
+        }
+
+
+def _reader_view(
+    app: AppContext, session_id: str, sel: PublicationSelection
+) -> tuple[list[dict], set[str]]:
+    """(threads readers see, ids of every comment the meeting has now)."""
+    from . import comments
+    from .shared_notes import unrestricted
+
+    with unrestricted():
+        session = app.repo.get(session_id)
+        if session is None or session.shared_from:
+            return [], set()
+        listed = comments.threads(app, session_id)
+        ids = {c.id for c in app.repo.list_comments(session_id)}
+        shown = _Shown(app, session, sel)
+    out = []
+    for t in listed.threads:
+        root = t.root
+        if root.parent_id or not root.author_id.startswith(READER_PREFIX):
+            continue  # the owner's own threads never leave the app
+        anchor = shown.anchor(root)
+        if anchor is None:
+            continue
+        out.append(
+            {
+                "root": shown.comment(root, anchor),
+                "replies": [shown.comment(r, dict(NO_ANCHOR)) for r in t.replies],
+            }
+        )
+    return out, ids
+
+
 def threads_for_readers(app: AppContext, session_id: str, sel: PublicationSelection) -> list:
-    """The threads readers see (task 11: readers' threads on published parts, redacted like
-    the manifest). None yet."""
-    return []
+    """The threads readers see, oldest first: only threads a reader started, with every reply
+    in them (the owner's through the selection's names and identifier rules, its author as
+    `Names.name` gives it, else "Owner"), and none on a part the selection does not show. Each
+    comment is {id, parent_id, author, rid, text, anchor: {target, target_id, quote_id, quote},
+    created_at, updated_at, resolved, deleted, detached, changed}; `rid` names a reader's own
+    (None for the owner's side)."""
+    return _reader_view(app, session_id, sel)[0]
+
+
+@dataclass(frozen=True)
+class _Op:
+    """A reader's COMMENT op, checked: the shape task 12 fixed, within the caps."""
+
+    kind: str
+    id: str
+    parent_id: str
+    text: str
+    name: str
+    at: datetime
+    anchor: dict[str, str]
+
+
+def _op_str(value: Any, limit: int) -> str | None:
+    """A string field of an op ("" for null), None when it is not one or too long."""
+    if value is None:
+        return ""
+    if not isinstance(value, str) or len(value) > limit:
+        return None
+    return value
+
+
+def _parse_op(obj: dict) -> _Op | None:
+    """The op, or None when it is not one a reader may send (unknown kind, bad id or time, no
+    text, more than MAX_TEXT characters, an anchor that is not one of OP_TARGETS)."""
+    from .comments import COMMENT_ID
+
+    kind, cid, at = obj.get("op"), obj.get("id"), obj.get("at")
+    if kind not in OPS or not isinstance(cid, str) or not COMMENT_ID.fullmatch(cid):
+        return None
+    when = _parse(at) if isinstance(at, str) else None
+    if when is None:
+        return None
+    name = obj.get("name")
+    name = name if isinstance(name, str) else ""
+    text = ""
+    if kind != "delete":
+        raw = obj.get("text")
+        if not isinstance(raw, str):
+            return None
+        text = raw.strip()
+        if not text or len(text) > MAX_TEXT:
+            return None
+    parent = ""
+    if kind == "reply":
+        parent = obj.get("parent_id")
+        if not isinstance(parent, str) or not COMMENT_ID.fullmatch(parent):
+            return None
+    anchor: dict[str, str] = {}
+    if kind == "create":
+        raw = obj.get("anchor")
+        if not isinstance(raw, dict) or raw.get("target") not in OP_TARGETS:
+            return None
+        limits = {"target_id": 64, "quote_id": 64, "exact": MAX_TEXT}
+        limits |= {"prefix": MAX_CONTEXT, "suffix": MAX_CONTEXT}
+        for field, limit in limits.items():
+            value = _op_str(raw.get(field), limit)
+            if value is None:
+                return None
+            anchor[field] = value
+        anchor["target"] = raw["target"]
+    return _Op(kind, cid, parent, text, name, when, anchor)
+
+
+def _reader_name(name: str) -> str:
+    clean = " ".join("".join(ch for ch in name if ch.isprintable()).split())
+    return f"{clean[:MAX_NAME].strip() or 'Reader'} (reader)"
+
+
+def _on_meeting(text: str, quote: str) -> str:
+    """A thread whose place cannot be found, kept on the meeting as a whole with what it was
+    about in its text."""
+    from .comments import excerpt
+
+    quote = excerpt(quote, ON_QUOTE)
+    return f"On: “{quote}”\n\n{text}" if quote else text
+
+
+def _placed(shown: _Shown, op: _Op) -> tuple[CommentCreate, str] | None:
+    """(the comment to create, the quote to keep it on the meeting with if its place is not
+    found) for a reader's new thread, or None when it is on nothing the publication shows (C8:
+    an item by its block id, a quote by its transcript lines, the summary text by quote, the
+    meeting as a whole)."""
+    from ..models.comment import CommentCreate
+
+    a, text, sel = op.anchor, op.text, shown.sel
+    target = a["target"]
+    if target in ITEM_PARTS:
+        if not getattr(sel, ITEM_PARTS[target]):
+            return None
+        quote = shown.items[target].get(a["target_id"])
+        if quote is None:
+            return None
+        return CommentCreate(target=target, target_id=a["target_id"], text=text), quote
+    if target == "quote":
+        spec = next((s for s in shown.specs if s["id"] == a["quote_id"]), None)
+        if spec is None:
+            return None
+        req = CommentCreate(target="segment", idx=spec["first"], idx_to=spec["last"], text=text)
+        return req, shown.quotes.get(spec["id"], "")
+    if target == "body" and a["exact"].strip():
+        if not sel.summary or not shown.content["summary"]:
+            return None
+        exact = a["exact"]
+        req = CommentCreate(
+            target="body", exact=exact, prefix=a["prefix"], suffix=a["suffix"], text=text
+        )
+        return req, exact
+    return CommentCreate(text=text), ""  # the meeting as a whole (or a body anchor on nothing)
+
+
+def _readers_file(app: AppContext, pub_id: str) -> Path:
+    from .publishing import pub_dir
+
+    return pub_dir(app, pub_id) / "readers.json"
+
+
+def _read_readers(app: AppContext, pub_id: str) -> tuple[dict[str, str], dict[str, dict]]:
+    """(the `at` of the last op applied per comment id, the comments readers were shown:
+    what a "removed" stand-in needs) kept beside the publication's files."""
+    try:
+        data = json.loads(_readers_file(app, pub_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}, {}
+    ops, sent = data.get("ops"), data.get("sent")
+    ops = {k: v for k, v in ops.items() if isinstance(v, str)} if isinstance(ops, dict) else {}
+    sent = {k: v for k, v in sent.items() if isinstance(v, dict)} if isinstance(sent, dict) else {}
+    return ops, sent
+
+
+def _write_readers(app: AppContext, pub_id: str, ops: dict, sent: dict) -> None:
+    from .publishing import read_meta
+
+    path = _readers_file(app, pub_id)
+    if not path.parent.is_dir() or (read_meta(app, pub_id) or {}).get("gone"):
+        return
+    try:
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"ops": ops, "sent": sent}), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        logger.warning("Live publication %s: could not keep its readers' ops", pub_id)
+
+
+def _removed(stub: dict) -> dict:
+    """A comment readers were shown that is gone from the meeting (deleted, or a thread
+    deleted through): "removed", with nothing of what it said or was on."""
+    anchor = stub.get("anchor") if isinstance(stub.get("anchor"), dict) else NO_ANCHOR
+    return {
+        **stub,
+        "text": "",
+        "anchor": {**NO_ANCHOR, **anchor, "quote": None},
+        "resolved": False,
+        "deleted": True,
+        "detached": False,
+        "changed": False,
+    }
+
+
+def _trim(threads: list[dict]) -> list[dict]:
+    """Oldest threads left out while the THREADS would be larger than MAX_THREADS_BYTES."""
+    sizes = [len(json.dumps(t, ensure_ascii=False).encode()) for t in threads]
+    total, start = sum(sizes), 0
+    while total > MAX_THREADS_BYTES and start < len(threads):
+        total -= sizes[start]
+        start += 1
+    return threads[start:]
 
 
 # -- rows, rooms, time --
@@ -819,6 +1135,16 @@ class PubBridge:
         self._since_snapshot = False  # frames sent since the last snapshot
         self._after_snapshot: _Frame | None = None  # the META sent right after it
         self._snap_lock = asyncio.Lock()
+        # Readers' comments (task 11): the `at` of the last op applied per comment id, the
+        # comments readers were shown (for "removed"), each reader's recent ops, the threads
+        # last sent, the pending THREADS, the bus subscription.
+        self._ops, self._sent = _read_readers(self.app, self.pub_id)
+        self._rates: dict[str, deque[float]] = {}
+        self._last_threads: list[dict] | None = None
+        self._threads_task: asyncio.Task | None = None
+        self._sub: asyncio.Queue | None = None
+        self.clock: Callable[[], float] = time.monotonic  # the rate window's (tests swap it)
+        self.outcomes: dict[str, int] = {}  # what became of readers' ops, by outcome (tests)
 
     @property
     def readers(self) -> int:
@@ -831,6 +1157,7 @@ class PubBridge:
             return
         self.running = True
         self.bridges.by_id[self.pub_id] = self
+        self._sub = self.app.bus.subscribe()
         self.task = asyncio.get_running_loop().create_task(
             self._run(), context=contextvars.Context()
         )
@@ -847,20 +1174,31 @@ class PubBridge:
             return
         self.running = False
         self.connected.clear()
+        if self._sub is not None:
+            self.app.bus.unsubscribe(self._sub)
+            self._sub = None
+        task, self._threads_task = self._threads_task, None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
         if self.bridges.by_id.get(self.pub_id) is self:
             del self.bridges.by_id[self.pub_id]
 
     def update_row(self, row: dict) -> None:
         """A newer row (a publish, or the tick's look): a switch turned on or off is META at
-        once; a new expiry moves the room's at the next tick."""
+        once; a new expiry moves the room's at the next tick; another selection may show
+        readers other threads (a part unticked takes its threads away): THREADS soon."""
         if row.get("expires_at") != self.row.get("expires_at"):
             self._extended_at = float("-inf")
+        selection_changed = row.get("selection") != self.row.get("selection")
         self.row = dict(row)
         if self._last_meta is not None and _switches(row) != self._last_meta:
             self.send_meta()
+        if selection_changed:
+            self.threads_soon()
 
     async def _run(self) -> None:
         ticker = asyncio.create_task(self._ticker())
+        events = asyncio.create_task(self._events())
         try:
             await self._connect_loop()
         except asyncio.CancelledError:
@@ -869,7 +1207,8 @@ class PubBridge:
             logger.warning("The live publication bridge of %s failed", self.pub_id, exc_info=True)
         finally:
             ticker.cancel()
-            await asyncio.gather(ticker, return_exceptions=True)
+            events.cancel()
+            await asyncio.gather(ticker, events, return_exceptions=True)
             if self.ws is not None:
                 with contextlib.suppress(Exception):
                     await self.ws.close()
@@ -1146,9 +1485,131 @@ class PubBridge:
         self._advance(seq)
 
     async def _on_reader_frame(self, env: bytes, seq: int) -> None:
-        """A reader's COMMENT envelope (`seq` in the room's log). Task 11 opens it
-        (pub_live_format.open_box with the row's box key) and applies the op; until then it is
-        ignored."""
+        """A reader's COMMENT envelope (`seq` in the room's log): opened with the row's box key
+        and the reader's signature checked before anything else, then the op applied as
+        `reader:<rid>` through services/comments.py (`_take`). Never logs what it carries."""
+        try:
+            ro = plf.open_box(self.key, self.room, env, self.row["box_key"])
+        except plf.PubLiveFormatError:
+            outcome = "unopened"
+        else:
+            outcome = self._take(ro)
+        self.outcomes[outcome] = self.outcomes.get(outcome, 0) + 1
+        if outcome != "applied":
+            logger.info(
+                "Live publication %s: a reader's op was not taken (%s)", self.pub_id, outcome
+            )
+
+    def _take(self, ro: plf.ReaderOp) -> str:
+        """Apply one opened op; returns what became of it: "applied", "off" (comments are
+        off: dropped, and META says so again), "bad" (not an op a reader may send, or over a
+        cap), "replay" (applied before: a create or reply with a known id, an edit or delete
+        not newer than the last op applied on that comment), "not_yours" (an edit or delete of
+        a comment that is not this reader's), "rate" (more than RATE_OPS in RATE_WINDOW),
+        "refused" (comments.py or the anchor rules said no)."""
+        from . import comments
+        from .shared_notes import unrestricted
+
+        if ro.rid != plf.rid_of(ro.reader_pub):
+            return "bad"
+        current = self.app.repo.get_publication(self.pub_id)
+        if current is not None and current != self.row:
+            self.update_row(current)
+        if not wanted(current) or not _switches(current)[1]:
+            self._nudge_meta()
+            return "off"
+        op = _parse_op(ro.op)
+        if op is None:
+            return "bad"
+        last = _parse(self._ops.get(op.id))
+        if op.kind in ("create", "reply"):
+            if op.id in self._ops:
+                return "replay"
+        elif last is not None and op.at <= last:
+            return "replay"
+        actor = (READER_PREFIX + ro.rid, _reader_name(op.name))
+        sid = self.session_id
+        try:
+            with unrestricted():
+                session = self.app.repo.get(sid)
+                if session is None or session.shared_from:
+                    return "refused"
+                if op.kind in ("edit", "delete"):
+                    c = self.app.repo.get_comment(op.id)
+                    if c is None or c.session_id != sid or c.author_id != actor[0]:
+                        return "not_yours"
+                if not self._rate_ok(ro.rid):
+                    return "rate"
+                if op.kind == "create":
+                    self._create(session, op, actor)
+                elif op.kind == "reply":
+                    self._reply(session, op, actor)
+                elif op.kind == "edit":
+                    comments.edit(self.app, sid, op.id, op.text, actor=actor)
+                else:
+                    comments.delete(self.app, sid, op.id, actor=actor)
+        except (
+            comments.BadComment,
+            comments.CommentNotFound,
+            access.Forbidden,
+            access.Hidden,
+            ValueError,
+        ):
+            return "refused"
+        self._ops[op.id] = op.at.isoformat()
+        _write_readers(self.app, self.pub_id, self._ops, self._sent)
+        return "applied"  # its `comments` event brings the THREADS
+
+    def _selection(self) -> PublicationSelection:
+        from ..models.publication import PublicationSelection
+
+        return PublicationSelection.model_validate(self.row["selection"])
+
+    def _create(self, session: Session, op: _Op, actor: tuple[str, str]) -> None:
+        """A reader's new thread, where the manifest says it is (C8); a place comments.py
+        cannot find (a summary passage with a redacted name, say) keeps the thread on the
+        meeting as a whole with the quote in its text, never drops it."""
+        from ..models.comment import CommentCreate
+        from .comments import BadComment, create
+
+        placed = _placed(_Shown(self.app, session, self._selection()), op)
+        if placed is None:
+            raise BadComment("Not on a part of the publication")
+        req, quote = placed
+        try:
+            create(self.app, session.id, req, comment_id=op.id, actor=actor)
+        except BadComment:
+            if req.target == "":
+                raise
+            fallback = CommentCreate(text=_on_meeting(op.text, quote))
+            create(self.app, session.id, fallback, comment_id=op.id, actor=actor)
+
+    def _reply(self, session: Session, op: _Op, actor: tuple[str, str]) -> None:
+        """A reader's reply: only to a thread readers are shown."""
+        from ..models.comment import CommentCreate
+        from .comments import BadComment, create
+
+        shown = threads_for_readers(self.app, session.id, self._selection())
+        if op.parent_id not in {t["root"]["id"] for t in shown}:
+            raise BadComment("No such thread for readers")
+        req = CommentCreate(parent_id=op.parent_id, text=op.text)
+        create(self.app, session.id, req, comment_id=op.id, actor=actor)
+
+    def _rate_ok(self, rid: str) -> bool:
+        now = self.clock()
+        recent = self._rates.setdefault(rid, deque())
+        while recent and recent[0] <= now - RATE_WINDOW:
+            recent.popleft()
+        if len(recent) >= RATE_OPS:
+            return False
+        recent.append(now)
+        return True
+
+    def _nudge_meta(self) -> None:
+        """A reader sent an op while comments are off: their page has not heard it, so META
+        again (at most once in META_NUDGE seconds)."""
+        if self.connected.is_set() and time.monotonic() - self._meta_at >= META_NUDGE:
+            self.send_meta()
 
     def _advance(self, seq: Any) -> None:
         if isinstance(seq, int) and not isinstance(seq, bool) and seq > self.seq:
@@ -1181,17 +1642,88 @@ class PubBridge:
         self.outq.put_nowait(frame)
         return frame
 
-    def _threads_frame(self) -> ThreadsFrame:
-        from ..models.publication import PublicationSelection
+    async def _threads(self) -> list[dict]:
+        """The threads readers see now, with a "removed" stand-in for every comment they were
+        shown that is gone from the meeting (so a deleted thread reads "removed" rather than
+        vanishing), within MAX_THREADS_BYTES."""
+        threads, ids = await asyncio.to_thread(
+            _reader_view, self.app, self.session_id, self._selection()
+        )
+        present: dict[str, dict] = {}
+        for t in threads:
+            present[t["root"]["id"]] = t
+            for c in [t["root"], *t["replies"]]:
+                self._sent[c["id"]] = {
+                    k: c[k] for k in ("id", "parent_id", "author", "rid", "created_at")
+                } | {"updated_at": c["updated_at"], "anchor": {**c["anchor"], "quote": None}}
+        shown = {c["id"] for t in threads for c in [t["root"], *t["replies"]]}
+        gone = [s for cid, s in self._sent.items() if cid not in shown and cid not in ids]
+        out = [dict(t, replies=list(t["replies"])) for t in threads]
+        by_root = {t["root"]["id"]: t for t in out}
+        for stub in sorted(gone, key=lambda s: str(s.get("created_at", ""))):
+            parent = stub.get("parent_id")
+            if not parent:
+                by_root[stub["id"]] = {"root": _removed(stub), "replies": []}
+                out.append(by_root[stub["id"]])
+        for stub in sorted(gone, key=lambda s: str(s.get("created_at", ""))):
+            parent = stub.get("parent_id")
+            if parent and parent in by_root:
+                thread = by_root[parent]
+                thread["replies"].append(_removed(stub))
+                thread["replies"].sort(key=lambda c: c["created_at"])
+        out.sort(key=lambda t: t["root"]["created_at"])
+        _write_readers(self.app, self.pub_id, self._ops, self._sent)
+        return _trim(out)
 
-        sel = PublicationSelection.model_validate(self.row["selection"])
-        threads = threads_for_readers(self.app, self.session_id, sel)
+    async def _threads_frame(self) -> ThreadsFrame:
+        threads = await self._threads()
+        self._last_threads = threads
         return ThreadsFrame(threads=threads, at=self._stamp())
 
-    async def send_threads(self) -> None:
-        """The readers' threads changed (task 11): a THREADS frame to the readers in the room,
-        and the same as the room's snapshot for the ones who join later."""
-        frame = await asyncio.to_thread(self._threads_frame)
+    def threads_soon(self) -> None:
+        """THREADS in THREADS_DEBOUNCE seconds (whatever else changes meanwhile goes with it)."""
+        if self._threads_task is not None or not self.running:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def later() -> None:
+            await asyncio.sleep(THREADS_DEBOUNCE)
+            self._threads_task = None  # a change from here on makes another
+            try:
+                await self.send_threads()
+            except Exception:
+                logger.warning("Live publication %s: THREADS not sent", self.pub_id, exc_info=True)
+
+        self._threads_task = loop.create_task(later(), context=contextvars.Context())
+
+    async def _events(self) -> None:
+        """The meeting's `comments` events (a reader's op, the owner's reply, delete or
+        resolve, sync): THREADS, debounced."""
+        q = self._sub
+        if q is None:
+            return
+        while True:
+            batch = [await q.get()]
+            while not q.empty():
+                batch.append(q.get_nowait())
+            if any(
+                e.get("type") == "comments" and e.get("session_id") == self.session_id
+                for e in batch
+            ):
+                self.threads_soon()
+
+    async def send_threads(self, *, force: bool = False) -> None:
+        """The readers' threads may have changed: unless they are what was sent last, a
+        THREADS frame to the readers in the room, and the same as the room's snapshot for the
+        ones who join later."""
+        threads = await self._threads()
+        if not force and threads == self._last_threads:
+            return  # (a change to the owner's own threads, say: nothing readers see)
+        self._last_threads = threads
+        frame = ThreadsFrame(threads=threads, at=self._stamp())
         if self.connected.is_set():
             self.outq.put_nowait(frame)
         await self.snapshot(frame)
@@ -1207,7 +1739,7 @@ class PubBridge:
         async with self._snap_lock:
             since = self.seq
             if frame is None:
-                frame = await asyncio.to_thread(self._threads_frame)
+                frame = await self._threads_frame()
             try:
                 resp = await _http(
                     self.app,
