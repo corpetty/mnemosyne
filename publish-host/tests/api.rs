@@ -1189,3 +1189,119 @@ async fn metrics_are_only_on_their_own_listener() {
     );
     assert!(out.contains("mnemosyne_publish_stored_bytes 4"), "{out}");
 }
+
+const ROOM: &str = "aaaa111122223333";
+
+impl Host {
+    async fn put_room_as(&self, id: &str, token: Option<&str>, body: &str) -> Reply {
+        let mut req = Request::put(format!("/pub/{id}/room"));
+        if let Some(t) = token {
+            req = req.header("authorization", format!("Bearer {t}"));
+        }
+        self.send(req.body(Body::from(body.to_string())).unwrap())
+            .await
+    }
+
+    async fn put_manifest_room(&self, version: u64, room: &str) -> Reply {
+        self.send(
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/pub/{ID}"))
+                .header("authorization", format!("Bearer {TOKEN}"))
+                .header("x-pub-version", version.to_string())
+                .header("x-pub-expires", (T0 + 90 * DAY).to_string())
+                .header("x-pub-room", room)
+                .body(Body::from(format!("v{version}")))
+                .unwrap(),
+        )
+        .await
+    }
+}
+
+#[tokio::test]
+async fn the_room_pointer_is_absent_by_default_and_set_by_the_manifest_header() {
+    let h = host().await;
+    h.put_manifest(b"v1", 1, &[]).await;
+    let uri = format!("/pub/{ID}");
+    assert!(h.get(&uri).await.headers.get("x-pub-room").is_none());
+
+    assert_eq!(h.put_manifest_room(2, ROOM).await.status, StatusCode::OK);
+    let res = h.get(&uri).await;
+    assert_eq!(res.header("x-pub-room"), ROOM);
+    let etag = res.header("etag").to_string();
+    let cond = h.get_with(&uri, "if-none-match", &etag).await;
+    assert_eq!(cond.status, StatusCode::NOT_MODIFIED);
+    assert_eq!(cond.header("x-pub-room"), ROOM);
+
+    // A later manifest without the header keeps it.
+    h.put_manifest(b"v3", 3, &[]).await;
+    assert_eq!(h.get(&uri).await.header("x-pub-room"), ROOM);
+    // A bad id is refused and changes nothing.
+    assert_eq!(
+        h.put_manifest_room(4, "nope").await.status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(h.get(&uri).await.header("x-pub-version"), "3");
+}
+
+#[tokio::test]
+async fn the_room_route_sets_clears_and_validates() {
+    let h = host().await;
+    h.put_manifest(b"v1", 1, &[]).await;
+    let uri = format!("/pub/{ID}");
+
+    assert_eq!(
+        h.put_room_as(ID, Some(TOKEN), ROOM).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(h.get(&uri).await.header("x-pub-room"), ROOM);
+
+    let bad = h.put_room_as(ID, Some(TOKEN), "not-a-room").await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    assert_eq!(bad.json()["error"], "bad_room");
+    assert_eq!(h.get(&uri).await.header("x-pub-room"), ROOM);
+
+    assert_eq!(
+        h.put_room_as(ID, Some(TOKEN), "").await.status,
+        StatusCode::NO_CONTENT
+    );
+    let res = h.get(&uri).await;
+    assert!(res.headers.get("x-pub-room").is_none());
+
+    // No manifest, no pointer.
+    assert_eq!(
+        h.put_room_as(OTHER_ID, Some(TOKEN), ROOM).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn the_room_route_wants_the_publisher_token() {
+    let h = host().await;
+    h.put_manifest(b"v1", 1, &[]).await;
+    assert_eq!(
+        h.put_room_as(ID, None, ROOM).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    let wrong = h.put_room_as(ID, Some("someone-else"), ROOM).await;
+    assert_eq!(wrong.status, StatusCode::FORBIDDEN);
+    assert!(h
+        .get(&format!("/pub/{ID}"))
+        .await
+        .headers
+        .get("x-pub-room")
+        .is_none());
+}
+
+#[tokio::test]
+async fn the_room_pointer_is_gone_after_delete() {
+    let h = host().await;
+    h.put_manifest_room(1, ROOM).await;
+    assert_eq!(
+        h.delete_as(ID, Some(TOKEN)).await.status,
+        StatusCode::NO_CONTENT
+    );
+    let meta = std::fs::read_to_string(h.pub_dir(ID).join("meta.json")).unwrap();
+    assert!(!meta.contains(ROOM), "{meta}");
+    assert_eq!(h.get(&format!("/pub/{ID}")).await.status, StatusCode::GONE);
+}

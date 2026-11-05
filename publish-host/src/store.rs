@@ -79,6 +79,10 @@ pub struct Meta {
     /// Set when unpublished or expired: the publication answers 410 for a while.
     #[serde(default)]
     pub deleted_at: Option<u64>,
+    /// The guest-notes room (a live channel) that goes with this publication, set by its
+    /// publisher. Absent in old files and omitted when unset, so they read and write the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<String>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -351,6 +355,7 @@ impl Store {
         Ok(true)
     }
 
+    #[allow(clippy::too_many_arguments)]
     /// Swaps in a new manifest. The caller checked the headers' syntax and the expiry range.
     pub async fn put_manifest(
         &self,
@@ -359,13 +364,14 @@ impl Store {
         version: u64,
         expires: u64,
         refs: &[String],
+        room: Option<&str>,
         auth: &Auth,
     ) -> Result<Meta, ApiError> {
         let mut used = self.used.write().await;
         let dir = self.dir(id);
         let before = held_bytes(&dir).await;
         let result = self
-            .put_manifest_locked(*used, id, manifest, version, expires, refs, auth)
+            .put_manifest_locked(*used, id, manifest, version, expires, refs, room, auth)
             .await;
         *used = used.saturating_sub(before) + held_bytes(&dir).await;
         result
@@ -380,6 +386,7 @@ impl Store {
         version: u64,
         expires: u64,
         refs: &[String],
+        room: Option<&str>,
         auth: &Auth,
     ) -> Result<Meta, ApiError> {
         let old = self.load(id).await?;
@@ -429,6 +436,12 @@ impl Store {
             manifest_sha: Some(sha256_hex(manifest)),
             blobs: refs.to_vec(),
             deleted_at: None,
+            // No header keeps the pointer; an empty one clears it.
+            room: match room {
+                None => old.as_ref().and_then(|m| m.room.clone()),
+                Some("") => None,
+                Some(r) => Some(r.to_string()),
+            },
         };
         self.write_meta(id, &meta).await?;
         // The swap is done: blobs the new manifest no longer references can go.
@@ -436,6 +449,24 @@ impl Store {
             let _ = fs::remove_file(dir.join("blobs").join(sha)).await;
         }
         Ok(meta)
+    }
+
+    /// Points the publication at a room (`Some`), or clears the pointer (`None`). The
+    /// publication must have a manifest: 404 otherwise.
+    pub async fn set_room(
+        &self,
+        id: &str,
+        room: Option<&str>,
+        auth: &Auth,
+    ) -> Result<(), ApiError> {
+        let _used = self.used.write().await;
+        let meta = self.load(id).await?;
+        Self::authorize(meta.as_ref(), auth)?;
+        let Some(mut meta) = meta.filter(|m| m.manifest_sha.is_some()) else {
+            return Err(not_found());
+        };
+        meta.room = room.map(str::to_string);
+        self.write_meta(id, &meta).await
     }
 
     /// Unpublishes: deletes the content and keeps a tombstone that answers 410 for a while.
