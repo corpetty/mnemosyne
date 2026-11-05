@@ -153,6 +153,7 @@ pub fn router(app: Shared) -> Router {
                 .put(put_manifest)
                 .delete(delete_publication),
         )
+        .route("/pub/{id}/room", put(put_room))
         .route("/pub/{id}/{sha}", get(get_blob).put(put_blob))
         .route("/n/", get(guest_page))
         .route("/n/{room}", get(guest_index))
@@ -240,6 +241,13 @@ fn header_u64(h: &HeaderMap, name: &'static str, missing: &'static str) -> Resul
 
 fn check_id(id: &str) -> Result<(), ApiError> {
     valid_id(id).then_some(()).ok_or(ApiError::bad("bad_id"))
+}
+
+/// Room ids have the shape of publication ids (rooms.rs checks them with `valid_id`).
+fn check_room(room: &str) -> Result<(), ApiError> {
+    valid_id(room)
+        .then_some(())
+        .ok_or(ApiError::bad("bad_room"))
 }
 
 fn check_sha(sha: &str) -> Result<(), ApiError> {
@@ -334,6 +342,9 @@ async fn get_manifest(
         HeaderName::from_static("x-pub-expires"),
         &meta.expires.to_string(),
     );
+    if let Some(room) = &meta.room {
+        set(&mut res, HeaderName::from_static("x-pub-room"), room);
+    }
     Ok(res)
 }
 
@@ -413,6 +424,16 @@ async fn put_manifest(
         return Err(ApiError::bad("too_many_blobs"));
     }
 
+    let room = match header_str(&headers, "x-pub-room") {
+        None => None,
+        Some(r) => {
+            if !r.is_empty() {
+                check_room(r)?;
+            }
+            Some(r)
+        }
+    };
+
     let manifest = read_body(&headers, body, app.cfg.manifest_max_bytes).await?;
     if manifest.is_empty() {
         return Err(ApiError::bad("empty_manifest"));
@@ -421,7 +442,7 @@ async fn put_manifest(
     let first = !app.store.is_published(&id).await;
     let meta = app
         .store
-        .put_manifest(&id, &manifest, version, expires, &refs, &auth)
+        .put_manifest(&id, &manifest, version, expires, &refs, room, &auth)
         .await?;
     if first {
         Metrics::inc(&app.metrics.publications_created);
@@ -432,6 +453,31 @@ async fn put_manifest(
         "sha256": meta.manifest_sha,
     }))
     .into_response())
+}
+
+/// `PUT /pub/<id>/room`: the body is the room id (the same shape as any room id); an empty
+/// body clears the pointer. 204; 404 when there is no manifest yet.
+async fn put_room(
+    State(app): State<Shared>,
+    UrlPath(id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, ApiError> {
+    check_id(&id)?;
+    let auth = auth_of(&app, &headers)?;
+    app.store.check_writer(&id, &auth).await?;
+    let bytes = read_body(&headers, body, 64).await?;
+    let room = std::str::from_utf8(&bytes)
+        .map_err(|_| ApiError::bad("bad_room"))?
+        .trim();
+    let room = if room.is_empty() {
+        None
+    } else {
+        check_room(room)?;
+        Some(room)
+    };
+    app.store.set_room(&id, room, &auth).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn delete_publication(
