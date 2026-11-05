@@ -113,6 +113,9 @@ class AppContext:
     )
     share_pull: Any = None  # services/share_pull.py SharePuller: meetings contacts share with us
     share_push: Any = None  # services/share_push.py SharePusher: what I did on them, sent back
+    # services/live_publications.py Watcher: republishes followed publications when their
+    # meeting changes. Its loop runs only while `live_watcher.interval` > 0 (tests set 0 and tick).
+    live_watcher: Any = None
     person: Any = None  # services/person.py PersonKeys: this person's signing key
 
     def __post_init__(self) -> None:
@@ -312,6 +315,9 @@ class AppContext:
         from ..services.share_push import SharePusher
 
         ctx.share_push = SharePusher(ctx)
+        from ..services.live_publications import Watcher
+
+        ctx.live_watcher = Watcher(ctx)
 
         # The sidecar's listeners are new each start: dial the sync peers and the contacts'
         # machines again, then pull.
@@ -640,6 +646,8 @@ class AppContext:
         from ..services import guest_notes
 
         await self._try("Guest notes", lambda: guest_notes.resume(self))
+        # Followed publications: a new version by itself when their meeting changes.
+        await self._try("Live publications", self.live_watcher.start)
 
     async def _reconcile_tasks(self) -> None:
         from ..services import task_links, task_migration
@@ -724,6 +732,8 @@ class AppContext:
             await self.share_push.stop()
         if self.share_pull is not None:
             await self.share_pull.stop()
+        if self.live_watcher is not None:  # before the jobs: it submits publish jobs
+            await self.live_watcher.stop()
         await self.link.stop()
         await self.rooms_link.stop()
         await self.index.stop()

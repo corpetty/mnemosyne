@@ -51,7 +51,11 @@ def keystore():
 
 @pytest.fixture
 def app(settings, keystore):
-    return create_app(settings, keystore=keystore)
+    app = create_app(settings, keystore=keystore)
+    # The live-publication watcher never runs on its own in a test (it would publish followed
+    # links behind the test's back); tests/test_live_publications.py ticks it.
+    app.state.ctx.live_watcher.interval = 0
+    return app
 
 
 @pytest.fixture
