@@ -126,6 +126,10 @@
 
 {#snippet entry(c: Comment, isRoot: boolean)}
 	{@render header(c)}
+	{#if isRoot && c.author_id.startsWith('reader:')}
+		<!-- A reader of the published link started it (services/live_publications.py): they see the replies. -->
+		<p class="text-[11px] text-gray-500">From the published link · replies are shown to its readers</p>
+	{/if}
 	{#if c.deleted}
 		<p class="text-gray-600 italic">Comment deleted</p>
 	{:else if editing === c.id}
