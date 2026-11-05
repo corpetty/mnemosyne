@@ -725,3 +725,9 @@ backend suite (locally: single files), the publish-host and link crates' full te
     Ctrl/Cmd+Enter sends, Escape drops the anchor; Cancel shows only when anchored.
   - The name card says only "Your name, shown with your comments" (the brief); the Risks line about
     saying that a cleared browser is a new reader is not in it.
+- Task 6: the bridge sets the pointer (`PUT /pub/{id}/room`) BEFORE creating the room, so an older host gets no
+  room at all; an older host answers that route 400 `bad_sha256` (it reads "room" as a blob hash), counted as
+  unsupported like a 404. The room id and the last applied seq live in `<pub_dir>/room.json` (no schema change).
+  The one-shot push (C12) joins with `since = 2**53-1`, sends the signed VERSION, waits up to 15 s for the ack and
+  never creates a room. A fresh bridge also sends the current VERSION after joining (readers ignore a version
+  that is not newer). Snapshots prune the log at most every 10 minutes and only after new frames.

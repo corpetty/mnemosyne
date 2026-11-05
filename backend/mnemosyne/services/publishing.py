@@ -1243,6 +1243,15 @@ async def publish(
         from .records import seal_later
 
         seal_later(app, session_id, SEAL_PUBLISHED if version == 1 else SEAL_UPDATED)
+    # Open readers hear of it: VERSION through the room (the origin's bridge, or a one-shot from
+    # another computer, C12); a publish that turned live off ends the room.
+    live_publications.version_published(
+        app,
+        row,
+        manifest_sha,
+        published_at=_iso(now),
+        expires_at=_iso(expires_at) if expires_at else "",
+    )
     job.update("Published", 1.0)
     return {"publication": to_model(app, row, session, local_base).model_dump(mode="json")}
 
@@ -1290,6 +1299,8 @@ async def unpublish(app: AppContext, session_id: str) -> dict | None:
         return None
     if why := served_elsewhere_message(app, row):
         raise HTTPException(409, why)
+    # The live room first: open readers hear it go (4410) and show "No longer published" (C13).
+    await live_publications.retire(app, row)
     if row["place"] == "host" and row["host_url"]:
         await _host_delete(app, row["host_url"], row["id"], row["token"])
     bury(app, row["id"], "unpublished", session_id)
@@ -1337,6 +1348,7 @@ def sweep_expired(app: AppContext) -> int:
                 # Every computer works out an expiry for itself: no new version to sync.
                 app.repo.mark_unpublished(row["id"], exp.isoformat(), touch=False)
                 history.log(app, row["session_id"], "publication_expired", publication=row["id"])
+                live_publications.retire_later(app, row)  # its bridge stops, its room goes
     return expired
 
 
@@ -1364,7 +1376,10 @@ def forget_session(app: AppContext, session_id: str):
 
 
 async def delete_quietly(app: AppContext, row: dict) -> None:
+    """The hosted copy deleted in the background (the meeting was deleted, or the publication
+    lost a library-sync merge), its live room first. Never raises."""
     try:
+        await live_publications.retire(app, row)  # never raises
         await _host_delete(app, row["host_url"], row["id"], row["token"])
     except Exception:
         logger.warning(
