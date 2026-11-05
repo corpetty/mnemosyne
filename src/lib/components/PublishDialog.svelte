@@ -376,7 +376,7 @@
 						{#if pub.justPublished}
 							{expiresLine}
 						{:else}
-							Published {shortDate(current.created_at)} · version {current.version}{current.expires_at ? ` · expires ${shortDate(current.expires_at)}` : ''}{#if current.behind && !(current.selection.follow && !current.live_reason)}<span class="text-amber-300">{' · behind'}</span>{/if}{#if current.live === 'live'}<span class="text-emerald-300"> · live</span>{#if current.readers > 0}{` · ${current.readers} reading`}{/if}{:else if current.live === 'offline'}<span class="text-amber-300"> · not connected to the host</span>{:else if current.live === 'unsupported'}<span class="text-gray-500"> · this host cannot push updates; readers check every minute</span>{/if}
+							Published {shortDate(current.created_at)} · version {current.version}{current.expires_at ? ` · expires ${shortDate(current.expires_at)}` : ''}{#if current.behind && !(current.selection.follow && !current.live_reason)}<span class="text-amber-300">{' · behind'}</span>{/if}{#if current.live === 'live'}<span class="text-emerald-300">{' · live'}</span>{#if current.readers > 0}{` · ${current.readers} reading`}{/if}{:else if current.live === 'offline'}<span class="text-amber-300">{' · not connected to the host'}</span>{:else if current.live === 'unsupported'}<span class="text-gray-500">{' · this host cannot push updates; readers check every minute'}</span>{/if}
 						{/if}
 					</p>
 					{#if current.live_reason}<p class="text-xs text-amber-300">{current.live_reason}</p>{/if}
