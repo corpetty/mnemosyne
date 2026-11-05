@@ -55,6 +55,9 @@ def app(settings, keystore):
     # The live-publication watcher never runs on its own in a test (it would publish followed
     # links behind the test's back); tests/test_live_publications.py ticks it.
     app.state.ctx.live_watcher.interval = 0
+    # Nor do publication bridges (rooms, one-shot VERSIONs): tests/test_live_publications.py
+    # turns them on where it drives a room.
+    app.state.ctx.live_bridges.enabled = False
     return app
 
 

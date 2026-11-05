@@ -608,7 +608,11 @@ def test_images_go_to_the_host_once(client, ctx, settings, seals):
 
 
 class FakeHost:
-    """The publish host contract (publish-host/), enough for the client."""
+    """The publish host contract (publish-host/), enough for the client. The room pointer
+    (`room`, live publications): `X-Pub-Room` on `PUT /pub/{id}` and `GET /pub/{id}`, and
+    `PUT /pub/{id}/room` (an empty body clears it); `pointer = False` plays an older host,
+    which takes "room" for a blob's sha (400 bad_sha256). No `/live/` rooms here (404):
+    tests/test_live_publications.py puts a FakeRoomHost beside it."""
 
     def __init__(self):
         self.calls = []
@@ -616,15 +620,24 @@ class FakeHost:
         self.blobs: dict[str, bytes] = {}
         self.manifest = None
         self.version = 0
+        self.room: str | None = None
+        self.pointer = True
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         self.calls.append((request.method, path, dict(request.headers)))
+        if not path.startswith("/pub/"):
+            return httpx.Response(404, json={"error": "not_found"})
         if request.method == "GET" and path.count("/") == 2:  # the manifest: open, like the host
             if self.manifest is None:
                 return httpx.Response(404)
             etag = '"' + hashlib.sha256(self.manifest).hexdigest() + '"'
-            return httpx.Response(200, content=self.manifest, headers={"etag": etag})
+            headers = {"etag": etag, "x-pub-version": str(self.version)}
+            if self.room:
+                headers["x-pub-room"] = self.room
+            return httpx.Response(200, content=self.manifest, headers=headers)
+        if request.method == "PUT" and path.endswith("/room") and not self.pointer:
+            return httpx.Response(400, json={"error": "bad_sha256"})
         auth = request.headers.get("authorization", "")
         if not auth.startswith("Bearer "):
             return httpx.Response(401, json={"error": "unauthorized"})
@@ -634,6 +647,11 @@ class FakeHost:
         elif token != self.token:
             return httpx.Response(403, json={"error": "wrong_token"})
         parts = path.strip("/").split("/")
+        if request.method == "PUT" and len(parts) == 3 and parts[2] == "room":
+            if self.manifest is None:
+                return httpx.Response(404, json={"error": "not_found"})
+            self.room = request.content.decode().strip() or None
+            return httpx.Response(204)
         if request.method == "PUT" and len(parts) == 3:
             known = parts[2] in self.blobs
             self.blobs[parts[2]] = request.content
@@ -648,10 +666,13 @@ class FakeHost:
                 return httpx.Response(409, json={"error": "missing", "missing": missing})
             assert int(request.headers["x-pub-expires"]) <= time.time() + 365 * 86400 + 60
             self.version, self.manifest = version, request.content
+            if "x-pub-room" in request.headers:
+                self.room = request.headers["x-pub-room"] or None
             return httpx.Response(200, json={"version": version})
         if request.method == "DELETE":
             self.blobs.clear()
             self.manifest = None
+            self.room = None
             return httpx.Response(204)
         return httpx.Response(404)
 
