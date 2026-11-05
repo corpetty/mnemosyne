@@ -50,10 +50,17 @@ export function metaLine(date: string, durationSeconds: number | null, attendees
 		.join(' · ');
 }
 
+/** A moment as the reader's local time of day, "14:32". */
+export function formatTime(d: Date): string {
+	return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 /** "Published with Mnemosyne · version 2 · expires 21 Jan 2027"; a preview says "Preview ·
- * version 2" (the version a publish would make). */
-export function footerLine(version: number, expiresAt: string | null, preview = false): string {
+ * version 2" (the version a publish would make). After a newer version came in while the page
+ * was open, `updated` ("14:32") adds " · Updated 14:32". */
+export function footerLine(version: number, expiresAt: string | null, preview = false, updated: string | null = null): string {
 	const parts = [preview ? 'Preview' : 'Published with Mnemosyne', `version ${version}`];
 	if (expiresAt) parts.push(`expires ${formatDate(expiresAt)}`);
+	if (updated) parts.push(`Updated ${updated}`);
 	return parts.join(' · ');
 }

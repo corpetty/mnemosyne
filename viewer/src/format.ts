@@ -94,6 +94,8 @@ export interface Manifest {
   /** The images the notes show; absent from a publication without any. */
   images?: ImageRef[];
   quotes: Quote[];
+  /** The owner's public keys for live updates (hex); absent from a publication that is not live. */
+  live?: { sign: string; box: string };
 }
 
 export class PublicationFormatError extends Error {

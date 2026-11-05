@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { footerLine, formatClock, formatDate, formatDuration, metaLine } from './display';
+import { footerLine, formatClock, formatDate, formatDuration, formatTime, metaLine } from './display';
 
 describe('dates', () => {
 	it('formats a calendar date without shifting it', () => {
@@ -48,5 +48,12 @@ describe('lines', () => {
 		expect(footerLine(2, '2027-01-21')).toBe('Published with Mnemosyne · version 2 · expires 21 Jan 2027');
 		expect(footerLine(1, null)).toBe('Published with Mnemosyne · version 1');
 		expect(footerLine(4, null, true)).toBe('Preview · version 4');
+		expect(footerLine(5, '2027-01-21', false, '14:32')).toBe(
+			'Published with Mnemosyne · version 5 · expires 21 Jan 2027 · Updated 14:32'
+		);
+	});
+	it('writes the time of an update as local HH:MM', () => {
+		expect(formatTime(new Date(2026, 10, 5, 14, 32, 59))).toBe('14:32');
+		expect(formatTime(new Date(2026, 10, 5, 9, 5))).toBe('09:05');
 	});
 });

@@ -18,8 +18,9 @@ export default defineConfig({
 	clearScreen: false,
 	plugins: [tailwindcss(), svelte({ configFile: false }), singleFile()],
 	resolve: {
-		// Markdown.svelte (shared with the app) imports Tauri lazily to open links.
-		alias: { '@tauri-apps/api/core': here('./src/no-tauri.ts') }
+		// Markdown.svelte (shared with the app) imports Tauri lazily to open links. The room client
+		// and the sealed envelopes of live publications live in the app's src/lib.
+		alias: { '@tauri-apps/api/core': here('./src/no-tauri.ts'), $lib: here('../src/lib') }
 	},
 	build: {
 		outDir: here('../backend/mnemosyne/api/static/viewer'),
