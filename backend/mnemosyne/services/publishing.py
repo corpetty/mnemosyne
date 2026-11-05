@@ -283,26 +283,46 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+class Redaction:
+    """The names and text rules a publication applies under a selection: `names` (as they
+    are, first names, "Person N"; people not listed are always "Person N") and `text()`
+    (identifiers and contacts redacted when `hide_identifiers`, then names). One
+    implementation for the manifest (`build_content`) and for what readers of a live
+    publication see of the comments (live_publications.threads_for_readers)."""
+
+    def __init__(self, session: Session, sel: PublicationSelection) -> None:
+        self.sel = sel
+        self.people = meeting_people(session)
+        self.wanted = {_clean(a).casefold() for a in sel.attendees}
+        lower = {p.casefold() for p in self.people}
+        hidden = {p for p in lower if p not in self.wanted}
+        data = session.summary_data
+        owners = [_real_name(a.owner) or "" for a in (data.action_items if data else [])]
+        known = self.people + [o for o in owners if o and o.casefold() not in lower]
+        self.names = Names(known, sel.names, hidden)
+
+    def text(self, value: str) -> str:
+        if self.sel.hide_identifiers:
+            from ..summarization.privacy import redact_contacts, redact_identifiers
+
+            value = redact_contacts(redact_identifiers(value))
+        return self.names.text(value)
+
+
 def build_content(
     app: AppContext, session: Session, sel: PublicationSelection
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """What the selection shows of the meeting, redacted: the manifest's fields except id,
     version, times and clips; and one spec per quote ({id, key, first, last, start, end,
     with_clip}, joined-timeline seconds of the clip to cut). Never the transcript."""
-    people = meeting_people(session)
-    wanted = {_clean(a).casefold() for a in sel.attendees}
-    hidden = {p.casefold() for p in people if p.casefold() not in wanted}
+    redaction = Redaction(session, sel)
+    people, wanted, names, text = (
+        redaction.people,
+        redaction.wanted,
+        redaction.names,
+        redaction.text,
+    )
     data = session.summary_data
-    owners = [_real_name(a.owner) or "" for a in (data.action_items if data else [])]
-    known = people + [o for o in owners if o and o.casefold() not in {p.casefold() for p in people}]
-    names = Names(known, sel.names, hidden)
-
-    def text(value: str) -> str:
-        if sel.hide_identifiers:
-            from ..summarization.privacy import redact_contacts, redact_identifiers
-
-            value = redact_contacts(redact_identifiers(value))
-        return names.text(value)
 
     content: dict[str, Any] = {
         "title": text(_clean(sel.title) or session.name),
@@ -1299,10 +1319,11 @@ async def unpublish(app: AppContext, session_id: str) -> dict | None:
         return None
     if why := served_elsewhere_message(app, row):
         raise HTTPException(409, why)
-    # The live room first: open readers hear it go (4410) and show "No longer published" (C13).
-    await live_publications.retire(app, row)
+    # The publication first, then its room: a reader that hears the room go (4410) re-reads the
+    # publication and must find it gone (410) to show "No longer published" at once (C13).
     if row["place"] == "host" and row["host_url"]:
         await _host_delete(app, row["host_url"], row["id"], row["token"])
+    await live_publications.retire(app, row)
     bury(app, row["id"], "unpublished", session_id)
     at = _now().isoformat()
     app.repo.mark_unpublished(row["id"], at)
