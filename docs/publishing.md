@@ -66,8 +66,9 @@ through the desktop app's save dialog, or downloads it in a browser.
 The link looks like `https://<host>/p/<id>#<key>`. The part after `#` is the key; browsers never
 send it to a server. The page fetches the encrypted copy and decrypts it in the browser
 (WebCrypto): title, date, summary, decisions, questions, action items, chapters, topics, notes (with their images)
-and the quotes, each with a play button when it has a clip. Readers cannot write, comment or see
-anything you did not tick. A wrong or shortened key, a deleted publication and an expired one each
+and the quotes, each with a play button when it has a clip. Readers cannot write or see
+anything you did not tick. (On a publish host with comments on, readers can comment: see "Comments from
+readers".) A wrong or shortened key, a deleted publication and an expired one each
 get their own plain message.
 
 ## What the host can see
@@ -99,9 +100,72 @@ You can change what is shown, move it from this computer to a host (the old copy
 change the expiry.
 
 After you re-summarize or edit the summary, notes or a quoted line, the meeting shows **"published version
-is behind"** whenever publishing again would show something different. Nothing updates by itself.
+is behind"** whenever publishing again would show something different. Nothing updates by itself, unless you turned on "Keep the link up to date" (below).
 Each version is recorded in the meeting's history (`published`, `publication_updated`,
 `unpublished`).
+
+## Kept up to date
+
+Tick **Keep the link up to date** in the Publish dialog and the link follows the meeting. When the meeting
+changes (a re-summarize, an edit of the summary, the notes or a quoted line, a speaker renamed), your computer
+publishes a new version by itself, under the same link, and readers who have the page open see it replace the
+old one without reloading. The footer says "Updated 14:32".
+
+- **Only what you ticked goes out.** The new version is made from the choices you saved, the same way an
+  Update does it: the same parts, the same names and hidden identifiers, the same attendee list ("Person N"
+  for everyone else), the same quotes. A decision you left unticked stays out however often the meeting
+  changes. Pictures are the one thing that could grow: when you turn this on, the notes' pictures you saw in
+  the dialog are fixed as the list, so a picture pasted in later is not published until you tick it at the
+  next Update.
+- **How often.** A change counts once the meeting has been quiet for 10 seconds, or once the first change
+  waiting is a minute old if it never goes quiet (typing in the notes). There are at least 30 seconds between
+  two automatic versions, and a version identical to the one out is never sent.
+- **What it costs you.** A wrong speaker rename or a hasty summary edit is public within about a minute.
+  Untick the switch or Unpublish to stop it.
+- **Records.** A version made by itself is a line in the meeting's history (`publication_auto_updated`), and
+  is listed in `publications.json` with `auto: true`. It does not seal a record version; Publish, Update (where
+  you can turn this on or off) and Unpublish do, as before.
+- **What readers see.** "Kept up to date as the meeting changes" in the page when live updates reach them. A
+  host that cannot push (an older one) or a reader who cannot connect gets "Checks for updates every
+  minute": the page asks the host once a minute and swaps in a newer version it finds. The dialog shows the
+  state of your side: live, with how many are reading, or not connected to the host, or that this host
+  cannot push (readers poll).
+- **Your computer must be on.** The host keeps the last version without it, and readers can still open it;
+  nothing new appears until your computer is back. Only the computer that recorded the meeting makes
+  automatic versions; the other computer of a library-sync pair can still Update by hand.
+
+**Where it applies.** Hosted publications only. A "this computer" publication has no room, so neither
+switch is offered for it, and the one-file export never updates ("This file does not update"). A meeting
+someone shared with you cannot be live either.
+
+## Comments from readers
+
+Tick **Readers may comment** and anyone with the link can comment on the published page, under a name they
+type the first time. They can comment on a decision, a question, an action item, a quote, a passage of the
+summary, or the meeting as a whole. They can edit and delete their own comments. Nothing proves a name: it is
+what the person typed, and your app shows it as "Ana (reader)" with a line saying it came from the published
+link.
+
+- **What readers see.** Only threads a reader started, with every reply in them, yours included. Your own
+  threads, and threads on a part you did not publish, never go out. Your replies are passed through the same
+  names and identifier hiding as the rest of the publication. A comment you delete shows as "removed".
+  Readers see each other's threads a moment after they are written, not the comments as they are typed.
+- **Your replies.** Reply in the comments panel as for any thread; the reader sees it in theirs. Resolve and
+  delete work as for guests.
+- **Approve or Hide.** Tick **Approve comments before other readers see them** (needs comments on) and a
+  reader's first comment, and each reply, reaches the other readers only once you press **Approve** on it.
+  The writer sees their own comment at once, marked "Waiting for the owner". Comments made before you turned
+  this on stay shown. **Hide** takes a comment away from readers whether the switch is on or not; "Show to
+  readers" brings it back. Both are for the meeting's owner or an admin.
+- **A cleared browser is a new reader.** A reader's identity is a key in their browser. Clear the site's
+  data, use another device or close a private window, and they are someone new: their old comments stay, but
+  they can no longer edit them. You can still delete them.
+- **Caps.** A comment is at most 4,000 characters, a name 80, and a reader can make 20 changes in 10
+  minutes. More are ignored.
+- **How they travel.** Comments travel as encrypted frames: other readers cannot read a comment from
+  the room before you let it out, or edit one that is not theirs. Reader comments are ordinary comments of
+  the meeting: they are searchable, sync with your other computer and are in the records export.
+- **Where it applies.** Hosted publications only, as above.
 
 ## Team servers
 

@@ -100,6 +100,7 @@ either. Ids are 16 lowercase hex characters, hashes 64 lowercase hex (anything e
 | `GET /pub/{id}/{sha256}` | a blob, cached as immutable; 404 if the current publication does not hold it |
 | `PUT /pub/{id}/{sha256}` | upload a blob (its hash must match the path) |
 | `PUT /pub/{id}` | swap in a manifest: `X-Pub-Version` (must rise), `X-Pub-Expires`, `X-Pub-Blobs` (comma-separated hashes it uses, all uploaded first, else 409). Blobs it no longer uses are deleted |
+| `PUT /pub/{id}/room` | set the publication's live room (body: a room id; empty clears it); the room id also comes back as `X-Pub-Room` on `GET /pub/{id}` and can be sent on `PUT /pub/{id}` |
 | `DELETE /pub/{id}` | delete everything; 410 for 30 days, then 404 |
 | `GET /health` | `ok` |
 
@@ -107,6 +108,12 @@ Writes need `Authorization: Bearer <publisher token>`. Problems come back as JSO
 `{"error": "<code>", ...}`: 400 malformed, 401 no token, 403 wrong token (or no upload token on a
 closed host), 409 version not rising or blobs missing (the body lists them), 413 too large,
 429 rate limited (with `Retry-After`), 507 store full.
+
+**Live publications need this route.** A publication kept up to date, or open to reader comments, keeps a
+room on the host and records its id with `PUT /pub/{id}/room`. Rebuild the host from a Mnemosyne that has
+the route (`docker compose up -d --build`) before turning those on. An older host still works: the app
+sees the route is missing, reports "This host cannot push updates", still uploads new versions, and
+readers' pages check for a new one once a minute and cannot comment. See [publishing.md](../../docs/publishing.md).
 
 ## Guest notes rooms
 

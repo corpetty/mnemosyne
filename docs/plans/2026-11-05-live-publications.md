@@ -1,7 +1,8 @@
 # Live publications: design and tasks
 
-Status: draft 2026-11-05 on branch live-publications (cut from main at 2b30a8d = Release 0.29.0), for Corey's
-review; nothing built. Phase 7 (publishing), phases 9 and 10 (guest notes and their rooms), "Our servers",
+Status: built 2026-11-05 on branch live-publications (PR #17)
+
+Cut from main at 2b30a8d = Release 0.29.0. Phase 7 (publishing), phases 9 and 10 (guest notes and their rooms), "Our servers",
 images in the notes and the summary in the notes (docs/plans/2026-11-04-summaries-in-notes.md) are the
 surroundings. Every statement below about the code was checked against it; the files and functions are named.
 
@@ -791,3 +792,7 @@ backend suite (locally: single files), the publish-host and link crates' full te
     on every reader comment that is not approved. Beyond the decided UI: reader REPLIES get the same caption and
     buttons (they need approval too), and Hide is offered on a reader's visible comment whenever readers may comment
     (the kill switch, `moderate` or not).
+- Unpublish order reversed from C13 (found by the M1 e2e): the publication is deleted on the host FIRST, then its
+  room. A reader that hears the room close (4410) re-reads `/pub/{id}`; with the room gone first it still found the
+  publication and fell back to polling, so "No longer published" took up to a minute.
+- Approve-before-show (13b) was built in this round, so the "no approve queue in v1" bullet above no longer holds.

@@ -455,6 +455,21 @@ Storage and serving:
 - Where a link points: a host link uses `publish_host`, else our host (services/ours.py); a "this computer" link uses the team
   listener, else `phone_url` (`local_reach`); with neither, only 127.0.0.1 can open it.
 
+Live publications (services/live_publications.py; use in [publishing.md](publishing.md), design in
+docs/plans/2026-11-05-live-publications.md). A hosted publication stays a sealed snapshot per version; "live"
+adds two things beside it. A watcher polls the library-sync change log every 5 s and, for a meeting whose
+selection has `follow`, submits the ordinary `publish` job with the stored selection once the meeting has been
+quiet 10 s (at most 60 s of waiting, 30 s between versions), so nothing a reader gets can exceed the selection.
+A bridge per publication keeps a room on the same publish host (its id is stored by the host as `X-Pub-Room`,
+set with `PUT /pub/{id}/room`) and sends signed `VERSION` frames, which the viewer answers by fetching and
+checking the new manifest; without a room (older host, "this computer") the viewer polls the ETag every minute.
+Reader comments come back as `COMMENT` frames boxed to the owner's X25519 key and signed per reader; the bridge
+writes them through services/comments.py as `reader:<rid>`, and readers see comments only in signed `THREADS`
+frames built from `publishing.Redaction`, the same redaction the manifest uses. The frame format is
+services/pub_live_format.py (Ed25519 per publication, public half in the sealed manifest's `live` field, FORMAT
+still 1). Unpublish deletes the publication, then the room, so a reader who hears the room go finds the
+publication gone.
+
 ### Our servers
 
 `services/ours.py` is the one place that answers "which relay, which host": `relays()` = `remote_relays`, else
