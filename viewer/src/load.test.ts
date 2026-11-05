@@ -9,9 +9,12 @@ import {
 	expiredOn,
 	openFile,
 	openHosted,
+	parseEtag,
 	parseLocation,
 	parsePayload,
+	parseRoom,
 	stateMessage,
+	swap,
 	unlockFile,
 	type FilePayload,
 	type ViewState
@@ -143,6 +146,66 @@ describe('hosted', () => {
 		});
 		const state = ready(await openHosted(at(`#${KEY}`), only.fn, BEFORE_EXPIRY));
 		await expect(state.loadClip(state.manifest.quotes[0].clip!)).rejects.toThrow(/no longer available/);
+	});
+});
+
+describe('following a hosted publication', () => {
+	it('keeps the ETag and the room header with the ready state', async () => {
+		const tagged = fakeFetch({
+			[`/pub/${ID}`]: {
+				status: 200,
+				body: MANIFEST,
+				headers: { 'X-Pub-Version': String(VERSION), ETag: `"${'a'.repeat(64)}"`, 'X-Pub-Room': '0011223344556677' }
+			}
+		});
+		const s = ready(await openHosted(at(`#${KEY}`), tagged.fn, BEFORE_EXPIRY));
+		expect([s.etag, s.room, s.hosted?.id]).toEqual(['a'.repeat(64), '0011223344556677', ID]);
+		const plain = ready(await openHosted(at(`#${KEY}`), host().fn, BEFORE_EXPIRY));
+		expect([plain.etag, plain.room]).toEqual(['', null]);
+	});
+
+	it('reads ETag and room headers strictly', () => {
+		expect(parseEtag('"abc"')).toBe('abc');
+		expect(parseEtag('W/"abc"')).toBe('abc');
+		expect(parseEtag(null)).toBe('');
+		expect(parseRoom('0011223344556677')).toBe('0011223344556677');
+		expect(parseRoom('0011')).toBeNull();
+		expect(parseRoom('../../x')).toBeNull();
+		expect(parseRoom(null)).toBeNull();
+	});
+
+	it('maps 304, 404 and 410 on a later fetch', async () => {
+		// The handle from a fake that answers by the If-None-Match it is given.
+		const hosted = ready(
+			await openHosted(
+				at(`#${KEY}`),
+				(async (_u: RequestInfo | URL, init?: RequestInit) => {
+					const inm = (init?.headers as Record<string, string> | undefined)?.['If-None-Match'];
+					if (inm === '"e"') return new Response(null, { status: 304, headers: { 'X-Pub-Room': '0011223344556677' } });
+					if (inm === '"gone"') return new Response(null, { status: 410 });
+					if (inm === '"none"') return new Response(null, { status: 404 });
+					return new Response(MANIFEST as BodyInit, { status: 200, headers: { 'X-Pub-Version': String(VERSION) } });
+				}) as typeof fetch,
+				BEFORE_EXPIRY
+			)
+		).hosted!;
+		expect(await hosted.fetch({ etag: 'e', cache: 'no-store' })).toEqual({ kind: 'not_modified', etag: 'e', room: '0011223344556677' });
+		expect(await hosted.fetch({ etag: 'gone', cache: 'no-store' })).toEqual({ kind: 'unpublished' });
+		expect(await hosted.fetch({ etag: 'none', cache: 'no-store' })).toEqual({ kind: 'not_found' });
+		const m = await hosted.fetch({ cache: 'no-cache' });
+		expect(m.kind === 'manifest' && m.manifest.version).toBe(VERSION);
+	});
+
+	it('swaps a manifest in, keeping the loaders, or gives the expiry', async () => {
+		const s = ready(await openHosted(at(`#${KEY}`), host().fn, BEFORE_EXPIRY));
+		const next = { manifest: { ...s.manifest, version: VERSION + 1 }, etag: 'b'.repeat(64), room: null };
+		const swapped = ready(swap(s, next, BEFORE_EXPIRY));
+		expect(swapped.manifest.version).toBe(VERSION + 1);
+		expect(swapped.loadClip).toBe(s.loadClip);
+		expect(swapped.loadImage).toBe(s.loadImage);
+		expect(swapped.hosted).toBe(s.hosted);
+		expect(swapped.etag).toBe('b'.repeat(64));
+		expect(swap(s, next, AFTER_EXPIRY).kind).toBe('expired');
 	});
 });
 

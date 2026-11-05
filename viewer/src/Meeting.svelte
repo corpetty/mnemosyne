@@ -1,6 +1,7 @@
 <script lang="ts">
 	// A published meeting, read-only. Takes the decrypted manifest, so the app's Publish dialog
-	// can render its preview (`preview`: the footer says so) with this same component.
+	// can render its preview (`preview`: the footer says so) with this same component. `updated`
+	// ("14:32") and `status` (how the page keeps up, live.ts STATUS) come from the viewer only.
 	import Markdown from '../../src/lib/components/Markdown.svelte';
 	import { footerLine, formatClock, formatDate, metaLine } from './display';
 	import type { Manifest } from './format';
@@ -12,8 +13,17 @@
 		manifest,
 		loadClip,
 		loadImage,
-		preview = false
-	}: { manifest: Manifest; loadClip: ClipLoader; loadImage?: ImageLoader; preview?: boolean } = $props();
+		preview = false,
+		updated = null,
+		status = null
+	}: {
+		manifest: Manifest;
+		loadClip: ClipLoader;
+		loadImage?: ImageLoader;
+		preview?: boolean;
+		updated?: string | null;
+		status?: string | null;
+	} = $props();
 
 	const m = $derived(manifest);
 	const meta = $derived(metaLine(m.date, m.duration_seconds, m.attendees ?? []));
@@ -125,8 +135,10 @@
 		</section>
 	{/if}
 
-	<footer class="border-t border-gray-800 pt-4 text-xs text-gray-600">
-		{footerLine(m.version, m.expires_at, preview)}
+	<!-- The status shares the footer's line when it fits, else wraps to above it. -->
+	<footer class="flex flex-wrap-reverse justify-between gap-x-4 gap-y-1 border-t border-gray-800 pt-4 text-xs text-gray-600">
+		<span>{footerLine(m.version, m.expires_at, preview, updated)}</span>
+		{#if status}<span>{status}</span>{/if}
 	</footer>
 </article>
 

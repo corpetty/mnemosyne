@@ -69,6 +69,16 @@ describe('Meeting', () => {
 		expect(target.querySelector('footer')!.textContent!.trim()).toBe('Preview · version 3');
 	});
 
+	it('adds the update time to the footer and the status beside it', () => {
+		target = document.createElement('div');
+		document.body.appendChild(target);
+		const props = { manifest: { ...manifest, expires_at: null }, loadClip: vi.fn(), updated: '14:32', status: 'Checks for updates every minute' };
+		component = mount(Meeting, { target, props });
+		flushSync();
+		const spans = [...target.querySelectorAll('footer > span')].map((s) => s.textContent);
+		expect(spans).toEqual(['Published with Mnemosyne · version 2 · Updated 14:32', 'Checks for updates every minute']);
+	});
+
 	it('keeps the line breaks of a quote with several speakers', () => {
 		const text = 'Ana: First.\nBo: Second.';
 		render({ ...manifest, quotes: [{ ...manifest.quotes[1], text, speaker: null }] });
@@ -216,6 +226,32 @@ describe('Viewer', () => {
 		document.body.appendChild(target);
 		component = mount(Viewer, { target, props: { source: { kind: 'file', payload: '__PAYLOAD__' } } });
 		await vi.waitFor(() => expect(target.textContent).toContain('This file could not be opened'));
+	});
+
+	it('says a single file does not update, and never fetches', async () => {
+		const payload = JSON.stringify({
+			format: 1,
+			id: vec.id,
+			version: vec.manifest.version,
+			manifest: vec.manifest.blob_b64url,
+			clips: {},
+			key: vec.key_b64url
+		});
+		const fetchSpy = vi.fn();
+		vi.stubGlobal('fetch', fetchSpy);
+		vi.stubGlobal('WebSocket', fetchSpy);
+		// Before the vectors' expiry, whatever today is.
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-10-23T12:00:00Z'));
+		target = document.createElement('div');
+		document.body.appendChild(target);
+		component = mount(Viewer, { target, props: { source: { kind: 'file', payload } } });
+		await vi.waitFor(() => expect(target.querySelector('footer')).not.toBeNull());
+		const spans = [...target.querySelectorAll('footer > span')].map((s) => s.textContent);
+		expect(spans[1]).toBe('This file does not update');
+		expect(fetchSpy).not.toHaveBeenCalled();
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
 	});
 
 	it('shows the password prompt for a protected file', async () => {

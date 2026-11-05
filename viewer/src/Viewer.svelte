@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { openFile, openHosted, stateMessage, unlockFile, type Source, type ViewState } from './load';
+	import { formatTime } from './display';
+	import { Follower, STATUS, statusLine } from './live';
+	import { openFile, openHosted, stateMessage, swap, unlockFile, type Source, type ViewState } from './load';
 	import Meeting from './Meeting.svelte';
 
 	let { source }: { source: Source } = $props();
@@ -9,13 +11,58 @@
 	let password = $state('');
 	let unlocking = $state(false);
 	const message = $derived(stateMessage(view));
+	/** "14:32" once a newer version was swapped in. */
+	let updated = $state<string | null>(null);
+	let following = $state(false);
+	let follower: Follower | null = null;
+	// single.html never polls or joins: it has no network (its CSP allows no requests).
+	const status = $derived(
+		source.kind === 'file' ? STATUS.file : view.kind === 'ready' && view.hosted ? statusLine(following) : null
+	);
+
+	function stopFollowing() {
+		follower?.stop();
+		follower = null;
+		following = false;
+	}
+
+	/** Poll the publication and, when it is live, follow its room; newer versions replace it in place. */
+	function follow() {
+		if (view.kind !== 'ready' || !view.hosted) return;
+		const f: Follower = new Follower(
+			view.hosted,
+			{ manifest: view.manifest, etag: view.etag ?? '', room: view.room ?? null },
+			{
+				onManifest: (next) => {
+					if (f !== follower || view.kind !== 'ready') return;
+					const now = new Date();
+					view = swap(view, next, now);
+					if (view.kind === 'ready') updated = formatTime(now);
+					else stopFollowing();
+				},
+				onGone: (state) => {
+					if (f !== follower) return;
+					stopFollowing();
+					view = state;
+				},
+				onChange: () => {
+					if (f === follower) following = f.following;
+				}
+			}
+		);
+		follower = f;
+		f.start();
+	}
 
 	async function load() {
+		stopFollowing();
+		updated = null;
 		view = { kind: 'loading' };
 		view =
 			source.kind === 'file'
 				? await openFile(source.payload)
 				: await openHosted(window.location, window.fetch.bind(window));
+		follow();
 	}
 
 	async function unlock(e: SubmitEvent) {
@@ -38,13 +85,16 @@
 		// A key pasted in after the page opened.
 		const onHash = () => source.kind === 'hosted' && load();
 		window.addEventListener('hashchange', onHash);
-		return () => window.removeEventListener('hashchange', onHash);
+		return () => {
+			window.removeEventListener('hashchange', onHash);
+			stopFollowing();
+		};
 	});
 </script>
 
 <main class="mx-auto w-full max-w-3xl px-4 py-8 sm:py-12">
 	{#if view.kind === 'ready'}
-		<Meeting manifest={view.manifest} loadClip={view.loadClip} loadImage={view.loadImage} />
+		<Meeting manifest={view.manifest} loadClip={view.loadClip} loadImage={view.loadImage} {updated} {status} />
 	{:else if view.kind === 'password'}
 		<form class="mx-auto mt-12 max-w-sm space-y-3" onsubmit={unlock}>
 			<h1 class="text-lg font-semibold text-gray-100">This meeting is protected with a password</h1>
