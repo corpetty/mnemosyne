@@ -48,14 +48,14 @@
 	};
 
 	// Moderating what readers of the published link write (services/live_publications.py). The
-	// meeting's publication is in the publishing store while the meeting is open; if it is not
-	// there (yet), every reader's comment that is not approved offers Approve.
+	// meeting's publication is in the publishing store while the meeting is open (SessionView loads
+	// it); until it is, nothing is marked waiting.
 	const publication = $derived(publishingState.publications[sessionId]);
 	const fromReader = (c: Comment) => c.author_id.startsWith('reader:');
 	/** Readers see this comment only once it is approved (`moderate` on, and it was written after that). */
 	function needsApproval(c: Comment): boolean {
 		if (!fromReader(c) || c.approved_at) return false;
-		if (publication === undefined) return true;
+		if (publication === undefined) return false;
 		const sel = publication && !publication.unpublished_at ? publication.selection : null;
 		if (!sel?.comments || !sel.moderate) return false;
 		const since = sel.moderated_since ? Date.parse(sel.moderated_since) : NaN;
@@ -166,7 +166,7 @@
 	{#if fromReader(c) && (isRoot || mod)}
 		<!-- A reader of the published link wrote it (services/live_publications.py): they see the replies. -->
 		<p class="text-[11px] text-gray-500">
-			From the published link{#if isRoot} · replies are shown to its readers{/if}{#if mod === 'pending'}<span class="text-amber-300"> · waiting for your approval</span>{:else if mod === 'hidden'}{' '}· hidden from readers{/if}
+			From the published link{#if isRoot}{' · replies are shown to its readers'}{/if}{#if mod === 'pending'}<span class="text-amber-300">{' · waiting for your approval'}</span>{:else if mod === 'hidden'}{' · hidden from readers'}{/if}
 		</p>
 	{/if}
 	{#if c.deleted}
