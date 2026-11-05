@@ -975,6 +975,37 @@ def test_comment_resolved_on_one_side_is_taken(binary):
     assert report["kept"] >= 1 and report["both"] == 0
 
 
+def test_comment_approval_and_hiding_merge_field_by_field(binary):
+    """Moderation (task 13b) travels as the other scalar fields do: a change on one side is
+    taken, approving here and hiding there keep both (hidden wins when read)."""
+    base = _doc(comments=[_comment("c1"), _comment("c2"), _comment("c3")])
+    at = T0.replace(minute=7).isoformat()
+    later = T0.replace(minute=9).isoformat()
+
+    def mine(d):
+        d.comments[0].approved_at = at
+        d.comments[1].approved_at = at
+
+    def yours(d):
+        d.comments[1].hidden_at = later
+        d.comments[2].hidden_at = later
+
+    out, _ = _merge(base, _ours(base, mine), _theirs(base, yours), binary)
+    c1, c2, c3 = out.comments
+    assert (c1.approved_at, c1.hidden_at) == (at, None)
+    assert (c2.approved_at, c2.hidden_at) == (at, later)
+    assert (c3.approved_at, c3.hidden_at) == (None, later)
+
+    # Approving after a hide (which clears it) on one side is taken over the old hide.
+    hidden = _doc(comments=[_comment("c1", approved_at=at, hidden_at=later)])
+
+    def approve(d):
+        d.comments[0].hidden_at = None
+
+    out, _ = _merge(hidden, _ours(hidden, approve), _theirs(hidden), binary)
+    assert (out.comments[0].approved_at, out.comments[0].hidden_at) == (at, None)
+
+
 def test_comment_resolved_on_both_sides_takes_the_newer_side(binary):
     base = _doc(comments=[_comment("c1")])
 

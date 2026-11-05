@@ -190,3 +190,39 @@ def test_the_comments_event_reaches_only_those_who_may_read(team):
         finally:
             access.current.reset(reset)
     assert seen == {"Ann": True, "Bob": False, "Rita": True}
+
+
+def test_only_the_owner_and_an_admin_approve_or_hide(team):
+    client, ctx, people = team
+    sid = _meeting(ctx, people, "Ann")
+    sharing.set_shares(ctx, sid, {sharing.EVERYONE})
+    ann, bob, admin, rita = (people[n][1] for n in ("Ann", "Bob", "Admin", "Rita"))
+    mine = _comment(client, sid, bob, text="Bob's thread").json()
+    assert not mine["can_moderate"]  # not even his own comment: it is the owner's call
+
+    for who in (bob, rita):
+        assert client.post(_url(sid, f"/{mine['id']}/approve"), headers=who).status_code == 403
+        assert client.post(_url(sid, f"/{mine['id']}/hide"), headers=who).status_code == 403
+    assert client.post(_url(sid, f"/{mine['id']}/approve"), headers=ann).status_code == 200
+    assert client.post(_url(sid, f"/{mine['id']}/hide"), headers=admin).status_code == 200
+    seen = client.get(_url(sid), headers=ann).json()["threads"][0]["root"]
+    assert seen["can_moderate"] and seen["approved_at"] and seen["hidden_at"]
+    # A stranger is told there is no such meeting.
+    cat = people["Cat"][1]
+    sharing.set_shares(ctx, sid, set())
+    assert client.post(_url(sid, f"/{mine['id']}/approve"), headers=cat).status_code == 404
+
+
+def test_an_explicit_actor_never_moderates(team):
+    """A reader or guest acting through the owner's bridge is a plain member of the comments."""
+    client, ctx, people = team
+    sid = _meeting(ctx, people, "Ann")
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    actor = ("reader:" + "1" * 16, "Ana (reader)")
+    with unrestricted():
+        c = comments.create(ctx, sid, comments.CommentCreate(text="Hi"), actor=actor)
+        assert not c.can_moderate
+        meeting = comments._Meeting.of(ctx, ctx.repo.get(sid), actor)
+        assert not meeting.can_moderate()

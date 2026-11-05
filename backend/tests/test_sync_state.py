@@ -109,6 +109,7 @@ def _meeting(repo) -> str:
     )
     repo.add_comment(s.id, parent_id=root, text="Yes", author="Bo")
     repo.set_comment_resolved(root, datetime(2026, 10, 20, 12, 0, 0), "u2")
+    repo.set_comment_moderation(root, datetime(2026, 11, 5, 9, 0, 0), None)
     repo.set_session_embeddings(s.id, {"Ann": [0.1, 0.2], "Bo": [0.3, 0.4]})
     link = repo.add_asset(Asset(id="lnk1", kind="link", title="Doc", url="https://x.test/doc"))
     repo.attach_asset(s.id, link.id)
@@ -238,6 +239,7 @@ def test_comments_round_trip_and_a_write_replaces_them(repo, other):
     doc = export_session(repo, sid, "dev-a")
     write_session(other, doc, local_device_id="dev-b", vv=doc.vv, bump=False)
     assert other.comment_rows(sid) == repo.comment_rows(sid)
+    assert [c["approved_at"] for c in other.comment_rows(sid)] == ["2026-11-05T09:00:00", None]
     assert _count(other, "comments", sid) == 2
     doc.comments = doc.comments[:1]  # the peer removed the reply
     write_session(other, doc, local_device_id="dev-b", vv=doc.vv, bump=False)

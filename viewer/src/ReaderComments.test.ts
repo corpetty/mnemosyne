@@ -145,6 +145,49 @@ describe('the column', () => {
 		expect(q('[data-testid="comment-not-sent"]')).toBeNull();
 	});
 
+	it('marks its own comment "Waiting for the owner" once THREADS lists it, from the text kept here, with no actions', async () => {
+		vi.useFakeTimers();
+		const { sent, model, store } = column({ name: 'Ana', key: true });
+		await model.init();
+		type(q('[data-testid="reader-compose"] textarea') as HTMLTextAreaElement, 'Is this right?');
+		button('Send').click();
+		flushSync();
+		expect(q('[data-testid="comment-sending"]')).not.toBeNull();
+		expect(store.getItem(`mnemosyne.reader.${PUB}.held`)).toContain('Is this right?');
+		// THREADS: no thread to read, this reader's id waiting (ids only).
+		model.setThreads([], { [model.rid!]: [sent[0].id] });
+		flushSync();
+		expect(q('[data-testid="comment-sending"]')).toBeNull();
+		const waiting = q('[data-testid="comment-waiting"]')!;
+		expect(waiting.textContent).toBe('Waiting for the owner');
+		expect(waiting.className).toContain('text-xs');
+		expect(waiting.className).toContain('text-gray-500');
+		expect(text()).toContain('Ana (reader)');
+		expect(text()).toContain('Is this right?');
+		// Past 15 s it is not "Not sent": the owner has it.
+		vi.advanceTimersByTime(NOT_SENT_MS + 20);
+		flushSync();
+		expect(q('[data-testid="comment-not-sent"]')).toBeNull();
+		expect(q('[data-testid="comment-waiting"]')).not.toBeNull();
+		expect(button('Reply')).toBeUndefined();
+		expect(button('Edit')).toBeUndefined();
+		// Approved: it is a comment like any other, and the kept text goes.
+		model.setThreads([{ root: comment(sent[0].id, { text: 'Is this right?', rid: model.rid, author: 'Ana (reader)' }), replies: [] }], {});
+		flushSync();
+		expect(q('[data-testid="comment-waiting"]')).toBeNull();
+		expect(button('Reply')).toBeDefined();
+		expect(store.getItem(`mnemosyne.reader.${PUB}.held`)).toBe('{}');
+	});
+
+	it('shows nothing for a waiting comment whose text is gone', async () => {
+		const { model } = column({ name: 'Ana', key: true });
+		await model.init();
+		model.setThreads([], { [model.rid!]: ['0000000000aa'] });
+		flushSync();
+		expect(q('[data-testid="comment-waiting"]')).toBeNull();
+		expect(target.querySelector('[data-thread]')).toBeNull();
+	});
+
 	it('anchors the composer to a part with its "On:" line, and Cancel goes back to the meeting', () => {
 		const d = manifest.decisions[0];
 		const { props, sent } = column({ name: 'Ana', draft: { anchor: { target: 'decision', target_id: d.id, quote_id: null, exact: null, prefix: null, suffix: null }, line: d.text } });

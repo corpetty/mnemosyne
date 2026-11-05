@@ -753,3 +753,41 @@ backend suite (locally: single files), the publish-host and link crates' full te
     1.5 MB. comments.py is unchanged (`BadComment` is caught in the bridge).
   - One redaction for the manifest and the threads: `publishing.Redaction(session, sel)` (people, wanted, `names`,
     `text()`), extracted from `build_content`, which uses it; `threads_for_readers` uses the same class.
+- Task 13b (approve before other readers see it), decided while building:
+  - State on a comment: `approved_at` and `hidden_at` (ISO, both nullable; columns added by `_migrate_columns`, the
+    sync rows `SyncComment` carry them, so the generic three-way merge treats them as scalars; the records export
+    carries them with the rest of the row). `comments.approve` sets `approved_at` and clears `hidden_at`;
+    `comments.hide` sets `hidden_at` and keeps `approved_at` (hidden wins when both are set, which is also what a
+    sync merge of an approve here and a hide there gives). Owner rights only: `_Meeting.can_moderate()` = `owns`
+    (owner, admin, the desktop); a reader or guest acting as an explicit actor, and a meeting shared with me, never.
+    `Comment.can_moderate` tells the UI. History lines `comment_approved` / `comment_hidden`; both announce a
+    `comments` event, so THREADS follows. Routes `POST /api/sessions/{id}/comments/{cid}/approve|hide`.
+  - `PublicationSelection.moderate` (default off) and `moderated_since`. The rule for older comments: the server
+    stamps `moderated_since` at publish (`publishing.stamp_moderation`): None while `moderate` is off, the moment it
+    went on, kept across later versions while it stays on; the caller's value is ignored. A reader's comment whose
+    `updated_at` is before it counts as approved. `updated_at`, not `created_at`: a reader's edit after the switch is
+    a new text (the bridge also clears `approved_at` on a reader's edit while `moderate` is on), so it waits again.
+    Off and on again re-stamps (comments made while it was off were shown, so they stay shown). Without a date
+    (a selection written by hand) nothing is grandfathered.
+  - `threads_for_readers` leaves out, always: a thread whose first comment is hidden, a hidden reply (alone). While
+    `comments` and `moderate` are on: a reader's first comment without approval (the whole thread, the owner's
+    replies included), and a reader's reply without approval. The owner's replies need none. A change of the
+    selection (so `moderate`) already re-sends THREADS (`update_row` -> `threads_soon`, from every publish).
+  - THREADS has a new field `pending`: `{rid: [comment id, ...]}`, ids only, for the reader's own roots and replies
+    waiting for approval, in threads that would show otherwise (not deleted, not hidden, not on an unpublished part);
+    at most 50 per reader and 2,000 in all. `{}` when nothing waits (always present). A reader may not reply to a
+    thread it is not shown (so not to its own waiting comment). The frame is re-sent when `pending` changes too.
+  - Viewer: `Follower.threads.pending` (`parsePending`, tolerant: an older owner has none). `HeldComments`
+    (`mnemosyne.reader.<pub id>.held`, one JSON entry by comment id, memory fallback, newest 50) keeps the words of
+    every create, reply and edit the reader sends. A comment listed under the reader's rid is "Waiting for the owner"
+    (`text-xs text-gray-500`), shown from the kept text, and its sent op counts as seen (no "Sending…"/"Not sent");
+    a THREADS that shows the comment, or no longer lists it while no op for it is in flight, drops the kept text;
+    nothing is dropped before a THREADS has come and the rid is known. No kept text, nothing shown. Waiting comments
+    have no Reply/Edit/Delete in the viewer (v1).
+  - Owner UI: `moderate` follows `comments` in `toSend()`; PublishDialog's indented checkbox as decided.
+    CommentThread shows "waiting for your approval" / "hidden from readers" in the "From the published link" line and
+    Approve / Hide / "Show to readers" in the action row; it uses the open meeting's publication from the publishing
+    store (`moderate` on, and the comment newer than `moderated_since`), and when that is not loaded it offers Approve
+    on every reader comment that is not approved. Beyond the decided UI: reader REPLIES get the same caption and
+    buttons (they need approval too), and Hide is offered on a reader's visible comment whenever readers may comment
+    (the kill switch, `moderate` or not).

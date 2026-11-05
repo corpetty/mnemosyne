@@ -60,6 +60,13 @@ class PublicationSelection(ApiModel):
     # readers of the link comment.
     follow: bool = False
     comments: bool = False
+    # Approve before other readers see (task 13b): while `comments` is on too, a comment a reader
+    # writes (and every reply of a reader) reaches the other readers only once the owner has
+    # approved it; its writer sees it at once, marked as waiting. `moderated_since` (UTC ISO) is
+    # set by the server when the switch goes on: comments made before it count as approved. The
+    # owner's Hide keeps a comment from readers whatever `moderate` says.
+    moderate: bool = False
+    moderated_since: str | None = None
 
 
 class NotesImage(ApiModel):

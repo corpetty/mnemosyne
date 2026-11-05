@@ -26,7 +26,8 @@ it is shown with its quote and never deleted on its own.
 
 Who may do what (team server, access.py): anyone who can read the meeting comments; authors edit
 their own; the author, the meeting's owner or an admin deletes; the meeting's owner, an admin or
-the thread's author resolves and reopens. On the desktop (nobody signed in) everything is allowed,
+the thread's author resolves and reopens; only the owner or an admin approves or hides a comment
+for readers of a published link. On the desktop (nobody signed in) everything is allowed,
 except on a meeting someone shared with me (phase 8, services/shared_with_me.py): there I act as
 myself as the owner's hub knows me (`contacts.my_principal`, a member who does not own it), and
 only on the parts shared with me, the same rules the hub applies when it takes the comment.
@@ -474,7 +475,14 @@ class _Meeting:
         out.can_edit, out.can_delete, out.can_resolve = self.rights(
             c, c.author_id if root_author is None else root_author
         )
+        out.can_moderate = self.can_moderate() and not c.deleted
         return out
+
+    def can_moderate(self) -> bool:
+        """May they approve or hide comments for readers of a published link? The meeting's
+        owner and an admin only (the same `owns` as deleting anyone's comment): never a guest
+        or reader acting as an explicit actor, never a meeting shared with me."""
+        return self.owns
 
 
 def _session(app: AppContext, session_id: str) -> Session:
@@ -646,13 +654,19 @@ def _check(
         target = root.target if root is not None else c.target
     meeting.require_part(target)
     can_edit, can_delete, can_resolve = meeting.rights(c, root_author)
-    allowed = {"edit": can_edit, "delete": can_delete, "resolve": can_resolve}[what]
+    allowed = {
+        "edit": can_edit,
+        "delete": can_delete,
+        "resolve": can_resolve,
+        "moderate": meeting.can_moderate(),
+    }[what]
     if not allowed:
         raise access.Forbidden(
             {
                 "edit": "Only its author can change a comment",
                 "delete": "Only its author or the meeting's owner can delete a comment",
                 "resolve": "Only the meeting's owner or the thread's author can resolve it",
+                "moderate": "Only the meeting's owner can approve or hide a comment",
             }[what]
         )
 
@@ -720,6 +734,44 @@ def resolve(app: AppContext, session_id: str, comment_id: str) -> Comment:
 
 def reopen(app: AppContext, session_id: str, comment_id: str) -> Comment:
     return _resolve(app, session_id, comment_id, False)
+
+
+def _moderate(app: AppContext, session_id: str, comment_id: str, approve: bool) -> Comment:
+    """Approve (`approved_at` set, `hidden_at` cleared) or hide (`hidden_at` set, `approved_at`
+    kept) a comment for readers of a published link (live_publications.threads_for_readers).
+    Owner rights; saying it again changes nothing."""
+    c = _get(app, session_id, comment_id)
+    if c.deleted:
+        raise CommentNotFound("Comment not found")
+    _check(app, session_id, c, "moderate")
+    if approve:
+        done = c.approved_at is not None and c.hidden_at is None
+        approved, hidden = (c.approved_at or datetime.now()), None
+    else:
+        done = c.hidden_at is not None
+        approved, hidden = c.approved_at, (c.hidden_at or datetime.now())
+    if done:
+        return _view_one(app, session_id, comment_id)
+    app.repo.set_comment_moderation(comment_id, approved, hidden)
+    _, by = _author(app, _session(app, session_id))
+    history.log(
+        app,
+        session_id,
+        "comment_approved" if approve else "comment_hidden",
+        by=by,
+        target=c.target,
+        excerpt=excerpt(c.text or c.quote),
+    )
+    _publish(app, session_id)
+    return _view_one(app, session_id, comment_id)
+
+
+def approve(app: AppContext, session_id: str, comment_id: str) -> Comment:
+    return _moderate(app, session_id, comment_id, True)
+
+
+def hide(app: AppContext, session_id: str, comment_id: str) -> Comment:
+    return _moderate(app, session_id, comment_id, False)
 
 
 # ---- tasks and decisions across meetings -------------------------------------------------

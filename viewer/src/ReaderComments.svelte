@@ -190,7 +190,9 @@
 	{@const state = c.pending ? model.stateOf(c.id) : null}
 	<div class="text-xs text-gray-500">
 		<span class="font-medium text-gray-300">{c.author || 'Someone'}</span>
-		{#if state === 'not_sent'}
+		{#if c.waiting}
+			· <span class="text-xs text-gray-500" data-testid="comment-waiting">Waiting for the owner</span>
+		{:else if state === 'not_sent'}
 			· <span class="text-amber-300" data-testid="comment-not-sent"
 				>Not sent · <button type="button" class="underline hover:text-amber-200" onclick={() => model.retry(c.id)}>Retry</button></span
 			>
@@ -229,7 +231,7 @@
 	{:else}
 		<p class="break-words whitespace-pre-wrap text-gray-200">{c.text}</p>
 	{/if}
-	{#if !c.deleted && editing !== c.id && actionable && !c.pending}
+	{#if !c.deleted && editing !== c.id && actionable && !c.pending && !c.waiting}
 		<div class="flex flex-wrap items-center gap-3 text-[11px] text-gray-500">
 			{#if isRoot}
 				<button type="button" class={LINK} onclick={() => startReply(t)}>Reply</button>

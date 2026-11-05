@@ -250,7 +250,9 @@ CREATE TABLE IF NOT EXISTS comments (
     updated_at TEXT NOT NULL,
     resolved_at TEXT,
     resolved_by TEXT NOT NULL DEFAULT '',
-    deleted INTEGER NOT NULL DEFAULT 0
+    deleted INTEGER NOT NULL DEFAULT 0,
+    approved_at TEXT,
+    hidden_at TEXT
 );
 CREATE INDEX IF NOT EXISTS comments_session ON comments(session_id);
 {COMMENT_FTS}
@@ -915,6 +917,11 @@ class SessionRepository:
         for col in ("sign_key", "box_key"):
             if col not in pub_cols:
                 self._conn.execute(f"ALTER TABLE publications ADD COLUMN {col} BLOB")
+        # Moderation of readers' comments on a live publication (task 13b).
+        comment_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(comments)")}
+        for col in ("approved_at", "hidden_at"):
+            if col not in comment_cols:
+                self._conn.execute(f"ALTER TABLE comments ADD COLUMN {col} TEXT")
         self._conn.commit()
 
     def _migrate_fts_rowids(self) -> None:
@@ -1730,6 +1737,8 @@ class SessionRepository:
             resolved_at=_dt(r["resolved_at"]) if r["resolved_at"] else None,
             resolved_by=r["resolved_by"],
             deleted=bool(r["deleted"]),
+            approved_at=_dt(r["approved_at"]) if r["approved_at"] else None,
+            hidden_at=_dt(r["hidden_at"]) if r["hidden_at"] else None,
         )
 
     def _comment_session(self, comment_id: str) -> str | None:
@@ -1871,6 +1880,30 @@ class SessionRepository:
                 (
                     None if resolved_at is None else resolved_at.isoformat(),
                     "" if resolved_at is None else resolved_by,
+                    comment_id,
+                ),
+            )
+            if cur.rowcount:
+                self._touch(session_id)
+        return cur.rowcount > 0
+
+    def set_comment_moderation(
+        self,
+        comment_id: str,
+        approved_at: datetime | None,
+        hidden_at: datetime | None,
+    ) -> bool:
+        """Set when a comment was approved and when it was hidden for readers of a published link
+        (None clears one). False when it is gone."""
+        session_id = self._comment_session(comment_id)
+        if session_id is None:
+            return False
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE comments SET approved_at=?, hidden_at=? WHERE id=?",
+                (
+                    None if approved_at is None else approved_at.isoformat(),
+                    None if hidden_at is None else hidden_at.isoformat(),
                     comment_id,
                 ),
             )
@@ -4811,7 +4844,8 @@ class SessionRepository:
             self._conn.executemany(
                 "INSERT OR REPLACE INTO comments (id, session_id, parent_id, target, target_id,"
                 " anchor, quote, text, author_id, author, mentions, created_at, updated_at,"
-                " resolved_at, resolved_by, deleted) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " resolved_at, resolved_by, deleted, approved_at, hidden_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     (
                         c.id,
@@ -4830,6 +4864,8 @@ class SessionRepository:
                         c.resolved_at,
                         c.resolved_by,
                         int(c.deleted),
+                        c.approved_at,
+                        c.hidden_at,
                     )
                     for c in s.comments
                 ],

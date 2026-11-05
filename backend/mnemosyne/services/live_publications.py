@@ -28,8 +28,12 @@ room when the host says this one is gone (4410). Readers' frames (COMMENT, task 
 anchor rules of C8, the caps (MAX_TEXT, MAX_NAME, RATE_OPS in RATE_WINDOW), the replay rule
 (`readers.json` beside the publication's files) and nothing while comments are off. The
 readers' threads (`threads_for_readers`) go back as THREADS, debounced, after every `comments`
-event of the meeting and every change of the selection. Every outgoing frame is a `VersionFrame`,
-`ThreadsFrame` or `MetaFrame` signed with the row's signing key (pub_live_format.sign_frame).
+event of the meeting and every change of the selection. With `moderate` on (task 13b) a reader's
+comment reaches the other readers once the owner approved it (`comments.approve`); its writer's
+page is told only its ids (THREADS `pending`, per rid) and shows the text it kept itself; the
+owner's Hide keeps a comment from readers whatever `moderate` says. Every outgoing frame is a
+`VersionFrame`, `ThreadsFrame` or `MetaFrame` signed with the row's signing key
+(pub_live_format.sign_frame).
 A host without the pointer route (or without rooms) makes the publication "unsupported": no
 room, readers poll. A manual Update on the other computer of a library-sync pair (C12) sends
 its VERSION through a one-shot connection to the room the host names, and makes none.
@@ -381,10 +385,15 @@ class VersionFrame(_Frame):
 
 class ThreadsFrame(_Frame):
     """The readers' threads (`threads_for_readers`, plus "removed" stand-ins); also the
-    room's snapshot. The newest `at` wins."""
+    room's snapshot. The newest `at` wins.
+
+    `pending` (approval on, task 13b): per reader (rid), the ids of that reader's own comments
+    still waiting for the owner's approval, roots and replies. Ids only, never a word of what
+    they say: every reader receives THREADS, and the writer's page keeps its own text."""
 
     KIND: ClassVar[plf.Kind] = plf.Kind.THREADS
     threads: list[dict[str, Any]]
+    pending: dict[str, list[str]] = {}
     at: str
 
 
@@ -415,6 +424,8 @@ RATE_WINDOW = 600.0  # ... in this many seconds; more are dropped
 THREADS_DEBOUNCE = 2.0  # seconds: comments that change together make one THREADS
 META_NUDGE = 30.0  # seconds: at most one META in this time for ops sent while comments are off
 ON_QUOTE = 280  # characters of the quote in a thread kept on the meeting as a whole ("On: …")
+MAX_PENDING_EACH = 50  # waiting comment ids THREADS names per reader (the newest) ...
+MAX_PENDING = 2000  # ... and in all
 MAX_THREADS_BYTES = 1_500_000  # a THREADS stays well inside the host's 2 MiB frame
 OPS = ("create", "reply", "edit", "delete")
 OP_TARGETS = ("", "body", "decision", "question", "item", "quote")
@@ -512,43 +523,93 @@ class _Shown:
 
 def _reader_view(
     app: AppContext, session_id: str, sel: PublicationSelection
-) -> tuple[list[dict], set[str]]:
-    """(threads readers see, ids of every comment the meeting has now)."""
+) -> tuple[list[dict], set[str], dict[str, list[str]]]:
+    """(threads readers see, ids of every comment the meeting has now, the waiting ones).
+
+    The owner's Hide keeps a comment from readers whatever the selection says: a hidden first
+    comment takes its thread, a hidden reply goes alone. With `comments` and `moderate` on, a
+    reader's comment (first or reply) that the owner has not approved is left out too, and a
+    first comment's whole thread with it, unless it was last written before `moderated_since`
+    (when the switch went on: everyone could see those). The ones left out for want of approval
+    are listed per reader as `waiting` ({rid: [comment ids]}, ids only), those of a thread that
+    would otherwise show."""
     from . import comments
     from .shared_notes import unrestricted
 
     with unrestricted():
         session = app.repo.get(session_id)
         if session is None or session.shared_from:
-            return [], set()
+            return [], set(), {}
         listed = comments.threads(app, session_id)
         ids = {c.id for c in app.repo.list_comments(session_id)}
         shown = _Shown(app, session, sel)
+    moderating = sel.comments and sel.moderate
+    since = _parse(sel.moderated_since) if moderating else None
+
+    def unapproved(c: Comment) -> bool:
+        if not moderating or not c.author_id.startswith(READER_PREFIX):
+            return False
+        if c.approved_at is not None:
+            return False
+        # An edit counts as a new comment: `updated_at`, not `created_at`.
+        return since is None or c.updated_at.astimezone(UTC) >= since
+
     out = []
+    waiting: dict[str, list[str]] = {}
     for t in listed.threads:
         root = t.root
         if root.parent_id or not root.author_id.startswith(READER_PREFIX):
             continue  # the owner's own threads never leave the app
+        if root.hidden_at is not None:
+            continue
         anchor = shown.anchor(root)
         if anchor is None:
             continue
+        replies = [r for r in t.replies if r.hidden_at is None]
+        for c in [root, *replies]:
+            if unapproved(c) and not c.deleted:
+                waiting.setdefault(c.author_id[len(READER_PREFIX) :], []).append(c.id)
+        if unapproved(root):
+            continue
+        visible = [r for r in replies if not unapproved(r)]
         out.append(
             {
                 "root": shown.comment(root, anchor),
-                "replies": [shown.comment(r, dict(NO_ANCHOR)) for r in t.replies],
+                "replies": [shown.comment(r, dict(NO_ANCHOR)) for r in visible],
             }
         )
-    return out, ids
+    return out, ids, _cap_waiting(waiting)
+
+
+def _cap_waiting(waiting: dict[str, list[str]]) -> dict[str, list[str]]:
+    """At most MAX_PENDING_EACH (the newest) per reader and MAX_PENDING in all."""
+    out: dict[str, list[str]] = {}
+    left = MAX_PENDING
+    for rid, found in waiting.items():
+        keep = found[-min(MAX_PENDING_EACH, left) :] if left > 0 else []
+        if keep:
+            out[rid] = keep
+            left -= len(keep)
+    return out
 
 
 def threads_for_readers(app: AppContext, session_id: str, sel: PublicationSelection) -> list:
     """The threads readers see, oldest first: only threads a reader started, with every reply
     in them (the owner's through the selection's names and identifier rules, its author as
-    `Names.name` gives it, else "Owner"), and none on a part the selection does not show. Each
+    `Names.name` gives it, else "Owner"), and none on a part the selection does not show, none
+    the owner hid, and, with `moderate` on, none not approved yet (`_reader_view`). Each
     comment is {id, parent_id, author, rid, text, anchor: {target, target_id, quote_id, quote},
     created_at, updated_at, resolved, deleted, detached, changed}; `rid` names a reader's own
     (None for the owner's side)."""
     return _reader_view(app, session_id, sel)[0]
+
+
+def pending_for_readers(
+    app: AppContext, session_id: str, sel: PublicationSelection
+) -> dict[str, list[str]]:
+    """{rid: ids of that reader's comments waiting for the owner's approval}: what THREADS says
+    to every reader so each page can show its own (ids only; see `ThreadsFrame`)."""
+    return _reader_view(app, session_id, sel)[2]
 
 
 @dataclass(frozen=True)
@@ -1141,6 +1202,7 @@ class PubBridge:
         self._ops, self._sent = _read_readers(self.app, self.pub_id)
         self._rates: dict[str, deque[float]] = {}
         self._last_threads: list[dict] | None = None
+        self._last_pending: dict[str, list[str]] | None = None
         self._threads_task: asyncio.Task | None = None
         self._sub: asyncio.Queue | None = None
         self.clock: Callable[[], float] = time.monotonic  # the rate window's (tests swap it)
@@ -1546,6 +1608,7 @@ class PubBridge:
                     self._reply(session, op, actor)
                 elif op.kind == "edit":
                     comments.edit(self.app, sid, op.id, op.text, actor=actor)
+                    self._unapprove(op.id)
                 else:
                     comments.delete(self.app, sid, op.id, actor=actor)
         except (
@@ -1559,6 +1622,14 @@ class PubBridge:
         self._ops[op.id] = op.at.isoformat()
         _write_readers(self.app, self.pub_id, self._ops, self._sent)
         return "applied"  # its `comments` event brings the THREADS
+
+    def _unapprove(self, comment_id: str) -> None:
+        """A reader changed a comment the owner may have approved: with approval on, the new
+        text waits for the owner again (a hidden comment stays hidden)."""
+        sel = self._selection()
+        c = self.app.repo.get_comment(comment_id)
+        if sel.comments and sel.moderate and c is not None and c.approved_at is not None:
+            self.app.repo.set_comment_moderation(comment_id, None, c.hidden_at)
 
     def _selection(self) -> PublicationSelection:
         from ..models.publication import PublicationSelection
@@ -1642,11 +1713,12 @@ class PubBridge:
         self.outq.put_nowait(frame)
         return frame
 
-    async def _threads(self) -> list[dict]:
-        """The threads readers see now, with a "removed" stand-in for every comment they were
-        shown that is gone from the meeting (so a deleted thread reads "removed" rather than
-        vanishing), within MAX_THREADS_BYTES."""
-        threads, ids = await asyncio.to_thread(
+    async def _threads(self) -> tuple[list[dict], dict[str, list[str]]]:
+        """(the threads readers see now, the comment ids waiting for approval per reader): the
+        threads with a "removed" stand-in for every comment they were shown that is gone from
+        the meeting (so a deleted thread reads "removed" rather than vanishing), within
+        MAX_THREADS_BYTES."""
+        threads, ids, waiting = await asyncio.to_thread(
             _reader_view, self.app, self.session_id, self._selection()
         )
         present: dict[str, dict] = {}
@@ -1673,12 +1745,12 @@ class PubBridge:
                 thread["replies"].sort(key=lambda c: c["created_at"])
         out.sort(key=lambda t: t["root"]["created_at"])
         _write_readers(self.app, self.pub_id, self._ops, self._sent)
-        return _trim(out)
+        return _trim(out), waiting
 
     async def _threads_frame(self) -> ThreadsFrame:
-        threads = await self._threads()
-        self._last_threads = threads
-        return ThreadsFrame(threads=threads, at=self._stamp())
+        threads, waiting = await self._threads()
+        self._last_threads, self._last_pending = threads, waiting
+        return ThreadsFrame(threads=threads, pending=waiting, at=self._stamp())
 
     def threads_soon(self) -> None:
         """THREADS in THREADS_DEBOUNCE seconds (whatever else changes meanwhile goes with it)."""
@@ -1719,11 +1791,11 @@ class PubBridge:
         """The readers' threads may have changed: unless they are what was sent last, a
         THREADS frame to the readers in the room, and the same as the room's snapshot for the
         ones who join later."""
-        threads = await self._threads()
-        if not force and threads == self._last_threads:
+        threads, waiting = await self._threads()
+        if not force and threads == self._last_threads and waiting == self._last_pending:
             return  # (a change to the owner's own threads, say: nothing readers see)
-        self._last_threads = threads
-        frame = ThreadsFrame(threads=threads, at=self._stamp())
+        self._last_threads, self._last_pending = threads, waiting
+        frame = ThreadsFrame(threads=threads, pending=waiting, at=self._stamp())
         if self.connected.is_set():
             self.outq.put_nowait(frame)
         await self.snapshot(frame)

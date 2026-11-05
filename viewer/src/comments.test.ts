@@ -11,6 +11,8 @@ import {
   COUNT_FROM,
   MAX_TEXT,
   NOT_SENT_MS,
+  HeldComments,
+  MAX_HELD,
   ReaderComments,
   ReaderIdentity,
   anchorKey,
@@ -19,6 +21,7 @@ import {
   createOp,
   deleteOp,
   editOp,
+  heldKey,
   itemAnchor,
   meetingAnchor,
   parseThreads,
@@ -358,6 +361,157 @@ describe('ReaderComments', () => {
     expect(m.create({ anchor: meetingAnchor(), line: null }, 'x'.repeat(MAX_TEXT + 1))).toBeNull();
     expect(sent).toEqual([]);
     expect(m.create({ anchor: meetingAnchor(), line: null }, 'Hello')?.name).toBe('Ana Lima');
+  });
+});
+
+describe('comments waiting for the owner\'s approval', () => {
+  const RID: string = vec.reader.rid;
+  const OTHER = '0123456789abcdef';
+  const held = (store: Store): Record<string, { text: string }> => JSON.parse(store.getItem(heldKey(PUB)) ?? '{}');
+  const meeting = { anchor: meetingAnchor(), line: null };
+
+  it('keeps the words of what it sends, under one key per publication, by comment id', async () => {
+    const { m, store } = model();
+    await m.init();
+    const a = m.create(meeting, 'Overall good')!;
+    const b = m.create({ anchor: itemAnchor('decision', 'd1'), line: null }, 'Why Friday?')!;
+    expect(heldKey(PUB)).toBe(`mnemosyne.reader.${PUB}.held`);
+    expect(Object.keys(held(store))).toEqual([a.id, b.id]);
+    expect(held(store)[b.id]).toMatchObject({ text: 'Why Friday?', name: 'Ana', parent_id: null, at: AT });
+    expect(held(store)[b.id]).toHaveProperty('anchor.target_id', 'd1');
+  });
+
+  it('shows its own listed comment as waiting, from the kept text, and not as "Sending…"', async () => {
+    const { m, sent } = model();
+    await m.init();
+    const op = m.create({ anchor: itemAnchor('decision', 'd1'), line: null }, 'Secret-ish remark')!;
+    expect(m.stateOf(op.id)).toBe('sending');
+    // The owner's THREADS: nothing to read, the id under this reader's rid, no text anywhere.
+    const pending = { [RID]: [op.id] };
+    expect(JSON.stringify(pending)).not.toContain('remark');
+    m.setThreads([], pending);
+    expect(m.stateOf(op.id)).toBeNull();
+    expect(m.pending.list).toEqual([]);
+    const root = m.view().open[0].root;
+    expect(root).toMatchObject({ id: op.id, waiting: true, pending: false, text: 'Secret-ish remark', author: 'Ana (reader)', rid: RID });
+    expect(anchorKey(root.anchor)).toBe('decision:d1');
+    expect(m.counts()).toEqual({ 'decision:d1': 1 });
+    expect(sent).toHaveLength(1); // nothing was sent again
+  });
+
+  it('shows a waiting reply under its thread', async () => {
+    const { m } = model();
+    await m.init();
+    m.setThreads([thread(comment('aaaaaaaaaaaa', { rid: OTHER, author: 'Bo (reader)' }))], {});
+    const op = m.reply('aaaaaaaaaaaa', 'I agree')!;
+    m.setThreads([thread(comment('aaaaaaaaaaaa', { rid: OTHER, author: 'Bo (reader)' }))], { [RID]: [op.id] });
+    const [t] = m.view().open;
+    expect(t.replies.map((r) => [r.id, r.waiting, r.text])).toEqual([[op.id, true, 'I agree']]);
+  });
+
+  it('drops the kept text when THREADS shows the comment itself (approved)', async () => {
+    const { m, store } = model();
+    await m.init();
+    const op = m.create(meeting, 'Overall good')!;
+    m.setThreads([], { [RID]: [op.id] });
+    expect(held(store)[op.id]).toBeDefined();
+    m.setThreads([thread(comment(op.id, { text: 'Overall good' }))], {});
+    expect(held(store)).toEqual({});
+    const root = m.view().open[0].root;
+    expect(root).toMatchObject({ id: op.id, pending: false });
+    expect(root.waiting).toBeUndefined();
+  });
+
+  it('drops the kept text when a THREADS no longer lists it as pending (hidden, deleted)', async () => {
+    const { m, store } = model();
+    await m.init();
+    const a = m.create(meeting, 'One')!;
+    const b = m.create(meeting, 'Two')!;
+    m.setThreads([], { [RID]: [a.id, b.id] });
+    expect(m.view().open.map((t) => t.root.id)).toEqual([a.id, b.id]);
+    m.setThreads([], { [RID]: [b.id] }); // the owner hid the first
+    expect(Object.keys(held(store))).toEqual([b.id]);
+    expect(m.view().open.map((t) => t.root.id)).toEqual([b.id]);
+    m.setThreads([], {});
+    expect(held(store)).toEqual({});
+    expect(m.view().open).toEqual([]);
+  });
+
+  it('keeps the text while the op is still on its way, whatever an older THREADS says', async () => {
+    const { m, store } = model();
+    await m.init();
+    const op = m.create(meeting, 'Just sent')!;
+    m.setThreads([], {}); // sent after this THREADS was made: the owner has not seen it yet
+    expect(held(store)[op.id]).toBeDefined();
+    expect(m.stateOf(op.id)).toBe('sending');
+    m.setThreads([], { [RID]: [op.id] });
+    expect(m.stateOf(op.id)).toBeNull();
+  });
+
+  it('only believes the list under its own rid', async () => {
+    const { m } = model();
+    await m.init();
+    const op = m.create(meeting, 'Mine')!;
+    m.setThreads([], { [OTHER]: [op.id] }); // somebody else claiming the id: not ours
+    expect(m.stateOf(op.id)).toBe('sending');
+    expect(m.view().open[0].root).toMatchObject({ pending: true });
+    expect(m.view().open[0].root.waiting).toBeUndefined();
+  });
+
+  it('shows nothing for a listed comment whose text is gone (a cleared browser, another page)', async () => {
+    const { m } = model();
+    await m.init();
+    m.setThreads([], { [RID]: ['0000000000aa'] });
+    expect(m.view()).toEqual({ open: [], resolved: [] });
+    expect(m.counts()).toEqual({});
+  });
+
+  it('keeps the words of an edit that has to wait again', async () => {
+    const { m } = model();
+    await m.init();
+    m.setThreads([thread(comment('aaaaaaaaaaaa', { text: 'Before' }))], {});
+    const c = m.threads[0].root;
+    m.edit(c, 'After the edit');
+    // Approved text edited: the owner takes it back to waiting, so THREADS lists it and not it.
+    m.setThreads([], { [RID]: [c.id] });
+    expect(m.stateOf(c.id)).toBeNull();
+    expect(m.view().open[0].root).toMatchObject({ id: c.id, waiting: true, text: 'After the edit' });
+  });
+
+  it('is tied to the identity that learns its rid late: nothing is dropped before it is known', async () => {
+    const { m, store } = model();
+    // A later visit: the kept text is there, THREADS comes before the rid is known.
+    store.setItem(heldKey(PUB), JSON.stringify({ aaaaaaaaaaaa: { parent_id: null, text: 'From before', name: 'Ana', at: AT, anchor: { target: '' } } }));
+    m.setThreads([], { [RID]: ['aaaaaaaaaaaa'] });
+    expect(m.rid).toBeNull();
+    expect(held(store).aaaaaaaaaaaa).toBeDefined();
+    await m.init();
+    expect(m.view().open[0].root).toMatchObject({ id: 'aaaaaaaaaaaa', waiting: true, text: 'From before' });
+  });
+
+  it('is kept in memory when storage throws, and bounded', () => {
+    const blocked = new HeldComments(PUB, () => ({
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      }
+    }));
+    const entry = { parent_id: null, text: 'x', name: 'Ana', at: AT, anchor: { target: '', target_id: null, quote_id: null, quote: null } };
+    blocked.set('aaaaaaaaaaaa', entry);
+    expect(blocked.get('aaaaaaaaaaaa')?.text).toBe('x');
+    blocked.delete('aaaaaaaaaaaa');
+    expect(blocked.all()).toEqual({});
+    for (let i = 0; i < MAX_HELD + 5; i++) blocked.set(i.toString(16).padStart(12, '0'), entry);
+    expect(Object.keys(blocked.all())).toHaveLength(MAX_HELD);
+    expect(blocked.get('000000000000')).toBeUndefined(); // the oldest went
+    // Garbage in storage is ignored.
+    const junk = new Store();
+    junk.setItem(heldKey(PUB), '{"a":{"text":3},"b":[],"c":null');
+    expect(new HeldComments(PUB, () => junk).all()).toEqual({});
+    junk.setItem(heldKey(PUB), '[1,2]');
+    expect(new HeldComments(PUB, () => junk).all()).toEqual({});
   });
 });
 

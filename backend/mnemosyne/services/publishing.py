@@ -897,6 +897,23 @@ def host_url(app: AppContext) -> str:
     return ours.publish_host(app.settings)
 
 
+def stamp_moderation(
+    sel: PublicationSelection, old: dict | None, now: datetime
+) -> PublicationSelection:
+    """`moderated_since` is the server's, never the caller's: None while `moderate` is off; the
+    moment `moderate` went on (kept while it stays on across versions); so the comments made
+    before it, which were shown to every reader, count as approved
+    (live_publications.threads_for_readers)."""
+    since = None
+    if sel.moderate:
+        before = (old or {}).get("selection") or {}
+        kept = before.get("moderated_since") if before.get("moderate") else None
+        since = kept or _iso(now)
+    if sel.moderated_since == since:
+        return sel
+    return sel.model_copy(update={"moderated_since": since})
+
+
 def check_live(session: Session, sel: PublicationSelection) -> None:
     """PublishError when `follow` or `comments` is asked for where it cannot work: a "this
     computer" publication (no room there in v1) or a meeting someone shared with us (a reader's
@@ -1067,6 +1084,7 @@ async def publish(
     else:
         row = dict(old)
     pub_id, key = row["id"], row["key"]
+    sel = stamp_moderation(sel, old, now)
     # The owner keys: made once, when `follow` or `comments` is first on, then kept across
     # versions and while the switches are off; the manifest names the public halves only while
     # one is on.

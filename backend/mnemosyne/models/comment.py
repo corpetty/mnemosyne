@@ -32,6 +32,11 @@ class Comment(ApiModel):
     resolved_at: datetime | None = None
     resolved_by: str = ""
     deleted: bool = False  # kept as an empty row while replies hang on it
+    # Moderation of what readers of a published link write (services/live_publications.py): the
+    # owner's "Approve" lets other readers see it while the publication asks for approval, "Hide"
+    # keeps it from them whatever the setting. Hide wins when both are set.
+    approved_at: datetime | None = None
+    hidden_at: datetime | None = None
     # Filled when read (services, not stored):
     changed: bool = False  # the text it was written about has changed since
     detached: bool = False  # its anchor is gone
@@ -47,6 +52,7 @@ class Comment(ApiModel):
     can_edit: bool = False
     can_delete: bool = False
     can_resolve: bool = False
+    can_moderate: bool = False  # approve or hide it for readers of a published link
 
 
 class CommentThread(ApiModel):

@@ -18,6 +18,12 @@
 //   or by a newer `updated_at`, since the owner's redaction may change the text); after
 //   NOT_SENT_MS without it, "Not sent · Retry". Retry sends the same op again (same id and `at`;
 //   the bridge is idempotent).
+// - Approval (the owner's "Approve comments before other readers see them"): a comment waiting for
+//   it is in no reader's THREADS. THREADS' `pending` lists, per rid and by id only, the comments
+//   still waiting; this page keeps the words of its own sent comments (`HeldComments`, localStorage
+//   with a memory fallback, per publication and comment id) and shows the ones listed for its rid
+//   as "Waiting for the owner", until THREADS shows the comment itself or no longer lists it. With
+//   the text gone, nothing is shown for it.
 import {
   PendingOps,
   findComment,
@@ -80,6 +86,8 @@ export interface ReaderComment extends BaseComment {
   /** A reader's comments carry their rid; null for the owner's side. */
   rid: string | null;
   anchor: ThreadAnchor;
+  /** This reader's own comment, waiting for the owner's approval: shown from the text kept here. */
+  waiting?: boolean;
 }
 export type ReaderThread = BaseThread<ReaderComment>;
 
@@ -275,8 +283,8 @@ export class ReaderIdentity {
   private readonly keys: { name: string; key: string };
 
   constructor(
-    pubId: string,
-    private readonly store: () => KeyValue | null = () => globalThis.localStorage ?? null
+    readonly pubId: string,
+    readonly store: () => KeyValue | null = () => globalThis.localStorage ?? null
   ) {
     this.keys = storageKeys(pubId);
   }
@@ -331,6 +339,105 @@ export class ReaderIdentity {
   }
 }
 
+// ---- the words of comments waiting for approval ----------------------------------------------
+
+/** What this page keeps of a comment it sent, for as long as the owner has not approved it. */
+export interface Held {
+  parent_id: string | null;
+  text: string;
+  name: string;
+  at: string;
+  anchor: ThreadAnchor;
+}
+
+export const heldKey = (pubId: string) => `mnemosyne.reader.${pubId}.held`;
+/** The newest this many are kept. */
+export const MAX_HELD = 50;
+
+function parseHeld(raw: string | null): Record<string, Held> {
+  const out: Record<string, Held> = {};
+  if (!raw) return out;
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return out;
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return out;
+  for (const [id, v] of Object.entries(data as Record<string, unknown>)) {
+    if (!v || typeof v !== 'object') continue;
+    const o = v as Record<string, unknown>;
+    const a = o.anchor && typeof o.anchor === 'object' ? (o.anchor as Record<string, unknown>) : {};
+    if (typeof o.text !== 'string' || !o.text || typeof o.name !== 'string' || typeof o.at !== 'string') continue;
+    out[id] = {
+      parent_id: str(o.parent_id),
+      text: o.text,
+      name: o.name,
+      at: o.at,
+      anchor: { target: str(a.target) ?? '', target_id: str(a.target_id), quote_id: str(a.quote_id), quote: str(a.quote) }
+    };
+  }
+  return out;
+}
+
+/**
+ * The text of this reader's comments that may be waiting for approval, by comment id, in one
+ * localStorage entry per publication (memory when storage is blocked). Never sent anywhere.
+ */
+export class HeldComments {
+  private memory: string | null = null;
+  private readonly key: string;
+
+  constructor(
+    pubId: string,
+    private readonly store: () => KeyValue | null = () => globalThis.localStorage ?? null
+  ) {
+    this.key = heldKey(pubId);
+  }
+
+  all(): Record<string, Held> {
+    let raw = this.memory;
+    try {
+      const v = this.store()?.getItem(this.key);
+      if (typeof v === 'string') raw = v;
+    } catch {
+      /* private mode or blocked storage: memory */
+    }
+    return parseHeld(raw);
+  }
+
+  get(id: string): Held | undefined {
+    return this.all()[id];
+  }
+
+  private save(map: Record<string, Held>): void {
+    const ids = Object.keys(map);
+    for (const id of ids.slice(0, Math.max(0, ids.length - MAX_HELD))) delete map[id];
+    const raw = JSON.stringify(map);
+    this.memory = raw;
+    try {
+      this.store()?.setItem(this.key, raw);
+    } catch {
+      /* kept in memory for the page's life */
+    }
+  }
+
+  set(id: string, held: Held): void {
+    const map = this.all();
+    delete map[id]; // (re-added last: the newest)
+    map[id] = held;
+    this.save(map);
+  }
+
+  delete(id: string): void {
+    const map = this.all();
+    if (id in map) {
+      delete map[id];
+      this.save(map);
+    }
+  }
+}
+
 // ---- comments and their pending ops --------------------------------------------------------
 
 export interface ReaderPending extends Pending<ReaderOp> {
@@ -359,13 +466,19 @@ export class ReaderComments {
   threads: ReaderThread[] = [];
   /** This reader's rid once known (after their first op, or at once when they had a key). */
   rid: string | null = null;
-  readonly pending = new PendingOps<ReaderOp, ReaderPending>(shows);
+  /** THREADS' `pending` of the newest THREADS (null before any): ids waiting for approval, by rid. */
+  private waitingBy: Record<string, string[]> | null = null;
+  /** An op counts as seen when THREADS shows it, or lists its comment as waiting for approval. */
+  readonly pending = new PendingOps<ReaderOp, ReaderPending>(
+    (p, threads) => shows(p, threads) || this.waitingIds().has(p.op.id)
+  );
 
   constructor(
     readonly identity: ReaderIdentity,
     private readonly send: SendOp,
     private readonly now: () => number = () => Date.now(),
-    private readonly onChange: () => void = () => {}
+    private readonly onChange: () => void = () => {},
+    private readonly held: HeldComments = new HeldComments(identity.pubId, identity.store)
   ) {}
 
   /** Learn the rid of a key kept from an earlier visit. */
@@ -380,7 +493,10 @@ export class ReaderComments {
     } catch {
       return; // no WebCrypto: own comments are not recognised, sending still fails gracefully
     }
-    if (this.rid) this.onChange();
+    if (this.rid) {
+      this.forgetHeld();
+      this.onChange();
+    }
   }
 
   get name(): string {
@@ -395,11 +511,64 @@ export class ReaderComments {
     return true;
   }
 
-  /** The newest THREADS' `threads` (as live.ts kept them). */
-  setThreads(raw: readonly unknown[] | null | undefined): void {
+  /** The newest THREADS' `threads` and `pending` (as live.ts kept them). */
+  setThreads(raw: readonly unknown[] | null | undefined, waiting: Record<string, string[]> | null = null): void {
     this.threads = parseThreads(raw);
+    this.waitingBy = waiting ?? {};
     this.pending.settle(this.threads);
+    this.forgetHeld();
     this.onChange();
+  }
+
+  /** The ids of this reader's comments the newest THREADS lists as waiting for approval. */
+  private waitingIds(): Set<string> {
+    return new Set(this.rid && this.waitingBy ? (this.waitingBy[this.rid] ?? []) : []);
+  }
+
+  /**
+   * Forget the words of what THREADS shows itself, or no longer lists as waiting (approved and
+   * then hidden, deleted by the owner, ...). Not while an op for it is still on its way, and not
+   * before a THREADS has come and this page knows its rid.
+   */
+  private forgetHeld(): void {
+    if (!this.rid || this.waitingBy === null) return;
+    const waiting = this.waitingIds();
+    for (const id of Object.keys(this.held.all())) {
+      const inFlight = this.pending.list.some((p) => p.op.id === id);
+      if (findComment(this.threads, id) || (!waiting.has(id) && !inFlight)) this.held.delete(id);
+    }
+  }
+
+  /** The comments listed as waiting that this page still has the words of, in `all`'s threads. */
+  private addWaiting(all: ViewThread[]): void {
+    const waiting = this.waitingIds();
+    if (!waiting.size) return;
+    const held = this.held.all();
+    const make = (id: string, h: Held): ViewComment => ({
+      id,
+      parent_id: h.parent_id,
+      author: `${h.name} (reader)`,
+      rid: this.rid,
+      text: h.text,
+      anchor: h.anchor,
+      created_at: h.at,
+      updated_at: h.at,
+      resolved: false,
+      deleted: false,
+      detached: false,
+      changed: false,
+      waiting: true,
+      pending: false
+    });
+    const ids = [...waiting].filter((id) => held[id] && !findComment(all, id));
+    for (const id of ids) {
+      if (!held[id].parent_id) all.push({ root: make(id, held[id]), replies: [] });
+    }
+    for (const id of ids) {
+      const parent = held[id].parent_id;
+      const thread = parent ? all.find((t) => t.root.id === parent) : undefined;
+      if (thread) thread.replies.push(make(id, held[id]));
+    }
   }
 
   isMine(c: Pick<ReaderComment, 'rid'>): boolean {
@@ -438,6 +607,7 @@ export class ReaderComments {
       detached: false,
       changed: false
     }));
+    this.addWaiting(all);
     // A deleted comment stays as "removed", a thread deleted through included.
     return orderThreads(all, true);
   }
@@ -459,9 +629,10 @@ export class ReaderComments {
     return new Date(this.now()).toISOString();
   }
 
-  private submit(op: ReaderOp, base: string | null = null): ReaderOp {
+  private submit(op: ReaderOp, base: string | null = null, keep?: Held): ReaderOp {
     const key = this.identity.ensureKey();
     this.pending.add(op, op.at, { sent: this.now(), base });
+    if (keep) this.held.set(op.id, keep); // (the owner may ask to approve it first)
     this.onChange();
     void this.learnRid();
     this.send(op, key);
@@ -472,25 +643,30 @@ export class ReaderComments {
   create(draft: Draft, text: string): ReaderOp | null {
     const t = text.trim();
     if (!this.name || !sendable(t)) return null;
-    return this.submit(createOp(mintId(), t, this.name, this.at(), draft.anchor));
+    const op = createOp(mintId(), t, this.name, this.at(), draft.anchor);
+    return this.submit(op, null, { parent_id: null, text: t, name: this.name, at: op.at, anchor: threadAnchor(op.anchor) });
   }
 
   reply(rootId: string, text: string): ReaderOp | null {
     const t = text.trim();
     if (!this.name || !sendable(t)) return null;
-    return this.submit(replyOp(mintId(), rootId, t, this.name, this.at()));
+    const op = replyOp(mintId(), rootId, t, this.name, this.at());
+    return this.submit(op, null, { parent_id: rootId, text: t, name: this.name, at: op.at, anchor: threadAnchor(null) });
   }
 
   /** Edit one's own comment; null when it is not one's own, unchanged or cannot be sent. */
   edit(c: ReaderComment, text: string): ReaderOp | null {
     const t = text.trim();
     if (!this.isMine(c) || !sendable(t) || t === c.text) return null;
-    return this.submit(editOp(c.id, t, this.name, this.at()), c.updated_at);
+    // With approval on, the edited text waits again: its words stay here meanwhile.
+    const keep = { parent_id: c.parent_id, text: t, name: this.name, at: c.created_at, anchor: c.anchor };
+    return this.submit(editOp(c.id, t, this.name, this.at()), c.updated_at, keep);
   }
 
   /** Delete one's own comment; null when it is not one's own. */
   remove(c: ReaderComment): ReaderOp | null {
     if (!this.isMine(c)) return null;
+    this.held.delete(c.id);
     return this.submit(deleteOp(c.id, this.name, this.at()));
   }
 

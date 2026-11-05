@@ -362,6 +362,8 @@ export class PublishingState {
 			where: this.target === 'host' ? 'host' : 'local',
 			follow: this.target === 'host' && !!s.follow,
 			comments: this.target === 'host' && !!s.comments,
+			// Approval only counts while readers may comment (the backend sets `moderated_since`).
+			moderate: this.target === 'host' && !!s.comments && !!s.moderate,
 			expires_days: fitExpiry(this.target, s.expires_days, this.defaultExpiry)
 		};
 	}
