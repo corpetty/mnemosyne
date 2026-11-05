@@ -20,6 +20,8 @@ export default defineConfig({
       'src/lib/notes/**/*.test.ts',
       'src/lib/stores/**/*.test.ts',
       'src/lib/app/**/*.test.ts',
+      'src/lib/rooms/**/*.test.ts',
+      'src/lib/sealed/**/*.test.ts',
       'viewer/src/**/*.test.ts',
       'guest/src/**/*.test.ts'
     ]
