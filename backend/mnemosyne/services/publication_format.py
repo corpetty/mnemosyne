@@ -27,6 +27,9 @@ Rules, exactly as implemented:
   without images is byte for byte what it was before) lists the images the notes show. The notes
   text keeps `![caption](mnemosyne:image/<sha>.<webp|jpeg>@<w>x<h>)` for each of them; the
   reader maps the `<sha>` to the `ImageRef` with that `id`. A left-out image is `[image: caption]`.
+- `Manifest.live` (additive the same way; absent from the canonical JSON when None, FORMAT stays
+  1) = `{sign, box}`, the owner's Ed25519 and X25519 public keys as 64 lowercase hex characters
+  each, for a live publication (services/pub_live_format.py; publication_live_v1.json).
 - a key from a password (single-file export): PBKDF2-HMAC-SHA256, 16-byte salt, 32-byte key;
   the file carries salt and iteration count.
 """
@@ -42,7 +45,7 @@ import struct
 from collections.abc import Iterable
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 FORMAT = 1
 AAD_PREFIX = "mnemosyne/pub/1"
@@ -190,6 +193,18 @@ class Quote(_Strict):
     clip: ClipRef | None = None
 
 
+_KEY_HEX = r"^[0-9a-f]{64}$"
+
+
+class LiveKeys(_Strict):
+    """The owner's public keys for a live publication (services/pub_live_format.py): `sign`
+    verifies the owner's frames (Ed25519), `box` is what readers seal comments to (X25519).
+    Both are the raw 32-byte public keys as 64 lowercase hex characters."""
+
+    sign: str = Field(pattern=_KEY_HEX)
+    box: str = Field(pattern=_KEY_HEX)
+
+
 class Manifest(_Strict):
     """What a reader sees. There is deliberately no field for transcript segments."""
 
@@ -211,6 +226,7 @@ class Manifest(_Strict):
     notes: str | None = None
     quotes: list[Quote] = []
     images: list[ImageRef] = []
+    live: LiveKeys | None = None  # additive, like `images`: absent from the JSON when None
 
 
 def canonical_json(value: object) -> bytes:
@@ -224,6 +240,8 @@ def manifest_bytes(manifest: Manifest) -> bytes:
     value = manifest.model_dump(mode="json")
     if not value["images"]:
         del value["images"]  # additive: a manifest without images is what it always was
+    if value["live"] is None:
+        del value["live"]  # the same for a publication that is not live
     return canonical_json(value)
 
 

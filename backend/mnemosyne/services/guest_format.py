@@ -47,6 +47,13 @@ Rules, exactly as implemented:
   every holder of the key can compute it, the host sees an opaque name (a sealed blob's own hash
   cannot serve, AES-GCM nonces are random). The plain `seal`/`unseal` take the sha as a keyword
   (`unseal` refuses a MEDIA envelope without it); the MEDIA kind is additive, FORMAT stays 1.
+
+Namespaces (live publications, docs/plans/2026-11-05-live-publications.md C5): the envelope,
+the key derivation and the AAD are parameterised by a `Space` (AAD prefix, HKDF infos, kinds,
+block sizes, the JSON kinds, the media kind). Every function takes `space=GUEST` as a keyword,
+so the rules above are the guest space and nothing about it changed. Another space
+(services/pub_live_format.py `PUB_LIVE`) derives other keys from the same 32-byte key and binds
+another prefix into every AAD, so a frame of one space never opens in the other.
 """
 
 from __future__ import annotations
@@ -54,6 +61,8 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from enum import IntEnum
 
 from . import publication_format as pf
@@ -92,6 +101,33 @@ JSON_KINDS = (Kind.SNAPSHOT, Kind.COMMENT, Kind.META, Kind.PRESENCE)
 
 class GuestFormatError(ValueError):
     """The data cannot be sealed or opened; the message says why."""
+
+
+@dataclass(frozen=True)
+class Space:
+    """One namespace of sealed room frames: what goes into the AAD and the HKDF infos, which
+    kind bytes exist and how each pads. `blocks` lists the kinds whose block is not BLOCK."""
+
+    aad_prefix: str
+    info_frames: bytes
+    info_room: bytes
+    kinds: type[IntEnum]
+    info_media_name: bytes | None = None
+    blocks: Mapping[int, int] = field(default_factory=dict)
+    json_kinds: frozenset[int] = frozenset()
+    media_kind: int | None = None
+
+
+GUEST = Space(
+    aad_prefix=AAD_PREFIX,
+    info_frames=INFO_FRAMES,
+    info_room=INFO_ROOM,
+    kinds=Kind,
+    info_media_name=INFO_MEDIA_NAME,
+    blocks={Kind.SNAPSHOT: SNAPSHOT_BLOCK, Kind.MEDIA: MEDIA_BLOCK},
+    json_kinds=frozenset(JSON_KINDS),
+    media_kind=Kind.MEDIA,
+)
 
 
 # ---- ids and keys --------------------------------------------------------------------
@@ -136,16 +172,18 @@ def _hkdf(key: bytes, info: bytes) -> bytes:
     return HKDF(algorithm=hashes.SHA256(), length=32, salt=b"", info=info).derive(bytes(key))
 
 
-def frames_key(key: bytes) -> bytes:
-    return _hkdf(key, INFO_FRAMES)
+def frames_key(key: bytes, *, space: Space = GUEST) -> bytes:
+    return _hkdf(key, space.info_frames)
 
 
-def room_token(key: bytes) -> str:
-    return pf.b64url_encode(_hkdf(key, INFO_ROOM))
+def room_token(key: bytes, *, space: Space = GUEST) -> str:
+    return pf.b64url_encode(_hkdf(key, space.info_room))
 
 
-def media_name_key(key: bytes) -> bytes:
-    return _hkdf(key, INFO_MEDIA_NAME)
+def media_name_key(key: bytes, *, space: Space = GUEST) -> bytes:
+    if space.info_media_name is None:
+        raise GuestFormatError("This kind of room has no media")
+    return _hkdf(key, space.info_media_name)
 
 
 def check_sha(sha: str) -> str:
@@ -154,35 +192,33 @@ def check_sha(sha: str) -> str:
     return sha
 
 
-def media_name(key: bytes, sha: str) -> str:
+def media_name(key: bytes, sha: str, *, space: Space = GUEST) -> str:
     """The name a room stores the blob of plaintext `sha` under (64 hex characters)."""
     import hmac
 
-    return hmac.new(media_name_key(key), check_sha(sha).encode("ascii"), "sha256").hexdigest()
+    name_key = media_name_key(key, space=space)
+    return hmac.new(name_key, check_sha(sha).encode("ascii"), "sha256").hexdigest()
 
 
 # ---- sealing -------------------------------------------------------------------------
 
 
-def _kind(kind: int) -> Kind:
+def _kind(kind: int, space: Space = GUEST) -> IntEnum:
     try:
-        return Kind(kind)
+        return space.kinds(kind)
     except ValueError as e:
         raise GuestFormatError(f"Unknown frame kind {kind!r}") from e
 
 
-def block_for(kind: int) -> int:
-    k = _kind(kind)
-    if k is Kind.SNAPSHOT:
-        return SNAPSHOT_BLOCK
-    return MEDIA_BLOCK if k is Kind.MEDIA else BLOCK
+def block_for(kind: int, *, space: Space = GUEST) -> int:
+    return space.blocks.get(_kind(kind, space), BLOCK)
 
 
-def aad(room: str, kind: int, sha: str | None = None) -> bytes:
+def aad(room: str, kind: int, sha: str | None = None, *, space: Space = GUEST) -> bytes:
     """`sha` (the plaintext's SHA-256, hex) is required for MEDIA and refused for other kinds."""
-    k = _kind(kind)
-    base = f"{AAD_PREFIX}|{check_room(room)}|{int(k)}"
-    if k is Kind.MEDIA:
+    k = _kind(kind, space)
+    base = f"{space.aad_prefix}|{check_room(room)}|{int(k)}"
+    if space.media_kind is not None and k == space.media_kind:
         if sha is None:
             raise GuestFormatError("A media frame needs its sha")
         return f"{base}|{check_sha(sha)}".encode()
@@ -198,25 +234,29 @@ def seal(
     plaintext: bytes,
     nonce: bytes | None = None,
     sha: str | None = None,
+    *,
+    space: Space = GUEST,
 ) -> bytes:
     """Pad and encrypt into an envelope. `nonce` is for the test vectors only."""
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-    k = _kind(kind)
-    additional = aad(room, k, sha)
+    k = _kind(kind, space)
+    additional = aad(room, k, sha, space=space)
     try:
-        padded = pf.pad(bytes(plaintext), block_for(k))
+        padded = pf.pad(bytes(plaintext), block_for(k, space=space))
     except pf.PublicationFormatError as e:
         raise GuestFormatError(str(e)) from e
     if nonce is None:
         nonce = secrets.token_bytes(NONCE_SIZE)
     elif len(nonce) != NONCE_SIZE:
         raise GuestFormatError("A nonce is 12 bytes")
-    sealed = AESGCM(frames_key(key)).encrypt(nonce, padded, additional)
+    sealed = AESGCM(frames_key(key, space=space)).encrypt(nonce, padded, additional)
     return bytes([k]) + nonce + sealed
 
 
-def unseal(key: bytes, room: str, envelope: bytes, sha: str | None = None) -> tuple[Kind, bytes]:
+def unseal(
+    key: bytes, room: str, envelope: bytes, sha: str | None = None, *, space: Space = GUEST
+) -> tuple[IntEnum, bytes]:
     """Decrypt and unpad. Raises GuestFormatError for a wrong key or room, a changed kind
     byte, a short or altered envelope, or bad padding. A MEDIA envelope opens only with its
     `sha` (use `unseal_media`, which also checks the bytes against it)."""
@@ -226,18 +266,18 @@ def unseal(key: bytes, room: str, envelope: bytes, sha: str | None = None) -> tu
     check_room(room)
     if len(envelope) < 1 + NONCE_SIZE + TAG_SIZE:
         raise GuestFormatError("The data is too short to be a guest frame")
-    kind = _kind(envelope[0])
+    kind = _kind(envelope[0], space)
     nonce = envelope[1 : 1 + NONCE_SIZE]
     try:
-        padded = AESGCM(frames_key(key)).decrypt(
-            nonce, envelope[1 + NONCE_SIZE :], aad(room, kind, sha)
+        padded = AESGCM(frames_key(key, space=space)).decrypt(
+            nonce, envelope[1 + NONCE_SIZE :], aad(room, kind, sha, space=space)
         )
     except InvalidTag as e:
         raise GuestFormatError(
             "Could not decrypt the frame: wrong key or room, or it was altered"
         ) from e
     try:
-        return kind, pf.unpad(padded, block_for(kind))
+        return kind, pf.unpad(padded, block_for(kind, space=space))
     except pf.PublicationFormatError as e:
         raise GuestFormatError(str(e)) from e
 
@@ -307,15 +347,25 @@ def canonical_json(obj: object) -> bytes:
         raise GuestFormatError("That value cannot be written as JSON") from e
 
 
-def seal_json(key: bytes, room: str, kind: int, obj: object, nonce: bytes | None = None) -> bytes:
-    if _kind(kind) not in JSON_KINDS:
+def seal_json(
+    key: bytes,
+    room: str,
+    kind: int,
+    obj: object,
+    nonce: bytes | None = None,
+    *,
+    space: Space = GUEST,
+) -> bytes:
+    if _kind(kind, space) not in space.json_kinds:
         raise GuestFormatError("That frame kind does not carry JSON")
-    return seal(key, room, kind, canonical_json(obj), nonce)
+    return seal(key, room, kind, canonical_json(obj), nonce, space=space)
 
 
-def unseal_json(key: bytes, room: str, envelope: bytes) -> tuple[Kind, object]:
-    kind, plain = unseal(key, room, envelope)
-    if kind not in JSON_KINDS:
+def unseal_json(
+    key: bytes, room: str, envelope: bytes, *, space: Space = GUEST
+) -> tuple[IntEnum, object]:
+    kind, plain = unseal(key, room, envelope, space=space)
+    if kind not in space.json_kinds:
         raise GuestFormatError("That frame kind does not carry JSON")
     try:
         return kind, json.loads(plain.decode("utf-8"))

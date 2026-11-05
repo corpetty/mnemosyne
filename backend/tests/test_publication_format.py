@@ -273,6 +273,22 @@ def test_the_manifest_lists_images_only_when_there_are_some():
         pf.parse_manifest(pf.canonical_json({**parsed, "images": [{**ref, "extra": 1}]}))
 
 
+def test_the_manifest_carries_live_keys_only_when_set(vec):
+    # Additive (live publications): without `live` the canonical JSON is what it always was,
+    # byte for byte, so publication_v1.json and every existing digest are unchanged.
+    assert b"live" not in pf.manifest_bytes(manifest())
+    for label in ("manifest", "images_manifest"):
+        old = vec[label]["json"]
+        assert '"live"' not in old
+        assert pf.manifest_bytes(pf.parse_manifest(old.encode())) == old.encode()
+    live = {"sign": "1" * 64, "box": "2" * 64}
+    m = manifest(live=live)
+    assert json.loads(pf.manifest_bytes(m))["live"] == live
+    assert pf.parse_manifest(pf.manifest_bytes(m)) == m
+    with pytest.raises(pf.PublicationFormatError):
+        pf.parse_manifest(pf.canonical_json({**json.loads(pf.manifest_bytes(m)), "live": {}}))
+
+
 # ---- password ----
 
 
