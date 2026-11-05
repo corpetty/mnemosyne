@@ -6,7 +6,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RoomSocket } from '$lib/rooms/client';
-import { deriveLiveKeys, PubKind, signFrame } from '$lib/sealed/signed';
+import { deriveLiveKeys, openBox, PubKind, signFrame } from '$lib/sealed/signed';
+import { createOp, itemAnchor } from './comments';
 import { b64urlDecode, blobHash, fromHex, parseManifest, type Manifest } from './format';
 import { Follower, POLL_MS, STATUS, statusLine, type Gone, type Shown } from './live';
 import { openHosted, type Ready } from './load';
@@ -495,6 +496,32 @@ describe('the room', () => {
 		await tick();
 		expect(run.swaps).toEqual([]);
 		await joined();
+	});
+
+	it('sendComment boxes the op into the room as 0x01 || envelope, for the owner only', async () => {
+		const { ws } = await live();
+		const op = createOp('0123456789ab', 'Why Friday?', 'Ana', '2026-11-05T10:20:00.000Z', itemAnchor('decision', 'd1'));
+		expect(await follower!.sendComment(op, READER)).toBe(true);
+		const out = ws.sent.slice(1); // after the join
+		expect(out.length).toBe(1);
+		const frame = out[0] as Uint8Array;
+		expect(frame[0]).toBe(0x01);
+		const opened = await openBox(await keys(), ROOM, frame.slice(1), fromHex(vec.owner.box_private_hex));
+		expect(opened.op).toEqual(op);
+		expect(opened.rid).toBe(vec.reader.rid);
+		// The reader's private key is in no frame.
+		expect(Buffer.from(frame).toString('hex')).not.toContain(vec.reader.private_hex);
+	});
+
+	it('sendComment without a room or without live keys sends nothing', async () => {
+		const host = new FakeHost();
+		await host.publish(unlive(4));
+		host.room = ROOM;
+		const run = await open(host);
+		follower = run.follower;
+		const op = createOp('0123456789ab', 'x', 'Ana', '2026-11-05T10:20:00.000Z', itemAnchor('decision', 'd1'));
+		expect(await follower.sendComment(op, READER)).toBe(false);
+		expect(sockets()).toEqual([]);
 	});
 
 	it('stop closes the socket and the polls', async () => {

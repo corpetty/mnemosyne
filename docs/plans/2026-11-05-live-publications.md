@@ -690,3 +690,38 @@ backend suite (locally: single files), the publish-host and link crates' full te
 - Task 5: the watcher also acts on a meeting whose first unpublished change is `MAX_WAIT` = 60 s old, quiet or not
   (still subject to GAP, the backoff and the active-job check), so steady typing in the live notes cannot keep
   readers waiting until everyone stops.
+- Task 12 (viewer comments UI), decided while building:
+  - The pure helpers moved to src/lib/comments/pure.ts, generic over the comment and op shapes
+    (`BaseComment`, `BaseOp`, `PendingOps<O, P>` with an optional "reflected" test, `withPendingBy`
+    with a `fresh` callback, `findComment`; `orderThreads(threads, keepGone)`). guest/src/comments.ts
+    re-exports them and keeps its guest-typed parts (`GuestOp` builders, `isMine`, `openMarkIds`, a
+    `PendingOps` subclass and `withPending` over `withPendingBy`); the guest tests are untouched.
+  - COMMENT op: always exactly the keys `op, id, parent_id, text, name, at, anchor`. `create`:
+    `parent_id: null`, `anchor` with all six keys (`target, target_id, quote_id, exact, prefix,
+    suffix`), null where unused (the vectors' op is produced byte for byte). `reply`: `parent_id` =
+    the root's id, `anchor: null`. `edit`: the new text, `parent_id: null`, `anchor: null`. `delete`:
+    `text: null`, `parent_id: null`, `anchor: null`. `name` = the reader's current name on every op;
+    `at` = `Date.toISOString()` (milliseconds, `Z`). Texts are trimmed; 1-4,000 code points.
+  - Anchors: meeting = target `""`; decision/question/item = that target + `target_id`; a quote =
+    target `"quote"` + `quote_id` (target_id null; the bridge maps it to the transcript lines); a
+    summary passage = target `"body"`, `exact` = the selection without outer whitespace, `prefix` /
+    `suffix` = up to 32 characters of the RENDERED summary's text (the Markdown component's
+    `textContent`, not `plain_markdown`), `""` at the edges.
+  - THREADS anchors are placed by `quote_id` first (whatever the target, e.g. `segment`), then
+    decision/question/item + `target_id`, then `body`; anything else is the meeting (no "On:" line).
+    The "On:" line shows the manifest's current text of the item or quote, else `anchor.quote`
+    (so the bridge should send the exact text as `quote` for body threads).
+  - Reader storage: `mnemosyne.reader.<pub id>.name` and `mnemosyne.reader.<pub id>.key` (the
+    Ed25519 seed as 64 hex); the key is made at the first op. Retry re-boxes the SAME op (same id
+    and `at`). An edit counts as seen when THREADS has its text OR another `updated_at` than when it
+    was made (the owner's redaction may change the text). A thread deleted through stays shown as
+    "removed" in the viewer (the guest page drops it), as e2e 14 expects.
+  - With comments off there are no affordances at all ("n comments" included); read-only threads
+    stay in the column. "n comments" counts the non-deleted comments (pending included) of the
+    threads on that part ("1 comment"); the phone tab's count is open threads. A focused thread
+    flashes the guest's `border-yellow-500/70` for 1.8 s.
+  - Layout: with the column, `main` widens to `lg:max-w-[70rem]` so the meeting keeps its 3xl width;
+    the meeting is never re-mounted when the column appears. Composer: Enter is a newline,
+    Ctrl/Cmd+Enter sends, Escape drops the anchor; Cancel shows only when anchored.
+  - The name card says only "Your name, shown with your comments" (the brief); the Risks line about
+    saying that a cleared browser is a new reader is not in it.

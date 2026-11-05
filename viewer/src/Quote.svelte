@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, type Snippet } from 'svelte';
 	import { formatClock } from './display';
 	import type { Quote } from './format';
 	import type { ClipLoader } from './load';
 
-	let { quote, loadClip }: { quote: Quote; loadClip: ClipLoader } = $props();
+	// `extra`: more in the caption's row (the viewer's comment affordance).
+	let { quote, loadClip, extra }: { quote: Quote; loadClip: ClipLoader; extra?: Snippet } = $props();
 
 	// The clip is fetched and decrypted only when the reader presses play; the audio element
 	// appears then, playing a blob URL that is revoked when the page or the quote goes away.
@@ -61,6 +62,7 @@
 				>
 			{/if}
 			{#if error}<span class="text-red-400">{error}</span>{/if}
+			{@render extra?.()}
 		</div>
 		{#if url}
 			<audio bind:this={audio} src={url} controls preload="auto" class="mt-2 h-8 w-full max-w-sm"></audio>
