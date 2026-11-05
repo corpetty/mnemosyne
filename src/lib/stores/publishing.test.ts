@@ -49,6 +49,8 @@ function defaults(extra: Partial<PublicationDefaults> = {}): PublicationDefaults
 		expires_days: 90,
 		follow: false,
 		comments: false,
+		moderate: false,
+		moderated_since: null,
 		local_reach: 'this_device',
 		local_url: '',
 		host_url: '',
@@ -114,6 +116,36 @@ describe('the Publish dialog store', () => {
 		expect(st.selection).toMatchObject({ follow: true, comments: true });
 		st.setTarget('file');
 		expect(st.selection).toMatchObject({ follow: false, comments: false });
+	});
+
+	it('approval starts off, and is sent only for a hosted publication that takes comments', async () => {
+		const api = fakeApi({ getPublicationDefaults: vi.fn(async () => defaults({ where: 'host', host_url: 'https://h' })) });
+		const st = new PublishingState(api, 400, 10);
+		await st.open(session);
+		expect(st.selection).toMatchObject({ comments: true, moderate: false });
+		expect(st.toSend()).toMatchObject({ moderate: false });
+		st.set({ moderate: true });
+		expect(st.toSend()).toMatchObject({ comments: true, moderate: true });
+		st.set({ comments: false }); // the choice is kept in the dialog, but does not count
+		expect(st.selection?.moderate).toBe(true);
+		expect(st.toSend()).toMatchObject({ comments: false, moderate: false });
+		st.set({ comments: true });
+		expect(st.toSend()?.moderate).toBe(true);
+		st.setTarget('local');
+		expect(st.toSend()).toMatchObject({ where: 'local', moderate: false });
+	});
+
+	it('keeps a saved publication\'s approval choice', async () => {
+		const saved = { id: 'p1', version: 2 } as unknown as Publication;
+		const api = fakeApi({
+			getPublication: vi.fn(async () => saved),
+			getPublicationDefaults: vi.fn(async () =>
+				defaults({ where: 'host', host_url: 'https://h', comments: true, moderate: true, moderated_since: '2026-11-05T10:00:00Z' })
+			)
+		});
+		const st = new PublishingState(api, 400, 10);
+		await st.open(session);
+		expect(st.selection).toMatchObject({ comments: true, moderate: true });
 	});
 
 	it('keeps a saved publication\'s switches, and a local new one starts off', async () => {

@@ -48,7 +48,24 @@ export interface Meta {
 /** The owner's THREADS as it came (M2 renders it). */
 export interface Threads {
 	threads: unknown[];
+	/** Per reader (rid), the ids of that reader's own comments waiting for the owner's approval:
+	 *  ids only, never their text (every reader gets this frame). Empty from an older owner. */
+	pending: Record<string, string[]>;
 	at: string;
+}
+
+const RID = /^[0-9a-f]{16}$/;
+
+/** THREADS' `pending`: {rid: [comment id, ...]}; anything malformed is left out. */
+export function parsePending(raw: unknown): Record<string, string[]> {
+	const out: Record<string, string[]> = {};
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+	for (const [rid, ids] of Object.entries(raw as Record<string, unknown>)) {
+		if (!RID.test(rid) || !Array.isArray(ids)) continue;
+		const list = ids.filter((i): i is string => typeof i === 'string' && i !== '');
+		if (list.length) out[rid] = list;
+	}
+	return out;
 }
 
 export interface FollowHandlers {
@@ -408,7 +425,7 @@ export class Follower {
 		if (at === null || !Array.isArray(o.threads)) return false;
 		if (this.threadsAt !== null && at <= this.threadsAt) return true;
 		this.threadsAt = at;
-		this.threads = { threads: o.threads, at: o.at as string };
+		this.threads = { threads: o.threads, pending: parsePending(o.pending), at: o.at as string };
 		this.h.onChange?.();
 		return true;
 	}

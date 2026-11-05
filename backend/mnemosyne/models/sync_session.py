@@ -67,6 +67,8 @@ class SyncComment(ApiModel):
     resolved_at: str | None = None
     resolved_by: str = ""
     deleted: bool = False
+    approved_at: str | None = None  # moderation for readers of a published link
+    hidden_at: str | None = None
 
 
 class SyncAsset(ApiModel):

@@ -9,7 +9,7 @@ import type { RoomSocket } from '$lib/rooms/client';
 import { deriveLiveKeys, openBox, PubKind, signFrame } from '$lib/sealed/signed';
 import { createOp, itemAnchor } from './comments';
 import { b64urlDecode, blobHash, fromHex, parseManifest, type Manifest } from './format';
-import { Follower, POLL_MS, STATUS, statusLine, type Gone, type Shown } from './live';
+import { Follower, POLL_MS, STATUS, parsePending, statusLine, type Gone, type Shown } from './live';
 import { openHosted, type Ready } from './load';
 
 const vec = JSON.parse(
@@ -382,6 +382,33 @@ describe('the room', () => {
 		ws.frame(4, await signed(PubKind.THREADS, { at: '2026-11-05T09:00:00Z', threads: [] }));
 		await settle();
 		expect(follower!.threads?.threads.length).toBe(1);
+	});
+
+	it('carries the pending ids of THREADS (ids only), none from an older owner', async () => {
+		const { ws } = await live();
+		ws.frame(1, b64urlDecode(vec.samples.threads.envelope_b64url)); // no `pending` in it
+		await settle();
+		expect(follower!.threads?.pending).toEqual({});
+		const rid = vec.reader.rid;
+		ws.frame(
+			2,
+			await signed(PubKind.THREADS, {
+				at: '2026-11-05T10:30:00Z',
+				threads: [],
+				pending: { [rid]: ['aaaaaaaaaaaa', 'bbbbbbbbbbbb'] }
+			})
+		);
+		await settle();
+		expect(follower!.threads).toMatchObject({ threads: [], pending: { [rid]: ['aaaaaaaaaaaa', 'bbbbbbbbbbbb'] } });
+	});
+
+	it('reads `pending` carefully', () => {
+		const rid = 'feedfacefeedface';
+		expect(parsePending({ [rid]: ['a', 'b'] })).toEqual({ [rid]: ['a', 'b'] });
+		expect(parsePending({ [rid]: ['a', 3, '', null, 'b'], notarid: ['x'], [rid.replace('f', '0')]: [], beefbeefbeefbeef: 'x' })).toEqual({
+			[rid]: ['a', 'b']
+		});
+		for (const bad of [undefined, null, 'x', 4, ['a'], true]) expect(parsePending(bad)).toEqual({});
 	});
 
 	it('drops frames that are not signed by the owner, silently', async () => {

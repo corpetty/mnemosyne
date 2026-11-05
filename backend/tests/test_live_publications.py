@@ -12,7 +12,7 @@ import asyncio
 import hashlib
 import json
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -641,7 +641,7 @@ async def test_a_publish_sends_version_with_the_manifest_sha(ctx, live, seals):
     # The room's snapshot is a signed THREADS (empty until task 11), posted before the join.
     (snapshot,) = [b for _, p, _, b in live.rooms.calls if p == f"/live/{room}/snapshot"]
     kind, body = plf.open_signed(row["key"], room, snapshot, _sign_pub(row))
-    assert (kind, body) == (plf.Kind.THREADS, {"threads": [], "at": body["at"]})
+    assert (kind, body) == (plf.Kind.THREADS, {"threads": [], "pending": {}, "at": body["at"]})
     # The reader joined late: from the log, the join's META, then version 1 (queued before the
     # bridge was in the room; readers ignore a version they show already).
     frames = await _until(
@@ -1027,6 +1027,11 @@ class Reader:
 
     def metas(self) -> list[dict]:
         return [b for k, b in self.frames() if k is plf.Kind.META]
+
+    def threads_frame(self) -> dict | None:
+        """The newest THREADS body, `pending` included."""
+        bodies = [b for k, b in self.frames() if k is plf.Kind.THREADS]
+        return max(bodies, key=lambda b: b["at"]) if bodies else None
 
 
 @pytest.fixture
@@ -1441,3 +1446,234 @@ async def test_an_owner_reply_names_people_as_the_manifest_does(ctx):
         )
     (thread,) = lp.threads_for_readers(ctx, s.id, sel)
     assert thread["replies"][0]["text"] == "Person 2, and Person 1 too"
+
+
+# ---- approving readers' comments before other readers see them (task 13b) ---------------------
+
+ANA = ("reader:" + "1" * 16, "Ana (reader)")
+BO = ("reader:" + "2" * 16, "Bo (reader)")
+
+
+def _moderated(ctx, **sel) -> tuple[str, PublicationSelection]:
+    s = _meeting(ctx)
+    return s.id, PublicationSelection(where="host", comments=True, moderate=True, **sel)
+
+
+def _make(ctx, sid, cid, actor=None, **kw):
+    from mnemosyne.models.comment import CommentCreate
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    with unrestricted():
+        return comments.create(ctx, sid, CommentCreate(**kw), comment_id=cid, actor=actor)
+
+
+def _ids(threads) -> list[str]:
+    return [t["root"]["id"] for t in threads]
+
+
+async def test_moderate_leaves_out_unapproved_readers_comments_and_lists_their_ids(ctx):
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    sid, sel = _moderated(ctx)
+    _make(ctx, sid, "a" * 12, ANA, text="Waiting root")
+    _make(ctx, sid, "b" * 12, ANA, text="Approved root")
+    _make(ctx, sid, "c" * 12, BO, text="Reply of Bo's", parent_id="b" * 12)  # unapproved reply
+    _make(ctx, sid, "d" * 12, ANA, text="Hidden root")
+    _make(ctx, sid, "e" * 12, ANA, text="Approved reply", parent_id="b" * 12)
+    _make(ctx, sid, "f" * 12, parent_id="b" * 12, text="The owner needs no approval")
+    _make(ctx, sid, "9" * 12, ANA, text="Deleted while waiting")
+    _make(ctx, sid, "8" * 12, BO, text="Unapproved reply to a waiting root", parent_id="a" * 12)
+    with unrestricted():
+        comments.approve(ctx, sid, "b" * 12)
+        comments.approve(ctx, sid, "e" * 12)
+        comments.approve(ctx, sid, "d" * 12)
+        comments.hide(ctx, sid, "d" * 12)
+        comments.delete(ctx, sid, "9" * 12)
+    threads = lp.threads_for_readers(ctx, sid, sel)
+    assert _ids(threads) == ["b" * 12]  # the waiting root takes its thread, replies included
+    assert [r["id"] for r in threads[0]["replies"]] == ["e" * 12, "f" * 12]
+    # What is waiting, per writer: ids only, a deleted one is not waiting, a hidden one is not.
+    waiting = lp.pending_for_readers(ctx, sid, sel)
+    assert waiting == {"1" * 16: ["a" * 12], "2" * 16: ["8" * 12, "c" * 12]}
+    blob = json.dumps(threads) + json.dumps(waiting)
+    for text in ("Waiting root", "Reply of Bo", "Hidden root", "Unapproved reply", "Deleted"):
+        assert text not in blob
+    # Approving brings a thread (and the reply that was waiting under it) in.
+    with unrestricted():
+        comments.approve(ctx, sid, "a" * 12)
+        comments.approve(ctx, sid, "c" * 12)
+    threads = lp.threads_for_readers(ctx, sid, sel)
+    assert _ids(threads) == ["a" * 12, "b" * 12]
+    assert [r["id"] for r in threads[1]["replies"]] == ["c" * 12, "e" * 12, "f" * 12]
+    assert lp.pending_for_readers(ctx, sid, sel) == {"2" * 16: ["8" * 12]}
+
+
+async def test_without_moderate_everything_shows_but_what_the_owner_hid(ctx):
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    sid, sel = _moderated(ctx)
+    _make(ctx, sid, "a" * 12, ANA, text="One")
+    _make(ctx, sid, "b" * 12, ANA, text="Two")
+    _make(ctx, sid, "c" * 12, BO, text="A reply", parent_id="b" * 12)
+    _make(ctx, sid, "d" * 12, BO, text="A hidden reply", parent_id="b" * 12)
+    with unrestricted():
+        comments.hide(ctx, sid, "a" * 12)
+        comments.hide(ctx, sid, "d" * 12)
+    for off in (
+        sel.model_copy(update={"moderate": False}),
+        # moderate only counts while comments are on
+        sel.model_copy(update={"comments": False}),
+    ):
+        threads = lp.threads_for_readers(ctx, sid, off)
+        assert _ids(threads) == ["b" * 12]  # Hide is the owner's kill switch, moderate or not
+        assert [r["id"] for r in threads[0]["replies"]] == ["c" * 12]
+        assert lp.pending_for_readers(ctx, sid, off) == {}
+    with unrestricted():
+        comments.approve(ctx, sid, "a" * 12)  # showing a hidden thread again
+    assert _ids(lp.threads_for_readers(ctx, sid, sel.model_copy(update={"moderate": False}))) == [
+        "a" * 12,
+        "b" * 12,
+    ]
+
+
+async def test_comments_from_before_moderation_count_as_approved(ctx):
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    sid, sel = _moderated(ctx)
+    _make(ctx, sid, "a" * 12, ANA, text="Old")
+    _make(ctx, sid, "b" * 12, BO, text="Edited later")
+    # The switch went on a minute from now: both were there before, everyone saw them.
+    soon = (datetime.now(UTC) + timedelta(minutes=1)).isoformat()
+    on = sel.model_copy(update={"moderated_since": soon})
+    assert _ids(lp.threads_for_readers(ctx, sid, on)) == ["a" * 12, "b" * 12]
+    assert lp.pending_for_readers(ctx, sid, on) == {}
+    # An hour ago: both came after it and wait.
+    ago = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    off = sel.model_copy(update={"moderated_since": ago})
+    assert lp.threads_for_readers(ctx, sid, off) == []
+    assert set(lp.pending_for_readers(ctx, sid, off)) == {"1" * 16, "2" * 16}
+    # No date at all (a selection written by hand): nothing is grandfathered.
+    assert lp.threads_for_readers(ctx, sid, sel) == []
+    # An edit after the switch is a new comment: back to waiting, unless approved again.
+    with unrestricted():
+        ctx.repo.add_comment(
+            sid,
+            id="c" * 12,
+            text="Written before",
+            author_id=ANA[0],
+            author=ANA[1],
+            created_at="2020-01-01T10:00:00",
+            updated_at="2020-01-01T10:00:00",
+        )
+    assert "c" * 12 in _ids(lp.threads_for_readers(ctx, sid, off))
+    with unrestricted():
+        comments.edit(ctx, sid, "c" * 12, "Changed after", actor=ANA)
+    assert "c" * 12 not in _ids(lp.threads_for_readers(ctx, sid, off))
+    assert "c" * 12 in lp.pending_for_readers(ctx, sid, off)["1" * 16]
+
+
+async def test_publishing_stamps_when_moderation_went_on(ctx, host, seals):
+    s = _meeting(ctx)
+
+    async def publish(**sel) -> PublicationSelection:
+        pub = await _first(ctx, s.id, follow=False, comments=True, **sel)
+        return PublicationSelection.model_validate(pub["selection"])
+
+    off = await publish(moderated_since="2000-01-01T00:00:00Z")  # not the caller's to say
+    assert not off.moderate and off.moderated_since is None
+    first = await publish(moderate=True)
+    assert first.moderated_since and first.moderated_since > "2020"
+    again = await publish(moderate=True, moderated_since="2000-01-01T00:00:00Z")
+    assert again.moderated_since == first.moderated_since  # kept while it stays on
+    gone = await publish(moderate=False)
+    assert gone.moderated_since is None
+    await asyncio.sleep(1.1)  # (second resolution)
+    back = await publish(moderate=True)
+    assert back.moderated_since and back.moderated_since > first.moderated_since
+
+
+async def test_pending_ids_reach_every_reader_without_text_and_follow_the_owner(
+    ctx, live, seals, quick
+):
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    s, bridge, row, ana = await _room_with_comments(ctx, live, moderate=True)
+    bo = Reader(await _reader(live, ctx, s.id), row, bridge.room)
+    await ana.send(_create("a" * 12, "Secret-ish remark from Ana"))
+    assert (await _taken(bridge, 1)) == {"applied": 1}
+    # Both readers hear: nothing to read, and Ana's id, with no words, under her rid.
+    for reader in (ana, bo):
+        frame = await _until(
+            lambda r=reader: (f := r.threads_frame()) and f["pending"] and f, "the pending id"
+        )
+        assert frame["threads"] == [] and frame["pending"] == {ana.rid: ["a" * 12]}
+        assert "remark" not in json.dumps(frame)
+    # The owner approves: the thread appears for both, nothing is waiting.
+    with unrestricted():
+        comments.approve(ctx, s.id, "a" * 12)
+    for reader in (ana, bo):
+        frame = await _until(
+            lambda r=reader: (f := r.threads_frame()) and f["threads"] and f, "the approved thread"
+        )
+        assert frame["pending"] == {} and frame["threads"][0]["root"]["text"].startswith("Secret")
+    # Hide takes it away again (and says nothing is waiting: it was answered).
+    with unrestricted():
+        comments.hide(ctx, s.id, "a" * 12)
+    frame = await _until(
+        lambda: (f := bo.threads_frame()) and not f["threads"] and f, "the hidden thread gone"
+    )
+    assert frame["pending"] == {}
+    # Ana edits an approved comment of hers: it waits again.
+    with unrestricted():
+        comments.approve(ctx, s.id, "a" * 12)
+    await ana.send(_edit("a" * 12, "Quite different now", 5))
+    await _taken(bridge, 2)
+    frame = await _until(
+        lambda: (f := bo.threads_frame()) and f["pending"] and f, "the edit to wait again"
+    )
+    assert frame["threads"] == [] and frame["pending"] == {ana.rid: ["a" * 12]}
+    assert ctx.repo.get_comment("a" * 12).approved_at is None
+    # The snapshot is the same frame.
+    snap = [b for _, p, _, b in live.rooms.calls if p == f"/live/{bridge.room}/snapshot"][-1]
+    kind, body = plf.open_signed(row["key"], bridge.room, snap, _sign_pub(row))
+    assert kind is plf.Kind.THREADS and body["pending"] == {ana.rid: ["a" * 12]}
+    for c in (ana.client, bo.client):
+        await c.close()
+
+
+async def test_a_reader_cannot_reply_in_a_thread_it_is_not_shown(ctx, live, seals, quick):
+    s, bridge, row, ana = await _room_with_comments(ctx, live, moderate=True)
+    await ana.send(_create("a" * 12, "Waiting"))
+    await _taken(bridge, 1)
+    await ana.send(_reply("b" * 12, "a" * 12, "Replying to myself", 1))
+    assert (await _taken(bridge, 2))["refused"] == 1  # readers reply to what they are shown
+    assert [c.id for c in _comments(ctx, s.id)] == ["a" * 12]
+    await ana.client.close()
+
+
+async def test_turning_moderation_off_sends_the_waiting_threads(ctx, live, seals, quick):
+    s, bridge, row, ana = await _room_with_comments(ctx, live, moderate=True)
+    await ana.send(_create("a" * 12, "Was waiting"))
+    await _taken(bridge, 1)
+    await _until(lambda: (f := ana.threads_frame()) and f["pending"], "pending")
+    await _first(ctx, s.id, comments=True, moderate=False)  # an Update with the switch off
+    frame = await _until(
+        lambda: (f := ana.threads_frame()) and f["threads"] and f, "THREADS after the Update"
+    )
+    assert frame["pending"] == {} and frame["threads"][0]["root"]["id"] == "a" * 12
+    # ... and on again: the comment, written before, stays visible; a new one waits.
+    await asyncio.sleep(1.1)
+    await _first(ctx, s.id, comments=True, moderate=True)
+    await ana.send(_create("b" * 12, "New and waiting", 1))
+    await _taken(bridge, 2)
+    frame = await _until(
+        lambda: (f := ana.threads_frame()) and f["pending"] and f, "the new one to wait"
+    )
+    assert frame["pending"] == {ana.rid: ["b" * 12]}
+    assert [t["root"]["id"] for t in frame["threads"]] == ["a" * 12]
+    await ana.client.close()

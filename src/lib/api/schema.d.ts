@@ -1840,6 +1840,40 @@ export interface paths {
         patch: operations["edit_comment_api_sessions__session_id__comments__comment_id__patch"];
         trace?: never;
     };
+    "/api/sessions/{session_id}/comments/{comment_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve Comment */
+        post: operations["approve_comment_api_sessions__session_id__comments__comment_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/comments/{comment_id}/hide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Hide Comment */
+        post: operations["hide_comment_api_sessions__session_id__comments__comment_id__hide_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/comments/{comment_id}/reopen": {
         parameters: {
             query?: never;
@@ -4625,6 +4659,8 @@ export interface components {
             anchor: {
                 [key: string]: unknown;
             };
+            /** Approved At */
+            approved_at: string | null;
             /** At Seconds */
             at_seconds: number | null;
             /**
@@ -4647,6 +4683,11 @@ export interface components {
              * @default false
              */
             can_edit: boolean;
+            /**
+             * Can Moderate
+             * @default false
+             */
+            can_moderate: boolean;
             /**
              * Can Resolve
              * @default false
@@ -4672,6 +4713,8 @@ export interface components {
              * @default false
              */
             detached: boolean;
+            /** Hidden At */
+            hidden_at: string | null;
             /** Id */
             id: string;
             /** Mentions */
@@ -6505,6 +6548,13 @@ export interface components {
             /** Local Url */
             local_url: string;
             /**
+             * Moderate
+             * @default false
+             */
+            moderate: boolean;
+            /** Moderated Since */
+            moderated_since: string | null;
+            /**
              * Names
              * @default as_is
              * @enum {string}
@@ -6603,6 +6653,13 @@ export interface components {
             /** Images */
             images?: string[] | null;
             /**
+             * Moderate
+             * @default false
+             */
+            moderate: boolean;
+            /** Moderated Since */
+            moderated_since?: string | null;
+            /**
              * Names
              * @default as_is
              * @enum {string}
@@ -6686,6 +6743,13 @@ export interface components {
             hide_identifiers: boolean;
             /** Images */
             images: string[] | null;
+            /**
+             * Moderate
+             * @default false
+             */
+            moderate: boolean;
+            /** Moderated Since */
+            moderated_since: string | null;
             /**
              * Names
              * @default as_is
@@ -8651,6 +8715,8 @@ export interface components {
             anchor: {
                 [key: string]: unknown;
             };
+            /** Approved At */
+            approved_at: string | null;
             /**
              * Author
              * @default
@@ -8668,6 +8734,8 @@ export interface components {
              * @default false
              */
             deleted: boolean;
+            /** Hidden At */
+            hidden_at: string | null;
             /** Id */
             id: string;
             /** Mentions */
@@ -13097,6 +13165,70 @@ export interface operations {
                 "application/json": components["schemas"]["CommentUpdate"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comment"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_comment_api_sessions__session_id__comments__comment_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comment"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hide_comment_api_sessions__session_id__comments__comment_id__hide_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

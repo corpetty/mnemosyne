@@ -318,6 +318,13 @@
 										Readers may comment
 									</label>
 									<p class="ml-6 mt-0.5 text-xs text-gray-500">Anyone with the link can comment under a name they type; their comments appear here marked (reader).</p>
+									{#if sel.comments}
+										<label class="ml-6 mt-2 flex items-center gap-2 text-gray-300">
+											<input type="checkbox" class={check} checked={sel.moderate} onchange={(e) => pub.set({ moderate: e.currentTarget.checked })} />
+											Approve comments before other readers see them
+										</label>
+										<p class="ml-12 mt-0.5 text-xs text-gray-500">Readers see a comment once you approve it here; its writer sees it at once, marked waiting.</p>
+									{/if}
 								</div>
 							</div>
 						{:else if pub.target === 'local'}

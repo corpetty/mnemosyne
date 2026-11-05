@@ -1,7 +1,9 @@
 import {
   addComment,
+  approveComment,
   deleteComment,
   editComment,
+  hideComment,
   listComments,
   reopenComment,
   resolveComment
@@ -116,6 +118,12 @@ class CommentsState {
   }
   reopen(cid: string) {
     return this.#run((id) => reopenComment(id, cid));
+  }
+  approve(cid: string) {
+    return this.#run((id) => approveComment(id, cid));
+  }
+  hide(cid: string) {
+    return this.#run((id) => hideComment(id, cid));
   }
 }
 

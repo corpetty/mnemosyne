@@ -63,3 +63,13 @@ async def resolve_comment(session_id: str, comment_id: str, ctx: AppContext = De
 @router.post("/{comment_id}/reopen", response_model=Comment)
 async def reopen_comment(session_id: str, comment_id: str, ctx: AppContext = Depends(get_ctx)):
     return _run(comments.reopen, ctx, session_id, comment_id)
+
+
+@router.post("/{comment_id}/approve", response_model=Comment)
+async def approve_comment(session_id: str, comment_id: str, ctx: AppContext = Depends(get_ctx)):
+    return _run(comments.approve, ctx, session_id, comment_id)
+
+
+@router.post("/{comment_id}/hide", response_model=Comment)
+async def hide_comment(session_id: str, comment_id: str, ctx: AppContext = Depends(get_ctx)):
+    return _run(comments.hide, ctx, session_id, comment_id)

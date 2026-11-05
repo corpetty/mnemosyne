@@ -327,3 +327,27 @@ def test_a_reader_can_comment_and_a_stranger_cannot_see_the_meeting(team):
     with _as(ann):
         assert ctx.repo.get_comment(mine).text == "note to self"
         assert ctx.repo.get_comment(mine).resolved_by == bob.id
+
+
+def test_moderation_columns_are_added_to_an_older_database(tmp_path):
+    path = tmp_path / "db.sqlite"
+    first = SessionRepository(path)
+    sid = _session(first)
+    cid = first.add_comment(sid, text="From before")
+    first.close()
+    raw = sqlite3.connect(path)
+    for col in ("approved_at", "hidden_at"):
+        raw.execute(f"ALTER TABLE comments DROP COLUMN {col}")
+    raw.commit()
+    assert "hidden_at" not in {r[1] for r in raw.execute("PRAGMA table_info(comments)")}
+    raw.close()
+    again = SessionRepository(path)
+    try:
+        c = again.get_comment(cid)
+        assert c is not None and c.approved_at is None and c.hidden_at is None
+        when = datetime(2026, 11, 5, 10, 0)
+        assert again.set_comment_moderation(cid, when, None)
+        got = again.get_comment(cid)
+        assert got is not None and got.approved_at == when and got.hidden_at is None
+    finally:
+        again.close()

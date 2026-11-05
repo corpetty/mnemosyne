@@ -1249,6 +1249,16 @@ export async function reopenComment(sessionId: string, cid: string): Promise<Com
   return request(`${commentsPath(sessionId)}/${encodeURIComponent(cid)}/reopen`, { method: 'POST' });
 }
 
+/** Let readers of the published link see a reader's comment (the meeting's owner or an admin). */
+export async function approveComment(sessionId: string, cid: string): Promise<Comment> {
+  return request(`${commentsPath(sessionId)}/${encodeURIComponent(cid)}/approve`, { method: 'POST' });
+}
+
+/** Keep a comment from readers of the published link, whatever the approval setting. */
+export async function hideComment(sessionId: string, cid: string): Promise<Comment> {
+  return request(`${commentsPath(sessionId)}/${encodeURIComponent(cid)}/hide`, { method: 'POST' });
+}
+
 // Comments on a task across the meetings that mention it
 export async function taskComments(key: string): Promise<ObjectComments> {
   return request(`/api/tasks/${encodeURIComponent(key)}/comments`);

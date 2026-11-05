@@ -369,3 +369,50 @@ def test_every_change_is_announced(client, ctx):
             got.append(event)
     assert got == [{"type": "comments", "session_id": sid, "mentions": []}] * 5
     ctx.bus.unsubscribe(queue)
+
+
+def test_approve_and_hide_set_dates_and_are_logged(client, ctx):
+    ctx.settings.local_speaker_name = "Corey"
+    sid = _meeting(ctx)
+    root = _post(client, sid, target="segment", idx=0, text="Is Friday firm?")
+    assert root["approved_at"] is None and root["hidden_at"] is None and root["can_moderate"]
+    queue = ctx.bus.subscribe()
+
+    approved = client.post(_url(sid, f"/{root['id']}/approve")).json()
+    assert approved["approved_at"] and approved["hidden_at"] is None
+    again = client.post(_url(sid, f"/{root['id']}/approve")).json()
+    assert again["approved_at"] == approved["approved_at"]  # saying it twice changes nothing
+
+    hidden = client.post(_url(sid, f"/{root['id']}/hide")).json()
+    assert hidden["hidden_at"] and hidden["approved_at"] == approved["approved_at"]  # hide wins
+    assert client.post(_url(sid, f"/{root['id']}/hide")).json()["hidden_at"] == hidden["hidden_at"]
+    shown = client.post(_url(sid, f"/{root['id']}/approve")).json()
+    assert shown["hidden_at"] is None and shown["approved_at"] == approved["approved_at"]
+
+    kinds = [e["kind"] for e in ctx.repo.events(sid) if e["kind"].startswith("comment")]
+    assert kinds == ["commented", "comment_approved", "comment_hidden", "comment_approved"]
+    event = [e for e in ctx.repo.events(sid) if e["kind"] == "comment_hidden"][0]["detail"]
+    assert event["by"] == "Corey" and event["excerpt"].startswith("Is Friday firm?")
+    got = []
+    while not queue.empty():
+        got.append(queue.get_nowait())
+    assert [e["type"] for e in got if e["type"] == "comments"] == ["comments"] * 3
+    ctx.bus.unsubscribe(queue)
+
+    # Replies are moderated like roots; a deleted comment, another meeting's or an unknown one
+    # is not found.
+    reply = _post(client, sid, parent_id=root["id"], text="Yes")
+    assert client.post(_url(sid, f"/{reply['id']}/hide")).json()["hidden_at"]
+    other = _meeting(ctx)
+    assert client.post(_url(other, f"/{root['id']}/approve")).status_code == 404
+    assert client.post(_url(sid, "/nope/hide")).status_code == 404
+    assert client.delete(_url(sid, f"/{reply['id']}")).status_code == 200
+    assert client.post(_url(sid, f"/{reply['id']}/approve")).status_code == 404
+
+
+def test_moderation_state_survives_a_restart_of_the_repository(client, ctx):
+    sid = _meeting(ctx)
+    root = _post(client, sid, target="segment", idx=0)
+    client.post(_url(sid, f"/{root['id']}/approve"))
+    (row,) = ctx.repo.comment_rows(sid)
+    assert row["approved_at"] and row["hidden_at"] is None
