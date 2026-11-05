@@ -433,3 +433,53 @@ async def test_publishing_touches_the_meeting_so_it_travels(nodes):  # noqa: F81
     assert a.repo.sync_state(sid)[1][a.id] == before[a.id] + 1
     await unpublish(a, sid)
     assert a.repo.sync_state(sid)[1][a.id] == before[a.id] + 2
+
+
+# ---- the owner keys of a live publication (task 4) --------------------------------------------
+
+
+async def test_the_owner_keys_travel_with_the_row(nodes, host, fake_cut):  # noqa: F811
+    a, b = nodes
+    sid = talk(a)
+    pub = await publish(a, sid, where="host", expires_days=30, follow=True, comments=True)
+    assert "sign_key" not in pub and "box_key" not in pub
+    ra = row(a, sid)
+    assert len(ra["sign_key"]) == 32 and len(ra["box_key"]) == 32
+    await pull(b, a)
+    rb = row(b, sid)
+    assert rb["sign_key"] == ra["sign_key"] and rb["box_key"] == ra["box_key"]
+    assert rb["selection"]["follow"] and rb["selection"]["comments"]
+    # B's update keeps the pair; it goes back to A unchanged.
+    await publish(b, sid, where="host", expires_days=30, follow=True)
+    assert row(b, sid)["sign_key"] == ra["sign_key"]
+    await pull(a, b)
+    assert row(a, sid)["sign_key"] == ra["sign_key"] and row(a, sid)["version"] == 2
+    # A publication without them carries none.
+    other = talk(a)
+    await publish(a, other)
+    assert row(a, other)["sign_key"] is None
+    await pull(b, a)
+    assert row(b, other)["sign_key"] is None and row(b, other)["box_key"] is None
+
+
+def test_a_merge_never_drops_keys_the_newer_row_lacks():
+    def pub(updated, sign=""):
+        return SyncPublication(
+            id="p1",
+            key="a2V5",
+            token="t",
+            where="host",
+            version=1,
+            selection={},
+            created_at="2026-11-05T09:00:00+00:00",
+            updated_at=updated,
+            sign_key=sign,
+            box_key="Ym94" if sign else "",
+        )
+
+    old = pub("2026-11-05T09:00:00+00:00", sign="c2lnbg==")
+    new = pub("2026-11-05T10:00:00+00:00")
+    for ours, theirs in ((old, new), (new, old)):
+        (merged,) = merge_publications([ours], [theirs])
+        assert merged.updated_at == new.updated_at
+        assert (merged.sign_key, merged.box_key) == ("c2lnbg==", "Ym94")

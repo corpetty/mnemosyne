@@ -38,6 +38,11 @@ from ..storage.sqlite import SessionRepository
 CLASH_SECONDS = 2.0
 
 
+def _b64(raw) -> str:
+    """A BLOB column as base64 text, "" for NULL."""
+    return base64.b64encode(bytes(raw)).decode("ascii") if raw else ""
+
+
 def export_session(repo: SessionRepository, session_id: str, device_id: str) -> SyncSession | None:
     """The meeting as the portable document, or None when there is no such meeting. Its
     origin is `device_id` (this machine's sync id) when it was recorded here ('' in the
@@ -149,6 +154,8 @@ def export_session(repo: SessionRepository, session_id: str, device_id: str) -> 
                 published_digest=x["published_digest"],
                 published_by=x["published_by"],
                 origin=x["origin"] or device_id,
+                sign_key=_b64(x["sign_key"]),
+                box_key=_b64(x["box_key"]),
             )
             for x in rows["publications"]
         ],

@@ -14,6 +14,11 @@ Where = Literal["local", "host"]
 # Who can open a link to this computer (services/publishing.py local_reach): "team" (the team
 # listener is on), "phone_url" (a configured address), "this_device" (127.0.0.1 only: nobody else).
 LocalReach = Literal["team", "phone_url", "this_device"]
+# A hosted publication's live channel (services/live_publications.py): "live" (the owner's
+# bridge is connected to the host's room), "offline" (not running or cannot reach the host),
+# "unsupported" (the host or the place cannot do it; `live_reason` says why), "off" (neither
+# `follow` nor `comments` is on).
+LiveState = Literal["live", "offline", "unsupported", "off"]
 
 
 class QuoteSpan(ApiModel):
@@ -49,6 +54,12 @@ class PublicationSelection(ApiModel):
     quotes: list[QuoteSpan] = Field(default_factory=list)
     where: Where = "local"  # "local": served by this computer; "host": the publish host
     expires_days: int | None = 90  # None: never (only for "local")
+    # Live publications (docs/plans/2026-11-05-live-publications.md; both need a publish host):
+    # `follow` publishes a new version by itself when the meeting changes, with this same
+    # selection (with it on, `images` None is frozen into the list published); `comments` lets
+    # readers of the link comment.
+    follow: bool = False
+    comments: bool = False
 
 
 class NotesImage(ApiModel):
@@ -96,6 +107,11 @@ class Publication(ApiModel):
     # that computer's name. It serves the link; here it can be neither updated nor unpublished,
     # and there is no link to show. Null for hosted ones and for those served here.
     served_by: str | None = None
+    # The live channel (never the owner keys, which stay on the row). `readers`: the room's
+    # connections beside the owner's bridge, 0 when unknown.
+    live: LiveState = "off"
+    live_reason: str = ""
+    readers: int = 0
 
 
 class PublicationListItem(ApiModel):
