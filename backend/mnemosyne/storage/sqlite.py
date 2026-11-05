@@ -468,7 +468,9 @@ CREATE TABLE IF NOT EXISTS deletions (
 -- published_digest is a hash of what the last version showed (`behind`). One live (not
 -- unpublished) row per meeting. A change here is a new version of the meeting for library sync
 -- (the row travels in SyncSession.publications); `origin` is the computer whose files serve a
--- "local" publication ('' = this one, else its sync id).
+-- "local" publication ('' = this one, else its sync id). sign_key and box_key are the raw private
+-- owner keys of a live publication (NULL until `follow` or `comments` is first on): they travel
+-- with the row in library sync like key and token, and nowhere else.
 CREATE TABLE IF NOT EXISTS publications (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -485,7 +487,9 @@ CREATE TABLE IF NOT EXISTS publications (
     clip_blobs TEXT NOT NULL DEFAULT '{}',
     published_digest TEXT NOT NULL DEFAULT '',
     published_by TEXT NOT NULL DEFAULT '',
-    origin TEXT NOT NULL DEFAULT ''
+    origin TEXT NOT NULL DEFAULT '',
+    sign_key BLOB,
+    box_key BLOB
 );
 CREATE INDEX IF NOT EXISTS publications_session ON publications(session_id);
 CREATE UNIQUE INDEX IF NOT EXISTS publications_live ON publications(session_id)
@@ -908,6 +912,9 @@ class SessionRepository:
             self._conn.execute(
                 "ALTER TABLE publications ADD COLUMN origin TEXT NOT NULL DEFAULT ''"
             )
+        for col in ("sign_key", "box_key"):
+            if col not in pub_cols:
+                self._conn.execute(f"ALTER TABLE publications ADD COLUMN {col} BLOB")
         self._conn.commit()
 
     def _migrate_fts_rowids(self) -> None:
@@ -2085,13 +2092,15 @@ class SessionRepository:
     _PUB_COLS = (
         "id, session_id, key, token, place, host_url, version, selection, created_at,"
         " updated_at, expires_at, unpublished_at, clip_blobs, published_digest, published_by,"
-        " origin"
+        " origin, sign_key, box_key"
     )
 
     @staticmethod
     def _publication(r: sqlite3.Row) -> dict:
         row = dict(r)
         row["key"] = bytes(row["key"])
+        for col in ("sign_key", "box_key"):  # the owner keys: bytes, or None before live
+            row[col] = bytes(row[col]) if row[col] else None
         row["selection"] = json.loads(row["selection"])
         row["clip_blobs"] = json.loads(row["clip_blobs"] or "{}")
         return row
@@ -2149,10 +2158,12 @@ class SessionRepository:
             row.get("published_digest", ""),
             row.get("published_by", ""),
             row.get("origin", ""),
+            row.get("sign_key"),
+            row.get("box_key"),
         )
 
     _PUB_UPSERT = (
-        f"INSERT INTO publications ({_PUB_COLS}) VALUES ({','.join('?' * 16)})"
+        f"INSERT INTO publications ({_PUB_COLS}) VALUES ({','.join('?' * 18)})"
         " ON CONFLICT(id) DO UPDATE SET "
         + ", ".join(
             f"{c.strip()}=excluded.{c.strip()}"
@@ -2277,6 +2288,8 @@ class SessionRepository:
                 "published_digest": p.published_digest,
                 "published_by": p.published_by,
                 "origin": "" if p.origin == self.device_id else p.origin,
+                "sign_key": base64.b64decode(p.sign_key) if p.sign_key else None,
+                "box_key": base64.b64decode(p.box_key) if p.box_key else None,
             }
             self._conn.execute(self._PUB_UPSERT, self._publication_values(row))
 

@@ -3,14 +3,16 @@ a meeting is published and not the link, admins publish any meeting, each publis
 unpublish is sealed and logged (also under a legal hold), and the records export lists the
 publications without their keys."""
 
+import base64
 import io
 import json
 import time
 import zipfile
 
 from mnemosyne import access
+from mnemosyne.models.publication import PublicationSelection
 from mnemosyne.services import publication_format as pf
-from mnemosyne.services import records, sharing
+from mnemosyne.services import publishing, records, sharing
 from tests.test_publishing import (  # noqa: F401
     _meeting,
     _publish,
@@ -179,3 +181,40 @@ def test_publishing_still_works_without_a_record_to_seal(client, ctx):
     _publish(client, s.id)
     time.sleep(0.2)
     assert ctx.repo.seals(s.id) == []
+
+
+# ---- live publications (task 4): automatic versions and the owner keys in the record -----------
+
+
+def test_the_record_lists_automatic_versions_and_never_the_owner_keys(client, ctx):  # noqa: F811
+    import httpx
+
+    from tests.test_publishing import FakeHost, _Job, asyncio_run
+
+    host = FakeHost()
+    ctx.http_transport = httpx.MockTransport(host.handler)
+    ctx.settings.publish_host = "https://pub.example.org"
+    s = _meeting(ctx)
+    pub = _publish(client, s.id, where="host", follow=True, comments=True)
+    ctx.repo.update_fields(s.id, summary="Ana Lopez and Bo decided to ship Monday.")
+    sel = PublicationSelection(where="host", follow=True, comments=True)
+    asyncio_run(publishing.publish(ctx, s.id, sel, _Job(), auto=True))
+    record = records.publications_record(ctx, ctx.repo.get(s.id))
+    assert [(v["version"], v["auto"]) for v in record[0]["versions"]] == [(1, False), (2, True)]
+    assert record[0]["selection"]["follow"] is True
+
+    row = ctx.repo.live_publication(s.id)
+    seen_by_the_api = json.dumps(pub)
+    seen_in_the_record = json.dumps(
+        [record, [e["detail"] for e in ctx.repo.events(s.id)]], default=str
+    )
+    # (the link itself carries `key`; the API shows only the link)
+    for raw in (row["sign_key"], row["box_key"]):
+        for text in (seen_by_the_api, seen_in_the_record):
+            assert raw.hex() not in text and base64.b64encode(raw).decode() not in text
+            assert pf.encode_key(raw) not in text
+    for raw in (row["key"], row["token"].encode()):
+        assert raw.hex() not in seen_in_the_record
+        assert base64.b64encode(raw).decode() not in seen_in_the_record
+    assert pf.encode_key(row["key"]) not in seen_in_the_record
+    assert row["token"] not in seen_in_the_record

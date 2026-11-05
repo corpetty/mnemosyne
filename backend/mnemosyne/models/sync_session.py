@@ -131,6 +131,8 @@ class SyncPublication(ApiModel):
     published_digest: str = ""
     published_by: str = ""
     origin: str = ""
+    sign_key: str = ""
+    box_key: str = ""
 
 
 def _when(text: str) -> datetime:
@@ -160,8 +162,11 @@ def merge_publications(
         if mine is None:
             by_id[p.id] = p
             continue
-        win = p if _rank(p) > _rank(mine) else mine
-        by_id[p.id] = win.model_copy(update={"version": max(mine.version, p.version)})
+        win, lose = (p, mine) if _rank(p) > _rank(mine) else (mine, p)
+        update: dict = {"version": max(mine.version, p.version)}
+        if not win.sign_key and lose.sign_key:  # keys made once never go missing in a merge
+            update.update(sign_key=lose.sign_key, box_key=lose.box_key)
+        by_id[p.id] = win.model_copy(update=update)
     live = [p for p in by_id.values() if not p.unpublished_at]
     if len(live) > 1:
         keep = max(live, key=lambda p: (_rank(p), p.id))

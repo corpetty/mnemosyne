@@ -47,6 +47,8 @@ function defaults(extra: Partial<PublicationDefaults> = {}): PublicationDefaults
 		quotes: [],
 		where: 'local',
 		expires_days: 90,
+		follow: false,
+		comments: false,
 		local_reach: 'this_device',
 		local_url: '',
 		host_url: '',

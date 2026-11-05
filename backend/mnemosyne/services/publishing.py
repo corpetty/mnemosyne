@@ -42,7 +42,8 @@ from ..models.publication import (
     QuoteSpan,
 )
 from ..models.session import Session
-from . import clips, history, notes_media, ours
+from . import clips, history, live_publications, notes_media, ours
+from . import pub_live_format as plf
 from . import publication_format as pf
 from .notes_chips import image_lines, plain_notes
 from .origin import audio_elsewhere, device_name, is_foreign
@@ -65,6 +66,9 @@ _GENERIC_SPEAKER = re.compile(r"^(SPEAKER_\d+|UNKNOWN|Speaker \d+)$", re.IGNOREC
 SEAL_PUBLISHED = "published"
 SEAL_UPDATED = "publication updated"
 SEAL_UNPUBLISHED = "unpublished"
+# The history line of a version made by the watcher (follow): no seal, see `publish(auto=)`.
+EVENT_AUTO_UPDATED = "publication_auto_updated"
+LIVE_NEEDS_HOST = "Live updates and comments need a publish host"
 _PREVIEW_ID = "0" * 16
 _ID = re.compile(r"^[0-9a-f]{16}$")
 
@@ -481,10 +485,12 @@ def build_manifest(
     expires_at: datetime | None = None,
     clip_refs: dict[str, pf.ClipRef] | None = None,
     image_refs: dict[str, pf.ImageRef] | None = None,
+    live: pf.LiveKeys | None = None,
 ) -> tuple[pf.Manifest, list[dict[str, Any]]]:
     """The manifest for this selection (clips from `clip_refs`, by quote id; images from
     `image_refs`, by plain hash; an image without one is not listed) and the quotes' clip
-    specs. The Manifest model has no field a transcript could ride in."""
+    specs. `live`: the owner's public keys, given while `follow` or `comments` is on. The
+    Manifest model has no field a transcript could ride in."""
     content, specs = build_content(app, session, selection)
     refs = clip_refs or {}
     images = image_refs or {}
@@ -497,6 +503,7 @@ def build_manifest(
         published_at=_iso(published_at or _now()),
         expires_at=_iso(expires_at) if expires_at else None,
         images=[images[i["id"]] for i in shown if i["id"] in images],
+        live=live,
         **content,
     )
     return manifest, specs
@@ -834,7 +841,18 @@ def to_model(app: AppContext, row: dict, session: Session, local_base: str = "")
         published_by=row.get("published_by", ""),
         local_reach=local_reach(app)[0],
         served_by=elsewhere,
+        **_live_fields(app, row),
     )
+
+
+def _live_fields(app: AppContext, row: dict) -> dict[str, Any]:
+    """`Publication.live`, `live_reason` and `readers`: "off" unless `follow` or `comments` is
+    on, else what the bridge says (services/live_publications.py). Never the owner keys."""
+    sel = row["selection"]
+    if row.get("unpublished_at") or not (sel.get("follow") or sel.get("comments")):
+        return {"live": "off", "live_reason": "", "readers": 0}
+    state, reason, readers = live_publications.status(app, row)
+    return {"live": state, "live_reason": reason, "readers": readers}
 
 
 # ---- publishing -----------------------------------------------------------------------
@@ -859,6 +877,21 @@ def host_url(app: AppContext) -> str:
     return ours.publish_host(app.settings)
 
 
+def check_live(session: Session, sel: PublicationSelection) -> None:
+    """PublishError when `follow` or `comments` is asked for where it cannot work: a "this
+    computer" publication (no room there in v1) or a meeting someone shared with us (a reader's
+    comment would reach the sharer as ours)."""
+    if not (sel.follow or sel.comments):
+        return
+    if sel.where != "host":
+        raise PublishError(LIVE_NEEDS_HOST)
+    if session.shared_from:
+        raise PublishError(
+            "Someone shared this meeting with you: its link cannot be kept up to date "
+            "or take comments"
+        )
+
+
 def check_request(app: AppContext, session: Session, sel: PublicationSelection) -> None:
     """What can be refused before the job starts: Forbidden, PublishError, or a 409 (raised as
     HTTPException): the publication's files are on another computer ("Published from <name>"),
@@ -866,6 +899,7 @@ def check_request(app: AppContext, session: Session, sel: PublicationSelection) 
     from .origin import require_local_audio
 
     check_may_publish(app, session)
+    check_live(session, sel)
     live = app.repo.live_publication(session.id)
     if live is not None and (why := served_elsewhere_message(app, live)):
         raise HTTPException(409, why)
@@ -969,14 +1003,20 @@ async def publish(
     selection: PublicationSelection,
     job: JobContext,
     local_base: str = "",
+    *,
+    auto: bool = False,
 ) -> dict:
     """The publish job: a new publication, or a new version of the meeting's live one.
     `local_base`: this backend's address as the caller reached it, for links to this computer
-    when it has no other (local_address)."""
+    when it has no other (local_address). `auto`: the watcher's version of a publication kept
+    up to date (services/live_publications.py): the same work, but it is logged as
+    `publication_auto_updated`, adds no seal (the seal is on a person's acts: publish, update,
+    unpublish) and keeps `published_by`."""
     session = app.repo.get(session_id)
     if session is None:
         raise PublishError("The meeting is gone")
     check_may_publish(app, session)
+    check_live(session, selection)
     sel = selection
     now = _now()
     old = app.repo.live_publication(session_id)
@@ -987,6 +1027,8 @@ async def publish(
         old = None
     if old is not None and (why := served_elsewhere_message(app, old)):
         raise PublishError(why)
+    if auto and old is None:
+        raise PublishError("There is no publication to update")
     if old is None:
         row: dict[str, Any] = {
             "id": pf.new_id(),
@@ -999,10 +1041,21 @@ async def publish(
             "created_at": now.isoformat(),
             "clip_blobs": {},
             "origin": "",
+            "sign_key": None,
+            "box_key": None,
         }
     else:
         row = dict(old)
     pub_id, key = row["id"], row["key"]
+    # The owner keys: made once, when `follow` or `comments` is first on, then kept across
+    # versions and while the switches are off; the manifest names the public halves only while
+    # one is on.
+    live: pf.LiveKeys | None = None
+    if sel.follow or sel.comments:
+        if not (row.get("sign_key") and row.get("box_key")):
+            made = plf.OwnerKeys.new()
+            row["sign_key"], row["box_key"] = made.sign, made.box
+        live = plf.OwnerKeys(sign=row["sign_key"], box=row["box_key"]).live()
     version = row["version"] + 1
     expires_at = _expiry(app, sel, now)
     target_host = host_url(app) if sel.where == "host" else ""
@@ -1022,6 +1075,10 @@ async def publish(
 
     # Clips: reused when their span is unchanged and their blob is here, else cut (origin only).
     content, specs = build_content(app, session, sel)
+    if sel.follow and sel.images is None:
+        # Kept up to date: "all of the notes' images" becomes the list published now, so a
+        # picture pasted in later never goes out unseen (the dialog lists it as unticked).
+        sel = sel.model_copy(update={"images": [i["id"] for i in content.get("images", [])]})
     stored: dict[str, dict] = row.get("clip_blobs") or {}
     old_clips = {k: v for k, v in stored.items() if not k.startswith(IMAGE_PREFIX)}
     old_images = {
@@ -1103,6 +1160,7 @@ async def publish(
             expires_at=expires_at,
             clip_refs=refs,
             image_refs=image_refs,
+            live=live,
         )
         job.update("Sealing", 0.65)
         manifest_blob, manifest_sha = pf.seal_manifest(manifest, key)
@@ -1168,7 +1226,7 @@ async def publish(
         unpublished_at=None,
         clip_blobs={**new_clips, **{IMAGE_PREFIX + sha: rec for sha, rec in new_images.items()}},
         published_digest=digest(content, specs),
-        published_by=who.name if who else "",
+        published_by=row.get("published_by", "") if auto else (who.name if who else ""),
     )
     if sel.where == "local":
         row["origin"] = ""  # the files that serve it are here
@@ -1176,14 +1234,15 @@ async def publish(
     _log(
         app,
         session_id,
-        "published" if version == 1 else "publication_updated",
+        EVENT_AUTO_UPDATED if auto else ("published" if version == 1 else "publication_updated"),
         row,
         sel,
         len(new_images),
     )
-    from .records import seal_later
+    if not auto:
+        from .records import seal_later
 
-    seal_later(app, session_id, SEAL_PUBLISHED if version == 1 else SEAL_UPDATED)
+        seal_later(app, session_id, SEAL_PUBLISHED if version == 1 else SEAL_UPDATED)
     job.update("Published", 1.0)
     return {"publication": to_model(app, row, session, local_base).model_dump(mode="json")}
 

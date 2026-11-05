@@ -404,7 +404,14 @@ def publications_record(app: AppContext, session: Session) -> list[dict]:
     events = [
         e
         for e in app.repo.events(session.id)
-        if e["kind"] in ("published", "publication_updated", "unpublished", "publication_expired")
+        if e["kind"]
+        in (
+            "published",
+            "publication_updated",
+            "publication_auto_updated",
+            "unpublished",
+            "publication_expired",
+        )
     ]
     out = []
     for row in rows:
@@ -413,9 +420,10 @@ def publications_record(app: AppContext, session: Session) -> list[dict]:
             d = e["detail"]
             if d.get("publication") != row["id"]:
                 continue
-            if e["kind"] in ("published", "publication_updated"):
+            if e["kind"] in ("published", "publication_updated", "publication_auto_updated"):
                 versions.append(
                     {
+                        "auto": e["kind"] == "publication_auto_updated",
                         "version": d.get("version"),
                         "at": e["at"],
                         "by": d.get("by", ""),

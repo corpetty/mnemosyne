@@ -884,3 +884,218 @@ def test_publishing_the_notes_leaves_the_backends_sections_out(ctx):
     )[0]
     assert manifest.notes.strip() == "My own note"
     assert "summary line" not in manifest.notes
+
+
+# ---- live publications: follow, comments and the owner keys (task 4) ----
+
+
+class _Job:
+    """The part of a JobContext `publishing.publish` uses, for calling it without a route."""
+
+    def update(self, message=None, progress=None):
+        pass
+
+
+def _auto(ctx, sid, sel, who=None):
+    """Run the publish job's body with `auto=True` (what the watcher does), as `who`."""
+    return asyncio_run(publishing.publish(ctx, sid, sel, _Job(), auto=True), who)
+
+
+def asyncio_run(coro, who=None):
+    import asyncio
+
+    token = access.current.set(who) if who else None
+    try:
+        return asyncio.run(coro)
+    finally:
+        if token is not None:
+            access.current.reset(token)
+
+
+@pytest.fixture
+def host(ctx, settings):
+    h = FakeHost()
+    ctx.http_transport = httpx.MockTransport(h.handler)
+    settings.publish_host = "https://pub.example.org"
+    return h
+
+
+def _manifest(host, pub):
+    pub_id, key = _key_and_id(pub["url"])
+    return pf.open_manifest(pub_id, host.version, host.manifest, key)
+
+
+def test_follow_and_comments_round_trip_and_the_api_shows_no_key(client, ctx, host, seals):
+    s = _meeting(ctx)
+    pub = _publish(client, s.id, where="host", follow=True, comments=True)
+    assert pub["selection"]["follow"] and pub["selection"]["comments"]
+    assert pub["live"] == "offline" and pub["live_reason"] == "" and pub["readers"] == 0
+    again = client.get(f"/api/sessions/{s.id}/publication").json()
+    assert again["selection"] == pub["selection"] and again["live"] == "offline"
+    row = ctx.repo.live_publication(s.id)
+    text = json.dumps([pub, again, client.get("/api/publications").json()])
+    for secret in (row["sign_key"], row["box_key"]):
+        assert secret.hex() not in text and pf.encode_key(secret) not in text
+    assert "sign_key" not in text and "box_key" not in text
+    # Either switch alone is "live" too; none is "off", and so is an old selection.
+    only = _publish(client, s.id, where="host", comments=True)
+    assert only["live"] == "offline"
+    off = _publish(client, s.id, where="host")
+    assert off["live"] == "off" and not off["selection"]["follow"]
+    plain = PublicationSelection.model_validate({"where": "host"})
+    assert plain.follow is False and plain.comments is False
+
+
+def test_live_is_refused_for_this_computer_and_for_meetings_shared_with_us(client, ctx, host):
+    s = _meeting(ctx)
+    for sel in ({"follow": True}, {"comments": True}):
+        r = client.put(f"/api/sessions/{s.id}/publication", json={"where": "local", **sel})
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Live updates and comments need a publish host"
+    assert ctx.repo.live_publication(s.id) is None
+    theirs = _meeting(ctx)
+    with ctx.repo._lock, ctx.repo._conn:
+        ctx.repo._conn.execute("UPDATE sessions SET shared_from='ab' WHERE id=?", (theirs.id,))
+    r = client.put(f"/api/sessions/{theirs.id}/publication", json={"where": "host", "follow": True})
+    assert r.status_code == 400 and "Someone shared this meeting with you" in r.json()["detail"]
+    # Publishing it without the switches stays as it is.
+    assert _publish(client, theirs.id, where="host")["live"] == "off"
+
+
+def test_owner_keys_are_made_once_kept_across_versions_and_named_only_while_a_switch_is_on(
+    client, ctx, host, seals
+):
+    from mnemosyne.services import pub_live_format as plf
+
+    s = _meeting(ctx)
+    pub = _publish(client, s.id, where="host")
+    assert _manifest(host, pub).live is None
+    row = ctx.repo.live_publication(s.id)
+    assert row["sign_key"] is None and row["box_key"] is None
+
+    pub = _publish(client, s.id, where="host", follow=True)
+    row = ctx.repo.live_publication(s.id)
+    assert len(row["sign_key"]) == 32 and len(row["box_key"]) == 32
+    keys = plf.OwnerKeys(sign=row["sign_key"], box=row["box_key"])
+    assert _manifest(host, pub).live == keys.live()
+    first = (row["sign_key"], row["box_key"])
+
+    # Switches off: the keys stay on the row, the manifest stops naming them.
+    pub = _publish(client, s.id, where="host")
+    assert _manifest(host, pub).live is None
+    row = ctx.repo.live_publication(s.id)
+    assert (row["sign_key"], row["box_key"]) == first
+    # Back on (the other switch): the same pair.
+    pub = _publish(client, s.id, where="host", comments=True)
+    assert _manifest(host, pub).live == keys.live()
+    row = ctx.repo.live_publication(s.id)
+    assert (row["sign_key"], row["box_key"]) == first
+    assert "sign_key" not in repr(keys) and first[0].hex() not in repr(keys)
+
+
+def test_turning_a_switch_on_is_a_new_version_that_is_not_behind(client, ctx, host, seals):
+    """`live` is not part of the digest: the meeting shows the same, so nothing is "behind". A
+    switch lives in the selection, which only a publish changes, and a publish is always a new
+    version carrying `live`, so there is no state in which a switch is on and the keys are not
+    out (the dialog's Update is what turns it on)."""
+    s = _meeting(ctx)
+    plain = _publish(client, s.id, where="host")
+    digest_before = ctx.repo.live_publication(s.id)["published_digest"]
+    on = _publish(client, s.id, where="host", follow=True)
+    assert on["version"] == plain["version"] + 1 and not on["behind"]
+    assert ctx.repo.live_publication(s.id)["published_digest"] == digest_before
+    assert _manifest(host, on).live is not None
+    assert client.get(f"/api/sessions/{s.id}/publication").json()["behind"] is False
+
+
+def test_an_automatic_version_is_a_history_line_without_a_seal(client, ctx, host, seals):
+    s = _meeting(ctx)
+    ann = access.Principal("u-ann", "Ann", "admin")
+    sel = PublicationSelection(where="host", follow=True)
+    first = asyncio_run(publishing.publish(ctx, s.id, sel, _Job()), ann)
+    assert first["publication"]["version"] == 1
+    assert seals == [(s.id, publishing.SEAL_PUBLISHED)]
+    ctx.repo.update_fields(s.id, summary="Ana Lopez and Bo decided to ship Monday.")
+    assert client.get(f"/api/sessions/{s.id}/publication").json()["behind"]
+
+    other = access.Principal("u-bot", "The watcher", "admin")
+    out = _auto(ctx, s.id, sel, who=other)
+    assert out["publication"]["version"] == 2 and not out["publication"]["behind"]
+    row = ctx.repo.live_publication(s.id)
+    assert row["version"] == 2 and row["published_by"] == "Ann"
+    assert seals == [(s.id, publishing.SEAL_PUBLISHED)]  # no new seal
+    kinds = [e["kind"] for e in ctx.repo.events(s.id)]
+    assert kinds.count("published") == 1 and kinds.count("publication_auto_updated") == 1
+    assert "publication_updated" not in kinds
+    event = next(e for e in ctx.repo.events(s.id) if e["kind"] == "publication_auto_updated")
+    assert event["detail"]["version"] == 2 and event["detail"]["publication"] == row["id"]
+    assert host.version == 2
+    # An automatic version needs a publication to update.
+    with pytest.raises(publishing.PublishError):
+        _auto(ctx, _meeting(ctx).id, sel)
+    # A manual update after it seals as an update again.
+    _publish(client, s.id, where="host", follow=True)
+    assert seals[-1] == (s.id, publishing.SEAL_UPDATED)
+
+
+def test_images_are_frozen_into_the_selection_only_while_following(client, ctx, host, seals):
+    s, (a, b) = _picture_meeting(ctx, webp(), jpeg())
+    pub = _publish(client, s.id, where="host", notes=True)
+    assert pub["selection"]["images"] is None  # not following: "all of them" stays open
+    pub = _publish(client, s.id, where="host", notes=True, follow=True)
+    assert pub["selection"]["images"] == [a, b] and not pub["behind"]
+    assert ctx.repo.live_publication(s.id)["selection"]["images"] == [a, b]
+    # A picture pasted in later does not go out, and is not "behind" either.
+    extra = jpeg(300, 200)
+    info = notes_media.store(ctx, s.id, sha(extra), extra)
+    late = value(extra, info.ext, info.width, info.height)
+    notes = ctx.repo.get(s.id).notes + f"![Late](mnemosyne:image/{late})\n"
+    ctx.repo.update_fields(s.id, notes=notes)
+    sel = PublicationSelection.model_validate(ctx.repo.live_publication(s.id)["selection"])
+    out = _auto(ctx, s.id, sel)
+    assert len(_manifest(host, out["publication"]).images) == 2  # a and b, not the late one
+    assert "[image: Late]" in _manifest(host, out["publication"]).notes
+    # An explicit choice is left alone; so is comments alone.
+    pub = _publish(client, s.id, where="host", notes=True, images=[b], follow=True)
+    assert pub["selection"]["images"] == [b]
+    pub = _publish(client, s.id, where="host", notes=True, comments=True)
+    assert pub["selection"]["images"] is None
+
+
+def test_a_database_from_before_the_owner_keys_gets_the_columns(tmp_path):
+    from mnemosyne.storage.sqlite import SessionRepository
+
+    path = tmp_path / "old.sqlite"
+    repo = SessionRepository(path)
+    repo.close()
+    import sqlite3
+
+    raw = sqlite3.connect(path)
+    for col in ("sign_key", "box_key"):
+        raw.execute(f"ALTER TABLE publications DROP COLUMN {col}")
+    raw.commit()
+    raw.close()
+    repo = SessionRepository(path)  # migrates
+    s = repo.save(Session(name="x", created_at=datetime(2026, 11, 5, 9, 0)))
+    row = {
+        "id": "a" * 16,
+        "session_id": s.id,
+        "key": b"k" * 32,
+        "token": "t",
+        "place": "host",
+        "version": 1,
+        "selection": {},
+        "created_at": "2026-11-05T09:00:00+00:00",
+        "updated_at": "2026-11-05T09:00:00+00:00",
+        "sign_key": b"s" * 32,
+        "box_key": b"b" * 32,
+    }
+    repo.put_publication(row)
+    got = repo.live_publication(s.id)
+    assert got["sign_key"] == b"s" * 32 and got["box_key"] == b"b" * 32
+    repo.put_publication({**row, "sign_key": None, "box_key": None, "version": 2})
+    assert repo.live_publication(s.id)["sign_key"] is None
+    repo.close()
+    repo = SessionRepository(path)  # opening again changes nothing
+    assert repo.live_publication(s.id)["version"] == 2
+    repo.close()

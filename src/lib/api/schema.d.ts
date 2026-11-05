@@ -6404,12 +6404,28 @@ export interface components {
             /** Id */
             id: string;
             /**
+             * Live
+             * @default off
+             * @enum {string}
+             */
+            live: "live" | "offline" | "unsupported" | "off";
+            /**
+             * Live Reason
+             * @default
+             */
+            live_reason: string;
+            /**
              * Local Reach
              * @enum {string}
              */
             local_reach: "team" | "phone_url" | "this_device";
             /** Published By */
             published_by: string;
+            /**
+             * Readers
+             * @default 0
+             */
+            readers: number;
             selection: components["schemas"]["PublicationSelection-Output"];
             /** Served By */
             served_by: string | null;
@@ -6451,6 +6467,11 @@ export interface components {
              */
             chapters: boolean;
             /**
+             * Comments
+             * @default false
+             */
+            comments: boolean;
+            /**
              * Decisions
              * @default true
              */
@@ -6460,6 +6481,11 @@ export interface components {
              * @default 90
              */
             expires_days: number | null;
+            /**
+             * Follow
+             * @default false
+             */
+            follow: boolean;
             /**
              * Hide Identifiers
              * @default true
@@ -6550,6 +6576,11 @@ export interface components {
              */
             chapters: boolean;
             /**
+             * Comments
+             * @default false
+             */
+            comments: boolean;
+            /**
              * Decisions
              * @default true
              */
@@ -6559,6 +6590,11 @@ export interface components {
              * @default 90
              */
             expires_days: number | null;
+            /**
+             * Follow
+             * @default false
+             */
+            follow: boolean;
             /**
              * Hide Identifiers
              * @default true
@@ -6624,6 +6660,11 @@ export interface components {
              */
             chapters: boolean;
             /**
+             * Comments
+             * @default false
+             */
+            comments: boolean;
+            /**
              * Decisions
              * @default true
              */
@@ -6633,6 +6674,11 @@ export interface components {
              * @default 90
              */
             expires_days: number | null;
+            /**
+             * Follow
+             * @default false
+             */
+            follow: boolean;
             /**
              * Hide Identifiers
              * @default true
@@ -8952,6 +8998,11 @@ export interface components {
          *     publication, as the SENDER sees it (its own sync id when it is its own).
          */
         SyncPublication: {
+            /**
+             * Box Key
+             * @default
+             */
+            box_key: string;
             /** Clip Blobs */
             clip_blobs: {
                 [key: string]: {
@@ -8987,6 +9038,11 @@ export interface components {
              */
             published_digest: string;
             selection: components["schemas"]["PublicationSelection-Output"];
+            /**
+             * Sign Key
+             * @default
+             */
+            sign_key: string;
             /** Token */
             token: string;
             /** Unpublished At */
