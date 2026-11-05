@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RoomSocket } from '$lib/rooms/client';
 import { deriveLiveKeys, PubKind, signFrame } from '$lib/sealed/signed';
-import { b64urlDecode, blobHash, fromHex, type Manifest } from './format';
+import { b64urlDecode, blobHash, fromHex, parseManifest, type Manifest } from './format';
 import { Follower, POLL_MS, STATUS, statusLine, type Gone, type Shown } from './live';
 import { openHosted, type Ready } from './load';
 
@@ -505,5 +505,14 @@ describe('the room', () => {
 		const n = host.manifestCalls.length;
 		await tick();
 		expect(host.manifestCalls.length).toBe(n);
+	});
+});
+
+describe('publication_live_v1.json manifest', () => {
+	it('parseManifest keeps the live keys', () => {
+		const m = parseManifest(new TextEncoder().encode(vec.manifest.json));
+		expect(m.live).toEqual({ sign: vec.owner.sign_public_hex, box: vec.owner.box_public_hex });
+		expect(m.id).toBe(vec.pub_id);
+		expect(m.version).toBe(vec.manifest.version);
 	});
 });
