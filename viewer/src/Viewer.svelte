@@ -1,9 +1,13 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
+	import { parseLiveKeys } from '$lib/sealed/signed';
+	import { ReaderComments as Comments, ReaderIdentity, commentsOpen, type Draft, type MeetingComments } from './comments';
 	import { formatTime } from './display';
-	import { Follower, STATUS, statusLine } from './live';
+	import { Follower, STATUS, statusLine, type Meta } from './live';
 	import { openFile, openHosted, stateMessage, swap, unlockFile, type Source, type ViewState } from './load';
 	import Meeting from './Meeting.svelte';
+	import ReaderComments from './ReaderComments.svelte';
+	import Tabs from './Tabs.svelte';
 
 	let { source }: { source: Source } = $props();
 
@@ -20,10 +24,64 @@
 		source.kind === 'file' ? STATUS.file : view.kind === 'ready' && view.hosted ? statusLine(following) : null
 	);
 
+	// ---- readers' comments (comments.ts) ---------------------------------------------------------
+	let meta = $state<Meta | null>(null);
+	let comments = $state.raw<Comments | null>(null);
+	/** Bumped whenever `comments` changed (it is not reactive itself). */
+	let rev = $state(0);
+	let seenThreads: unknown = null;
+	let draft = $state<Draft | null>(null);
+	let focus = $state<{ key: string; n: number } | null>(null);
+	let highlight = $state<string | null>(null);
+	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+	let tab = $state<'meeting' | 'comments'>('meeting');
+
+	const live = $derived(view.kind === 'ready' && parseLiveKeys(view.manifest.live) !== null);
+	const canComment = $derived(view.kind === 'ready' && commentsOpen(view.manifest, meta));
+	/** The comments column (a tab below lg): open for comments, or threads to read. */
+	const column = $derived.by(() => {
+		void rev;
+		return live && !!comments && (canComment || comments.threads.length > 0 || comments.pending.list.length > 0);
+	});
+	const openThreads = $derived.by(() => {
+		void rev;
+		return comments ? comments.view().open.length : 0;
+	});
+	const affordances = $derived.by((): MeetingComments | null => {
+		void rev;
+		if (!canComment || !comments) return null;
+		return {
+			counts: comments.counts(),
+			onComment: (d) => {
+				draft = d;
+				tab = 'comments';
+			},
+			onShow: (key) => {
+				focus = { key, n: (focus?.n ?? 0) + 1 };
+				tab = 'comments';
+			}
+		};
+	});
+
+	/** Show a part of the meeting a thread is on, tinted for 1.5 s. */
+	async function goto(key: string) {
+		tab = 'meeting';
+		await tick();
+		const el = [...document.querySelectorAll<HTMLElement>('[data-anchor]')].find((e) => e.dataset.anchor === key);
+		el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+		highlight = key;
+		if (highlightTimer) clearTimeout(highlightTimer);
+		highlightTimer = setTimeout(() => (highlight = null), 1500);
+	}
+
 	function stopFollowing() {
 		follower?.stop();
 		follower = null;
 		following = false;
+		meta = null;
+		comments = null;
+		seenThreads = null;
+		draft = focus = null;
 	}
 
 	/** Poll the publication and, when it is live, follow its room; newer versions replace it in place. */
@@ -46,11 +104,27 @@
 					view = state;
 				},
 				onChange: () => {
-					if (f === follower) following = f.following;
+					if (f !== follower) return;
+					following = f.following;
+					meta = f.meta;
+					if (comments && f.threads !== seenThreads) {
+						seenThreads = f.threads;
+						comments.setThreads(f.threads?.threads);
+					}
 				}
 			}
 		);
 		follower = f;
+		const c = new Comments(
+			new ReaderIdentity(view.manifest.id),
+			(op, key) => void f.sendComment(op, key),
+			undefined,
+			() => {
+				if (comments === c) rev++;
+			}
+		);
+		comments = c;
+		void c.init();
 		f.start();
 	}
 
@@ -88,13 +162,57 @@
 		return () => {
 			window.removeEventListener('hashchange', onHash);
 			stopFollowing();
+			if (highlightTimer) clearTimeout(highlightTimer);
 		};
 	});
 </script>
 
-<main class="mx-auto w-full max-w-3xl px-4 py-8 sm:py-12">
+<!-- With comments the meeting keeps its width (3xl) and the column is added beside it from lg up. -->
+<main class="mx-auto w-full max-w-3xl px-4 py-8 sm:py-12 {column ? 'lg:max-w-[70rem]' : ''}">
 	{#if view.kind === 'ready'}
-		<Meeting manifest={view.manifest} loadClip={view.loadClip} loadImage={view.loadImage} {updated} {status} />
+		<!-- One tree with and without the column, so the meeting (a playing clip) is never mounted again. -->
+		{#if column}
+			<div class="mb-4 lg:hidden"><Tabs bind:selected={tab} comments={openThreads} /></div>
+		{/if}
+		<div class={column ? 'lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8' : ''}>
+			<div
+				id="viewer-panel-meeting"
+				role={column ? 'tabpanel' : undefined}
+				aria-labelledby={column ? 'viewer-tab-meeting' : undefined}
+				class={column && tab !== 'meeting' ? 'hidden lg:block' : ''}
+			>
+				<Meeting
+					manifest={view.manifest}
+					loadClip={view.loadClip}
+					loadImage={view.loadImage}
+					{updated}
+					{status}
+					comments={affordances}
+					{highlight}
+				/>
+			</div>
+			{#if column && comments}
+				<div
+					id="viewer-panel-comments"
+					role="tabpanel"
+					aria-labelledby="viewer-tab-comments"
+					class="{tab === 'comments'
+						? ''
+						: 'hidden'} lg:sticky lg:top-6 lg:block lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto"
+				>
+					<ReaderComments
+						model={comments}
+						{rev}
+						manifest={view.manifest}
+						canAct={canComment}
+						{draft}
+						{focus}
+						ondraft={(d) => (draft = d)}
+						ongoto={goto}
+					/>
+				</div>
+			{/if}
+		</div>
 	{:else if view.kind === 'password'}
 		<form class="mx-auto mt-12 max-w-sm space-y-3" onsubmit={unlock}>
 			<h1 class="text-lg font-semibold text-gray-100">This meeting is protected with a password</h1>

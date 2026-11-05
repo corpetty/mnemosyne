@@ -11,8 +11,8 @@
 //   in the pub-live space and verified against `live.sign`; anything that does not verify, or
 //   whose body is malformed, is dropped silently (`dropped` counts them). VERSION refetches with
 //   `cache: 'no-cache'` and is taken only when the response's ETag is the frame's sha256 and its
-//   version is higher than the shown one. META and THREADS: the newest `at` wins (THREADS is kept
-//   for the comments of M2 and not shown).
+//   version is higher than the shown one. META and THREADS: the newest `at` wins (THREADS feeds
+//   the readers' comments, comments.ts). `sendComment` boxes a reader's COMMENT op into the room.
 // - Room closes (RoomClient handles reconnects and backoff): 4410 (the room is gone) re-reads
 //   `GET /pub/<id>` for a new room id, and only a 410 from that read ends the page; 4401 (token
 //   refused) leaves that room and keeps polling; 4429 (room full or write budget) and 4403 (ended)
@@ -23,7 +23,7 @@
 
 import { RoomClient, ROOM_CLOSE, roomUrl, type RoomSocket, type RoomSocketCtor, type RoomState } from '$lib/rooms/client';
 import type { SpaceKeys } from '$lib/sealed/envelope';
-import { openSigned, parseLiveKeys, PubKind } from '$lib/sealed/signed';
+import { boxOp, openSigned, parseLiveKeys, PubKind } from '$lib/sealed/signed';
 import type { Manifest } from './format';
 import { expiredOn, type Fetched, type Hosted } from './load';
 
@@ -197,6 +197,29 @@ export class Follower {
 			const r = await this.hosted.fetch({ etag: this.shown.etag || null, cache: 'no-store' });
 			this.take(r);
 		});
+	}
+
+	/**
+	 * A reader's COMMENT op (comments.ts), boxed to the owner's `live.box` and signed with the
+	 * reader's key, into the room joined now (queued by the room client until it is joined). The
+	 * key is used here and nowhere else; it is not kept. False when there is no room or no live
+	 * keys: the op stays pending and turns "Not sent".
+	 */
+	async sendComment(op: object, readerPrivate: Uint8Array): Promise<boolean> {
+		const client = this.client;
+		const room = this.clientRoom;
+		const keys = this.keys;
+		const live = parseLiveKeys(this.shown.manifest.live);
+		if (this.stopped || !client || !room || !keys || !live) return false;
+		let env: Uint8Array;
+		try {
+			env = await boxOp(keys, room, op, readerPrivate, live.box);
+		} catch {
+			return false;
+		}
+		if (client !== this.client || this.stopped) return false;
+		client.sendFrame(env);
+		return true;
 	}
 
 	// ---- internals -------------------------------------------------------------------------
