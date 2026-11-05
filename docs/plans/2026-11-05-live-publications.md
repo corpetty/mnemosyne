@@ -314,6 +314,34 @@ in, the switch off by default.
     signature's subject.
   - Outgoing frames are pydantic models with `extra="forbid"` and only these fields; a test serialises every
     outgoing frame of a bridge run and asserts the key set (the leak test's second half).
+  - **Bytes settled at task 1** (services/pub_live_format.py, the TS side matches these):
+    - Every pub-live kind pads to 256-byte blocks, THREADS (also when posted as the room's snapshot)
+      included: there is no 4096 snapshot block in this space. Kinds: VERSION 1, THREADS 2, META 3,
+      COMMENT 4; no media kind, no plain-JSON kind.
+    - `frames_key`/`room_token`: HKDF-SHA256 with an EMPTY salt, length 32, from the 32-byte link key, as
+      guest_format does; the room token is unpadded base64url.
+    - Signed message = UTF-8 `mnemosyne/pub-live/1|<room>|<kind decimal>|` followed by the body bytes.
+      Ed25519 is pure RFC 8032; private keys are the 32-byte seed. `body` and `op` are JSON OBJECTS in
+      canonical JSON (sorted keys, no whitespace, UTF-8, non-ASCII as is: publication_format
+      `canonical_json`); the receiver verifies the bytes as received and does not re-canonicalise.
+    - Box: X25519 per RFC 7748 (32-byte scalar, clamped by the library); an all-zero shared secret
+      (low-order point) is refused. HKDF salt = the ASCII bytes of the 16-character room id string (NOT
+      its 8 hex-decoded bytes), info `mnemosyne/pub/box`, length 32. `hex(eph)` in the inner AAD is 64
+      lowercase hex characters. Inner nonce 12 random bytes; inner AES-GCM output is ciphertext || 16-byte
+      tag; the boxed content is NOT padded (the outer envelope pads). In the reader's signed message
+      `reader_pub` is the raw 32 bytes.
+    - `rid` = first 16 lowercase hex characters of SHA-256 over the raw 32-byte Ed25519 public key.
+    - `LiveKeys.sign`/`.box`: 64 lowercase hex (`^[0-9a-f]{64}$`), raw 32-byte public keys; unknown fields
+      inside `live` are refused like the rest of the manifest.
+    - publication_live_v1.json (scripts/make_live_vectors.py): `key_b64url`, `pub_id`, `room`,
+      `frames_key_hex`, `room_token`, `owner` {sign/box private and public hex}, `reader` {private_hex,
+      public_hex, rid}, `manifest` {version, json, aad, nonce_hex, blob_b64url, sha256} (with `live`),
+      `samples.version|threads|meta` {kind, aad, nonce_hex, json, signed_message_hex, sig_hex,
+      plaintext_hex, padded_length, envelope_b64url}, `samples.comment` {kind, aad, nonce_hex, json,
+      reader_message_hex, reader_sig_hex, content_hex, eph_private_hex, eph_public_hex, shared_hex,
+      box_key_hex, box_aad, box_nonce_hex, plaintext_hex (eph || nonce || ct), padded_length,
+      envelope_b64url, rid}, and `refused` {threads_signed_by_reader, version_unsigned}: well-sealed
+      envelopes that must NOT verify under `owner.sign_public_hex`.
 - Test vectors: `backend/tests/vectors/publication_live_v1.json` (link key, room id, room token, frames key;
   fixed owner sign/box key pairs, one fixed reader key pair, fixed nonces and ephemeral key; one sealed and
   signed VERSION, one THREADS, one boxed COMMENT with its expected `rid`; a manifest JSON with `live` and its
@@ -650,3 +678,12 @@ backend suite (locally: single files), the publish-host and link crates' full te
   Firefox ≥ 130, Safari ≥ 17): the vectors make that swap a one-file change.
 - Readers still see that COMMENT frames exist and their padded sizes (C17); the bridge's THREADS snapshot
   prunes the log (`X-Room-Since`), so the window is short.
+
+## Changed while building
+
+- Task 2: `@noble/curves` pinned to 1.9.7 (2025-08-15, the newest 1.x; 2.x changes the import paths), a direct
+  dependency; it brings `@noble/hashes` 1.8.0. Signatures are verified strictly (`zip215: false`), as
+  `cryptography` does. vitest.config.ts `include` gained `src/lib/rooms/**` and `src/lib/sealed/**`. A throwaway
+  check matched every value of publication_live_v1.json; task 9 makes it a permanent test.
+- Task 2 note for task 7: the viewer's Vite config has no `$lib` alias (the guest's has
+  `$lib: here('../src/lib')`); task 7 adds the same alias to viewer/vite.config.ts.

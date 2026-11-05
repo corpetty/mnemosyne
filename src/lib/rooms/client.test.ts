@@ -12,7 +12,7 @@ import {
   type RoomHandlers,
   type RoomSocket,
   type RoomState
-} from './room';
+} from './client';
 
 class FakeSocket implements RoomSocket {
   static all: FakeSocket[] = [];
