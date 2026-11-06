@@ -615,7 +615,7 @@ sync, share, bridge, viewer, guest); `img.src` is set only from the provider's o
 address; a blob nothing has shown for 7 days is swept (after one more fold of the meeting); caps 2,000,000 bytes an image,
 50,000,000 a meeting, 25,000,000 a room (2 MiB + 128 KiB sealed a blob), 20 MiB per publication with clips.
 
-Live publications (unreleased, docs/plans/2026-11-05-live-publications.md, use in docs/publishing.md, bytes in the plan's "Data
+Live publications (released as 0.30.0, docs/plans/2026-11-05-live-publications.md, use in docs/publishing.md, bytes in the plan's "Data
 and formats"): a hosted publication can be kept up to date (`PublicationSelection.follow`) and take reader comments
 (`comments`, `moderate`, `moderated_since`); "this computer" and the file never go live. services/live_publications.py has the
 watcher (polls the change log every 5 s; quiet 10 s, `MAX_WAIT` 60 s, `GAP` 30 s; submits the ordinary `publish` job with the
