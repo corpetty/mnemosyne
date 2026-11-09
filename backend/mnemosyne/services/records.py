@@ -37,15 +37,18 @@ from ..storage.records import (
     audio_key,
     chain_hash,
     chain_hash_v2,
+    comments_payload,
     compare_audio,
     compare_parts,
     compare_step,
     content_hash,
     content_of,
     erase_audio,
+    external_notes_payload,
     manifest_for,
     manifest_hash,
     manifest_problems,
+    summary_data_payload,
 )
 from . import notes_media
 from .storage_service import ErasureNotSealed
@@ -799,8 +802,8 @@ README = """Mnemosyne meeting records
 Exported {at} by {by} from {host}.
 
 One folder per meeting:
-  meeting.json       name, dates, owner, who it is shared with, participants, attendees, legal
-                     hold, retention
+  meeting.json       name, dates, owner, who it is shared with, participants, attendees, meeting
+                     type, agenda, legal hold, retention
   transcript.txt     who said what, when
   transcript.json    the same, with word times when available
   summary.md         the summary as shown in the app
@@ -808,7 +811,16 @@ One folder per meeting:
   versions.json      earlier transcripts and summaries, with when, why and by whom they changed
   history.json       what happened to the meeting: recordings, consent, transcriptions,
                      summaries, who opened, played or exported it
-  seals.json         the chain of seals and its verification when exported
+  seals.json         the chain of seals, each with the manifest it vouches for, and its
+                     verification when exported
+  notes.md           the meeting's notes as stored, raw (image references, chips and section
+                     marks included)
+  comments.json      every comment on the meeting, deleted ones too, as sealed
+  external_notes.json  other assistants' notes about the meeting
+  summary_data.json  the summary's structured parts exactly as sealed (null when there are none)
+  record.json        the record as of this export: the chain head, the last seal's manifest,
+                     which file each sealed part is recomputed from, the verification and the
+                     audio deleted on purpose (name, SHA-256, when, by whom, why)
   supervision.json   lines flagged for review phrases and the reviewers' sign-offs
                      (only for meetings that have any)
   publications.json  links made to share the meeting (only for meetings that have any): when
@@ -825,10 +837,26 @@ One folder per meeting:
 deletions.json lists meetings and audio deleted in the period, with who, when and why.
 
 To check that nothing in this export changed since it was made: `sha256sum -c SHA256SUMS`.
+To check each meeting's record from these files alone (every part of the last seal recomputed,
+the chain, the audio against the manifest): `mnemosyne-backend records verify <this zip>`.
 To check a meeting's record against the server later: its seals.json ends with the chain head
 ("chain_head"); the same meeting verified on the server gives the same value while nothing was
 changed there.
 """
+
+
+# The export file each sealed part is recomputed from (storage/records.py part_payloads), for
+# record.json. `summary_data.json` rather than summary.json: the digest is over the dump without
+# defaults, which summary.json (the full dump) is not.
+RECORD_FILES = {
+    "transcript": "transcript.json",
+    "summary": "summary.md",
+    "summary_data": "summary_data.json",
+    "notes": "notes.md",
+    "comments": "comments.json",
+    "meta": "meeting.json",
+    "external_notes": "external_notes.json",
+}
 
 
 class ExportRequest(ApiModel):
@@ -881,6 +909,8 @@ def export_zip(app: AppContext, request: ExportRequest, dest: Path, progress=Non
                 "participants": session.participants,
                 "attendees": session.attendees,
                 "meeting_type": session.meeting_type,
+                "owner_id": session.owner_id,
+                "agenda": [a.model_dump(mode="json") for a in session.agenda],
                 "legal_hold": session.legal_hold,
                 "kept_until": until.isoformat() if until else None,
                 "shared_with": [
@@ -908,9 +938,33 @@ def export_zip(app: AppContext, request: ExportRequest, dest: Path, progress=Non
                 f"{folder}/history.json",
                 json.dumps(app.repo.events(session.id), indent=1, default=str).encode(),
             )
+            put(f"{folder}/notes.md", (session.notes or "").encode())
+            comments = app.repo.list_comments(session.id)
+            put(
+                f"{folder}/comments.json",
+                json.dumps(comments_payload(comments), indent=1).encode(),
+            )
+            put(
+                f"{folder}/external_notes.json",
+                json.dumps(external_notes_payload(session.external_notes), indent=1).encode(),
+            )
+            put(
+                f"{folder}/summary_data.json",
+                json.dumps(summary_data_payload(session.summary_data), indent=1).encode(),
+            )
             check = verify(app, session.id)
-            seals = {"seals": app.repo.seals(session.id), "verified": check.model_dump(mode="json")}
+            all_seals = app.repo.seals(session.id)
+            seals = {"seals": all_seals, "verified": check.model_dump(mode="json")}
             put(f"{folder}/seals.json", json.dumps(seals, indent=1, default=str).encode())
+            record = {
+                "chain_head": check.chain_head,
+                "format": check.format,
+                "manifest": all_seals[-1]["manifest"] if all_seals else None,
+                "parts": RECORD_FILES,
+                "verification": check.model_dump(mode="json"),
+                "erased": [e.model_dump(mode="json") for e in check.erased],
+            }
+            put(f"{folder}/record.json", json.dumps(record, indent=1, default=str).encode())
             flags, reviews = app.repo.flags(session.id), app.repo.reviews(session.id)
             if flags or reviews:
                 supervised = {"flags": flags, "reviews": reviews}
