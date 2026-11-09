@@ -184,12 +184,8 @@ def test_a_refused_pairing_leaves_nothing_behind(node, ctx, sidecar):
 
 
 def test_pairing_as_b_refusals(client, ctx, sidecar):
-    body = {"invite": f"{make_ticket(OTHER)}#code", "name": "Laptop"}
-    # Remote access off: the sidecar is not running.
+    # (Remote access off or no token is no refusal: pairing turns them on, test_pairing_prep.py.)
     ctx.settings.api_token = "s3cret"
-    r = client.post("/api/sync/pair", json=body, headers=ADMIN)
-    assert r.status_code == 400 and "remote access" in r.json()["detail"]
-
     client.put("/api/settings", json={"remote_access": True}, headers=ADMIN)
     wait_for(lambda: ctx.link.status.running)
     for invite in ("nonsense", f"{make_ticket(OTHER)}#", "endpointzzz#code"):
@@ -259,10 +255,11 @@ def test_a_desktop_code_is_not_a_sync_code(node, ctx):
     assert ctx.sync_peers.peers() == []
 
 
-def test_sync_codes_in_team_mode_and_without_remote_access(client, ctx):
+def test_sync_codes_in_team_mode_and_without_the_sidecar(client, ctx):
     ctx.settings.api_token = "s3cret"
+    # No mnemosyne-link here: the reason, not "turn on remote access".
     r = client.post("/api/pairing/codes", json={"kind": "sync"}, headers=ADMIN)
-    assert r.status_code == 409 and "remote access" in r.json()["detail"]
+    assert r.status_code == 409 and "mnemosyne-link" in r.json()["detail"]
 
 
 def test_removing_the_peer_removes_its_device_and_hangs_up(node, ctx, sidecar):

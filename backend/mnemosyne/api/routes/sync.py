@@ -30,6 +30,7 @@ from ...models.sync import (
     SyncStatus,
 )
 from ...services import contacts, notes_media, sync_peers
+from ...services.pairing_prep import PairingUnavailable
 from ...services.person import PersonKeys
 from ...services.sync_peers import SyncPairingError, SyncPeer
 from ..context import AppContext, get_ctx
@@ -175,6 +176,8 @@ async def pair(body: SyncPairRequest, ctx: AppContext = Depends(get_ctx)):
     outcome: dict = {}
     try:
         peer = await sync_peers.pair_with_invite(ctx, body.invite, body.name, outcome=outcome)
+    except PairingUnavailable as e:  # no sidecar, or it did not start: a conflict, not a bad invite
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except SyncPairingError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return SyncPairResponse(peer=_info(peer), person_error=outcome.get("person_error"))

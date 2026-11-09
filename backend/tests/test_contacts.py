@@ -24,6 +24,7 @@ def ticket(endpoint_id: str) -> str:
 
 @pytest.fixture
 def me(ctx):
+    ctx.settings.remote_access = True
     ctx.link.status.running, ctx.link.status.ticket = True, ticket(EP_A)
     ctx.settings.local_speaker_name = "Corey"
     return ctx

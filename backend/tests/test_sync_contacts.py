@@ -64,6 +64,7 @@ class Node:
         self.ctx.sync.sync_interval = None  # tests run the rounds
         self.ctx.sync.poke_delay = 0.0
         self.ctx.sync_peers.set_name(f"{name} desk")
+        self.ctx.settings.remote_access = True
         self.ctx.link.status.running = True
         self.ctx.link.status.endpoint_id = self.endpoint
         self.ctx.link.status.ticket = ticket(self.endpoint)

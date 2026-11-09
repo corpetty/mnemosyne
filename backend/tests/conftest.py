@@ -41,6 +41,13 @@ def settings(tmp_path, monkeypatch) -> Settings:
     )
 
 
+@pytest.fixture(autouse=True)
+def config_file(tmp_path, monkeypatch):
+    """Settings saved by the code under test (a generated API token, remote access turned on by
+    services/pairing_prep.py) never reach the real config file, whichever way the app is built."""
+    monkeypatch.setenv("MNEMOSYNE_CONFIG_FILE", str(tmp_path / "config.toml"))
+
+
 @pytest.fixture
 def keystore():
     """Tests never touch the real keyring."""
