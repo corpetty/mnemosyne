@@ -380,7 +380,7 @@ the streamed meeting can no longer be replaced) stops the retries: the item stay
 
 
 ### `GET /api/system`
-What this machine can do, for the setup wizard: `{gpu_driver, gpu_stack, parakeet, pipewire, ffmpeg,
+What this machine can do, for the setup wizard: `{gpu_driver, gpu_stack, parakeet, capture, capture_problem, ffmpeg,
 hf_token, onnx_diarizer, transcriber_in_use, diarizer_in_use, platform}`. `gpu_driver` is an NVIDIA
 driver (nvidia-smi or a loadable libcuda); `gpu_stack` means torch and WhisperX are installed;
 `parakeet` means onnx-asr is; `onnx_diarizer` means sherpa-onnx is. `*_in_use` is what runs for the

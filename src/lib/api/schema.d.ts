@@ -9790,6 +9790,10 @@ export interface components {
         };
         /** SystemInfo */
         SystemInfo: {
+            /** Capture */
+            capture: boolean;
+            /** Capture Problem */
+            capture_problem: string | null;
             /** Diarizer In Use */
             diarizer_in_use: string;
             /** Ffmpeg */
@@ -9814,8 +9818,6 @@ export interface components {
             phonon_bytes: number;
             /** Phonon Installable */
             phonon_installable: boolean;
-            /** Pipewire */
-            pipewire: boolean;
             /** Platform */
             platform: string;
             /** Problems */

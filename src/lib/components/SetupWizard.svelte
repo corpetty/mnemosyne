@@ -276,10 +276,11 @@
 				and writes summaries with the language model of your choice.
 			</p>
 			<p class="text-sm text-gray-500">A few steps: pick your audio, choose how to transcribe, connect a model for summaries, and optionally your notes and calendar. Everything can be changed later in Settings.</p>
-			{#if system && (!system.pipewire || !system.ffmpeg)}
-				<p class="text-sm text-yellow-500">
-					Missing on this machine: {[!system.pipewire && 'PipeWire tools (pw-record)', !system.ffmpeg && 'ffmpeg'].filter(Boolean).join(' and ')}. Recording needs them.
-				</p>
+			{#if system && !system.capture && system.capture_problem}
+				<p class="text-sm text-yellow-500">{system.capture_problem}</p>
+			{/if}
+			{#if system && !system.ffmpeg}
+				<p class="text-sm text-yellow-500">Missing on this machine: ffmpeg. Recording needs it.</p>
 			{/if}
 		</section>
 	{:else if STEPS[step] === 'This computer'}
