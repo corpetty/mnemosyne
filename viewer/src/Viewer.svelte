@@ -52,6 +52,7 @@
 		if (!canComment || !comments) return null;
 		return {
 			counts: comments.counts(),
+			notes: meta?.notes === true,
 			onComment: (d) => {
 				draft = d;
 				tab = 'comments';

@@ -51,7 +51,7 @@ export const NOT_SENT_MS = 15_000;
 /** Characters of context before and after a summary passage. */
 export const CONTEXT_CHARS = 32;
 
-export type OpTarget = '' | 'body' | 'decision' | 'question' | 'item' | 'quote';
+export type OpTarget = '' | 'body' | 'notes' | 'decision' | 'question' | 'item' | 'quote';
 export type ItemTarget = 'decision' | 'question' | 'item';
 
 /** Where a new thread goes, as the COMMENT op says it. */
@@ -124,6 +124,8 @@ export function commentCount(n: number): string {
 export interface MeetingComments {
   /** Comments on each part, by `anchorKey`. */
   counts: Record<string, number>;
+  /** The owner's META says the notes can be commented on (`notes: true`); absent or false: nothing is offered on them. */
+  notes?: boolean;
   /** Open the composer anchored to a part. */
   onComment(draft: Draft): void;
   /** Bring the threads on a part into view. */
@@ -152,11 +154,11 @@ export function quoteAnchor(quoteId: string): OpAnchor {
 }
 
 /**
- * A passage of the summary's rendered text (`full`, characters `start`..`end`) as a `body`
- * anchor: the passage without its outer whitespace, and up to CONTEXT_CHARS before and after it.
+ * A passage of the summary's or the notes' rendered text (`full`, characters `start`..`end`) as
+ * an anchor of that `target` (`body`, the default, or `notes`): the passage without its outer whitespace, and up to CONTEXT_CHARS before and after it.
  * Null when only whitespace is selected.
  */
-export function passageAnchor(full: string, start: number, end: number): OpAnchor | null {
+export function passageAnchor(full: string, start: number, end: number, target: 'body' | 'notes' = 'body'): OpAnchor | null {
   let s = Math.max(0, Math.min(start, end));
   let e = Math.min(full.length, Math.max(start, end));
   while (s < e && /\s/.test(full[s])) s++;
@@ -164,7 +166,7 @@ export function passageAnchor(full: string, start: number, end: number): OpAncho
   if (s >= e) return null;
   return {
     ...NONE,
-    target: 'body',
+    target,
     exact: full.slice(s, e),
     prefix: full.slice(Math.max(0, s - CONTEXT_CHARS), s),
     suffix: full.slice(e, e + CONTEXT_CHARS)
@@ -175,13 +177,13 @@ const ITEM_TARGETS = new Set(['decision', 'question', 'item']);
 
 /**
  * The page element an anchor belongs to (Meeting.svelte's `data-anchor`): `decision:<id>`,
- * `question:<id>`, `item:<id>`, `quote:<id>`, `body`; null for the meeting as a whole.
+ * `question:<id>`, `item:<id>`, `quote:<id>`, `body`, `notes`; null for the meeting as a whole.
  */
 export function anchorKey(a: { target: string; target_id: string | null; quote_id: string | null } | null): string | null {
   if (!a) return null;
   if (a.quote_id) return `quote:${a.quote_id}`;
   if (ITEM_TARGETS.has(a.target) && a.target_id) return `${a.target}:${a.target_id}`;
-  if (a.target === 'body') return 'body';
+  if (a.target === 'body' || a.target === 'notes') return a.target;
   return null;
 }
 

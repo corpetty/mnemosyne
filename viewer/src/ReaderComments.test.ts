@@ -374,4 +374,54 @@ describe('affordances in the meeting', () => {
 		expect(full.slice(at + draft.anchor.prefix!.length + exact.length).startsWith(draft.anchor.suffix!)).toBe(true);
 		expect(draft.line).toBe(exact);
 	});
+
+	function selectInNotes() {
+		const box = target.querySelector('[data-anchor="notes"] > div:last-of-type')!;
+		const node = [...box.querySelectorAll('p')].map((p) => p.firstChild).find((t) => t && t.nodeType === 3 && (t.textContent ?? '').length > 3)!;
+		const range = document.createRange();
+		range.setStart(node, 0);
+		range.setEnd(node, Math.min(6, node.textContent!.length));
+		const sel = document.getSelection()!;
+		sel.removeAllRanges();
+		sel.addRange(range);
+		document.dispatchEvent(new Event('selectionchange'));
+		flushSync();
+		return { box, node };
+	}
+
+	it('offers "Comment" over a passage of the notes, anchored with target notes, when META allows', () => {
+		const onComment = vi.fn();
+		place(Meeting, { manifest, loadClip: vi.fn(), comments: { counts: {}, notes: true, onComment, onShow: vi.fn() } });
+		const { box, node } = selectInNotes();
+		const pick = target.querySelector<HTMLButtonElement>('[data-testid="comment-passage"]')!;
+		expect(pick).not.toBeNull();
+		expect(target.querySelector('[data-anchor="notes"]')!.contains(pick)).toBe(true);
+		pick.click();
+		const draft = onComment.mock.calls[0][0] as Draft;
+		const exact = node.textContent!.slice(0, 6).trim();
+		expect(draft.anchor).toEqual({
+			target: 'notes',
+			target_id: null,
+			quote_id: null,
+			exact,
+			prefix: '',
+			suffix: box.textContent!.slice(box.textContent!.indexOf(exact) + exact.length).slice(0, 32)
+		});
+		expect(draft.line).toBe(exact);
+	});
+
+	it('offers nothing on the notes without notes: true, and shows their count when it has one', () => {
+		const onShow = vi.fn();
+		place(Meeting, { manifest, loadClip: vi.fn(), comments: { counts: { notes: 2 }, onComment: vi.fn(), onShow } });
+		selectInNotes();
+		expect(target.querySelector('[data-testid="comment-passage"]')).toBeNull();
+		expect(target.querySelector('[data-anchor="notes"] [data-testid="comment-count"]')).toBeNull();
+		if (component) unmount(component);
+		target.innerHTML = '';
+		place(Meeting, { manifest, loadClip: vi.fn(), comments: { counts: { notes: 2 }, notes: true, onComment: vi.fn(), onShow } });
+		const count = target.querySelector<HTMLButtonElement>('[data-anchor="notes"] [data-testid="comment-count"]')!;
+		expect(count.textContent).toBe('2 comments');
+		count.click();
+		expect(onShow).toHaveBeenCalledWith('notes');
+	});
 });

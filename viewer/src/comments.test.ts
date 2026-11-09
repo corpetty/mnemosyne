@@ -236,6 +236,9 @@ describe('threads and anchors', () => {
     expect(anchorKey(a({ target: 'segment', quote_id: 'q1' }))).toBe('quote:q1');
     expect(anchorKey(a({ target: 'quote', quote_id: 'q1' }))).toBe('quote:q1');
     expect(anchorKey(a({ target: 'body', quote: 'x' }))).toBe('body');
+    expect(anchorKey(a({ target: 'notes', quote: 'x' }))).toBe('notes');
+    expect(anchorLine(a({ target: 'notes', quote: ' the notes line ' }), MANIFEST)).toBe('the notes line');
+    expect(passageAnchor('Some notes here', 5, 10, 'notes')).toMatchObject({ target: 'notes', exact: 'notes', prefix: 'Some ', suffix: ' here' });
     expect(anchorKey(a({}))).toBeNull();
     expect(anchorKey(itemAnchor('item', 'a1'))).toBe('item:a1');
     expect(anchorLine(a({ target: 'decision', target_id: 'd1' }), MANIFEST)).toBe('Ship on Friday 📦');

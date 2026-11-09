@@ -362,7 +362,7 @@ describe('the room', () => {
 		expect(follower!.following).toBe(false);
 		ws.frame(1, b64urlDecode(vec.samples.meta.envelope_b64url));
 		await settle();
-		expect(follower!.meta).toEqual(JSON.parse(vec.samples.meta.json));
+		expect(follower!.meta).toEqual({ ...JSON.parse(vec.samples.meta.json), notes: false }); // the vector predates `notes`
 		expect(follower!.following).toBe(true);
 		expect(statusLine(follower!.following)).toBe(STATUS.live);
 		ws.serverClose(1006);
@@ -376,6 +376,12 @@ describe('the room', () => {
 		ws.frame(2, await signed(PubKind.META, { at: '2026-11-05T10:00:00Z', comments: true, follow: true }));
 		await settle();
 		expect(follower!.meta?.follow).toBe(false);
+		expect(follower!.meta?.notes).toBe(false); // an older owner sends no `notes`
+		ws.frame(5, await signed(PubKind.META, { at: '2026-11-05T12:00:00Z', comments: true, follow: true, notes: true }));
+		await settle();
+		expect(follower!.meta?.notes).toBe(true);
+		ws.frame(6, await signed(PubKind.META, { at: '2026-11-05T10:30:00Z', comments: false, follow: false }));
+		await settle();
 		ws.frame(3, b64urlDecode(vec.samples.threads.envelope_b64url));
 		await settle();
 		expect(follower!.threads?.at).toBe('2026-11-05T10:22:31Z');
