@@ -26,7 +26,10 @@ room when the host says this one is gone (4410). Readers' frames (COMMENT, task 
 `_on_reader_frame`: opened with the row's box key, the reader's signature checked, then the op
 (create, reply, edit, delete) applied through services/comments.py as `reader:<rid>`, with the
 anchor rules of C8, the caps (MAX_TEXT, MAX_NAME, RATE_OPS in RATE_WINDOW), the replay rule
-(`readers.json` beside the publication's files) and nothing while comments are off. The
+(`readers.json` beside the publication's files) and nothing while comments are off. A passage
+of the published notes (M4) becomes a `notes` comment whose mark the bridge puts on the real
+text itself (`_create_on_notes`: services/notes_anchor.py finds it, shared_notes marks it under
+the notes lock, off the event loop); META `notes` says when that can be done. The
 readers' threads (`threads_for_readers`) go back as THREADS, debounced, after every `comments`
 event of the meeting and every change of the selection. With `moderate` on (task 13b) a reader's
 comment reaches the other readers once the owner approved it (`comments.approve`); its writer's
@@ -84,6 +87,7 @@ if TYPE_CHECKING:
     from ..models.comment import Comment, CommentCreate
     from ..models.publication import PublicationSelection
     from ..models.session import Session
+    from .notes_anchor import Locate
 
 logger = logging.getLogger(__name__)
 
@@ -412,11 +416,16 @@ class ThreadsFrame(_Frame):
 
 
 class MetaFrame(_Frame):
-    """The switches as readers need them, and the room's heartbeat. The newest `at` wins."""
+    """The switches as readers need them, and the room's heartbeat. The newest `at` wins.
+
+    `notes` (M4): readers may comment on the published notes: comments on, the notes published
+    and not empty, and a sidecar here that marks the passage (`PubBridge.notes_ok`). An older
+    owner sends no `notes`: the viewer reads it as false."""
 
     KIND: ClassVar[plf.Kind] = plf.Kind.META
     comments: bool
     follow: bool
+    notes: bool
     at: str
 
 
@@ -442,7 +451,7 @@ MAX_PENDING_EACH = 50  # waiting comment ids THREADS names per reader (the newes
 MAX_PENDING = 2000  # ... and in all
 MAX_THREADS_BYTES = 1_500_000  # a THREADS stays well inside the host's 2 MiB frame
 OPS = ("create", "reply", "edit", "delete")
-OP_TARGETS = ("", "body", "decision", "question", "item", "quote")
+OP_TARGETS = ("", "body", "decision", "question", "item", "quote", "notes")
 ITEM_PARTS = {"decision": "decisions", "question": "questions", "item": "action_items"}
 NO_ANCHOR: dict[str, Any] = {"target": "", "target_id": None, "quote_id": None, "quote": None}
 
@@ -456,6 +465,7 @@ class _Shown:
         from .publishing import Redaction, build_content
 
         self.sel = sel
+        self.app, self.session_id = app, session.id
         self.content, self.specs = build_content(app, session, sel)
         # The manifest's own names and text rules (build_content uses the same class).
         self.redaction = Redaction(session, sel)
@@ -467,9 +477,36 @@ class _Shown:
             "item": {a["id"]: a["text"] for a in c["action_items"]},
         }
         self.quotes: dict[str, str] = {q["id"]: q["text"] for q in c["quotes"]}
+        self._marks: tuple[str, dict] | None = None
+        self._marks_read = False
 
     def text(self, value: str) -> str:
         return self.redaction.text(value)
+
+    def notes_marks(self) -> tuple[str, dict] | None:
+        """The notes' plain text and comment ranges as last folded (read once)."""
+        from .shared_notes import unrestricted
+
+        if not self._marks_read:
+            with unrestricted():
+                self._marks = self.app.repo.notes_marks(self.session_id)
+            self._marks_read = True
+        return self._marks
+
+    def notes_quote(self, root: Comment) -> str | None:
+        """A notes thread's quote as the publication shows it: the marked text of the last
+        fold through the names and text rules, else (detached, no fold yet) its own quote the
+        same way; None for a deleted one."""
+        from .comments import place_notes
+
+        if root.deleted:
+            return None
+        marks = self.notes_marks()
+        found, _ = place_notes(root.id, root.quote, marks)
+        if found is not None and marks is not None:
+            marked = marks[0][found[0] : found[1]].replace("\x1f", "\t")
+            return self.text(marked) or None
+        return self.text(root.quote) or None
 
     def anchor(self, root: Comment) -> dict[str, Any] | None:
         """Where a reader thread is, as THREADS says it ({target, target_id, quote_id, quote}),
@@ -505,7 +542,11 @@ class _Shown:
                 "target_id": root.target_id or None,
                 "quote": self.items[target].get(root.target_id),
             }
-        return None  # the notes, and anything readers cannot write on
+        if target == "notes":
+            if not self.sel.notes or not self.content["notes"]:
+                return None
+            return {**NO_ANCHOR, "target": "notes", "quote": self.notes_quote(root)}
+        return None  # anything readers cannot write on
 
     def comment(self, c: Comment, anchor: dict[str, Any]) -> dict[str, Any]:
         """A comment as readers see it: a reader's as they wrote it, with their rid; the owner's
@@ -708,7 +749,8 @@ def _placed(shown: _Shown, op: _Op) -> tuple[CommentCreate, str] | None:
     """(the comment to create, the quote to keep it on the meeting with if its place is not
     found) for a reader's new thread, or None when it is on nothing the publication shows (C8:
     an item by its block id, a quote by its transcript lines, the summary text by quote, the
-    meeting as a whole)."""
+    notes by quote (M4: the bridge marks the passage, `_create_on_notes`), the meeting as a
+    whole)."""
     from ..models.comment import CommentCreate
 
     a, text, sel = op.anchor, op.text, shown.sel
@@ -734,7 +776,12 @@ def _placed(shown: _Shown, op: _Op) -> tuple[CommentCreate, str] | None:
             target="body", exact=exact, prefix=a["prefix"], suffix=a["suffix"], text=text
         )
         return req, exact
-    return CommentCreate(text=text), ""  # the meeting as a whole (or a body anchor on nothing)
+    if target == "notes" and a["exact"].strip():
+        if not sel.notes or not shown.content["notes"]:
+            return None
+        exact = a["exact"]
+        return CommentCreate(target="notes", exact=exact, text=text), exact
+    return CommentCreate(text=text), ""  # the meeting as a whole (or a passage of nothing)
 
 
 def _readers_file(app: AppContext, pub_id: str) -> Path:
@@ -1206,7 +1253,7 @@ class PubBridge:
         self._refused: set[str] = set()  # rooms whose token the host refused: never again
         self._lookup = True  # look the room up on the host before the next join
         self._last_at: datetime | None = None
-        self._last_meta: tuple[bool, bool] | None = None
+        self._last_meta: tuple[bool, bool, bool] | None = None  # (follow, comments, notes)
         self._meta_at = float("-inf")
         self._extended_at = float("-inf")
         self._snapshot_at = float("-inf")
@@ -1224,6 +1271,10 @@ class PubBridge:
         self._sub: asyncio.Queue | None = None
         self.clock: Callable[[], float] = time.monotonic  # the rate window's (tests swap it)
         self.outcomes: dict[str, int] = {}  # what became of readers' ops, by outcome (tests)
+        # Notes comments (M4): a sidecar that marks passages answered (probed off the loop at
+        # start and every tick), and the marks `_take` left to make once it returns.
+        self.notes_ok = False
+        self._marks_due: list[tuple[str, Locate, tuple[str, str]]] = []
 
     @property
     def readers(self) -> int:
@@ -1290,7 +1341,7 @@ class PubBridge:
             self._extended_at = float("-inf")
         selection_changed = row.get("selection") != self.row.get("selection")
         self.row = dict(row)
-        if self._last_meta is not None and _switches(row) != self._last_meta:
+        if self._last_meta is not None and self._meta_state() != self._last_meta:
             self.send_meta()
         if selection_changed:
             self.threads_soon()
@@ -1299,6 +1350,7 @@ class PubBridge:
         ticker = asyncio.create_task(self._ticker())
         events = asyncio.create_task(self._events())
         try:
+            await self._probe_notes()  # before the join: its META says it
             await self._connect_loop()
         except asyncio.CancelledError:
             raise
@@ -1467,7 +1519,12 @@ class PubBridge:
         except plf.PubLiveFormatError:
             outcome = "unopened"
         else:
-            outcome = self._take(ro)
+            try:
+                outcome = self._take(ro)
+            finally:
+                due, self._marks_due = self._marks_due, []
+            for comment_id, locate, actor in due:
+                await self._mark_notes(comment_id, locate, actor)
         self.outcomes[outcome] = self.outcomes.get(outcome, 0) + 1
         if outcome != "applied":
             logger.info(
@@ -1550,22 +1607,70 @@ class PubBridge:
 
     def _create(self, session: Session, op: _Op, actor: tuple[str, str]) -> None:
         """A reader's new thread, where the manifest says it is (C8); a place comments.py
-        cannot find (a summary passage with a redacted name, say) keeps the thread on the
-        meeting as a whole with the quote in its text, never drops it."""
+        cannot find (a summary passage with a redacted name, say), or a notes passage on a
+        computer that cannot mark one (no sidecar, C5), keeps the thread on the meeting as a
+        whole with the quote in its text, never drops it."""
         from ..models.comment import CommentCreate
-        from .comments import BadComment, create
+        from .comments import BadComment, NotesNotShared, create
 
-        placed = _placed(_Shown(self.app, session, self._selection()), op)
+        shown = _Shown(self.app, session, self._selection())
+        placed = _placed(shown, op)
         if placed is None:
             raise BadComment("Not on a part of the publication")
         req, quote = placed
         try:
-            create(self.app, session.id, req, comment_id=op.id, actor=actor)
-        except BadComment:
+            if req.target == "notes":
+                self._create_on_notes(session, shown, op, req, actor)
+            else:
+                create(self.app, session.id, req, comment_id=op.id, actor=actor)
+        except (BadComment, NotesNotShared):
             if req.target == "":
                 raise
             fallback = CommentCreate(text=_on_meeting(op.text, quote))
             create(self.app, session.id, fallback, comment_id=op.id, actor=actor)
+
+    def _create_on_notes(
+        self,
+        session: Session,
+        shown: _Shown,
+        op: _Op,
+        req: CommentCreate,
+        actor: tuple[str, str],
+    ) -> None:
+        """A reader's thread on the notes (M4, Item 1): made as a web reader's is (its anchor
+        is the mark `comment:<id>`, its quote the reader's passage, detached until marked), and
+        the mark left for `_on_reader_frame` to put, off the event loop, on the passage found
+        in the fold it marks against (`shared_notes.mark_comment_located`). R, the notes as the
+        reader read them, is the publication's own notes (`shown`), worked out here, outside
+        the notes lock. NotesNotShared when this computer cannot mark one (no sidecar: the
+        caller keeps the thread on the meeting)."""
+        from .comments import NotesNotShared, create
+        from .notes_anchor import as_read, locator
+
+        if not self.notes_ok:  # (comments.create would probe the sidecar on the loop)
+            raise NotesNotShared("The notes are not shared on this computer")
+        create(self.app, session.id, req, comment_id=op.id, actor=actor)
+        rendered = as_read(shown.content["notes"] or "")
+        locate = locator(
+            self.app, session, shown.sel, op.anchor, shown.redaction, rendered=rendered
+        )
+        self._marks_due.append((op.id, locate, actor))
+
+    async def _mark_notes(self, comment_id: str, locate: Locate, actor: tuple[str, str]) -> None:
+        """Put a reader's notes thread's mark on its passage, as the reader (the frame log says
+        who). Not found, or the sidecar failing: the thread stays detached, shown by its
+        quote. Marked: a `comments` event, so THREADS carries the marked text."""
+        from .comments import _publish
+        from .shared_notes import mark_comment_located, unrestricted
+
+        with unrestricted():
+            marked = await mark_comment_located(
+                self.app, self.session_id, comment_id, locate, actor[0], actor[1]
+            )
+        if marked:
+            _publish(self.app, self.session_id)
+        else:
+            logger.info("Live publication %s: a reader's notes passage not marked", self.pub_id)
 
     def _reply(self, session: Session, op: _Op, actor: tuple[str, str]) -> None:
         """A reader's reply: only to a thread readers are shown."""
@@ -1615,13 +1720,46 @@ class PubBridge:
         if self.connected.is_set():
             self.outq.put_nowait(frame)
 
+    def _meta_state(self, row: dict | None = None) -> tuple[bool, bool, bool]:
+        """(follow, comments, notes) as META says them: `notes` when comments are on, the
+        selection publishes the notes and they are not empty (`build_content`'s rule), and
+        this computer can mark a passage (`notes_ok`)."""
+        from ..models.publication import PublicationSelection
+        from .publishing import _own_notes
+        from .shared_notes import unrestricted
+
+        row = self.row if row is None else row
+        follow, comments = _switches(row)
+        notes = False
+        if comments and self.notes_ok:
+            sel = PublicationSelection.model_validate(row["selection"])
+            if sel.notes:
+                with unrestricted():
+                    session = self.app.repo.get(self.session_id)
+                    notes = (
+                        session is not None
+                        and not session.shared_from
+                        and bool(_own_notes(self.app, session).strip())
+                    )
+        return follow, comments, notes
+
+    async def _probe_notes(self) -> None:
+        """Whether a sidecar here answers `notes doc` (shared_notes.available runs it once per
+        binary: off the loop)."""
+        from .shared_notes import available
+
+        try:
+            self.notes_ok = await asyncio.to_thread(available)
+        except Exception:
+            logger.warning("Live publication %s: sidecar probe failed", self.pub_id, exc_info=True)
+            self.notes_ok = False
+
     def send_meta(self, now: float | None = None) -> MetaFrame | None:
-        follow, comments = _switches(self.row)
-        self._last_meta = (follow, comments)
+        follow, comments, notes = self._last_meta = self._meta_state()
         self._meta_at = time.monotonic() if now is None else now
         if not self.connected.is_set():
             return None  # said at the next join
-        frame = MetaFrame(comments=comments, follow=follow, at=self._stamp())
+        frame = MetaFrame(comments=comments, follow=follow, notes=notes, at=self._stamp())
         self.outq.put_nowait(frame)
         return frame
 
@@ -1780,8 +1918,9 @@ class PubBridge:
         if current.get("host_url") != self.row.get("host_url"):
             self.bridges.spawn(self.bridges.retire(self.row))
             return  # the next publish (or a restart) bridges it on its new host
+        await self._probe_notes()  # a sidecar installed or gone since: META says so
         self.update_row(current)
-        if _switches(current) != self._last_meta or now - self._meta_at >= META_EVERY:
+        if self._meta_state() != self._last_meta or now - self._meta_at >= META_EVERY:
             self.send_meta(now)
         if self.room and not self._lookup and now - self._extended_at >= EXTEND_EVERY:
             try:
