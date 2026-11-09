@@ -44,6 +44,7 @@ from mnemosyne.services.record_sealer import (
     CURSOR_KEY,
     MAX_WAIT,
     QUIET,
+    UP_TO_DATE,
     RecordSealer,
     changed_reason,
 )
@@ -178,6 +179,10 @@ class Rig:
                 assert len(seals) == before[s] + 1, f"{label}: {s} was not sealed"
                 assert seals[-1]["reason"] == changed_reason(differing), label
                 assert seals[-1]["reason"] in reasons
+            elif ctx.repo.sync_seq_of(s) > last["manifest"]["rev"]:
+                # The app wrote to it and no part moved: the seal's rev catches up.
+                assert len(seals) == before[s] + 1, f"{label}: {s} was not sealed"
+                assert seals[-1]["reason"] == UP_TO_DATE, label
             else:
                 assert len(seals) == before[s], f"{label}: sealed with nothing to seal"
             check = records.verify(ctx, s)
@@ -491,13 +496,6 @@ def test_details_paths_advance_sync_seq(client, ctx, rig):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="REPORTED, not fixed: SessionRepository.adopt_unowned changes owner_id (part `meta`) "
-    "without `_touch`, on purpose (tests/test_sync_storage.py NEVER pins 'local bookkeeping'). "
-    "Turning team mode on would show every sealed older meeting as changed outside the app. "
-    "Fix: `_touch(sid, keep_updated=True)` per adopted meeting and drop it from NEVER.",
-)
 def test_adopting_unowned_meetings_advances_sync_seq(ctx, rig):
     rig.step(
         "owner (team mode first turned on)",
@@ -708,20 +706,62 @@ def test_each_change_restarts_the_quiet_time_up_to_the_longest_wait(ctx, clock):
     assert 1000.0 + MAX_WAIT <= clock.t - 30 < 1000.0 + MAX_WAIT + 40
 
 
-def test_a_change_that_no_part_sees_seals_nothing(ctx, clock):
+def test_a_change_that_no_part_sees_is_sealed_as_up_to_date(ctx, clock):
     sid = meeting(ctx)
     records.seal(ctx, sid, "baseline")
     sealer = new_sealer(ctx, clock)
     seq = ctx.repo.sync_seq_of(sid)
-    ctx.repo.set_notes_items(sid, [])  # derived state: not a part, not a version
     ctx.repo.update_fields(sid, local_only=True)  # a travelling field that is not covered
     assert ctx.repo.sync_seq_of(sid) > seq
+    assert records.verify(ctx, sid).ok
+    tick(sealer)
+    clock.t += QUIET + 1
+    assert tick(sealer) == [UP_TO_DATE]
+    assert [s["reason"] for s in ctx.repo.seals(sid)] == ["baseline", UP_TO_DATE]
+    assert ctx.repo.seals(sid)[-1]["manifest"]["rev"] == ctx.repo.sync_seq_of(sid)
+    clock.t += QUIET + 1
+    assert tick(sealer) == []  # one row, not one per look
+    check = records.verify(ctx, sid)
+    assert check.ok and not check.pending
+
+
+def test_a_derived_write_that_is_no_version_seals_nothing(ctx, clock):
+    sid = meeting(ctx)
+    records.seal(ctx, sid, "baseline")
+    sealer = new_sealer(ctx, clock)
+    ctx.repo.set_notes_items(sid, [])  # derived state: no `_touch`, no candidate
     tick(sealer)
     clock.t += QUIET + 1
     assert tick(sealer) == []
     assert len(ctx.repo.seals(sid)) == 1
+
+
+def test_a_tamper_after_a_no_op_touch_is_a_problem_not_pending(ctx, clock):
+    """seal -> an app write no part sees -> the sealer -> a covered part edited in the database
+    (sync_seq stays): verify must say so. Without the "up to date" seal the meeting's rev stays
+    behind its sync_seq and the edit would read as the app's own, not yet sealed, for good."""
+    sid = meeting(ctx)
+    records.seal(ctx, sid, "baseline")
+    sealer = new_sealer(ctx, clock)
+    ctx.repo.update_fields(sid, local_only=True)
+    tick(sealer)
+    clock.t += QUIET + 1
+    assert tick(sealer) == [UP_TO_DATE]
+    seq = ctx.repo.sync_seq_of(sid)
+    with ctx.repo._lock, ctx.repo._conn:
+        ctx.repo._conn.execute(
+            "UPDATE segments SET text='forged' WHERE session_id=? AND idx=0", (sid,)
+        )
+        ctx.repo._conn.execute("UPDATE sessions SET notes='forged notes' WHERE id=?", (sid,))
+    assert ctx.repo.sync_seq_of(sid) == seq
     check = records.verify(ctx, sid)
-    assert check.ok and not check.pending
+    assert not check.ok and not check.pending
+    assert "The transcript or summary differs from the last seal" in check.problems
+    assert "The notes differ from the last seal" in check.problems
+    # The sealer does not launder it: nothing in the app changed, so no candidate.
+    clock.t += QUIET + 1
+    assert tick(sealer) == []
+    assert not records.verify(ctx, sid).ok
 
 
 def test_a_meeting_being_recorded_or_in_a_job_waits(ctx, clock, monkeypatch):

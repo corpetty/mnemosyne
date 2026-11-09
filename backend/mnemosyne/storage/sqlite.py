@@ -3409,11 +3409,19 @@ class SessionRepository:
         return True
 
     def adopt_unowned(self, owner_id: str) -> int:
-        """Meetings that belong to nobody (made before team mode) become this person's."""
+        """Meetings that belong to nobody (made before team mode) become this person's. The owner
+        is part of the meeting's record (`meta`), so each meeting gets a new version (`_touch`,
+        without moving `updated_at`: nothing changed for a reader), or a seal made before would
+        show it as changed outside the app. Library sync is refused in team mode: no travel."""
         with self._lock, self._conn:
-            return self._conn.execute(
-                "UPDATE sessions SET owner_id=? WHERE owner_id=''", (owner_id,)
-            ).rowcount
+            ids = [
+                r["id"]
+                for r in self._conn.execute("SELECT id FROM sessions WHERE owner_id=''").fetchall()
+            ]
+            self._conn.execute("UPDATE sessions SET owner_id=? WHERE owner_id=''", (owner_id,))
+            for sid in ids:
+                self._touch(sid, keep_updated=True)
+            return len(ids)
 
     # ---- per-person preferences (services/prefs.py) ------------------------
 

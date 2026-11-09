@@ -6,9 +6,10 @@ outside the app" until the next transcription.
 It polls the library-sync change log (`repo.seal_candidates`, the counter every travelling write
 already moves), keeps the meetings that changed, and once one has been quiet for `QUIET` seconds
 (or has waited `MAX_WAIT` seconds since its first unsealed change, so people typing together for
-minutes still get sealed) and is not busy, compares it with its last seal part by part. Only a
+minutes still get sealed) and is not busy, compares it with its last seal part by part. A
 difference seals: the reason lists what differs ("changed: notes, comments"). A change that no
-part sees (the derived state `_touch` also counts) seals nothing.
+part sees (the derived state `_touch` also counts) is sealed as "up to date": the seal's `rev`
+catches up, so that a later change made outside the app is a problem and not "pending" for good.
 
 Left alone: a meeting being recorded or with a job running (the job's own seals follow, and the
 next look finds it quiet), a meeting shared with us (`shared_from`, `seal_candidates` leaves it
@@ -44,6 +45,9 @@ MAX_WAIT = 600.0  # ... or once its first unsealed change is this old, quiet or 
 BACKOFF = (60.0, 120.0, 300.0, 600.0)  # after the 1st, 2nd, 3rd, 4th and later failures
 PAGE = 200  # candidates read from the log at a time
 CURSOR_KEY = "records_sealer_seq"
+
+
+UP_TO_DATE = "up to date"  # nothing differs, but the meeting moved on since the last seal
 
 
 def changed_reason(parts: list[str]) -> str:
@@ -189,6 +193,7 @@ class RecordSealer:
         parts: list[str] = []
         if last is not None and last["format"] == 2 and last["manifest"]:
             sealed = last["manifest"]
+            rev_now = app.repo.sync_seq_of(session_id)  # first: a write after it is seen later
             now = manifest_for(session, comments, rev=sealed["rev"], audio_here=False)
             parts = [d.name for d in compare_parts(sealed["parts"], now["parts"])]
             audio, _, failed = records._audio_now(app, session, last)
@@ -199,7 +204,16 @@ class RecordSealer:
             ):
                 parts.append("audio")
             if not parts:
-                return None
+                # Nothing a seal vouches for differs, but the app wrote to the meeting since
+                # (a derived value, a no-op rewrite): the seal's `rev` is behind. Seal anyway,
+                # or a later change made outside the app would read as pending (the app's own
+                # change, not yet sealed) for good: the meeting is no candidate until the app
+                # writes to it again.
+                if rev_now is None or rev_now <= sealed["rev"]:
+                    return None
+                reason = UP_TO_DATE
+                written = records.seal(app, session_id, reason)
+                return reason if written is not None else ""
         reason = changed_reason(parts)
         written = records.seal(app, session_id, reason)
         return reason if written is not None else ""
