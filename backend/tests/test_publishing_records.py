@@ -120,7 +120,8 @@ def test_each_change_is_sealed_with_a_readable_reason_also_under_a_legal_hold(cl
     seals = _wait_for_seals(ctx, s.id, 3)
     # The content never changed, and still each event is a link in the chain.
     assert [x["reason"] for x in seals] == ["published", "publication updated", "unpublished"]
-    assert len({x["content_hash"] for x in seals}) == 1
+    # (Format 2: the manifest also names the meeting's `rev`, which publishing moves on.)
+    assert len({json.dumps(x["manifest"]["parts"], sort_keys=True) for x in seals}) == 1
     check = records.verify(ctx, s.id)
     assert check.ok and check.seals == 3
     kinds = [e["kind"] for e in ctx.repo.events(s.id)]

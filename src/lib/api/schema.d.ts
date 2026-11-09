@@ -5379,6 +5379,27 @@ export interface components {
             /** Locked */
             locked: boolean;
         };
+        /**
+         * Erasure
+         * @description Audio deleted on purpose (retention, an admin with a reason): still in the record by its
+         *     plaintext SHA-256, so a copy kept elsewhere (an export) can be checked against it.
+         */
+        Erasure: {
+            /** At */
+            at: string;
+            /** By */
+            by: string;
+            /** Bytes */
+            bytes: number;
+            /** Matched */
+            matched: boolean;
+            /** Name */
+            name: string;
+            /** Reason */
+            reason: string;
+            /** Sha256 */
+            sha256: string;
+        };
         /** ExportRequest */
         ExportRequest: {
             /** End */
@@ -6334,6 +6355,22 @@ export interface components {
             kind: string;
             /** Urls */
             urls: string[];
+        };
+        /**
+         * PartCheck
+         * @description One part of the record compared with the last seal: a part (storage/records.py PARTS) or
+         *     an audio file ("audio/<name without .enc>").
+         */
+        PartCheck: {
+            /** Detail */
+            detail: string;
+            /** Name */
+            name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "same" | "differs" | "pending" | "unavailable";
         };
         /**
          * PartClock
@@ -9818,10 +9855,18 @@ export interface components {
         Verification: {
             /** Chain Head */
             chain_head: string;
+            /** Erased */
+            erased: components["schemas"]["Erasure"][];
+            /** Format */
+            format: number;
             /** Last Sealed At */
             last_sealed_at: string | null;
             /** Ok */
             ok: boolean;
+            /** Parts */
+            parts: components["schemas"]["PartCheck"][];
+            /** Pending */
+            pending: boolean;
             /** Problems */
             problems: string[];
             /** Seals */

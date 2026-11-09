@@ -183,3 +183,246 @@ def test_an_export_carries_the_notes_images_and_the_seal_ignores_them(client, ct
     sums = dict(line.split("  ", 1)[::-1] for line in z.read("SHA256SUMS").decode().splitlines())
     assert sums[name] == sha(data)
     assert "media/" in z.read("README.txt").decode()
+
+
+# ---- format 2 seals (docs/plans/2026-11-09-records-by-frontier.md, task 3) -------------------
+
+
+def _saved(ctx, tmp_path, name="Weekly", audio=True, **fields):
+    """A meeting saved straight to the repository: a transcript and (by default) one file."""
+    from mnemosyne.models.session import Recording, Session, TranscriptSegment
+
+    path = None
+    if audio:
+        path = tmp_path / f"{name}.ogg"
+        path.write_bytes(b"OggS" + name.encode() * 500)
+    fields.setdefault(
+        "transcript", [TranscriptSegment(text="We ship Friday.", speaker="Ana", start=0, end=3)]
+    )
+    s = Session(
+        name=name,
+        audio_file=str(path) if path else None,
+        recordings=(
+            [Recording(source="mic", device_id=0, device_name="Mic", path=str(path))]
+            if path
+            else []
+        ),
+        **fields,
+    )
+    ctx.repo.save(s)
+    return s.id, path
+
+
+def _encrypt(ctx, sid, path):
+    """What turning encryption on does to a file, without a new version of the meeting."""
+    from mnemosyne.storage.crypto import encrypt_file
+
+    enc = encrypt_file(path, ctx.file_key)
+    with ctx.repo._lock, ctx.repo._conn:
+        ctx.repo._conn.execute("UPDATE sessions SET audio_file=? WHERE id=?", (str(enc), sid))
+        ctx.repo._conn.execute("UPDATE recordings SET path=? WHERE session_id=?", (str(enc), sid))
+    return enc
+
+
+def _status(check, name):
+    return next(p.status for p in check.parts if p.name == name)
+
+
+def test_a_seal_is_a_manifest_with_plaintext_audio_that_survives_encryption(ctx, tmp_path):
+    sid, path = _saved(ctx, tmp_path)
+    plain = path.read_bytes()
+    assert records.seal(ctx, sid, "transcribed") is not None
+    (s,) = ctx.repo.seals(sid)
+    m = s["manifest"]
+    assert s["format"] == 2 and m["rev"] == ctx.repo.sync_seq_of(sid) and m["audio_here"]
+    assert m["audio"] == {
+        path.name: {"sha256": hashlib.sha256(plain).hexdigest(), "bytes": len(plain)}
+    }
+    assert set(s["audio_stat"]) == {path.name}
+    check = records.verify(ctx, sid)
+    assert check.ok and check.format == 2 and not check.pending and check.erased == []
+    assert {p.name for p in check.parts} == {*records.PARTS, f"audio/{path.name}"}
+    assert all(p.status == "same" for p in check.parts)
+
+    ctx.master_key = bytes(range(32))
+    enc = _encrypt(ctx, sid, path)  # x.ogg -> x.ogg.enc, another nonce: the same plaintext
+    check = records.verify(ctx, sid)
+    assert check.ok and _status(check, f"audio/{path.name}") == "same", check.problems
+
+    # Locked: the audio cannot be compared, which is not a problem; nor can it be sealed anew.
+    ctx.master_key = None
+    records._plain_digests.clear()
+    check = records.verify(ctx, sid)
+    assert check.ok and _status(check, f"audio/{path.name}") == "unavailable"
+    assert records.seal(ctx, sid, "published") is None
+
+    # Unlocked again, a seal records the encrypted file's stats; locked, the next one reuses
+    # that digest instead of reading the file.
+    ctx.master_key = bytes(range(32))
+    assert records.seal(ctx, sid, "published") is not None
+    assert ctx.repo.seals(sid)[-1]["audio_stat"][path.name]["file"] == str(enc)
+    ctx.master_key = None
+    records._plain_digests.clear()
+    assert records.seal(ctx, sid, "unpublished") is not None
+    assert ctx.repo.seals(sid)[-1]["manifest"]["audio"] == m["audio"]
+
+    # A file that does not decrypt is a problem, never "unavailable".
+    ctx.master_key = bytes(range(32))
+    data = bytearray(enc.read_bytes())
+    data[-1] ^= 1
+    enc.write_bytes(bytes(data))
+    records._plain_digests.clear()  # same size, and maybe the same coarse mtime
+    check = records.verify(ctx, sid)
+    assert not check.ok and any(path.name in p and "differs" in p for p in check.problems)
+
+
+def test_a_v1_record_still_verifies_and_upgrades_when_opened(client, ctx, tmp_path):
+    sid, path = _saved(ctx, tmp_path)
+    session = ctx.repo.get(sid)
+    ctx.repo.add_seal(
+        sid, "transcribed", records.content_hash(records.content_of(session)),
+        records.audio_hashes(session),
+    )  # fmt: skip
+    check = records.verify(ctx, sid)
+    assert check.ok and check.format == 1 and check.parts == [] and not check.pending
+
+    # Encrypted since: the v1 seal hashed the file as stored, so it cannot be compared.
+    ctx.master_key = bytes(range(32))
+    _encrypt(ctx, sid, path)
+    check = records.verify(ctx, sid)
+    assert check.ok, check.problems
+    assert [(p.name, p.status) for p in check.parts] == [(f"audio/{path.name}", "unavailable")]
+    assert "new format" in check.parts[0].detail
+
+    # Opening the record seals it in format 2, chained to the v1 seal.
+    got = client.get(f"/api/sessions/{sid}/records").json()["verification"]
+    assert got["ok"] and got["format"] == 2 and got["seals"] == 2
+    v1, v2 = ctx.repo.seals(sid)
+    assert v2["reason"] == records.UPGRADE_REASON and v2["prev"] == v1["chain"]
+    assert v2["manifest"]["content_v1"] == v1["content_hash"]
+    assert client.get(f"/api/sessions/{sid}/records").json()["verification"]["seals"] == 2
+
+    # A v1 record that no longer matches is not upgraded: the problem stays visible.
+    other, _ = _saved(ctx, tmp_path, "Other")
+    session = ctx.repo.get(other)
+    ctx.repo.add_seal(
+        other, "transcribed", records.content_hash(records.content_of(session)),
+        records.audio_hashes(session),
+    )  # fmt: skip
+    with ctx.repo._lock, ctx.repo._conn:
+        ctx.repo._conn.execute("UPDATE segments SET text='forged' WHERE session_id=?", (other,))
+    got = client.get(f"/api/sessions/{other}/records").json()["verification"]
+    assert got["format"] == 1 and got["problems"] == [records.CONTENT_DIFFERS]
+
+
+def test_app_changes_are_pending_and_forged_rows_are_problems(ctx, tmp_path):
+    sid, _ = _saved(ctx, tmp_path, notes="Ship it")
+    records.seal(ctx, sid, "transcribed")
+    ctx.repo.add_comment(sid, text="Are we sure?", author="Bo")  # the app: rev moves on
+    check = records.verify(ctx, sid)
+    assert check.ok and check.pending and check.problems == []
+    assert _status(check, "comments") == "pending" and _status(check, "transcript") == "same"
+
+    assert records.seal(ctx, sid, "changed: comments") is not None
+    check = records.verify(ctx, sid)
+    assert check.ok and not check.pending
+    with ctx.repo._lock, ctx.repo._conn:  # behind the app's back: rev stays
+        ctx.repo._conn.execute("UPDATE comments SET text='forged' WHERE session_id=?", (sid,))
+        ctx.repo._conn.execute("UPDATE sessions SET notes='forged' WHERE id=?", (sid,))
+    check = records.verify(ctx, sid)
+    assert not check.ok and not check.pending
+    assert check.problems == [
+        "The notes differ from the last seal",
+        "The comments differ from the last seal",
+    ]
+    assert _status(check, "notes") == "differs" and _status(check, "comments") == "differs"
+
+
+def test_notes_only_meetings_are_sealed_and_empty_ones_are_not(ctx, tmp_path):
+    sid, _ = _saved(ctx, tmp_path, "Notes only", audio=False, transcript=[], notes="- Ship Friday")
+    assert records.seal(ctx, sid, "changed: notes") is not None
+    check = records.verify(ctx, sid)
+    assert check.ok and check.format == 2 and {p.name for p in check.parts} == set(records.PARTS)
+    empty, _ = _saved(ctx, tmp_path, "Empty", audio=False, transcript=[])
+    assert records.seal(ctx, empty, "changed") is None and ctx.repo.seals(empty) == []
+
+
+def test_audio_recorded_elsewhere_is_not_in_the_manifest(ctx, tmp_path):
+    sid, _ = _saved(ctx, tmp_path, "Foreign", origin="peer-machine")
+    records.seal(ctx, sid, "summarized")
+    m = ctx.repo.seals(sid)[-1]["manifest"]
+    assert m["audio"] == {} and m["audio_here"] is False
+    check = records.verify(ctx, sid)
+    assert check.ok and not any(p.name.startswith("audio/") for p in check.parts)
+    shared, _ = _saved(ctx, tmp_path, "Theirs")
+    with ctx.repo._lock, ctx.repo._conn:  # what taking a meeting shared with this person sets
+        ctx.repo._conn.execute("UPDATE sessions SET shared_from='ada' WHERE id=?", (shared,))
+    assert records.seal(ctx, shared, "transcribed") is None  # someone else's record
+
+
+def _erase(ctx, sid, path, *, sha=None, by="Admin", reason="Retention"):
+    """An erasure seal as task 4 will make it: the files move from audio to erased."""
+    from mnemosyne.storage import records as r
+
+    last = ctx.repo.seals(sid)[-1]["manifest"]
+    data = path.read_bytes()
+    measured = {path.name: r.audio_entry(sha or hashlib.sha256(data).hexdigest(), len(data))}
+    audio, erased = r.erase_audio(
+        last["audio"], last["erased"], measured, at="2026-11-09T10:00:00", by=by, reason=reason,
+        deletion=None,
+    )  # fmt: skip
+    path.unlink()
+    manifest = r.manifest_for(
+        ctx.repo.get(sid), ctx.repo.list_comments(sid), rev=ctx.repo.sync_seq_of(sid),
+        audio=audio, erased=erased,
+    )  # fmt: skip
+    return ctx.repo.add_seal(sid, "audio deleted", manifest=manifest)
+
+
+def test_erased_audio_keeps_verifying_and_vanished_audio_does_not(ctx, tmp_path):
+    from mnemosyne.storage import records as r
+
+    sid, path = _saved(ctx, tmp_path)
+    records.seal(ctx, sid, "transcribed")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    _erase(ctx, sid, path)
+    check = records.verify(ctx, sid)
+    assert check.ok, check.problems
+    assert [(e.name, e.sha256, e.by, e.reason, e.matched) for e in check.erased] == [
+        (path.name, digest, "Admin", "Retention", True)
+    ]
+    assert not any(p.name.startswith("audio/") for p in check.parts)
+    # Later seals carry the erasure; the same file put back is no difference.
+    records.seal(ctx, sid, "published")
+    assert path.name in ctx.repo.seals(sid)[-1]["manifest"]["erased"]
+    assert records.verify(ctx, sid).ok
+
+    # A file that no longer matched when it was erased is recorded, and shown as a problem.
+    other, opath = _saved(ctx, tmp_path, "Swapped")
+    records.seal(ctx, other, "transcribed")
+    _erase(ctx, other, opath, sha="0" * 64)
+    check = records.verify(ctx, other)
+    assert check.erased[0].matched is False
+    assert check.problems == [
+        f"Audio file {opath.name} no longer matched the record when it was deleted"
+    ]
+
+    # Audio that leaves the record without an erasure breaks continuity.
+    third, tpath = _saved(ctx, tmp_path, "Vanished")
+    records.seal(ctx, third, "transcribed")
+    tpath.unlink()
+    manifest = r.manifest_for(ctx.repo.get(third), [], rev=ctx.repo.sync_seq_of(third))
+    ctx.repo.add_seal(third, "forged", manifest=manifest)
+    problems = records.verify(ctx, third).problems
+    assert f"Audio file {tpath.name} left the record at seal 2 without being erased" in problems
+
+
+def test_a_swapped_image_in_the_notes_is_a_problem(ctx, tmp_path):
+    data = webp(pad=b"i" * 100)
+    notes = f"![Board](mnemosyne:image/{sha(data)}.webp@640x480)\n"
+    sid, _ = _saved(ctx, tmp_path, notes=notes)
+    notes_media.store(ctx, sid, sha(data), data)
+    records.seal(ctx, sid, "transcribed")
+    assert records.verify(ctx, sid).ok
+    notes_media.path(ctx, sid, sha(data)).write_bytes(webp(pad=b"x" * 100))
+    assert records.IMAGE_CHANGED in records.verify(ctx, sid).problems
