@@ -299,3 +299,58 @@ fn mark_comment_refuses_unknown_deleted_or_reversed_ids() {
         .0
         .starts_with("first: "));
 }
+
+#[test]
+fn mark_comment_at_equals_marking_by_the_ids_at_those_positions() {
+    let text = "alpha beta gamma\nsecond line\n";
+    let mut by_ids = Notes::new(origin(9));
+    by_ids.set_text(text, &Default::default());
+    let mut by_pos = Notes::from_snapshot(origin(9), &by_ids.snapshot()).unwrap();
+    let (first, last) = ids(&by_ids, 6, 9);
+    let a = by_ids.mark_comment(&first, &last, "0123456789ab").unwrap();
+    let b = by_pos.mark_comment_at(6, 10, "0123456789ab").unwrap();
+    assert_eq!(a.len(), b.len());
+    assert_eq!(by_pos.comments()["0123456789ab"], Some((6, 10)));
+    assert_eq!(by_pos.comments(), by_ids.comments());
+    // A range over a line break and the very last character.
+    let (f, l) = ids(&by_ids, 13, 19);
+    by_ids.mark_comment(&f, &l, "bbbbbbbbbbbb").unwrap();
+    by_pos.mark_comment_at(13, 20, "bbbbbbbbbbbb").unwrap();
+    let n = text.chars().count();
+    by_pos.mark_comment_at(n - 1, n, "cccccccccccc").unwrap();
+    assert_eq!(by_pos.comments()["cccccccccccc"], Some((n - 1, n)));
+    assert_eq!(
+        by_pos.comments()["bbbbbbbbbbbb"],
+        by_ids.comments()["bbbbbbbbbbbb"]
+    );
+}
+
+#[test]
+fn mark_comment_at_refuses_empty_and_out_of_range() {
+    let mut doc = Notes::new(origin(9));
+    doc.set_text("alpha\n", &Default::default());
+    assert!(doc.mark_comment_at(3, 3, "c1").is_err());
+    assert!(doc.mark_comment_at(4, 2, "c1").is_err());
+    assert!(doc.mark_comment_at(0, 7, "c1").is_err());
+    assert!(doc.mark_comment_at(9, 12, "c1").is_err());
+    assert!(doc.comments().is_empty(), "nothing was marked");
+    assert!(doc.mark_comment_at(0, 6, "c1").is_ok());
+}
+
+#[test]
+fn mark_comment_at_counts_a_table_cell_separator_as_one_position() {
+    let mut doc = Notes::new(origin(9));
+    doc.set_text("| a | b |\n|---|---|\n| c | d |\n", &Default::default());
+    let text: Vec<char> = doc.model().text.clone();
+    let sep = text
+        .iter()
+        .position(|&c| c == '\u{1f}')
+        .expect("a cell separator");
+    // "b" is the character right after the first separator on the header row.
+    assert_eq!(text[sep + 1], 'b');
+    doc.mark_comment_at(sep + 1, sep + 2, "c1").unwrap();
+    assert_eq!(doc.comments()["c1"], Some((sep + 1, sep + 2)));
+    // The range may include the separator itself: two positions.
+    doc.mark_comment_at(sep, sep + 2, "c2").unwrap();
+    assert_eq!(doc.comments()["c2"], Some((sep, sep + 2)));
+}

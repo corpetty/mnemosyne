@@ -199,6 +199,20 @@ fn every_op_answers_with_tasks() {
     }))
     .unwrap();
     assert_eq!(tasks(&comment).len(), 3);
+    let at = call(json!({
+        "op":"mark_comment_at","notes":hex(4),"snapshot":b64(&snap),"frames":[],
+        "start":0,"end":2,"comment":"c1c1c1c1c1c1"
+    }))
+    .unwrap();
+    assert_eq!(tasks(&at).len(), 3);
+    assert_eq!(at["comments"], comment["comments"]);
+    for bad in [(2, 2), (3, 1), (0, 100_000)] {
+        assert!(call(json!({
+            "op":"mark_comment_at","notes":hex(4),"snapshot":b64(&snap),"frames":[],
+            "start":bad.0,"end":bad.1,"comment":"c1c1c1c1c1c1"
+        }))
+        .is_err());
+    }
     // merge: the union's lines are older than the request's frames.
     let groups = log(
         &snap,
