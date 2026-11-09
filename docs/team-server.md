@@ -43,9 +43,9 @@ only: your own and your contacts' meetings can be deleted whatever the period sa
 them (the Review queue does not list them). An explicit legal hold holds any meeting. Stopping hosting
 brings the normal rules back for every meeting, and old flags show again. Sealing is unchanged.
 
-While you host, Mnemosyne's relay and notes server are not used automatically (`use_our_servers` is
-off on a team server) unless you turn them on under Advanced. Stopping returns the computer to a plain main computer;
-accounts and meetings stay.
+While you host, Mnemosyne's relay and notes server stay in use as on any main computer, so your laptop and
+guest notes keep working (`use_our_servers` is off automatically only on a dedicated team server; Advanced changes
+it). Stopping returns the computer to a plain main computer; accounts and meetings stay.
 
 Once you host, the tab gains a **Your team** section: **People and access** (add people and send each
 their invite link), the two allow switches above, **Flagged phrases**, **Use my Tailscale name**,
