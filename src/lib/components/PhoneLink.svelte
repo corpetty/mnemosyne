@@ -13,6 +13,9 @@
 	let qr = $state('');
 	let chosen = $state(0);
 
+	// Sync peers are stored as desktop devices (services/pairing.py), so they show as "computer".
+	const kindLabel = (kind: string) => (kind === 'phone' ? 'phone' : kind === 'contact' ? 'contact' : 'computer');
+
 	async function loadDevices() {
 		try {
 			devices = await listPairedDevices();
@@ -127,7 +130,7 @@
 				{#each devices as d (d.id)}
 					<li class="flex items-center gap-3">
 						<span class="text-gray-300">{d.name}</span>
-						<span class="text-gray-500">{d.kind === 'desktop' ? 'computer' : 'phone'}</span>
+						<span class="text-gray-500">{kindLabel(d.kind)}</span>
 						<span class="text-gray-600">paired {when(d.created_at)}{d.last_seen_at ? `, last used ${when(d.last_seen_at)}` : ''}</span>
 						<button onclick={() => remove(d)} class="ml-auto text-gray-500 hover:text-red-400">Remove</button>
 					</li>

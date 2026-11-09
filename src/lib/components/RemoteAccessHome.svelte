@@ -8,8 +8,9 @@
 	let {
 		enabled = false,
 		relays = '',
-		tokenSet = false
-	}: { enabled?: boolean; relays?: string; tokenSet?: boolean } = $props();
+		tokenSet = false,
+		ourServers = true
+	}: { enabled?: boolean; relays?: string; tokenSet?: boolean; ourServers?: boolean } = $props();
 
 	let status = $state<RemoteAccess | null>(null);
 	let code = $state<PairingCode | null>(null);
@@ -57,8 +58,13 @@
 			Off. When on, computers you pair reach this backend from anywhere over an end-to-end encrypted connection;
 			nothing listens on the internet.
 		{:else if status.running}
-			On{relays.trim() ? ', through your relays' : ", through n0's free public relays"}. Paired computers can connect;
-			relays only pass along encrypted traffic.
+			On{relays.trim()
+				? ', through your relays'
+				: ourServers
+					? ", through Mnemosyne's relay"
+					: ', with no relay (same network only)'}. Paired computers can connect{relays.trim() || ourServers
+				? '; relays only pass along encrypted traffic.'
+				: ' only on the same network or by a direct connection.'}
 		{:else if status.error}
 			<span class="text-red-400">{status.error}</span>
 		{:else}
