@@ -470,6 +470,12 @@ services/pub_live_format.py (Ed25519 per publication, public half in the sealed 
 still 1). Unpublish deletes the publication, then the room, so a reader who hears the room go finds the
 publication gone.
 
+Both bridges (guest notes' `Bridge` and the publication's `PubBridge`) hold their room through one
+`RoomConnection` (services/room_connection.py): the outbound WebSocket dial and join, ping/pong and acknowledgements, the pump (unacknowledged frames first, then the queue),
+the mapping of closes to a status, and the reconnect loop with backoff. It knows no sealing, document or publication: a bridge
+supplies `RoomHooks` (what a close code means, what is queued at join, how a frame is made). Readers' comments on the published notes
+are located by services/notes_anchor.py and marked in the notes document; reader blocks live in the publication's row.
+
 ### Our servers
 
 `services/ours.py` is the one place that answers "which relay, which host": `relays()` = `remote_relays`, else
