@@ -1,11 +1,13 @@
 """Disk usage, per-session audio deletion, and retention cleanup."""
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from ... import access
 from ...models.session import Session
 from ...services.origin import require_local_audio
-from ...services.storage_service import CleanupResult, StorageReport
+from ...services.storage_service import CleanupResult, ErasureNotSealed, StorageReport
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["storage"])
@@ -32,10 +34,20 @@ async def delete_session_audio(
     from ...services.records import check_delete
 
     try:
-        check_delete(ctx, session, "audio", reason)
+        check_delete(ctx, session, "audio", reason, log=False)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    ctx.storage.delete_audio(session_id)
+    who = access.principal()
+    try:  # the deletion is logged, and its erasure sealed, before the files go
+        await asyncio.to_thread(
+            ctx.storage.delete_audio,
+            session_id,
+            by=who.name if who else "",
+            role=who.role if who else "",
+            detail=reason.strip(),
+        )
+    except ErasureNotSealed as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     ctx.bus.publish({"type": "session", "session_id": session_id, "status": "audio_deleted"})
     return ctx.sessions.get_session(session_id)
 
@@ -51,7 +63,7 @@ async def cleanup(
     from ...services.records import protected_ids
 
     keep = ctx.busy_sessions() | protected_ids(ctx)  # never records or held meetings
-    result = ctx.storage.cleanup(retention, dry_run=dry_run, busy=keep)
+    result = await asyncio.to_thread(ctx.storage.cleanup, retention, dry_run=dry_run, busy=keep)
     if not dry_run:
         for u in result.sessions:
             ctx.bus.publish(

@@ -24,7 +24,7 @@ import hashlib
 import json
 import logging
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -42,11 +42,13 @@ from ..storage.records import (
     compare_step,
     content_hash,
     content_of,
+    erase_audio,
     manifest_for,
     manifest_hash,
     manifest_problems,
 )
 from . import notes_media
+from .storage_service import ErasureNotSealed
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -448,7 +450,10 @@ def _compare_v2(
             _add(problems, f"Audio file {name} was deleted and a different file is in its place")
 
     erasures = []
+    deletions = app.repo.deletion_ids(session.id) if erased else set()
     for name, e in sorted(erased.items()):
+        if e.get("deletion") is not None and e["deletion"] not in deletions:
+            _add(problems, f"The deletion log has no entry for erased audio file {name}")
         erasures.append(
             Erasure(
                 name=name,
@@ -522,6 +527,189 @@ def open_record(app: AppContext, session_id: str) -> Verification:
     return check
 
 
+# ---- erasure ----------------------------------------------------------------------------------
+
+SEAL_BEFORE_ERASURE = "sealed before audio deleted"
+ERASURE_REASON = "audio deleted"
+COULD_NOT_SEAL = "The record could not be sealed; try again"
+
+
+def upgrade_if_v1(app: AppContext, session_id: str) -> bool:
+    """Seal the meeting in format 2 when its last seal is format 1 and still matches (as when its
+    record is opened), so the plaintext digests are on record before its audio is deleted,
+    encrypted or replaced. False when there was nothing to upgrade or it does not match (then
+    the problem stays visible). Blocking; never raises."""
+    try:
+        seals = app.repo.seals(session_id)
+        if not seals or seals[-1]["format"] != 1 or not verify(app, session_id).ok:
+            return False
+        return seal(app, session_id, UPGRADE_REASON) is not None
+    except Exception:
+        logger.warning("Could not upgrade the seals of session %s", session_id, exc_info=True)
+        return False
+
+
+def measure_audio(app: AppContext, paths: list[Path]) -> dict[str, dict]:
+    """The plaintext digests of these files (manifest entries by name without `.enc`). Raises
+    ErasureNotSealed, with a plain reason, for a file that cannot be read (encryption locked, a
+    file that does not decrypt)."""
+    measured: dict[str, dict] = {}
+    for path in paths:
+        try:
+            measured[audio_key(path.name)] = _plain_entry(path, app.file_key)
+        except PermissionError as e:
+            raise ErasureNotSealed(
+                "Encryption is locked: unlock Mnemosyne to delete this meeting's audio"
+            ) from e
+        except Exception as e:
+            logger.warning("Could not hash audio %s", path, exc_info=True)
+            raise ErasureNotSealed(
+                f"Audio file {path.name} cannot be read, so its deletion cannot be sealed"
+            ) from e
+    return measured
+
+
+def _baseline(app: AppContext, session_id: str) -> tuple[dict, dict] | None:
+    """(audio, erased) of the meeting's last seal, sealing it in format 2 first when there is
+    none or the last one is format 1 (the upgrade needs the old seal to still match). None when
+    the meeting has nothing to keep and no seals (no record to put the erasure in). A last seal
+    that cannot be upgraded gives ({}, erased={}): every file then records `matched: false`."""
+    seals = app.repo.seals(session_id)
+    if not seals:
+        session = app.repo.get(session_id)
+        if session is None or not _sealable(session, app.repo.list_comments(session_id)):
+            return None
+        if seal(app, session_id, SEAL_BEFORE_ERASURE) is None:
+            raise ErasureNotSealed(COULD_NOT_SEAL)
+    elif seals[-1]["format"] == 1:
+        upgrade_if_v1(app, session_id)
+    seals = app.repo.seals(session_id)
+    last = seals[-1] if seals else None
+    manifest = last["manifest"] if last is not None and last["format"] == 2 else None
+    if manifest is None or manifest_problems(manifest):
+        return {}, {}
+    return dict(manifest["audio"]), dict(manifest["erased"])
+
+
+def _seal_erased(
+    app: AppContext,
+    session_id: str,
+    measured: Mapping[str, Mapping],
+    *,
+    by: str,
+    reason: str,
+    deletion: int | Callable[[], int] | None,
+    seal_reason: str = ERASURE_REASON,
+    audio_now: Mapping[str, Mapping] | None = None,
+    stats: Mapping[str, Mapping] | None = None,
+) -> dict | None:
+    """Seal the meeting with `measured` files moved from `audio` to `erased`. `audio_now` is the
+    audio that stays (None: what the last seal had, less the erased). `deletion` is the log
+    entry's id, or a function that writes it: called once the last seal is known to be in
+    format 2 and only the seal itself is left to make. None when the meeting has no record to put
+    it in (the deletion is logged all the same)."""
+    base = _baseline(app, session_id)
+    if base is None:
+        if callable(deletion):
+            deletion()
+        return None
+    audio, erased = erase_audio(
+        base[0], base[1], measured, at=datetime.now().isoformat(), by=by, reason=reason,
+        deletion=deletion() if callable(deletion) else deletion,
+    )  # fmt: skip
+    if audio_now is not None:
+        audio = {n: dict(e) for n, e in audio_now.items() if n not in erased}
+    # `rev` first, as in `seal`: a write landing meanwhile only makes a difference pending.
+    rev = app.repo.sync_seq_of(session_id)
+    session = app.repo.get(session_id)
+    if rev is None or session is None:
+        raise ErasureNotSealed(COULD_NOT_SEAL)
+    manifest = manifest_for(
+        session,
+        app.repo.list_comments(session_id),
+        rev=rev,
+        audio=audio,
+        audio_here=not session.origin,
+        erased=erased,
+    )
+    sealed = app.repo.add_seal(
+        session_id, seal_reason, force=True, manifest=manifest, audio_stat=dict(stats or {})
+    )
+    if sealed is None:
+        raise ErasureNotSealed(COULD_NOT_SEAL)
+    return sealed
+
+
+def seal_erasure(
+    app: AppContext,
+    session_id: str,
+    *,
+    by: str,
+    reason: str,
+    deletion: int | Callable[[], int] | None,
+) -> dict | None:
+    """Seal the deletion of a meeting's audio, BEFORE its files go (blocking: hashes the audio).
+
+    Each file's plaintext is hashed and moved from the manifest's `audio` into `erased`, with who,
+    when, why and the deletion log's entry (`deletion`: its id, or a function that writes it and
+    returns the id; called only once the files have been read, so a failed seal leaves no entry
+    for a deletion that did not happen). `matched` records whether the file still equalled the
+    last seal when it was measured; when it did not, the audio is deleted anyway (retention is
+    policy) and `verify` shows it as a problem. A meeting with no audio files, or nothing to
+    keep and no seals, has nothing to seal (None).
+
+    Raises ErasureNotSealed, with a plain reason, when the seal cannot be made: the caller must
+    then not delete (retention skips the meeting this pass; a manual deletion answers 409)."""
+    try:
+        session = app.repo.get(session_id)
+        files = audio_files(session) if session is not None else []
+        if not files:
+            if callable(deletion):
+                deletion()  # the deletion is logged all the same
+            return None
+        return _seal_erased(
+            app, session_id, measure_audio(app, files), by=by, reason=reason, deletion=deletion
+        )
+    except ErasureNotSealed:
+        raise
+    except Exception as e:
+        logger.warning("Could not seal the erasure of session %s", session_id, exc_info=True)
+        raise ErasureNotSealed(COULD_NOT_SEAL) from e
+
+
+def seal_combined(
+    app: AppContext,
+    session_id: str,
+    removed: Mapping[str, Mapping],
+    *,
+    by: str,
+    reason: str,
+) -> dict | None:
+    """Seal the target of a combine (blocking; never raises): "combined", with the target's old
+    audio that the join replaced (`removed`, measured before it was unlinked) moved into
+    `erased`. Its audio now is the joined recording. Without an earlier seal there is nothing to
+    erase from, and this is an ordinary seal."""
+    try:
+        if not app.repo.seals(session_id) or not removed:
+            return seal(app, session_id, "combined")
+        session = app.repo.get(session_id)
+        if session is None or session.shared_from:
+            return None
+        audio, stats, failed = _audio_now(app, session)
+        if failed:
+            logger.warning(
+                "Not sealing the combined session %s: audio cannot be hashed", session_id
+            )
+            return None
+        return _seal_erased(
+            app, session_id, removed, by=by, reason=reason, deletion=None, seal_reason="combined",
+            audio_now=audio, stats=stats,
+        )  # fmt: skip
+    except Exception:
+        logger.warning("Could not seal the combined session %s", session_id, exc_info=True)
+        return None
+
+
 # ---- retention and legal holds --------------------------------------------------------------
 
 
@@ -536,10 +724,14 @@ def kept_until(app: AppContext, session: Session) -> date | None:
         return created.replace(year=created.year + years, day=28)
 
 
-def check_delete(app: AppContext, session: Session, what: str, reason: str = "") -> None:
+def check_delete(
+    app: AppContext, session: Session, what: str, reason: str = "", *, log: bool = True
+) -> int | None:
     """May the caller delete this meeting (what="meeting") or its audio ("audio")? Raises
     access.Forbidden when not, ValueError when a reason is needed; logs the deletion when it
-    goes ahead. (Deletion by age is `automatic_deletion_allowed`.)"""
+    goes ahead and returns the log entry's id (with `log=False` it only checks: the audio
+    deletion logs itself once its erasure is sealed, StorageService.delete_audio). (Deletion by
+    age is `automatic_deletion_allowed`.)"""
     if session.legal_hold:
         raise access.Forbidden(f"On legal hold ({session.legal_hold}): nothing can be deleted")
     until = kept_until(app, session)
@@ -548,8 +740,10 @@ def check_delete(app: AppContext, session: Session, what: str, reason: str = "")
             raise access.Forbidden(f"Kept as a record until {until.isoformat()}")
         if not reason.strip():
             raise ValueError(f"Kept as a record until {until.isoformat()}: give a reason")
+    if not log:
+        return None
     who = access.principal()
-    app.repo.log_deletion(
+    return app.repo.log_deletion(
         session, what, who.name if who else "", who.role if who else "", reason.strip()
     )
 

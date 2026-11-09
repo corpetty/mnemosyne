@@ -296,6 +296,14 @@ class AppContext:
                 },
             ),
         )
+
+        def seal_erasure(session_id: str, by: str, reason: str, log) -> None:
+            from ..services.records import seal_erasure as seal_the_erasure
+
+            seal_the_erasure(ctx, session_id, by=by, reason=reason, deletion=log)
+
+        # Audio is deleted only after the erasure is sealed (services/records.py seal_erasure).
+        ctx.storage.before_erase = seal_erasure
         from ..services.person import PersonKeys
 
         ctx.person = PersonKeys(
@@ -401,15 +409,22 @@ class AppContext:
         busy |= {j.session_id for j in self.jobs.list(active_only=True) if j.session_id}
         return busy
 
-    def run_retention(self):
+    def _retention_pass(self):
+        """What the retention pass does: (days, sessions to leave alone), or None when off. Taken
+        on the event loop, so the busy set is current when the pass starts."""
         days = self.settings.audio_retention_days
         if days <= 0:
             return None
         from ..services.records import protected_ids
 
-        keep = self.busy_sessions() | protected_ids(self)  # never records or held meetings
-        result = self.storage.cleanup(days, busy=keep)
-        if result.sessions:
+        return days, self.busy_sessions() | protected_ids(self)  # never records or held meetings
+
+    def run_retention(self):
+        plan = self._retention_pass()
+        return self._retained(self.storage.cleanup(plan[0], busy=plan[1]) if plan else None)
+
+    def _retained(self, result):
+        if result is not None and result.sessions:
             logger.info(
                 "Retention: removed audio from %d session(s), %d bytes",
                 len(result.sessions),
@@ -424,7 +439,13 @@ class AppContext:
     async def _retention_loop(self, interval_seconds: float) -> None:
         while True:
             try:
-                self.run_retention()
+                plan = self._retention_pass()
+                # In a thread: each deletion seals its erasure first, which hashes the audio.
+                self._retained(
+                    await asyncio.to_thread(self.storage.cleanup, plan[0], busy=plan[1])
+                    if plan
+                    else None
+                )
             except Exception:
                 logger.exception("Audio retention pass failed")
             try:
