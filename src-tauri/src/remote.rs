@@ -5,8 +5,21 @@
 //! in `<app data>/remote.json`. While paired, a tunnel listens on 127.0.0.1 and the UI's
 //! connection points at it, carrying the API token the pairing returned; the tunnel restarts
 //! with the app.
+//!
+//! This computer's own backend is told about the main computer (`PUT /api/system/main`: the
+//! tunnel's URL, the token and the main computer's name) whenever the tunnel comes up, at
+//! pairing and at each launch, and forgets it (`DELETE`) when the pairing is forgotten. Its
+//! recordings then go to the main computer. The token is kept in remote.json (mode 0600) for
+//! that; a pairing made before it was kept is told nothing until it is paired again.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 use log::{info, warn};
 use mnemosyne_link::{
@@ -23,12 +36,21 @@ const PREFERRED_PORT: u16 = 8009;
 struct Saved {
     ticket: String,
     port: u16,
+    /// The API token the pairing returned, for telling this computer's backend (None: paired
+    /// before it was kept).
+    #[serde(default)]
+    token: Option<String>,
 }
+
+/// Bumped by every tell and forget: a tell still waiting for the backend gives up when a newer
+/// one (or a forget) came after it.
+static TELL: AtomicU64 = AtomicU64::new(0);
 
 struct Tunnel {
     remote: Arc<Remote>,
     task: tauri::async_runtime::JoinHandle<()>,
     url: String,
+    addr: SocketAddr,
 }
 
 #[derive(Default)]
@@ -66,8 +88,90 @@ fn load(app: &AppHandle) -> Option<Saved> {
 }
 
 fn save(app: &AppHandle, saved: &Saved) -> Result<(), String> {
+    use std::io::Write;
     let path = dir(app)?.join("remote.json");
-    std::fs::write(&path, serde_json::to_vec(saved).unwrap()).map_err(|e| format!("{path:?}: {e}"))
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        options.mode(0o600); // it holds the token
+        if path.exists() {
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    options
+        .open(&path)
+        .and_then(|mut f| f.write_all(&serde_json::to_vec(saved).unwrap()))
+        .map_err(|e| format!("{path:?}: {e}"))
+}
+
+/// Tell this computer's backend about the main computer behind the tunnel at `tunnel`, once the
+/// backend answers (at launch it may still be starting, or installing on a first run). The
+/// name is the main computer's host name, asked through the tunnel, else its short id.
+fn tell_backend(tunnel: SocketAddr, token: String, fallback_name: String) {
+    let generation = TELL.fetch_add(1, Ordering::SeqCst) + 1;
+    let spawned = std::thread::Builder::new()
+        .name("tell-main".into())
+        .spawn(move || {
+            let current = || TELL.load(Ordering::SeqCst) == generation;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30 * 60);
+            while crate::backend_request("GET", "/health", "").is_none() {
+                if !current() || std::time::Instant::now() > deadline {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+            let name = crate::http_request(tunnel, "GET", "/health", "")
+                .and_then(|h| h.get("host").and_then(|v| v.as_str()).map(str::to_string))
+                .filter(|n| !n.is_empty())
+                .unwrap_or(fallback_name);
+            let body = serde_json::json!({
+                "url": format!("http://{tunnel}"),
+                "token": token,
+                "name": name,
+            })
+            .to_string();
+            for _ in 0..5 {
+                if !current() {
+                    return;
+                }
+                if crate::backend_request("PUT", "/api/system/main", &body).is_some() {
+                    info!("Remote access: told the backend its main computer is {name}");
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(3));
+            }
+            warn!("Remote access: could not tell the backend about the main computer");
+        });
+    if let Err(e) = spawned {
+        warn!("Remote access: {e}");
+    }
+}
+
+/// The pairing was forgotten: this computer's backend has no main computer any more.
+fn untell_backend() {
+    TELL.fetch_add(1, Ordering::SeqCst); // a tell still waiting gives up
+    let _ = std::thread::Builder::new()
+        .name("untell-main".into())
+        .spawn(|| {
+            if crate::backend_request("DELETE", "/api/system/main", "").is_none() {
+                warn!("Remote access: could not tell the backend the main computer is gone");
+            }
+        });
+}
+
+/// After the tunnel is up: tell the backend, when the token is known.
+fn tell_if_known(saved: Option<&Saved>, tunnel: SocketAddr) {
+    let Some(saved) = saved else { return };
+    let name = short_id(&saved.ticket).unwrap_or_else(|| "Main computer".into());
+    match saved.token.clone() {
+        Some(token) if !token.is_empty() => tell_backend(tunnel, token, name),
+        _ => info!(
+            "Remote access: paired before the token was kept; pair again so this computer's \
+             recordings go to {name}"
+        ),
+    }
 }
 
 fn short_id(ticket: &str) -> Option<String> {
@@ -116,6 +220,7 @@ async fn start_with(
         remote,
         task,
         url: url.clone(),
+        addr,
     });
     Ok(url)
 }
@@ -144,9 +249,11 @@ async fn ensure_started(app: &AppHandle) -> Result<Option<String>, String> {
         .await
         .map_err(|e| format!("{e:#}"))?;
     let remote = Arc::new(Remote::new(endpoint, ticket));
-    start_with(app, &mut tunnel, remote, saved.port)
-        .await
-        .map(Some)
+    let url = start_with(app, &mut tunnel, remote, saved.port).await?;
+    if let Some(t) = tunnel.as_ref() {
+        tell_if_known(load(app).as_ref(), t.addr);
+    }
+    Ok(Some(url))
 }
 
 /// At launch: bring the tunnel up before the UI's first request, if this computer is paired.
@@ -201,9 +308,13 @@ pub async fn remote_pair(app: AppHandle, invite: String, name: String) -> Result
         &Saved {
             ticket: invite.ticket.to_string(),
             port: PREFERRED_PORT,
+            token: Some(token.clone()),
         },
     )?;
     let url = start_with(&app, &mut tunnel, remote, PREFERRED_PORT).await?;
+    if let Some(t) = tunnel.as_ref() {
+        tell_if_known(load(&app).as_ref(), t.addr);
+    }
     info!(
         "Remote access: paired with {}",
         invite.ticket.endpoint_addr().id.fmt_short()
@@ -216,6 +327,7 @@ pub async fn remote_pair(app: AppHandle, invite: String, name: String) -> Result
 pub async fn remote_forget(app: AppHandle) -> Result<(), String> {
     let state = app.state::<RemoteState>();
     stop(&mut *state.0.lock().await).await;
+    untell_backend();
     let path = dir(&app)?.join("remote.json");
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),

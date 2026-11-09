@@ -112,11 +112,22 @@ fn port_in_use() -> bool {
 }
 
 /// A small blocking HTTP/1.0 request to the backend port, for the few calls the shell makes
-/// before any window can. Returns the JSON body of a 200 answer.
+/// before any window can. Returns the JSON body of a 200 answer. The shell has no API token:
+/// what it asks for must be in the backend's LOCAL_PATHS (backend/mnemosyne/api/auth.py).
 fn backend_request(method: &str, path: &str, body: &str) -> Option<serde_json::Value> {
+    http_request(backend_addr(), method, path, body)
+}
+
+/// `backend_request` to another local address (remote.rs: the tunnel to the main computer).
+fn http_request(
+    addr: std::net::SocketAddr,
+    method: &str,
+    path: &str,
+    body: &str,
+) -> Option<serde_json::Value> {
     use std::io::{Read, Write};
     let timeout = std::time::Duration::from_secs(5);
-    let mut stream = std::net::TcpStream::connect_timeout(&backend_addr(), timeout).ok()?;
+    let mut stream = std::net::TcpStream::connect_timeout(&addr, timeout).ok()?;
     stream.set_read_timeout(Some(timeout)).ok()?;
     stream.set_write_timeout(Some(timeout)).ok()?;
     write!(
