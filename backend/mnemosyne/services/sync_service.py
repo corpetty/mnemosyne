@@ -39,6 +39,10 @@ that person's own meetings (owner '' or theirs, not a contact's): served, taken,
 fetched (`own`). Members' meetings, their tombstones and their names never leave, and nothing
 that arrives changes or deletes one; meetings that arrive are the owner's. That holds after
 hosting is turned off too: the members' meetings are still in the database.
+
+A tombstone never deletes a meeting the records rules keep (a legal hold, or inside the records
+period: `records.check_delete`): it stays, its history says why, and the tombstone is not
+passed on. On every computer, not only a team's.
 """
 
 from __future__ import annotations
@@ -74,6 +78,9 @@ BACKOFF_FIRST, BACKOFF_MAX = 60.0, 600.0
 # is harmless: a tombstone we have is skipped.
 TOMBSTONE_MARGIN = timedelta(hours=2)
 TOMBSTONE_CURSOR = "sync_tombstones_since:"  # + peer id, in the repository's meta table
+# + peer id + ":" + meeting id: the time of a peer's tombstone this computer did not apply
+# (the records keep the meeting), so the re-reads of later rounds log it only once.
+KEPT_TOMBSTONE = "sync_kept:"
 REQUEST_TIMEOUT = 60.0
 MEDIA_RETRY = 300.0  # seconds before a blob the fold found missing is asked for again
 
@@ -872,7 +879,9 @@ class SyncService:
         sees it; who deleted it and its name stay. None when the meeting is busy here
         (recording, a job): it waits for the next round.
 
-        Never a meeting sync does not carry (a team member's, a contact's: `carries`)."""
+        Never a meeting sync does not carry (a team member's, a contact's: `carries`), and
+        never one the records keep (`_kept`): that one stays, its history says so, and the
+        tombstone is not kept or passed on."""
         repo, sid = self.ctx.repo, t.session_id
         if repo.has_tombstone(sid):
             return _Outcome("ignored", sid)
@@ -884,14 +893,60 @@ class SyncService:
                 "Sync: a tombstone from %s names a meeting sync does not carry", peer.name
             )
             return _Outcome("ignored", sid)
+        if here and self._kept(peer, t):
+            return _Outcome("ignored", sid)
         if here and sid in self.ctx.busy_sessions():
             logger.info("Sync: %s was deleted on %s; waiting until it is not busy", sid, peer.name)
             return None
         if here:
+            self._log_deletion(peer, sid)
             self.ctx.sessions.delete_session(sid)
             logger.info("Sync: deleted %s (deleted on %s)", sid, peer.name)
         repo.add_tombstone(sid, datetime.now().isoformat(), t.device, t.name)
         return _Outcome("deleted" if here else "ignored", sid, t.name)
+
+    def _kept(self, peer: SyncPeer, t: SyncTombstone) -> bool:
+        """Whether the records keep this meeting although the peer deleted it: on legal hold, or
+        inside the records period (`records.check_delete`, asked without a reason, so an admin's
+        exception for a period does not apply to a delete nobody here asked for). The first time
+        a peer's tombstone is kept, the meeting's history says so (`kept_despite_peer_delete`);
+        the re-reads of later rounds log nothing."""
+        from .. import access
+        from . import history, records
+
+        sid = t.session_id
+        session = self.ctx.repo.get(sid)
+        if session is None:
+            return False
+        try:
+            records.check_delete(self.ctx, session, "meeting", log=False)
+            return False
+        except (access.Forbidden, ValueError):
+            pass
+        if session.legal_hold:
+            reason = f"On legal hold ({session.legal_hold})"
+        else:
+            until = records.kept_until(self.ctx, session)
+            reason = f"Kept as a record until {until.isoformat()}" if until else "Kept as a record"
+        key = f"{KEPT_TOMBSTONE}{peer.id}:{sid}"
+        if self.ctx.repo.get_meta(key) != t.at:
+            self.ctx.repo.set_meta(key, t.at)
+            history.log(self.ctx, sid, "kept_despite_peer_delete", source=peer.name, reason=reason)
+            logger.info("Sync: %s was deleted on %s and is kept here: %s", sid, peer.name, reason)
+        return True
+
+    def _log_deletion(self, peer: SyncPeer, sid: str) -> None:
+        """The deletion log (services/records.py) hears of a delete that came from a peer, as of
+        one made here. Never stops the delete."""
+        session = self.ctx.repo.get(sid)
+        if session is None:
+            return
+        try:
+            self.ctx.repo.log_deletion(
+                session, "meeting", f"Sync ({peer.name})", "", f"Deleted on {peer.name}"
+            )
+        except Exception:
+            logger.warning("Sync: the deletion of %s was not logged", sid, exc_info=True)
 
     # ---- serving ----------------------------------------------------------------------------
 

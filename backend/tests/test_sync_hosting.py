@@ -1,7 +1,7 @@
 """Library sync on a computer that hosts a team (docs/plans/2026-11-09-team-hosting.md 2.4, task 5):
 it carries only the owner's own meetings (owner '' or H, not a contact's), served and taken,
 also after hosting is turned off; meetings that arrive are the owner's and a round never resets
-an owner.
+an owner. And on every computer (D6): a peer's delete never removes a meeting the records keep.
 Two apps in one process, as in test_sync_service.py: A hosts, B is the owner's laptop."""
 
 import asyncio
@@ -188,6 +188,50 @@ async def test_members_meetings_never_flow_after_hosting_is_off(hosted):
     assert "Member" not in text
     async with b.sync.client_for(b.peer(a)) as c:
         assert (await c.get(f"/api/sync/media/{theirs}/{sha(data)}")).status_code == 404
+
+
+# ---- I13 (D6): a peer's delete never removes what the records keep -------------------------
+
+
+def kept_events(node, sid: str) -> list[dict]:
+    return [e for e in node.repo.events(sid) if e["kind"] == "kept_despite_peer_delete"]
+
+
+@pytest.mark.parametrize("rule", ["hold", "period"])
+async def test_a_peers_delete_keeps_a_meeting_the_records_keep(nodes, rule):  # noqa: F811
+    a, b = nodes  # plain computers: no team anywhere
+    sid = meeting(a)
+    await pull(b, a)
+    if rule == "hold":
+        a.repo.set_legal_hold(sid, "Dispute 12")
+    else:
+        a.ctx.settings.records_retention_years = 7
+    with access.internally():
+        b.ctx.sessions.delete_session(sid)
+    st = await pull(a, b)
+    assert st.deleted == 0 and a.repo.get(sid) is not None
+    assert not a.repo.has_tombstone(sid)  # not passed on
+    (event,) = kept_events(a, sid)
+    assert event["detail"]["source"] == "B"
+    assert ("Dispute 12" if rule == "hold" else "Kept as a record until") in event["detail"][
+        "reason"
+    ]
+    # Later rounds read the tombstone again (the margin): logged once.
+    await pull(a, b)
+    assert len(kept_events(a, sid)) == 1 and a.repo.get(sid) is not None
+    assert sid not in {t["session_id"] for t in a.repo.tombstones_since("")}
+
+
+async def test_a_peers_delete_goes_ahead_and_is_logged_without_a_records_rule(nodes):  # noqa: F811
+    a, b = nodes
+    sid = meeting(a)
+    await pull(b, a)
+    with access.internally():
+        b.ctx.sessions.delete_session(sid)
+    st = await pull(a, b)
+    assert st.deleted == 1 and a.repo.get(sid) is None
+    (entry,) = [d for d in a.repo.deletions() if d["session_id"] == sid]
+    assert (entry["what"], entry["by"]) == ("meeting", "Sync (B)")
 
 
 # ---- I1: a dedicated team server still refuses ---------------------------------------------
