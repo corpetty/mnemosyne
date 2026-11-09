@@ -459,7 +459,8 @@ describe('the room', () => {
 		const next = await host.publish(version(5, { summary: 'Pushed.' }));
 		const before = host.manifestCalls.length;
 		ws.frame(1, await signed(PubKind.VERSION, { version: 5, sha256: next.sha, published_at: '2026-11-05T12:00:00Z', expires_at: null }));
-		await settle();
+		// The swap decrypts first: wait for it rather than a fixed time (a busy CI runner is slower).
+		await until(() => swaps.length > 0, 'the new version swapped in');
 		expect(host.manifestCalls.length).toBe(before + 1);
 		const call = host.manifestCalls.at(-1)!;
 		expect(call.init.cache).toBe('no-cache');
