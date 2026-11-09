@@ -228,6 +228,14 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - `src/lib/notes/ui/` imports only from `src/lib/notes/` (never `$lib/stores`, `$lib/api`, toasts): the guest Vite
   entry bundles it. App-only behaviour comes in through the host and provider objects.
 
+- Records seals: a change to a sealed part's payload or encoding (storage/records.py PARTS, a summary_data or comment field) changes
+  digests of unchanged meetings. Regenerate backend/tests/vectors/records_v2.json (scripts/make_records_vectors.py) only on purpose,
+  and old seals must keep verifying.
+- Every app write to a sealed part must advance `sync_seq` (`_touch`), or verify shows a false "changed outside the app" (the part
+  differs with an unchanged `rev`). tests/test_record_sealer.py's coverage test checks the write paths; add yours there.
+- Audio is deleted only through `StorageService.delete_audio`: its hook (`seal_erasure`) seals the erasure first. Deleting a file
+  by hand makes the record report it missing.
+
 ## Roadmap (agreed 2026-09-22)
 
 0. Done: lockfile, GPU extra, ruff, pytest with fakes, this file.
@@ -652,6 +660,19 @@ shared_notes.edit_blocking + `AFTER_FOLD` hooks, services/copilot_notes.py (`Cop
 `shared_from`; readers that must not see the sections read `Session.own_notes` (None = not worked out: use `notes`);
 summary action items in the notes are never notes items; ticks from the notes run outside the notes lock; the
 editor keeps a ref on the line holding the original text and never gives one to a new line.
+
+Records v2 (unreleased, docs/plans/2026-11-09-records-by-frontier.md): seals over a manifest instead of two hashes. A format 2
+seal (storage/records.py) holds a digest of each part (transcript, summary, summary_data, notes raw markdown, comments, meta,
+external_notes), the plaintext SHA-256 of each audio file, the `erased` list and the meeting's `rev`, chained with
+`chain_hash_v2`; v1 seals verify as before and are upgraded lazily when a record is opened. Verify (services/records.py) reports
+`pending` for app changes not yet sealed (`rev`/`sync_seq` moved on), per-part `parts` and `erased`. The record sealer
+(services/record_sealer.py: quiet 60 s, at most 10 min, skips busy meetings) seals "changed: <parts>", and "up to date" when the
+app touched a meeting without changing a part, so a later outside edit is a problem, not pending. Erasure: `delete_audio`'s hook
+`seal_erasure` makes a pre-seal for never-sealed files, then the erasure seal with the measured sha and `matched`; refused with 409
+(skipped in retention, which writes deletion rows) when it cannot be sealed; combine and encryption on/off keep the chain
+verifiable. Export adds notes.md, comments.json, external_notes.json, summary_data.json, record.json; `mnemosyne-backend records
+verify <zip>` (services/records_check.py; exit 0/1/2, `--json`) checks one offline. RecordsCard shows the pending line and erased
+lines; `adopt_unowned` touches each adopted meeting. The notes' hashseq frontier is deferred (plan section 6).
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

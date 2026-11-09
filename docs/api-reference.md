@@ -157,8 +157,15 @@ received nothing for 10 minutes is stopped (`recording_stopped`, reason `browser
 ### Records
 `services/records.py`. Versions: a replaced transcript or summary is kept (`session_versions`;
 reasons `edited`, `speaker X renamed`, `transcribed again`, `summarized again`). Seals: after
-transcription, summary and edits, a SHA-256 of the content (transcript lines and summary) and of each
-audio file as stored, chained (`session_seals`). `records_retention_years`: within it, deleting a
+transcription, summary and edits, and by the record sealer (`services/record_sealer.py`) a quiet 60 s
+(at most 10 min) after any other app change, a chained seal (`session_seals`). Format 2 seals hold a
+manifest: a digest per part (`transcript`, `summary`, `summary_data`, `notes` as raw markdown,
+`comments`, `meta`, `external_notes`), the SHA-256 of each audio file's plaintext, the `erased` list
+and the meeting's `rev`, chained with `chain_hash_v2` (`storage/records.py`; vectors
+`backend/tests/vectors/records_v2.json`). Format 1 seals (transcript, summary, audio as stored) verify
+as before and are replaced by a format 2 seal when the record is opened. The sealer's reasons are
+`changed: <parts>`, or `up to date` when the app touched a meeting without changing a part. Audio is
+deleted only through `StorageService.delete_audio`, whose hook (`seal_erasure`) seals the erasure first. `records_retention_years`: within it, deleting a
 meeting (`DELETE /api/sessions/{id}?reason=`) or its audio (`DELETE /api/sessions/{id}/audio?reason=`)
 needs an admin and a `reason` (400 without, 403 for others), and audio retention skips the meeting.
 A legal hold refuses both to everyone (403) and refuses combining. Every deletion is logged in
@@ -166,7 +173,7 @@ A legal hold refuses both to everyone (403) and refuses combining. Every deletio
 
 | Method | Path | |
 |---|---|---|
-| GET | `/api/sessions/{id}/records` | `kept_until`, `legal_hold`, `versions`, `verification` (`ok`, `seals`, `chain_head`, `problems`) |
+| GET | `/api/sessions/{id}/records` | `kept_until`, `legal_hold`, `versions`, `verification` (below) |
 | GET | `/api/sessions/{id}/versions` | earlier versions, oldest first (`has_summary`: can be restored as the summary); no seal check |
 | GET | `/api/sessions/{id}/versions/{version_id}` | an earlier version's transcript lines and summary, with `summary_data` (topics, items...) for versions kept since 0.15.1 |
 | POST | `/api/sessions/{id}/versions/{version_id}/restore-summary` | puts that summary back (text and, when kept, its data; done ticks, issue links and due dates carry over), keeping the current one as a version; history `summary_restored`; 404 without a summary, 403 for someone else's meeting |
@@ -174,6 +181,19 @@ A legal hold refuses both to everyone (403) and refuses combining. Every deletio
 | GET | `/api/records/deletions?start=&end=` | reviewer or admin: the deletion log |
 | POST | `/api/records/export` | `{session_ids}` or `{start, end}` → a `records_export` job; its result has `export_id` |
 | GET | `/api/records/exports/{export_id}` | the zip, for whoever started it (or an admin), once |
+
+Verification fields: `ok` (false only for `problems`), `seals`, `chain_head`, `problems`, `pending` (the
+app changed the meeting since the last seal: not a problem), `format` (of the last seal: 1, 2, 0 without
+seals), `parts` (`{name, status: same|differs|pending|unavailable, detail}` for each part and each
+`audio/<name>`), `erased` (`{name, sha256, bytes, at, by, reason, matched}`: `matched` = the measured
+digest at erasure equalled the one sealed earlier). Erasing audio that cannot be sealed first
+(`DELETE /api/sessions/{id}/audio`) answers `409`; audio retention skips the meeting and retention
+deletions write `deletions` rows. Combining and turning encryption on or off keep the chain verifiable.
+
+Check an export offline: `mnemosyne-backend records verify <export.zip> [--json]`
+(`services/records_check.py`); exit 0 ok, 1 problems, 2 unreadable. The export has, per meeting,
+`notes.md`, `comments.json`, `external_notes.json`, `summary_data.json` and `record.json` beside the
+audio and `SHA256SUMS`.
 
 ### Supervision
 `services/supervision.py`, on when `review_phrases` has any. Lines of the final transcript with a

@@ -193,11 +193,24 @@ For a team that keeps its meetings as records:
 
 - **Nothing is overwritten.** Editing a transcript, renaming a speaker, transcribing or summarizing
   again keeps the earlier version (each meeting's Record card lists them, with who and when).
-- **Sealed.** After each transcription, summary and edit, the meeting's content and the SHA-256 of
-  each audio file are sealed, each seal chained to the one before. The Record card checks the chain
-  against what is there now; anything changed outside the app (a database row, a swapped file)
-  shows as "changed outside the app". Someone who can rewrite the whole database could rewrite the
-  chain as well, which is why the chain head also goes into every export and backup.
+- **Sealed.** A seal lists a digest of each part of the meeting (transcript, summary and its
+  structured parts, notes, comments, details such as name and attendees, other assistants' notes) and
+  of each audio file's content, and is chained to the one before. The app seals after each
+  transcription, summary and edit, and also a quiet minute after anything else it changed (a comment,
+  a tick, a note), at most ten minutes later. The Record card checks the chain and every part against
+  what is there now. Someone who can rewrite the whole database could rewrite the chain as well,
+  which is why the chain head also goes into every export and backup.
+- **Reading the card.** "Not sealed yet" (pending) means the app changed the meeting since the last
+  seal; the next seal covers it and it is not a problem. "Changed outside the app" names the part
+  (or audio file) whose content differs although the app did not touch the meeting: a database row
+  or a swapped file. A part marked unavailable cannot be compared on this computer (audio kept on
+  another machine, a locked file); it is neither fine nor a problem. Meetings sealed by earlier
+  versions still verify as before and get a new-format seal the first time their record is opened.
+- **Erased audio.** When audio is deleted on purpose (retention, or an admin with a reason) the
+  erasure is sealed first, with the file's name and SHA-256, who and when. The card then lists
+  "Audio X erased ..." and the record keeps verifying; it is not a problem, and a copy of the file
+  kept elsewhere (an export) can be checked against that SHA-256. An erasure that cannot be sealed
+  (the file cannot be read, the record cannot be written) is refused, and audio retention skips it.
 - **Kept.** Settings → General → Records period (years): until then, deleting a meeting or its
   audio needs an admin and a reason, and audio retention leaves it alone. A reviewer or an admin
   can put a meeting on **legal hold**: then nobody can delete anything of it.
@@ -207,7 +220,15 @@ For a team that keeps its meetings as records:
   → General → Records) as a zip: audio, transcripts, summaries, earlier versions, history
   (recordings, consent, who opened what), seals, the deletion log, and `SHA256SUMS` to check
   nothing changed. The zip holds the audio unencrypted: it can be downloaded once, and is removed
-  from the server a day after it was made even if nobody fetches it.
+  from the server a day after it was made even if nobody fetches it. Each meeting also carries
+  `notes.md`, `comments.json`, `external_notes.json`, `summary_data.json` and `record.json`
+  (the seals and their manifests).
+- **Checking an export** needs no server and no login:
+  `mnemosyne-backend records verify export.zip` recomputes every checksum, each part's digest and the
+  whole chain, and prints the chain head per meeting. Compare that head with the one you wrote down
+  earlier (from a previous export or backup): a chain rewritten after that moment has a different
+  head. Exit status 0 = everything checks out, 1 = problems (listed), 2 = the zip cannot be read;
+  `--json` prints the result as JSON.
 
 ## Publishing
 
