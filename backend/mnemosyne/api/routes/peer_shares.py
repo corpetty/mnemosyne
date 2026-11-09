@@ -9,9 +9,14 @@ from ... import access
 from ...models.share_hub import PeerShareInfo
 from ...models.shared_meeting import ShareParts
 from ...services import contacts, history
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 
-router = APIRouter(prefix="/api/sessions/{session_id}/peer-shares", tags=["sharing"])
+router = APIRouter(
+    prefix="/api/sessions/{session_id}/peer-shares",
+    tags=["sharing"],
+    dependencies=[Depends(require_owner_channel)],
+)
 
 
 def _owner_check(ctx: AppContext, session_id: str) -> None:

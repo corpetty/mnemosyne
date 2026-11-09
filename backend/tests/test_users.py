@@ -7,9 +7,10 @@ from fastapi.testclient import TestClient
 
 from mnemosyne import access
 from mnemosyne.api.app import create_app
+from mnemosyne.config import Settings
 from mnemosyne.models.session import Session
 from mnemosyne.models.transcript import TranscriptSegment
-from mnemosyne.services.users import InvalidInvite, UserService
+from mnemosyne.services.users import ONLY_OWNER_ADMIN, InvalidInvite, UserService, admin_refusal
 
 # ---- the user store ------------------------------------------------------------------------
 
@@ -28,6 +29,34 @@ def test_invite_redeem_verify_and_sign_out(tmp_path):
     assert token not in (tmp_path / "users.json").read_text()  # hashes only
     users.forget_token(token)
     assert users.verify(token) is None
+
+
+def test_an_invite_can_be_looked_at_without_being_used(tmp_path):
+    clock = [1000.0]
+    users = UserService(tmp_path / "users.json", clock=lambda: clock[0])
+    sam = users.add("Sam", "", "member")
+    code, _ = users.invite(sam.id)
+    assert users.invited(code).id == sam.id and users.invited(code).id == sam.id
+    assert users.invited("nope") is None
+    users.redeem(code, "Laptop")
+    assert users.invited(code) is None  # used
+    other, _ = users.invite(sam.id)
+    clock[0] += 8 * 24 * 3600
+    assert users.invited(other) is None  # expired
+
+
+def test_only_the_owner_is_an_admin_on_a_computer_that_hosts_a_team():
+    host = Settings(team_mode=True, team_owner_id="u1")
+    assert admin_refusal(host, "admin") == ONLY_OWNER_ADMIN  # a new person
+    assert admin_refusal(host, "admin", "u2") == ONLY_OWNER_ADMIN
+    assert admin_refusal(host, "admin", "u1") == ""  # the owner
+    assert admin_refusal(host, "reviewer", "u2") == admin_refusal(host, None, "u2") == ""
+    for s in (
+        Settings(team_mode=True),  # a dedicated server
+        Settings(),  # a plain computer
+        Settings(team_owner_id="u1"),  # hosting turned off
+    ):
+        assert admin_refusal(s, "admin") == admin_refusal(s, "admin", "u2") == ""
 
 
 def test_invites_expire_and_disabled_people_are_out(tmp_path):

@@ -29,7 +29,7 @@ def users_command(argv: list[str]) -> None:
 
     from .access import ROLES
     from .config import load_settings
-    from .services.users import UserService
+    from .services.users import UserService, admin_refusal
 
     parser = argparse.ArgumentParser(prog="mnemosyne-backend users")
     sub = parser.add_subparsers(dest="action", required=True)
@@ -44,13 +44,16 @@ def users_command(argv: list[str]) -> None:
     sub.add_parser("list", help="everyone, with their id and role")
     args = parser.parse_args(argv)
 
-    users = UserService(load_settings().data_dir / "users.json")
+    settings = load_settings()
+    users = UserService(settings.data_dir / "users.json")
     if args.action == "list":
         for u in users.list():
             state = " (disabled)" if u.disabled else ""
             print(f"{u.id}  {u.role:<8}  {u.name} <{u.email}>{state}")
         return
     if args.action == "add":
+        if refusal := admin_refusal(settings, args.role):
+            raise SystemExit(refusal)
         try:
             user = users.add(args.name, args.email, args.role)
         except ValueError as e:
@@ -58,6 +61,9 @@ def users_command(argv: list[str]) -> None:
         user_id = user.id
     else:
         user_id = args.user_id
+        existing = users.get(user_id)
+        if existing is not None and (refusal := admin_refusal(settings, existing.role, user_id)):
+            raise SystemExit(refusal)
     try:
         code, expires = users.invite(user_id)
     except KeyError:

@@ -24,7 +24,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..access import ROLES
+from ..access import ADMIN, ROLES
+from ..config import hosts_team
 
 INVITE_TTL = 7 * 24 * 3600
 SEEN_WRITE_INTERVAL = 300.0
@@ -32,6 +33,19 @@ SEEN_WRITE_INTERVAL = 300.0
 
 class InvalidInvite(Exception):
     pass
+
+
+ONLY_OWNER_ADMIN = "On a computer that hosts a team only its owner is an admin"
+
+
+def admin_refusal(settings, role: str | None, user_id: str = "") -> str:
+    """Why `role` may not be given to `user_id` ("" = a person not added yet), or "". On a
+    computer that hosts a team (config.hosts_team) only its owner (`team_owner_id`) is an admin:
+    anyone else is a reviewer or a member (docs/plans/2026-11-09-team-hosting.md D2). A
+    dedicated team server and a plain computer have no such rule."""
+    if role == ADMIN and hosts_team(settings) and user_id != settings.team_owner_id:
+        return ONLY_OWNER_ADMIN
+    return ""
 
 
 @dataclass
@@ -193,6 +207,13 @@ class UserService:
             self._invites[_hash(code)] = (expires, user_id)
             self._save()
             return code, expires
+
+    def invited(self, code: str) -> User | None:
+        """Whom an invite code is for, without using it up (None: unknown or expired)."""
+        with self._lock:
+            self._fresh()
+            expires, user_id = self._invites.get(_hash(code), (0.0, ""))
+            return self._users.get(user_id) if expires > self.clock() else None
 
     def redeem(self, code: str, device: str) -> tuple[User, str]:
         with self._lock:

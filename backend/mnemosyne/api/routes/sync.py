@@ -33,10 +33,12 @@ from ...services import contacts, notes_media, sync_peers
 from ...services.pairing_prep import PairingUnavailable
 from ...services.person import PersonKeys
 from ...services.sync_peers import SyncPairingError, SyncPeer
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/sync", tags=["sync"])
+# Personal: on a computer that hosts a team only its owner (api/auth.py require_owner_channel).
+router = APIRouter(prefix="/api/sync", tags=["sync"], dependencies=[Depends(require_owner_channel)])
 ADMIN = [Depends(access.require_admin)]
 
 

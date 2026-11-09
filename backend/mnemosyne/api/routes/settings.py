@@ -9,10 +9,13 @@ from ... import access
 from ...config import SECRET_FIELDS, Settings, config_file_path, save_settings
 from ...models.base import ApiModel
 from ...services.meeting_types import available_types
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
-ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
+# Team-wide: an admin's job (access.py). On a computer that hosts a team the settings are the
+# owner's own configuration, so only the owner channel may change them (guard first).
+ADMIN = [Depends(require_owner_channel), Depends(access.require_admin)]
 
 
 # Every setting as it is sent to the UI (secrets blanked); derived from Settings so the

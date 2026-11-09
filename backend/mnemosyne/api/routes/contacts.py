@@ -18,12 +18,15 @@ from ...models.contact import (
 )
 from ...services import contacts
 from ...services.pairing import CONTACT_CODE
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 from .pairing import PairingCode, make_code
 
 logger = logging.getLogger(__name__)
 router = APIRouter(
-    prefix="/api/contacts", tags=["contacts"], dependencies=[Depends(access.require_admin)]
+    prefix="/api/contacts",
+    tags=["contacts"],
+    dependencies=[Depends(require_owner_channel), Depends(access.require_admin)],
 )
 
 

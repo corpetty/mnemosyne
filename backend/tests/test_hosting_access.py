@@ -388,3 +388,320 @@ def test_the_principal_is_still_set_for_users(make_machine):
     assert client.get("/api/_t/who", headers=headers).json()["who"]
     client, headers, _ = m.client("api_token")
     assert client.get("/api/_t/who", headers=headers).json()["who"] is None
+
+
+# ---- the personal routes (plan task 4, I3) -----------------------------------------------------
+
+OWNER_ONLY = auth.OWNER_ONLY
+FAKE_SHA = "a" * 64
+
+# Every route that is the owner's own business: (method, path). Concrete paths: nothing here
+# needs to exist, a caller who gets past the guard may answer 404, 409 or 422.
+PERSONAL_ROUTES = [
+    ("GET", "/api/sync/peers"),
+    ("GET", "/api/sync/status"),
+    ("GET", "/api/sync/hello"),
+    ("GET", "/api/sync/changes"),
+    ("POST", "/api/sync/poke"),
+    ("POST", "/api/sync/now"),
+    ("POST", "/api/sync/pair"),
+    ("DELETE", "/api/sync/peers/x"),
+    ("GET", "/api/sync/person-key"),
+    ("PUT", "/api/sync/person-key"),
+    ("GET", "/api/sync/contacts"),
+    ("GET", f"/api/sync/media/s1/{FAKE_SHA}"),
+    ("POST", "/api/pairing/codes"),
+    ("POST", "/api/pairing/prepare"),
+    ("GET", "/api/pairing/devices"),
+    ("DELETE", "/api/pairing/devices/x"),
+    ("GET", "/api/pairing/remote"),
+    ("GET", "/api/contacts"),
+    ("POST", "/api/contacts/codes"),
+    ("POST", "/api/contacts/pair"),
+    ("PATCH", "/api/contacts/p1"),
+    ("POST", "/api/contacts/p1/pull"),
+    ("DELETE", "/api/contacts/p1"),
+    ("GET", "/api/sessions/s1/peer-shares"),
+    ("PUT", "/api/sessions/s1/peer-shares/p1"),
+    ("DELETE", "/api/sessions/s1/peer-shares/p1"),
+    ("GET", "/api/connections/devices"),
+    ("POST", "/api/connections/handoff"),
+    ("GET", "/api/system/main"),
+    ("PUT", "/api/system/main"),
+    ("DELETE", "/api/system/main"),
+    ("PUT", "/api/settings"),
+    ("PUT", "/api/team"),
+]
+# Not guarded on purpose: redeeming a pairing code (the device being paired has nothing yet),
+# the phone's `/api/pairing/me`, `/api/share/*` (contacts authenticate there as contacts), and
+# `GET /api/team` (the status; `can_change` says whether the caller may change it).
+
+# On a host: who is refused (always 403 "Only the owner ...") and who is let past the guard.
+REFUSED_ON_HOST = (
+    "member",
+    "reviewer",
+    "other_admin",
+    "owner_team",
+    "owner_team_loopback",
+    "owner_proxied",
+    "owner_tunnel",
+    "phone",
+)
+OWNER_CHANNELS_ON_HOST = ("window", "api_token", "device", "owner_main")
+
+
+def _send(m: Machine, caller: str, method: str, path: str):
+    client, headers, _ = m.client(caller)
+    # An empty JSON object is a valid body for every route that takes one and changes nothing.
+    return client.request(method, path, headers=headers, json={})
+
+
+def _owner_refusal(r) -> bool:
+    return r.status_code == 403 and r.json().get("detail") == OWNER_ONLY
+
+
+@pytest.fixture
+def personal_paths_for_phone(monkeypatch):
+    """A phone token opens only DEVICE_PATHS (api/auth.py): widen them to every route here so
+    the guard itself is what refuses a phone, were that list ever widened."""
+    monkeypatch.setattr(auth, "DEVICE_PATHS", auth.DEVICE_PATHS | {p for _, p in PERSONAL_ROUTES})
+
+
+def test_on_a_host_every_personal_route_is_refused_to_everyone_but_the_owner(
+    make_machine, personal_paths_for_phone
+):
+    m = make_machine("hosting")
+    wrong = []
+    for method, path in PERSONAL_ROUTES:
+        for caller in REFUSED_ON_HOST:
+            r = _send(m, caller, method, path)
+            if not _owner_refusal(r):
+                wrong.append((method, path, caller, r.status_code))
+    assert not wrong
+
+
+def test_on_a_host_the_owner_channels_get_past_the_guard(make_machine):
+    m = make_machine("hosting")
+    wrong = []
+    # PUT /api/settings last: it applies the settings again
+    for method, path in sorted(PERSONAL_ROUTES, key=lambda r: r[1] == "/api/settings"):
+        for caller in OWNER_CHANNELS_ON_HOST:
+            r = _send(m, caller, method, path)
+            if r.status_code == 401 or _owner_refusal(r):
+                wrong.append((method, path, caller, r.status_code))
+    assert not wrong
+
+
+def test_a_contact_and_a_phone_do_not_reach_the_personal_routes_even_unguarded(make_machine):
+    """Without the widened DEVICE_PATHS a phone is not let in at all, and on a host a contact
+    token opens only /api/share/ (and not even that while team_mode is on)."""
+    m = make_machine("hosting")
+    for method, path in PERSONAL_ROUTES:
+        for caller in ("phone", "contact"):
+            assert _send(m, caller, method, path).status_code in (401, 403), (path, caller)
+
+
+@pytest.mark.parametrize("kind", ["plain", "dedicated", "off"])
+def test_elsewhere_the_guard_changes_nothing(make_machine, kind, personal_paths_for_phone):
+    """A plain computer, a dedicated server and a computer whose hosting is off: no caller is
+    ever told "only the owner" (the routes answer as before: their own refusals stand)."""
+    m = make_machine(kind)
+    callers = ("api_token", "device", "owner_main", "member", "reviewer", "other_admin", "phone")
+    wrong = []
+    for method, path in PERSONAL_ROUTES:
+        for caller in callers:
+            if caller == "owner_main" and path == "/api/settings" and kind == "dedicated":
+                continue
+            r = _send(m, caller, method, path)
+            if _owner_refusal(r):
+                wrong.append((method, path, caller))
+    assert not wrong
+
+
+def test_a_dedicated_server_keeps_its_own_refusals(make_machine):
+    """The existing team_mode refusals are still what answers (the guard is not in the way)."""
+    m = make_machine("dedicated")
+    client, headers, _ = m.client("api_token")
+    r = client.get("/api/sync/hello", headers=headers)
+    assert r.status_code == 409 and "team server" in r.json()["detail"]
+    r = client.post("/api/pairing/codes", headers=headers, json={"kind": "sync"})
+    assert r.status_code == 409 and "team server" in r.json()["detail"]
+    r = client.get("/api/contacts", headers=headers)
+    assert r.status_code == 409 and "team server" in r.json()["detail"]
+
+
+def test_a_member_is_refused_before_the_feature_says_anything(make_machine):
+    """The guard answers first: the same words whatever the route, never the route's own reason."""
+    m = make_machine("hosting")
+    details = set()
+    for method, path in PERSONAL_ROUTES:
+        r = _send(m, "member", method, path)
+        details.add((r.status_code, r.json()["detail"]))
+    assert details == {(403, OWNER_ONLY)}
+
+
+# ---- the team on/off route and a proxy on this machine (R6) -----------------------------
+
+
+def test_the_team_route_refuses_a_proxy_on_this_machine(make_machine):
+    """`tailscale serve` / Caddy pass requests on from 127.0.0.1: they carry the owner's token
+    perhaps, but they are not the desktop app. On a plain computer the old `_local` check let
+    them through."""
+    m = make_machine("plain")
+    client, headers, _ = m.client("api_token")
+    assert client.get("/api/team", headers=headers).json()["can_change"] is True
+    assert client.put("/api/team", headers=headers, json={}).status_code == 200
+    proxied = {**headers, "X-Forwarded-For": "100.64.0.7"}
+    assert client.get("/api/team", headers=proxied).json()["can_change"] is False
+    r = client.put("/api/team", headers=proxied, json={"enabled": True})
+    assert r.status_code == 403
+    assert "desktop app" in r.json()["detail"]
+    assert not m.ctx.settings.team_mode
+    # a Host header that is not this machine's, too
+    other = {**headers, "Host": "desk.tail1234.ts.net"}
+    assert client.get("/api/team", headers=other).json()["can_change"] is False
+    # and the link tunnel
+    tunnel = TestClient(m.app, base_url=MAIN, client=("127.0.0.2", 50000))
+    assert tunnel.put("/api/team", headers=headers, json={}).status_code == 403
+
+
+def test_the_team_route_on_a_host_is_the_owners_window_only(make_machine):
+    m = make_machine("hosting")
+    ok, headers, _ = m.client("window")
+    assert ok.get("/api/team", headers=headers).json()["can_change"] is True
+    assert ok.put("/api/team", headers=headers, json={}).status_code == 200
+    for caller in ("owner_proxied", "owner_team_loopback", "member"):
+        client, headers, _ = m.client(caller)
+        r = client.put("/api/team", headers=headers, json={"enabled": False})
+        assert _owner_refusal(r), caller
+        assert client.get("/api/team", headers=headers).json()["can_change"] is False, caller
+    assert m.ctx.settings.team_mode
+
+
+# ---- only the owner is an admin on a host (I2, D2) -----------------------------------------
+
+ONLY_OWNER_ADMIN = "On a computer that hosts a team only its owner is an admin"
+
+
+def _owner_client(m: Machine):
+    client, headers, _ = m.client("owner_main")
+    return client, headers
+
+
+def test_on_a_host_nobody_else_is_added_as_an_admin(make_machine):
+    m = make_machine("hosting")
+    client, headers = _owner_client(m)
+    before = len(m.ctx.users.list())
+    r = client.post("/api/users", headers=headers, json={"name": "Pat", "role": "admin"})
+    assert r.status_code == 409 and r.json()["detail"] == ONLY_OWNER_ADMIN
+    assert len(m.ctx.users.list()) == before
+    for role in ("member", "reviewer"):
+        r = client.post("/api/users", headers=headers, json={"name": f"P-{role}", "role": role})
+        assert r.status_code == 200, r.text
+        assert r.json()["user"]["role"] == role
+
+
+def test_on_a_host_nobody_else_is_made_an_admin(make_machine):
+    m = make_machine("hosting")
+    client, headers = _owner_client(m)
+    sam = next(u for u in m.ctx.users.list() if u.name == "Sam")
+    r = client.patch(f"/api/users/{sam.id}", headers=headers, json={"role": "admin"})
+    assert r.status_code == 409 and r.json()["detail"] == ONLY_OWNER_ADMIN
+    assert m.ctx.users.get(sam.id).role == "member"
+    # other changes, and other roles, are fine; so is the owner staying an admin
+    assert (
+        client.patch(f"/api/users/{sam.id}", headers=headers, json={"role": "reviewer"}).status_code
+        == 200
+    )
+    assert (
+        client.patch(f"/api/users/{sam.id}", headers=headers, json={"name": "Samuel"}).status_code
+        == 200
+    )
+    owner = m.ctx.settings.team_owner_id
+    r = client.patch(f"/api/users/{owner}", headers=headers, json={"role": "admin"})
+    assert r.status_code == 200
+
+
+def test_on_a_host_an_invite_for_another_admin_is_refused(make_machine):
+    """Redeeming it and asking for it: someone who was an admin before hosting began (or whose
+    file was edited) is not let in as one."""
+    m = make_machine("hosting")
+    client, headers = _owner_client(m)
+    alex = next(u for u in m.ctx.users.list() if u.name == "Alex")
+    assert alex.role == "admin"
+    r = client.post(f"/api/users/{alex.id}/invite", headers=headers)
+    assert r.status_code == 409 and r.json()["detail"] == ONLY_OWNER_ADMIN
+    tokens = len(alex.tokens)
+    code, _ = m.ctx.users.invite(alex.id)  # an invite made while it was still allowed
+    anyone = TestClient(m.app, base_url=f"http://{LAN}:{TEAM_PORT}", client=(LAN, 50000))
+    r = anyone.post("/api/users/redeem", json={"code": code, "device": "Browser"})
+    assert r.status_code == 409 and r.json()["detail"] == ONLY_OWNER_ADMIN
+    assert len(m.ctx.users.get(alex.id).tokens) == tokens  # nobody was signed in
+    # the owner's own invite (another browser of theirs) and a member's still work
+    owner = m.ctx.settings.team_owner_id
+    own_code, _ = m.ctx.users.invite(owner)
+    assert anyone.post("/api/users/redeem", json={"code": own_code}).status_code == 200
+    sam = next(u for u in m.ctx.users.list() if u.name == "Sam")
+    sam_code, _ = m.ctx.users.invite(sam.id)
+    assert anyone.post("/api/users/redeem", json={"code": sam_code}).status_code == 200
+    # an unknown code is still the invite's own error
+    r = anyone.post("/api/users/redeem", json={"code": "nope"})
+    assert r.status_code == 400
+
+
+@pytest.mark.parametrize("kind", ["plain", "dedicated", "off"])
+def test_elsewhere_admins_are_added_as_before(make_machine, kind):
+    m = make_machine(kind)
+    client, headers, _ = m.client("api_token")
+    r = client.post("/api/users", headers=headers, json={"name": "Pat", "role": "admin"})
+    assert r.status_code == 200, r.text
+    pat = r.json()["user"]["id"]
+    sam = next(u for u in m.ctx.users.list() if u.name == "Sam")
+    assert (
+        client.patch(f"/api/users/{sam.id}", headers=headers, json={"role": "admin"}).status_code
+        == 200
+    )
+    assert client.post(f"/api/users/{pat}/invite", headers=headers).status_code == 200
+    code, _ = m.ctx.users.invite(pat)
+    assert client.post("/api/users/redeem", headers=headers, json={"code": code}).status_code == 200
+
+
+def _cli_settings(settings, tmp_path, monkeypatch, **changes):
+    s = settings.model_copy(update={"data_dir": tmp_path / "data", **changes})
+    s.data_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr("mnemosyne.config.load_settings", lambda: s)
+    return s
+
+
+def test_the_cli_adds_no_other_admin_on_a_host(settings, tmp_path, monkeypatch, capsys):
+    from mnemosyne.cli import users_command
+    from mnemosyne.services.users import UserService
+
+    s = _cli_settings(settings, tmp_path, monkeypatch, team_mode=True, team_owner_id="u-owner")
+    with pytest.raises(SystemExit) as e:
+        users_command(["add", "Pat", "--role", "admin"])
+    assert str(e.value) == ONLY_OWNER_ADMIN
+    assert UserService(s.data_dir / "users.json").list() == []
+    users_command(["add", "Pat", "--role", "reviewer"])
+    assert "Invite link" in capsys.readouterr().out
+    # an invite for someone who is an admin but not the owner
+    users = UserService(s.data_dir / "users.json")
+    other = users.add("Alex", "", "admin")
+    with pytest.raises(SystemExit) as e:
+        users_command(["invite", other.id])
+    assert str(e.value) == ONLY_OWNER_ADMIN
+    mine = users.add("Corey", "", "admin")
+    s.team_owner_id = mine.id
+    users_command(["invite", mine.id])
+    assert "Invite link" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("changes", [{}, {"team_mode": True}, {"team_owner_id": "u-owner"}])
+def test_the_cli_adds_admins_as_before_elsewhere(settings, tmp_path, monkeypatch, capsys, changes):
+    """A plain computer, a dedicated server (team_mode, no owner) and hosting turned off (an
+    owner kept, no team_mode)."""
+    from mnemosyne.cli import users_command
+
+    _cli_settings(settings, tmp_path, monkeypatch, **changes)
+    users_command(["add", "Pat", "--role", "admin"])
+    assert "Invite link" in capsys.readouterr().out

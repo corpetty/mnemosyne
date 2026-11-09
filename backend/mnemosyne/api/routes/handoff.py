@@ -54,11 +54,15 @@ from ...services import handoff as handoffs
 from ...services import history, records, shared_notes
 from ...services.pairing import DESKTOP
 from ...services.recovery import write_manifest
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/connections", tags=["connections"])
+# A paired computer (a DESKTOP device) is an owner channel; members, reviewers, phones are not.
+router = APIRouter(
+    prefix="/api/connections", tags=["connections"], dependencies=[Depends(require_owner_channel)]
+)
 
 # The whole request. A 3-hour meeting is about 1 GB per source as 48 kHz WAV; Ogg is far less.
 MAX_HANDOFF_BYTES = 4 * 1024**3

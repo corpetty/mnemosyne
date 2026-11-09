@@ -25,13 +25,17 @@ from ...services.pairing import (
     PairedDevice,
 )
 from ...services.pairing_prep import PairingUnavailable, prepare_pairing
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 from .mobile import phone_page_urls
 
 logger = logging.getLogger(__name__)
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 router = APIRouter(prefix="/api/pairing", tags=["pairing"])
-ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
+# Personal: on a computer that hosts a team only its owner pairs, lists or removes devices.
+# The guard comes first so another caller learns nothing else. Redeeming a code and `/me` are
+# open to the device being paired.
+ADMIN = [Depends(require_owner_channel), Depends(access.require_admin)]
 
 
 class CodeRequest(BaseModel):

@@ -14,10 +14,11 @@ from ... import access
 from ...models.base import ApiModel
 from ...services.contacts import my_or_card_name
 from ...services.pairing import DESKTOP, PHONE
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/connections", tags=["connections"])
-ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
+ADMIN = [Depends(require_owner_channel), Depends(access.require_admin)]
 
 CAN = {
     "phone": "Sends recordings",
