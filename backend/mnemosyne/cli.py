@@ -103,8 +103,20 @@ def prefetch_command(argv: list[str]) -> None:
         print(f"{folder}: {size / 1e6:.0f} MB")
 
 
+def records_command(argv: list[str]) -> int:
+    """`mnemosyne-backend records verify <export.zip>`: check a records export on its own."""
+    if argv[:1] != ["verify"]:
+        print("usage: mnemosyne-backend records verify <export.zip> [--json]", file=sys.stderr)
+        return 2
+    from .services.records_check import main as verify
+
+    return verify(argv[1:])
+
+
 def main() -> None:
     quiet_known_warnings()
+    if sys.argv[1:2] == ["records"]:
+        sys.exit(records_command(sys.argv[2:]))
     if sys.argv[1:2] == ["users"]:
         users_command(sys.argv[2:])
         return
