@@ -20,8 +20,17 @@
 	import DeviceSelector from './DeviceSelector.svelte';
 	import BrowserSources from './BrowserSources.svelte';
 	import LocalModelCard from './LocalModelCard.svelte';
+	import RemoteConnect from './RemoteConnect.svelte';
+	import { connectionState } from '$lib/stores/connection.svelte.js';
 
-	const STEPS = ['Welcome', 'Audio', 'Transcription', 'Summaries', 'Notes & calendar', 'Done'] as const;
+	type Step = 'Welcome' | 'This computer' | 'Audio' | 'Transcription' | 'Summaries' | 'Notes & calendar' | 'Main computer' | 'Done';
+	// The first question: does this computer do the work, or use one you already have?
+	let usesMain = $state(false);
+	const STEPS = $derived<Step[]>(
+		usesMain
+			? ['Welcome', 'This computer', 'Main computer', 'Done']
+			: ['Welcome', 'This computer', 'Audio', 'Transcription', 'Summaries', 'Notes & calendar', 'Done']
+	);
 	let step = $state(0);
 	let saving = $state(false);
 	let system = $state<SystemInfo | null>(null);
@@ -225,12 +234,12 @@
 			ok = await save(u);
 		}
 		if (ok) step = Math.min(step + 1, STEPS.length - 1);
-		if (STEPS[step] === 'Done') void prepare();
+		if (STEPS[step] === 'Done' && !usesMain) void prepare();
 	}
 
 	async function finish(record = false) {
 		await save({ setup_complete: true });
-		if (!(offerGpu && !installGpu)) void startGpuInstall(); // skipped setup: the default
+		if (!usesMain && !(offerGpu && !installGpu)) void startGpuInstall(); // skipped setup: the default
 		uiState.view = 'home';
 		if (record) startRecording(true);
 	}
@@ -272,6 +281,27 @@
 					Missing on this machine: {[!system.pipewire && 'PipeWire tools (pw-record)', !system.ffmpeg && 'ffmpeg'].filter(Boolean).join(' and ')}. Recording needs them.
 				</p>
 			{/if}
+		</section>
+	{:else if STEPS[step] === 'This computer'}
+		<section class="space-y-3">
+			<h2 class="text-xl font-semibold text-gray-100">Is this your main computer?</h2>
+			<div class="grid grid-cols-1 sm:grid-cols-2 gap-3" role="radiogroup" aria-label="Is this your main computer?">
+				{#each [[false, 'Yes, it does the work', 'Recording, transcription and summaries run here. Your other devices can use it later.'], [true, 'No, I already have one', "This computer shows your main computer's library and records into it."]] as [value, title, text] (title)}
+					<label class="relative block rounded border px-3 py-2 cursor-pointer {usesMain === value ? 'border-blue-600 bg-blue-950/30' : 'border-gray-700 hover:border-gray-600'}">
+						<input type="radio" name="main-computer" checked={usesMain === value} onchange={() => (usesMain = value as boolean)} class="sr-only" />
+						<span class="block text-sm font-medium {usesMain === value ? 'text-gray-100' : 'text-gray-300'}">{title}</span>
+						<span class="block text-xs text-gray-500 mt-0.5">{text}</span>
+					</label>
+				{/each}
+			</div>
+		</section>
+	{:else if STEPS[step] === 'Main computer'}
+		<section class="space-y-3">
+			<h2 class="text-xl font-semibold text-gray-100">Connect to your main computer</h2>
+			<p class="text-sm text-gray-400">
+				On your main computer, open Settings → Devices and people → Add a device → A laptop or another computer, and paste the invite here.
+			</p>
+			<RemoteConnect beforeConnect={async () => void (await save({ setup_complete: true }))} />
 		</section>
 	{:else if STEPS[step] === 'Audio'}
 		<section class="space-y-3">
@@ -414,6 +444,12 @@
 				{/if}
 			</div>
 		</section>
+	{:else if usesMain}
+		<section class="space-y-3">
+			<h2 class="text-2xl font-semibold text-gray-100">You're set</h2>
+			<p class="text-sm text-gray-300">This computer uses your main computer. Connect any time from Settings → Devices and people.</p>
+			<button onclick={() => finish(false)} class="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium">Go to the app</button>
+		</section>
 	{:else}
 		<section class="space-y-3">
 			<h2 class="text-2xl font-semibold text-gray-100">You're set</h2>
@@ -455,7 +491,7 @@
 			{#if step > 0}
 				<button onclick={() => (step -= 1)} class="px-3 py-1.5 text-sm rounded text-gray-400 hover:text-gray-200">Back</button>
 			{/if}
-			<button onclick={next} disabled={saving} class="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white font-medium">
+			<button onclick={next} disabled={saving || (STEPS[step] === 'Main computer' && !connectionState.remote)} class="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white font-medium">
 				{step === 0 ? 'Get started' : 'Next'}
 			</button>
 			<button onclick={() => finish(false)} class="ml-auto text-xs text-gray-500 hover:text-gray-300">Skip setup</button>

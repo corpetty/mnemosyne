@@ -24,6 +24,10 @@ test('the setup wizard walks through every step and saves choices', async ({ pag
   await expect(setup.getByRole('heading', { name: 'Welcome to Mnemosyne' })).toBeVisible();
   await setup.getByRole('button', { name: 'Get started' }).click();
 
+  await expect(setup.getByRole('heading', { name: 'Is this your main computer?' })).toBeVisible();
+  await setup.getByRole('radio', { name: /^Yes, it does the work/ }).check();
+  await setup.getByRole('button', { name: 'Next' }).click();
+
   await expect(setup.getByRole('heading', { name: 'What should be recorded?' })).toBeVisible();
   await setup.getByRole('button', { name: 'Next' }).click();
 
