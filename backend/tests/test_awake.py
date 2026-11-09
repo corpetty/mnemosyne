@@ -1,6 +1,8 @@
 """Keeping the computer awake while something records here, or all the time it is shared when
 asked (services/awake.py)."""
 
+import os
+import sys
 from types import SimpleNamespace
 
 from mnemosyne.services import awake
@@ -90,3 +92,45 @@ def test_guest_notes_rooms_on_this_computer_keep_it_awake(settings):
     assert awake.reason(ctx) == "Guest notes are open"
     ctx.active_recordings["s2"] = SimpleNamespace(is_recording=True)
     assert awake.reason(ctx) == "Recording a meeting"  # a recording is the first reason
+
+
+def test_linux_command_is_systemd_inhibit(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert awake._command("Recording a meeting") == [
+        "systemd-inhibit",
+        "--what=sleep",
+        "--mode=block",
+        "--who=Mnemosyne",
+        "--why=Recording a meeting",
+        "sleep",
+        "infinity",
+    ]
+
+
+def test_darwin_command_is_caffeinate_for_this_backend(monkeypatch):
+    # conftest stubs awake._spawn, so the argv is checked through _command, which _spawn uses
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert awake._command("Recording a meeting") == [
+        "/usr/bin/caffeinate",
+        "-i",
+        "-w",
+        str(os.getpid()),
+    ]
+
+
+def test_darwin_available_when_caffeinate_exists(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    missing = tmp_path / "caffeinate"
+    monkeypatch.setattr(awake, "CAFFEINATE", str(missing))
+    assert awake.KeepAwake().available is False
+    missing.write_text("")
+    assert awake.KeepAwake().available is True
+
+
+def test_darwin_release_stops_caffeinate(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    keeper, spawned = _keeper()
+    keeper.want("Recording a meeting")
+    assert keeper.holding and spawned[0].reason == "Recording a meeting"
+    keeper.want("")
+    assert not keeper.holding and spawned[0].stopped
