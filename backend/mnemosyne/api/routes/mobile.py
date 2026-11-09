@@ -72,7 +72,13 @@ async def phone_link(ctx: AppContext = Depends(get_ctx)):
     urls = phone_page_urls(ctx.settings)
     reachable = bool(urls)
     pairing = bool(ctx.settings.api_token)
-    if not reachable:
+    if not reachable and os.environ.get("MNEMOSYNE_APP_PID"):
+        # Started by the desktop app, which binds 127.0.0.1: --host is not an option there.
+        note = (
+            "The backend only listens on this computer. Set a phone address, such as a "
+            "Tailscale HTTPS name (docs/remote-access.md), to record from a phone."
+        )
+    elif not reachable:
         note = (
             "The backend only listens on this computer. Run it in server mode "
             "(--host 0.0.0.0, with an API token), or set a phone address such as a "
