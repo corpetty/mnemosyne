@@ -13,8 +13,9 @@ import pytest
 
 from mnemosyne.api.app import create_app
 from mnemosyne.config import Settings
-from mnemosyne.services import parts
+from mnemosyne.services import parts, records, shared_notes
 from mnemosyne.services.pairing import PHONE
+from mnemosyne.services.storage_service import ErasureNotSealed
 from mnemosyne.storage.crypto import MemoryKeyStore
 
 pytestmark = pytest.mark.anyio
@@ -377,6 +378,114 @@ async def test_a_handoff_replaces_a_streamed_meetings_audio_before_transcription
     async with client(app, laptop_token, peer=TUNNEL) as c:
         r = await c.post("/api/connections/handoff", **handoff_form(meta("r2", session_id=sid)))
         assert r.status_code == 409
+
+
+def _with_notes(ctx, sid: str) -> None:
+    """Something to keep, so the meeting is a record the sealer seals (notes-only counts)."""
+    with shared_notes.unrestricted():
+        ctx.sessions.update_notes(sid, "- the stream, as typed live")
+
+
+async def test_replacing_sealed_audio_seals_its_erasure_first(
+    app, ctx, laptop_token, fake_pipewire, fake_engine
+):
+    ctx.settings.auto_transcribe = False
+    sid = await _streamed(app, ctx, laptop_token, transcribe=False)
+    _with_notes(ctx, sid)
+    streamed = ctx.sessions.get_session(sid)
+    old = [Path(r.path) for r in streamed.recordings] + [Path(streamed.audio_file)]
+    assert records.seal(ctx, sid, "background") is not None  # what the sealer does when quiet
+    sealed = ctx.repo.seals(sid)[-1]["manifest"]["audio"]
+    assert {p.name for p in old} <= set(sealed)
+
+    async with client(app, laptop_token, peer=TUNNEL) as c:
+        r = await c.post("/api/connections/handoff", **handoff_form(meta("r1", session_id=sid)))
+    assert r.status_code == 200, r.text
+    seals = ctx.repo.seals(sid)
+    assert seals[-1]["reason"] == "audio deleted"  # sealed before the files changed
+    assert all(p.exists() for p in old)  # the finish job has not unlinked them yet
+    await finish(ctx, sid)
+    assert not any(p.exists() for p in old)
+
+    assert records.seal(ctx, sid, "after hand-over") is not None
+    check = records.verify(ctx, sid)
+    assert check.ok, check.problems
+    assert sorted(e.name for e in check.erased) == sorted({p.name for p in old})
+    assert all(e.matched for e in check.erased)
+    rows = ctx.repo.deletions()
+    assert len(rows) == 1 and rows[0]["what"] == "audio" and rows[0]["by"] == "Corey's laptop"
+    manifest = ctx.repo.seals(sid)[-1]["manifest"]
+    assert set(manifest["erased"]) == {p.name for p in old}
+    new = {Path(x.path).name for x in ctx.sessions.get_session(sid).recordings}
+    assert new <= set(manifest["audio"]) and new.isdisjoint(manifest["erased"])
+
+
+async def test_replacing_audio_no_seal_listed_logs_no_erasure(
+    app, ctx, laptop_token, fake_pipewire, fake_engine
+):
+    ctx.settings.auto_transcribe = False
+    sid = await _streamed(app, ctx, laptop_token, transcribe=False)
+    _with_notes(ctx, sid)  # sealable, but nothing sealed it yet
+    assert ctx.repo.seals(sid) == []
+    async with client(app, laptop_token, peer=TUNNEL) as c:
+        r = await c.post("/api/connections/handoff", **handoff_form(meta("r1", session_id=sid)))
+    assert r.status_code == 200, r.text
+    await finish(ctx, sid)
+    assert ctx.repo.seals(sid) == [] and ctx.repo.deletions() == []
+    assert records.seal(ctx, sid, "after hand-over") is not None
+    check = records.verify(ctx, sid)
+    assert check.ok, check.problems
+    assert check.erased == []
+
+
+async def test_replacing_sealed_audio_that_cannot_be_erased_changes_nothing(
+    app, ctx, laptop_token, fake_pipewire, fake_engine, monkeypatch
+):
+    ctx.settings.auto_transcribe = False
+    sid = await _streamed(app, ctx, laptop_token, transcribe=False)
+    _with_notes(ctx, sid)
+    assert records.seal(ctx, sid, "background") is not None
+    old = [Path(r.path) for r in ctx.sessions.get_session(sid).recordings]
+
+    def locked(*args, **kwargs):
+        raise ErasureNotSealed("Encryption is locked: unlock Mnemosyne to delete this audio")
+
+    monkeypatch.setattr(records, "seal_erasure", locked)
+    async with client(app, laptop_token, peer=TUNNEL) as c:
+        r = await c.post("/api/connections/handoff", **handoff_form(meta("r1", session_id=sid)))
+        assert r.status_code == 409 and "Encryption is locked" in r.json()["detail"]
+        monkeypatch.undo()  # the same hand-off may be tried again once it can be sealed
+        r = await c.post("/api/connections/handoff", **handoff_form(meta("r1", session_id=sid)))
+        assert r.status_code == 200, r.text
+    await finish(ctx, sid)
+    assert not any(p.exists() for p in old)
+
+
+async def test_a_refused_replacement_leaves_the_meeting_as_it_was(
+    app, ctx, laptop_token, fake_pipewire, fake_engine, monkeypatch
+):
+    ctx.settings.auto_transcribe = False
+    sid = await _streamed(app, ctx, laptop_token, transcribe=False)
+    _with_notes(ctx, sid)
+    records.seal(ctx, sid, "background")
+    before = ctx.sessions.get_session(sid)
+    folder = ctx.settings.recordings_dir / sid
+    files = sorted(p.name for p in folder.iterdir())
+    seals = len(ctx.repo.seals(sid))
+
+    def locked(*args, **kwargs):
+        raise ErasureNotSealed("Encryption is locked")
+
+    monkeypatch.setattr(records, "seal_erasure", locked)
+    async with client(app, laptop_token, peer=TUNNEL) as c:
+        r = await c.post("/api/connections/handoff", **handoff_form(meta("r1", session_id=sid)))
+    assert r.status_code == 409
+    after = ctx.sessions.get_session(sid)
+    assert after.status == before.status and after.audio_file == before.audio_file
+    assert [x.path for x in after.recordings] == [x.path for x in before.recordings]
+    assert sorted(p.name for p in folder.iterdir()) == files
+    assert len(ctx.repo.seals(sid)) == seals and ctx.repo.deletions() == []
+    assert not [e for e in ctx.repo.events(sid) if e["kind"] == "handed_over"]
 
 
 async def test_no_replacing_once_transcription_started(

@@ -51,7 +51,7 @@ from ...audio.capture import (
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, SessionStatus
 from ...services import handoff as handoffs
-from ...services import history, shared_notes
+from ...services import history, records, shared_notes
 from ...services.pairing import DESKTOP
 from ...services.recovery import write_manifest
 from ..context import AppContext, get_ctx
@@ -181,6 +181,42 @@ def _check_replace(ctx: AppContext, session_id: str, device_id: str | None):
     return session
 
 
+def _sealed_audio(ctx: AppContext, session_id: str) -> bool:
+    """Does the meeting's last seal list any audio file (so replacing it is an erasure)?"""
+    seals = ctx.repo.seals(session_id)
+    if not seals:
+        return False
+    last = seals[-1]
+    listed = last["audio"] if last["format"] == 1 else (last["manifest"] or {}).get("audio")
+    return bool(listed)
+
+
+async def _seal_replaced_audio(ctx: AppContext, session, sender: str) -> None:
+    """Seal the erasure of the streamed audio a hand-off replaces, BEFORE anything changes: the
+    record's chain lets an audio file leave only by being erased (services/records.py). Audio no
+    seal ever listed is just replaced (nothing to erase from). 409 with the reason when the
+    erasure cannot be sealed (encryption locked, an unreadable file)."""
+    if not _sealed_audio(ctx, session.id):
+        return
+
+    def log() -> int:
+        return ctx.repo.log_deletion(
+            session, "audio", sender, "system", f"Replaced by the full recording from {sender}"
+        )
+
+    try:
+        await asyncio.to_thread(
+            records.seal_erasure,
+            ctx,
+            session.id,
+            by=sender,
+            reason=f"Replaced by the full recording handed over from {sender}",
+            deletion=log,
+        )
+    except records.ErasureNotSealed as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
 def _parts(meta: HandoffMeta, out_dir: Path) -> list[RecordingSession]:
     """One recording per part, in part order, numbered 0.. as this meeting's parts."""
     by_part: dict[int, list[HandoffSource]] = {}
@@ -307,6 +343,8 @@ async def _take(ctx, form, meta: HandoffMeta, device_id, sender, key, store) -> 
         session = _check_replace(ctx, meta.session_id, device_id)
         if ctx.jobs.list(session_id=session.id, active_only=True):
             raise HTTPException(status_code=409, detail="The meeting is busy; try again soon")
+        # Before any file is written or anything cleared: a refusal leaves the meeting as it was.
+        await _seal_replaced_audio(ctx, session, sender)
     else:
         title = meta.title.strip()[:200] or DEFAULT_SESSION_NAME
         session = ctx.sessions.create_session(title, created_at=_local_time(meta.started_at))
