@@ -1,11 +1,16 @@
 """Meeting records a team can rely on, when Mnemosyne is where its meetings are kept.
 
 - Versions: a replaced transcript or summary is kept (storage/sqlite.py keep_version).
-- Seals: after a transcription, a summary or an edit, a SHA-256 of the meeting's content and of
-  each audio file, chained to the previous seal. `verify` recomputes the chain and compares the
-  last seal with what is there now, so a change made outside the app (a row edited in the
-  database, a file swapped) shows. Someone able to rewrite the whole database could rewrite the
-  chain too: the chain head goes into exports and backups, which live elsewhere.
+- Seals: after a transcription, a summary, an edit or an event (EVENT_SEALS), a manifest of the
+  meeting (storage/records.py, format 2: a digest of each part — transcript, summary, its
+  structured parts, notes, comments, details, other assistants' notes — and of each audio file's
+  plaintext), chained to the previous seal. Seals made before (format 1: the transcript and
+  summary, and each audio file as stored) stay in the chain and verify as they did. `verify`
+  recomputes the chain and compares the last seal with what is there now, so a change made
+  outside the app (a row edited in the database, a file swapped) shows, while a change the app
+  made after the seal (the meeting's `rev`, its `sync_seq`, moved on) is pending, not a problem.
+  Someone able to rewrite the whole database could rewrite the chain too: the chain head goes
+  into exports and backups, which live elsewhere.
 - Retention: `records_retention_years` after a meeting, deleting it or its audio needs an admin
   and a reason; a legal hold refuses it to everyone. Every deletion is logged (`deletions`),
   and that log outlives the meeting.
@@ -19,13 +24,28 @@ import hashlib
 import json
 import logging
 import zipfile
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from .. import access
 from ..models.base import ApiModel
-from ..storage.records import chain_hash, content_hash, content_of
+from ..storage.records import (
+    PARTS,
+    audio_entry,
+    audio_key,
+    chain_hash,
+    chain_hash_v2,
+    compare_audio,
+    compare_parts,
+    compare_step,
+    content_hash,
+    content_of,
+    manifest_for,
+    manifest_hash,
+    manifest_problems,
+)
 from . import notes_media
 
 if TYPE_CHECKING:
@@ -38,6 +58,7 @@ _file_hashes: dict[tuple[str, int, float], str] = {}
 
 
 def _file_sha256(path: Path) -> str:
+    """SHA-256 of a file as stored (format 1 seals), cached by path, size and mtime."""
     st = path.stat()
     key = (str(path), st.st_size, st.st_mtime)
     if key not in _file_hashes:
@@ -49,6 +70,44 @@ def _file_sha256(path: Path) -> str:
     return _file_hashes[key]
 
 
+_plain_digests: dict[tuple[str, int, int], dict] = {}
+_PLAIN_DIGESTS_MAX = 4096
+
+
+def _plain_entry(path: Path, file_key: bytes | None) -> dict:
+    """A file's manifest entry (`audio_entry`): the SHA-256 and length of its PLAINTEXT, an
+    encrypted file decrypted chunk by chunk (never written out), cached in memory by path,
+    size and mtime_ns. PermissionError when it is encrypted and the key is not available;
+    a file that does not decrypt raises the cipher's error."""
+    from ..storage.crypto import EncryptedFile, is_encrypted
+
+    st = path.stat()
+    key = (str(path), st.st_size, st.st_mtime_ns)
+    cached = _plain_digests.get(key)
+    if cached is not None:
+        return dict(cached)
+    h = hashlib.sha256()
+    if is_encrypted(path):
+        if file_key is None:
+            raise PermissionError("Meetings are encrypted and the key is not available")
+        sealed = EncryptedFile(path, file_key)
+        step = sealed.chunk * 16
+        for start in range(0, sealed.size, step):
+            h.update(sealed.read(start, start + step))
+        size = sealed.size
+    else:
+        size = 0
+        with path.open("rb") as f:
+            while chunk := f.read(1 << 20):
+                h.update(chunk)
+                size += len(chunk)
+    entry = audio_entry(h.hexdigest(), size)
+    if len(_plain_digests) >= _PLAIN_DIGESTS_MAX:
+        _plain_digests.clear()
+    _plain_digests[key] = entry
+    return dict(entry)
+
+
 def audio_files(session: Session) -> list[Path]:
     if session.origin:  # recorded on another computer: its audio is not here
         return []
@@ -57,8 +116,50 @@ def audio_files(session: Session) -> list[Path]:
 
 
 def audio_hashes(session: Session) -> dict[str, str]:
-    """SHA-256 of each audio file as stored (encrypted ones as encrypted), by file name."""
+    """SHA-256 of each audio file as stored (encrypted ones as encrypted), by file name: what
+    format 1 seals hold."""
     return {p.name: _file_sha256(p) for p in audio_files(session)}
+
+
+LOCKED = "locked"  # the file is encrypted and the key is not available
+UNREADABLE = "unreadable"  # the file does not decrypt (or cannot be read)
+
+
+def _audio_now(
+    app: AppContext, session: Session, last: dict | None = None
+) -> tuple[dict[str, dict], dict[str, dict], dict[str, str]]:
+    """The meeting's audio files as manifest entries, keyed by name without `.enc`; their file
+    stats (`audio_stat`: the next seal may reuse a digest by them); and the names that could not
+    be hashed, with why (LOCKED or UNREADABLE). With `last` (the previous format 2 seal), a file
+    whose path, size and mtime_ns are what that seal recorded keeps that seal's digest instead
+    of being read again (a seal is cheap; `verify` passes no `last` and rehashes, through the
+    in-memory cache)."""
+    entries: dict[str, dict] = {}
+    stats: dict[str, dict] = {}
+    failed: dict[str, str] = {}
+    if session.origin:
+        return entries, stats, failed
+    sealed = ((last or {}).get("manifest") or {}).get("audio") or {}
+    seen = (last or {}).get("audio_stat") or {}
+    for path in audio_files(session):
+        name = audio_key(path.name)
+        try:
+            st = path.stat()
+        except OSError:  # gone since it was listed
+            continue
+        stat = {"file": str(path), "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+        stats[name] = stat
+        if seen.get(name) == stat and name in sealed:
+            entries[name] = dict(sealed[name])
+            continue
+        try:
+            entries[name] = _plain_entry(path, app.file_key)
+        except PermissionError:
+            failed[name] = LOCKED
+        except Exception:  # a cipher error, a bad header, an I/O error
+            logger.warning("Could not hash audio %s", path, exc_info=True)
+            failed[name] = UNREADABLE
+    return entries, stats, failed
 
 
 # Seals that record something that happened rather than a change of content: made even when the
@@ -75,20 +176,58 @@ EVENT_SEALS = frozenset(
     }
 )
 
+# A meeting whose last seal is format 1 gets a format 2 seal when its record is opened (D5).
+UPGRADE_REASON = "sealed in the new format"
+
+
+def _sealable(session: Session, comments: list) -> bool:
+    """A meeting with something to keep: a transcript, a summary, notes or comments (D12: a
+    notes-only meeting is a record too). Just audio is not, as before."""
+    return bool(session.transcript or session.summary or (session.notes or "").strip() or comments)
+
 
 def seal(app: AppContext, session_id: str, reason: str) -> dict | None:
-    """Chain a seal of the meeting as it is now (blocking: hashes audio; run in a thread).
-    Never raises: a record that cannot be sealed must not fail what it records."""
+    """Chain a format 2 seal of the meeting as it is now (blocking: hashes audio; run in a
+    thread). None when nothing changed since the last seal (unless an EVENT_SEALS reason), for a
+    meeting with nothing to keep, someone else's shared meeting (`shared_from`), or when an audio
+    file cannot be hashed (encryption locked, a file that does not decrypt). Never raises: a
+    record that cannot be sealed must not fail what it records."""
     try:
+        # `rev` first: an app write landing while the meeting is read leaves the seal's rev
+        # behind the meeting's, so a difference shows as pending, never as tampering.
+        rev = app.repo.sync_seq_of(session_id)
         session = app.repo.get(session_id)
-        if session is None or not (session.transcript or session.summary):
+        if session is None or rev is None or session.shared_from:
             return None
+        comments = app.repo.list_comments(session_id)
+        if not _sealable(session, comments):
+            return None
+        seals = app.repo.seals(session_id)
+        last = seals[-1] if seals and seals[-1]["format"] == 2 and seals[-1]["manifest"] else None
+        audio, stats, failed = _audio_now(app, session, last)
+        if failed:
+            logger.warning(
+                "Not sealing session %s (%s): audio %s cannot be hashed",
+                session_id,
+                reason,
+                ", ".join(f"{n} ({why})" for n, why in sorted(failed.items())),
+            )
+            return None
+        erased = dict(last["manifest"].get("erased") or {}) if last else {}
+        manifest = manifest_for(
+            session,
+            comments,
+            rev=rev,
+            audio={n: e for n, e in audio.items() if n not in erased},
+            audio_here=not session.origin,
+            erased=erased,
+        )
         return app.repo.add_seal(
             session_id,
             reason,
-            content_hash(content_of(session)),
-            audio_hashes(session),
             force=reason in EVENT_SEALS,
+            manifest=manifest,
+            audio_stat=stats,
         )
     except Exception:
         logger.warning("Could not seal session %s", session_id, exc_info=True)
@@ -116,12 +255,232 @@ def protected_ids(app: AppContext) -> set[str]:
     return app.repo.protected_ids(since)
 
 
+# ---- verification ---------------------------------------------------------------------------
+
+
+class PartCheck(ApiModel):
+    """One part of the record compared with the last seal: a part (storage/records.py PARTS) or
+    an audio file ("audio/<name without .enc>")."""
+
+    name: str
+    # pending: changed in the app, not sealed yet; unavailable: cannot be compared here
+    status: Literal["same", "differs", "pending", "unavailable"]
+    detail: str  # why it is unavailable; "" otherwise
+
+
+class Erasure(ApiModel):
+    """Audio deleted on purpose (retention, an admin with a reason): still in the record by its
+    plaintext SHA-256, so a copy kept elsewhere (an export) can be checked against it."""
+
+    name: str
+    sha256: str
+    bytes: int
+    at: str
+    by: str
+    reason: str
+    matched: bool  # it still equalled the sealed file when it was deleted
+
+
 class Verification(ApiModel):
-    ok: bool
+    ok: bool  # false only for problems: pending changes are fine
     seals: int
     last_sealed_at: datetime | None
     chain_head: str  # the last seal's chain hash: write it down to prove the record later
     problems: list[str]
+    pending: bool  # the app changed the meeting since the last seal; the next seal covers it
+    format: int  # of the last seal: 1 or 2 (0 without seals)
+    # Format 2: every part and audio file. Format 1: only audio files that cannot be compared
+    # (re-encrypted or decrypted since that seal).
+    parts: list[PartCheck]
+    erased: list[Erasure]
+
+
+SAME, DIFFERS, PENDING, UNAVAILABLE = "same", "differs", "pending", "unavailable"
+
+CONTENT_DIFFERS = "The transcript or summary differs from the last seal"
+_PART_PROBLEMS = {
+    "transcript": CONTENT_DIFFERS,
+    "summary": CONTENT_DIFFERS,
+    "summary_data": "The summary's decisions, questions or action items differ from the last seal",
+    "notes": "The notes differ from the last seal",
+    "comments": "The comments differ from the last seal",
+    "meta": "The meeting's name, people or agenda differ from the last seal",
+    "external_notes": "Other assistants' notes differ from the last seal",
+}
+_AUDIO_PROBLEMS = {
+    "missing": "Audio file {} is missing",
+    "differs": "Audio file {} differs from the last seal",
+    "added": "Audio file {} was added after the last seal",
+}
+REENCRYPTED = (
+    "Encrypted or decrypted since the last seal, which hashed the file as stored; open the "
+    "record once to seal it in the new format"
+)
+IMAGE_CHANGED = "An image in the notes was changed"
+
+
+def _add(problems: list[str], problem: str) -> None:
+    if problem not in problems:
+        problems.append(problem)
+
+
+def _check_chain(session_id: str, seals: list[dict], problems: list[str]) -> None:
+    """Every seal follows the one before and still hashes to its link; a format 2 seal's manifest
+    hashes to its `content_hash`, is this meeting's, and continues the previous format 2 one
+    (`compare_step`: audio leaves only by erasure, erasures never change)."""
+    prev = ""
+    prev_manifest = None
+    for i, s in enumerate(seals, 1):
+        if s["prev"] != prev:
+            problems.append(f"Seal {i} does not follow seal {i - 1}")
+        changed = f"Seal {i} ({s['at'][:16]}) was changed after it was made"
+        if s["format"] == 2:
+            m = s["manifest"]
+            if (
+                m is None
+                or manifest_problems(m)
+                or manifest_hash(m) != s["content_hash"]
+                or chain_hash_v2(s["prev"], s["content_hash"], s["at"], s["reason"]) != s["chain"]
+            ):
+                problems.append(changed)
+                prev_manifest = None
+            elif m["session"] != session_id:
+                problems.append(f"Seal {i} ({s['at'][:16]}) is another meeting's")
+                prev_manifest = None
+            else:
+                if prev_manifest is not None:
+                    problems.extend(compare_step(prev_manifest, m, i))
+                prev_manifest = m
+        else:
+            if (
+                chain_hash(s["prev"], s["content_hash"], s["audio"], s["at"], s["reason"])
+                != s["chain"]
+            ):
+                problems.append(changed)
+            prev_manifest = None
+        prev = s["chain"]
+
+
+def _compare_v1(session: Session, last: dict, problems: list[str]) -> list[PartCheck]:
+    """The meeting now against a format 1 seal: as before, except that a file sealed as `x` and
+    now `x.enc` (or the other way) cannot be compared (ciphertext), which is not a problem."""
+    checks: list[PartCheck] = []
+    if content_hash(content_of(session)) != last["content_hash"]:
+        problems.append(CONTENT_DIFFERS)
+    if session.origin:  # the audio files are on the computer that recorded it
+        return checks
+    now = audio_hashes(session)
+    twins: set[str] = set()
+    for name, digest in last["audio"].items():
+        if name in now:
+            if now[name] != digest:
+                problems.append(_AUDIO_PROBLEMS["differs"].format(name))
+            continue
+        twin = name.removesuffix(".enc") if name.endswith(".enc") else name + ".enc"
+        if twin in now and twin not in last["audio"]:
+            twins.add(twin)
+            checks.append(
+                PartCheck(name=f"audio/{audio_key(name)}", status=UNAVAILABLE, detail=REENCRYPTED)
+            )
+        else:
+            problems.append(_AUDIO_PROBLEMS["missing"].format(name))
+    for name in sorted(now.keys() - last["audio"].keys() - twins):
+        problems.append(_AUDIO_PROBLEMS["added"].format(name))
+    return checks
+
+
+def _compare_v2(
+    app: AppContext, session: Session, sealed: dict, problems: list[str]
+) -> tuple[bool, list[PartCheck], list[Erasure]]:
+    """The meeting now against a format 2 manifest, part by part and file by file. A difference
+    while the meeting's `rev` is past the seal's is pending (the app changed it); with the same
+    `rev` it is a problem. Returns (pending, checks, erasures)."""
+    comments = app.repo.list_comments(session.id)
+    audio, _, failed = _audio_now(app, session)
+    # `rev` last: an app write after the meeting was read can only make a difference pending.
+    rev_now = app.repo.sync_seq_of(session.id) or 0
+    in_app = rev_now > sealed["rev"]
+    pending = False
+    checks: list[PartCheck] = []
+
+    def differ(name: str, problem: str) -> None:
+        nonlocal pending
+        if in_app:
+            pending = True
+            checks.append(PartCheck(name=name, status=PENDING, detail=""))
+        else:
+            checks.append(PartCheck(name=name, status=DIFFERS, detail=""))
+            _add(problems, problem)
+
+    current = manifest_for(session, comments, rev=sealed["rev"], audio_here=False)
+    diffs = {d.name for d in compare_parts(sealed["parts"], current["parts"])}
+    for name in PARTS:
+        if name in diffs:
+            differ(name, _PART_PROBLEMS[name])
+        else:
+            checks.append(PartCheck(name=name, status=SAME, detail=""))
+
+    erased = sealed["erased"]
+    if sealed["audio_here"] and not session.origin:
+        now = dict(audio)
+        for name, why in failed.items():
+            if why == LOCKED:  # not comparable: taken as sealed, shown as unavailable
+                if name in sealed["audio"]:
+                    now[name] = sealed["audio"][name]
+            else:
+                now[name] = {"sha256": "", "bytes": -1}  # differs from anything sealed
+        kinds = {d.name: d.kind for d in compare_audio(sealed["audio"], erased, now)}
+        for name in sorted((sealed["audio"].keys() | now.keys() | failed.keys()) - erased.keys()):
+            label = f"audio/{name}"
+            if failed.get(name) == LOCKED:
+                checks.append(
+                    PartCheck(name=label, status=UNAVAILABLE, detail="Encryption is locked")
+                )
+            elif failed.get(name) == UNREADABLE:
+                checks.append(PartCheck(name=label, status=DIFFERS, detail=""))
+                _add(problems, _AUDIO_PROBLEMS["differs"].format(name) + " (it does not decrypt)")
+            elif name in kinds:
+                differ(label, _AUDIO_PROBLEMS[kinds[name]].format(name))
+            else:
+                checks.append(PartCheck(name=label, status=SAME, detail=""))
+        for name in sorted(kinds.keys() & erased.keys()):  # a different file where one was erased
+            checks.append(PartCheck(name=f"audio/{name}", status=DIFFERS, detail=""))
+            _add(problems, f"Audio file {name} was deleted and a different file is in its place")
+
+    erasures = []
+    for name, e in sorted(erased.items()):
+        erasures.append(
+            Erasure(
+                name=name,
+                sha256=e["sha256"],
+                bytes=e["bytes"],
+                at=str(e.get("at") or ""),
+                by=str(e.get("by") or ""),
+                reason=str(e.get("reason") or ""),
+                matched=bool(e.get("matched")),
+            )
+        )
+        if not e.get("matched"):
+            _add(problems, f"Audio file {name} no longer matched the record when it was deleted")
+    return pending, checks, erasures
+
+
+def _check_images(app: AppContext, session: Session, problems: list[str]) -> None:
+    """Each image the notes name whose bytes are here must hash to its name: the notes' digest
+    commits to the sha, so a swapped blob is a changed record."""
+    for value in notes_media.values_in(session.notes):
+        sha = value.split(".", 1)[0]
+        file = notes_media.path(app, session.id, sha)
+        if file is None:
+            continue
+        try:
+            digest = _plain_entry(file, app.file_key)["sha256"]
+        except PermissionError:  # encryption locked: not comparable
+            continue
+        except Exception:
+            digest = ""
+        if digest != sha:
+            _add(problems, IMAGE_CHANGED)
 
 
 def verify(app: AppContext, session_id: str) -> Verification:
@@ -129,40 +488,38 @@ def verify(app: AppContext, session_id: str) -> Verification:
     session = app.repo.get(session_id)
     seals = app.repo.seals(session_id)
     problems: list[str] = []
-    prev = ""
-    for i, s in enumerate(seals, 1):
-        if s["prev"] != prev:
-            problems.append(f"Seal {i} does not follow seal {i - 1}")
-        if chain_hash(s["prev"], s["content_hash"], s["audio"], s["at"], s["reason"]) != s["chain"]:
-            problems.append(f"Seal {i} ({s['at'][:16]}) was changed after it was made")
-        prev = s["chain"]
-    if session is not None and seals:
-        last = seals[-1]
-        if content_hash(content_of(session)) != last["content_hash"]:
-            problems.append("The transcript or summary differs from the last seal")
-        if session.origin:  # the audio files are on the computer that recorded it
-            return Verification(
-                ok=not problems,
-                seals=len(seals),
-                last_sealed_at=last["at"],
-                chain_head=last["chain"],
-                problems=problems,
-            )
-        now = audio_hashes(session)
-        for name, digest in last["audio"].items():
-            if name not in now:
-                problems.append(f"Audio file {name} is missing")
-            elif now[name] != digest:
-                problems.append(f"Audio file {name} differs from the last seal")
-        for name in now.keys() - last["audio"].keys():
-            problems.append(f"Audio file {name} was added after the last seal")
+    _check_chain(session_id, seals, problems)
+    pending = False
+    parts: list[PartCheck] = []
+    erased: list[Erasure] = []
+    last = seals[-1] if seals else None
+    if session is not None and last is not None:
+        if last["format"] == 1:
+            parts = _compare_v1(session, last, problems)
+        elif isinstance(last["manifest"], Mapping) and not manifest_problems(last["manifest"]):
+            pending, parts, erased = _compare_v2(app, session, last["manifest"], problems)
+        # A malformed last manifest is already a problem from the chain check.
+        _check_images(app, session, problems)
     return Verification(
         ok=not problems,
         seals=len(seals),
-        last_sealed_at=seals[-1]["at"] if seals else None,
-        chain_head=seals[-1]["chain"] if seals else "",
+        last_sealed_at=last["at"] if last else None,
+        chain_head=last["chain"] if last else "",
         problems=problems,
+        pending=pending,
+        format=last["format"] if last else 0,
+        parts=parts,
+        erased=erased,
     )
+
+
+def open_record(app: AppContext, session_id: str) -> Verification:
+    """`verify` for the Record card (blocking). A meeting whose last seal is format 1 and still
+    matches is sealed in format 2 first (D5: upgraded lazily, never in a pass over the library)."""
+    check = verify(app, session_id)
+    if check.format == 1 and check.ok and seal(app, session_id, UPGRADE_REASON) is not None:
+        check = verify(app, session_id)
+    return check
 
 
 # ---- retention and legal holds --------------------------------------------------------------

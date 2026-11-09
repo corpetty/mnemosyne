@@ -76,7 +76,8 @@ def _reviewer() -> None:
 @router.get("/sessions/{session_id}/records", response_model=MeetingRecord)
 async def meeting_record(session_id: str, ctx: AppContext = Depends(get_ctx)):
     session = _session(ctx, session_id)
-    check = await asyncio.to_thread(records.verify, ctx, session_id)  # may hash audio once
+    # May hash audio once; a meeting last sealed in format 1 is sealed in format 2 here (D5).
+    check = await asyncio.to_thread(records.open_record, ctx, session_id)
     return MeetingRecord(
         kept_until=records.kept_until(ctx, session),
         legal_hold=session.legal_hold,
