@@ -49,7 +49,8 @@
 	});
 	const affordances = $derived.by((): MeetingComments | null => {
 		void rev;
-		if (!canComment || !comments) return null;
+		// A blocked reader gets no comment buttons on the meeting (ReaderComments says why).
+		if (!canComment || !comments || comments.blockedHere) return null;
 		return {
 			counts: comments.counts(),
 			notes: meta?.notes === true,
