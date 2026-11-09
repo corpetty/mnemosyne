@@ -251,7 +251,8 @@ def seal_later(app: AppContext, session_id: str, reason: str) -> None:
 
 def protected_ids(app: AppContext) -> set[str]:
     """Meetings whose audio retention must not remove: on legal hold, or created within
-    `records_retention_years`."""
+    `records_retention_years` (on a computer that hosts a team: a member's meeting; see
+    `records_apply`)."""
     years = app.settings.records_retention_years
     since = ""
     if years > 0:
@@ -751,9 +752,26 @@ def seal_combined(
 # ---- retention and legal holds --------------------------------------------------------------
 
 
+def records_apply(app: AppContext, session: Session) -> bool:
+    """Does the records period (`records_retention_years`) apply to this meeting? Yes on every
+    computer, except one that hosts a team (`config.hosts_team`, which sets `repo.host_owner`):
+    there it covers the members' meetings only. The owner's own meetings (owner '' or the host)
+    and a contact's (`shared_from`) are outside it, so he can delete them, and their audio,
+    whatever the period says (docs/plans/2026-11-09-team-hosting.md D5).
+
+    Turning hosting off makes this a plain computer again (`hosts_team` is False, `host_owner`
+    is ''), so the period then applies to every meeting, as it does on any plain computer that
+    set it. Members' meetings that stay behind are then covered like the rest.
+
+    A legal hold is not decided here: it is an explicit choice made on one meeting, so it holds
+    any meeting, the owner's own included (`check_delete`, `protected_ids`)."""
+    return not app.repo.outside_team(session.owner_id, session.shared_from)
+
+
 def kept_until(app: AppContext, session: Session) -> date | None:
+    """The end of the records period, None when there is none or it does not apply here."""
     years = app.settings.records_retention_years
-    if years <= 0:
+    if years <= 0 or not records_apply(app, session):
         return None
     created = session.created_at.date()
     try:

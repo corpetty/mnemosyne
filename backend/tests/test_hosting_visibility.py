@@ -170,7 +170,12 @@ def test_every_listing_follows_the_read_rule(host, caller, path, params):
 def test_the_review_queue_follows_the_read_rule(host, caller):
     r = _get(host, caller, "/api/supervision")
     assert r.status_code == 200, r.text
-    assert {k for k, sid in host.ids.items() if sid in r.text} == SEES[caller]
+    # Phrase review is for the members' meetings only (D5, test_hosting_records.py): what
+    # the caller reads, less the owner's own and a contact's.
+    assert {k for k, sid in host.ids.items() if sid in r.text} == SEES[caller] & {
+        "team",
+        "teamgrant",
+    }
 
 
 def test_a_member_has_no_review_queue(host):

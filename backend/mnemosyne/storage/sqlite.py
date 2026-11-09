@@ -1146,8 +1146,25 @@ class SessionRepository:
     def _sees(scope: access.ReadScope, alias: str = "") -> tuple[str, tuple]:
         """(condition, params) for the meetings `scope` may read; `alias` is the sessions
         table's alias in the query ("" for none)."""
+        cond, params = SessionRepository._sees_kind(scope, alias)
+        for extra in scope.also:  # a limit on top of who the caller is (access.limited_to)
+            more, more_params = SessionRepository._sees(extra, alias)
+            cond, params = f"({cond} AND {more})", (*params, *more_params)
+        return cond, params
+
+    @staticmethod
+    def _sees_kind(scope: access.ReadScope, alias: str) -> tuple[str, tuple]:
         a = alias + "." if alias else ""
         granted = f"{a}id IN (SELECT session_id FROM session_shares WHERE user_id IN (?, '*'))"
+        if scope.kind == access.OWN:
+            return f"({a}owner_id IN ('', ?) AND {a}shared_from='')", (scope.host,)
+        if scope.kind == access.PERSONAL:
+            return f"({a}owner_id IN ('', ?) OR {a}shared_from<>'')", (scope.host,)
+        if scope.kind == access.VIEW:
+            return (
+                f"({a}owner_id IN ('', ?) OR {a}shared_from<>'' OR {granted})",
+                (scope.host, scope.user_id),
+            )
         if scope.kind == access.OWN_AND_GRANTED:
             return (
                 f"({a}shared_from='' AND ({a}owner_id=? OR {granted}))",
@@ -3130,12 +3147,29 @@ class SessionRepository:
             for r in rows
         ]
 
+    def outside_team(self, owner_id: str, shared_from: str = "") -> bool:
+        """On a computer that hosts a team (`host_owner`): is a meeting with this owner and
+        `shared_from` outside the team, i.e. the owner's own (owner '' or the host) or a
+        contact's? Records rules and phrase review are for the members' meetings only
+        (docs/plans/2026-11-09-team-hosting.md D5). False on any other computer."""
+        return bool(self.host_owner) and (bool(shared_from) or owner_id in ("", self.host_owner))
+
+    def meeting_outside_team(self, session_id: str) -> bool:
+        """`outside_team` for a stored meeting (False for an unknown one)."""
+        owner = self._owner(session_id)
+        return owner is not None and self.outside_team(owner, self._shared_from(session_id))
+
     def protected_ids(self, since: str) -> set[str]:
-        """Meetings on legal hold, and (with `since`, an ISO date) created since then."""
+        """Meetings on legal hold, and (with `since`, an ISO date) created since then. On a
+        computer that hosts a team the records period reaches the members' meetings only; a
+        legal hold is the owner's explicit choice and holds any meeting."""
+        team, params = "", ()
+        if self.host_owner:
+            team, params = " AND shared_from='' AND owner_id NOT IN ('', ?)", (self.host_owner,)
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id FROM sessions WHERE legal_hold<>'' OR (?<>'' AND created_at>=?)",
-                (since, since),
+                f"SELECT id FROM sessions WHERE legal_hold<>'' OR (?<>'' AND created_at>=?{team})",
+                (since, since, *params),
             ).fetchall()
         return {r["id"] for r in rows}
 
@@ -3214,12 +3248,18 @@ class SessionRepository:
     def _was_seen(scope: access.ReadScope, owner: str, shared_from: str) -> bool:
         """Whether `scope` could read a deleted meeting of this owner (grants are gone with it:
         only ownership counts)."""
-        if scope.everything:
+        if any(not SessionRepository._was_seen(x, owner, shared_from) for x in scope.also):
+            return False
+        if scope.kind == access.ALL:
             return True
         if scope.kind == access.OWN_AND_GRANTED:
             return bool(owner) and owner == scope.user_id
         if scope.kind == access.TEAM_WIDE:
             return not shared_from and owner not in ("", scope.host)
+        if scope.kind == access.OWN:
+            return not shared_from and owner in ("", scope.host)
+        if scope.kind in (access.PERSONAL, access.VIEW):
+            return bool(shared_from) or owner in ("", scope.host)
         return False
 
     # ---- supervision (services/supervision.py) --------------------------
@@ -3311,11 +3351,19 @@ class SessionRepository:
                (SELECT r.note FROM supervision_reviews r WHERE r.session_id = s.id
                 ORDER BY r.id DESC LIMIT 1) AS note
         FROM sessions s JOIN supervision_flags f ON f.session_id = s.id
+        {where}
         GROUP BY s.id ORDER BY s.created_at DESC
         """
+        # On a computer that hosts a team only the members' meetings are reviewed. Flags the
+        # owner's own meetings got before hosting started stay in the table (a review is
+        # part of a record) and come back if hosting is turned off; they are just not listed.
+        where, params = "", ()
+        if self.host_owner:
+            where = "WHERE s.shared_from='' AND s.owner_id NOT IN ('', ?)"
+            params = (self.host_owner,)
         visible = self.visible_ids()
         with self._lock:
-            rows = self._conn.execute(sql).fetchall()
+            rows = self._conn.execute(sql.format(where=where), params).fetchall()
         return [dict(r) for r in rows if visible is None or r["id"] in visible]
 
     def set_action_item_done(self, session_id: str, idx: int, done: bool) -> bool:
