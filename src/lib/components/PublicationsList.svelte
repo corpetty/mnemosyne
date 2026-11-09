@@ -5,7 +5,7 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
 
-	// This library's live publications (GET /api/publications), in Settings → Publishing.
+	// This library's live publications (GET /api/publications), in Settings → Devices and people → Links for people without Mnemosyne.
 	$effect(() => {
 		void publishingState.loadList();
 	});

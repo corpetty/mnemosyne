@@ -876,6 +876,11 @@ export async function getConnectedDevices(): Promise<ConnectedDevice[]> {
   return request('/api/connections/devices');
 }
 
+/** Remove one of them: `device.remove` is the path to DELETE (the route differs by kind). */
+export async function removeConnectedDevice(path: string): Promise<void> {
+  await request(path, { method: 'DELETE' });
+}
+
 /** `main`, or `team` on a team server. */
 export async function getSystemRole(): Promise<SystemRole> {
   return request('/api/system/role');

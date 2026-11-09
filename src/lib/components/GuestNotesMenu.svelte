@@ -78,7 +78,7 @@
 
 	function openSettings() {
 		open = false;
-		uiState.settingsTab = 'general';
+		uiState.settingsTab = 'devices';
 		openView('settings');
 	}
 

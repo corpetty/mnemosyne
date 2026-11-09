@@ -32,15 +32,67 @@ test('settings are grouped in tabs', async ({ page }) => {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const tabs = page.getByRole('navigation', { name: 'Settings sections' });
   for (const [tab, heading] of [
-    ['General', 'Server mode'],
+    ['General', 'Troubleshooting'],
     ['Recording', 'Auto-record'],
     ['Transcription', 'Names and terms'],
     ['AI', 'Search and Ask'],
-    ['Notes & sharing', 'GitHub issues']
+    ['Notes', 'GitHub issues'],
+    ['Devices and people', 'This computer']
   ]) {
     await tabs.getByRole('button', { name: tab, exact: true }).click();
     await expect(page.getByRole('heading', { name: heading })).toBeVisible();
   }
+});
+
+test('Devices and people: this computer, my devices, people and links, with the rest under Advanced', async ({ page }) => {
+  await openApp(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Devices and people', exact: true }).click();
+
+  // This computer: three cards, the current role selected (a main computer here).
+  const roles = page.getByRole('radiogroup', { name: 'What this computer is' });
+  await expect(roles.getByRole('radio', { name: /^Main computer/ })).toBeChecked();
+  await expect(page.getByText('Your devices reach this computer while Mnemosyne runs.')).toBeVisible();
+  await roles.getByText('Team server', { exact: true }).click();
+  await expect(page.getByText('Others sign in to this computer from a browser.')).toBeVisible();
+  await roles.getByText('Main computer', { exact: true }).click();
+
+  // My devices: Add a device offers a computer or a phone.
+  await expect(page.getByRole('heading', { name: 'My devices' })).toBeVisible();
+  await page.getByRole('button', { name: 'Add a device' }).click();
+  await expect(page.getByRole('button', { name: 'A laptop or another computer' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'A phone', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'A phone', exact: true }).click();
+  await expect(page.getByLabel('Phone address')).toBeVisible();
+
+  await expect(page.getByRole('heading', { name: 'People', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Meetings people share with you appear in Ask')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Links for people without Mnemosyne' })).toBeVisible();
+  await expect(page.getByText('New pages expire after')).toBeVisible();
+
+  // Advanced is collapsed until opened.
+  const advanced = page.locator('details', { has: page.getByText('Advanced', { exact: true }) });
+  await expect(advanced.getByText('Use Mnemosyne\'s relay and notes server')).toBeHidden();
+  await advanced.getByText('Advanced', { exact: true }).click();
+  await expect(advanced.getByText('Use Mnemosyne\'s relay and notes server')).toBeVisible();
+  await expect(advanced.getByText('Relays (comma-separated)')).toBeVisible();
+  await expect(advanced.getByText('Connect to a backend by address')).toBeVisible();
+  await expect(advanced.getByText('Let paired computers reach this computer from anywhere')).toBeVisible();
+});
+
+test('a setting moved to Devices and people is saved with its Save button', async ({ page }) => {
+  await openApp(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Devices and people', exact: true }).click();
+  const ask = page.getByLabel('Meetings people share with you appear in Ask');
+  await ask.check();
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.getByText('Settings saved')).toBeVisible();
+  const { values } = await (await page.request.get('http://127.0.0.1:8018/api/settings')).json();
+  expect(values.shared_in_ask).toBe(true);
+  await ask.uncheck();
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.getByText('Settings saved')).toBeVisible();
 });
 
 test('copy diagnostics puts a report without secrets on the clipboard', async ({ page, context }) => {
@@ -108,7 +160,7 @@ test('settings never make the page taller than the window', async ({ page }) => 
   await openApp(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const tabs = page.getByRole('navigation', { name: 'Settings sections' });
-  for (const tab of ['General', 'Recording', 'Transcription', 'AI', 'Notes & sharing']) {
+  for (const tab of ['General', 'Recording', 'Transcription', 'AI', 'Notes', 'Devices and people']) {
     await tabs.getByRole('button', { name: tab, exact: true }).click();
     const [scrollHeight, height] = await page.evaluate(() => [
       document.documentElement.scrollHeight,

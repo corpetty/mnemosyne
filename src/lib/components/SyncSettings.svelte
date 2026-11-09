@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Settings → Connection: keep one library across this person's computers (backend
+	// Settings → Devices and people → My devices → More: keep one library across this person's computers (backend
 	// services/sync_service.py, docs/api-reference.md "Library sync").
 	import { createPairingCode, removeSyncPeer, syncNow, syncPair } from '$lib/api/backend.js';
 	import { peerState } from '$lib/app/syncText.js';
@@ -79,7 +79,7 @@
 	const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 </script>
 
-<div class="mt-4 space-y-2" aria-label="Sync with your other computers">
+<div class="mt-3 space-y-2" aria-label="Sync with your other computers">
 	<h4 class="text-sm font-medium text-gray-300">Sync with your other computers</h4>
 	<p class="text-xs text-gray-500">
 		Meetings recorded on either computer appear on both; summaries and notes merge. Audio stays on the computer that recorded it.

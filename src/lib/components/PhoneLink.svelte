@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { createPairingCode, getPhoneLink, listPairedDevices, removePairedDevice } from '$lib/api/backend.js';
+	import { createPairingCode, getPhoneLink, listPairedDevices } from '$lib/api/backend.js';
+	import { devicesState } from '$lib/stores/devices.svelte.js';
 	import type { PairedDevice, PairingCode, PhoneLink } from '$lib/types/index.js';
 
 	/** The saved phone address. Pairing a phone makes the API token it needs. */
@@ -12,9 +13,6 @@
 	let error = $state('');
 	let qr = $state('');
 	let chosen = $state(0);
-
-	// Sync peers are stored as desktop devices (services/pairing.py), so they show as "computer".
-	const kindLabel = (kind: string) => (kind === 'phone' ? 'phone' : kind === 'contact' ? 'contact' : 'computer');
 
 	async function loadDevices() {
 		try {
@@ -64,6 +62,7 @@
 				devices = now;
 				justPaired = added.name;
 				code = null;
+				void devicesState.load();
 			}
 		}, 2000);
 		return () => clearInterval(timer);
@@ -80,16 +79,6 @@
 		}
 	}
 
-	async function remove(d: PairedDevice) {
-		try {
-			await removePairedDevice(d.id);
-			devices = devices.filter((x) => x.id !== d.id);
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not remove the device';
-		}
-	}
-
-	const when = (iso: string) => new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 	const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 </script>
 
@@ -123,19 +112,6 @@
 					{/if}
 				</div>
 			</div>
-		{/if}
-		{#if link.pairing && devices.length}
-			<h4 class="text-sm font-medium text-gray-300 pt-2">Paired devices</h4>
-			<ul class="space-y-1 text-xs max-w-md" aria-label="Paired devices">
-				{#each devices as d (d.id)}
-					<li class="flex items-center gap-3">
-						<span class="text-gray-300">{d.name}</span>
-						<span class="text-gray-500">{kindLabel(d.kind)}</span>
-						<span class="text-gray-600">paired {when(d.created_at)}{d.last_seen_at ? `, last used ${when(d.last_seen_at)}` : ''}</span>
-						<button onclick={() => remove(d)} class="ml-auto text-gray-500 hover:text-red-400">Remove</button>
-					</li>
-				{/each}
-			</ul>
 		{/if}
 	</div>
 {/if}

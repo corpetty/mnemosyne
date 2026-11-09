@@ -65,7 +65,7 @@
 
 	function addPerson() {
 		open = false;
-		uiState.settingsTab = 'general';
+		uiState.settingsTab = 'devices';
 		openView('settings');
 	}
 

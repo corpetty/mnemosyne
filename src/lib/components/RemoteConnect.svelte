@@ -1,7 +1,7 @@
 <script lang="ts">
-	// Settings → Connection, desktop app only: reach a backend on another machine through remote
-	// access (src-tauri/src/remote.rs). Pairing turns an invite into this computer's own token and
-	// a local tunnel; the connection then points at that tunnel.
+	// Settings → Devices and people → This computer → "Uses my main computer", desktop app only:
+	// reach the main computer through remote access (src-tauri/src/remote.rs). Pairing turns an
+	// invite into this computer's own token and a local tunnel; the connection then points at it.
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 
 	interface Status {
@@ -11,7 +11,8 @@
 		home: string | null;
 	}
 
-	let desktop = $state(false);
+	/** null until we know whether this is the desktop app (a browser cannot connect this way). */
+	let desktop = $state<boolean | null>(null);
 	let status = $state<Status | null>(null);
 	let invite = $state('');
 	let name = $state('');
@@ -60,21 +61,23 @@
 	}
 </script>
 
-{#if desktop}
-	<div class="mt-4 space-y-2" aria-label="Remote access">
-		<h4 class="text-sm font-medium text-gray-300">Remote access</h4>
+{#if desktop === false}
+	<p class="mt-3 text-xs text-gray-500">Connecting to a main computer is done in the Mnemosyne desktop app.</p>
+{:else if desktop}
+	<div class="mt-3 space-y-2" aria-label="Use my main computer">
 		{#if connectionState.remote && status?.configured}
 			<p class="text-xs text-gray-500">
-				Connected through remote access to <span class="text-gray-300 font-mono">{status.home}</span>: end-to-end
-				encrypted, from anywhere. The other machine can remove this computer at any time.
+				Connected to your main computer <span class="text-gray-300 font-mono">{connectionState.host ?? status.home}</span>:
+				end-to-end encrypted, from anywhere. The main computer can remove this computer at any time.
 			</p>
 			<button onclick={disconnect} disabled={busy} class="text-sm text-gray-400 hover:text-red-400 disabled:opacity-50"
 				>Disconnect</button
 			>
 		{:else}
 			<p class="text-xs text-gray-500">
-				Work with the meetings on another machine from anywhere. On that machine, turn on remote access in Settings →
-				Server mode, choose <span class="text-gray-400">Pair a computer</span>, and paste the invite here.
+				Work with your main computer's meetings from anywhere. On the main computer, open Settings → Devices and people →
+				<span class="text-gray-400">Add a device</span>, choose <span class="text-gray-400">A laptop or another computer</span>,
+				and paste the invite here.
 			</p>
 			<div class="grid grid-cols-[1fr_12rem] gap-3">
 				<label>

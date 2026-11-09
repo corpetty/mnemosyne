@@ -111,7 +111,8 @@
 			settings('recording', 'Recording'),
 			settings('transcription', 'Transcription'),
 			settings('ai', 'AI'),
-			settings('notes', 'Notes & sharing')
+			settings('notes', 'Notes'),
+			settings('devices', 'Devices and people')
 		];
 		const meetings: Item[] = sessionState.sessions.map((s) => ({
 			id: `meeting:${s.id}`,

@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Settings → Connection: people whose computers this one shares chosen meetings with
+	// Settings → Devices and people → People: people whose computers this one shares chosen meetings with
 	// (backend services/contacts.py, share_pull.py).
 	import { createContactCode, pairContact, pullContact, removeContact, renameContact } from '$lib/api/backend.js';
 	import { ago } from '$lib/app/syncText.js';
@@ -122,8 +122,7 @@
 </script>
 
 {#if contactsState.available}
-	<div class="mt-4 space-y-2" aria-label="People you share with">
-		<h4 class="text-sm font-medium text-gray-300">People you share with</h4>
+	<div class="space-y-2" aria-label="People">
 		<p class="text-xs text-gray-500">
 			Pair with someone else's computer to share chosen meetings with them. They can comment, tick action items and type in the notes you share; the rest stays yours.
 		</p>
