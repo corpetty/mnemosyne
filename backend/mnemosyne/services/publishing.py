@@ -1348,9 +1348,11 @@ def _log(
     )
 
 
-async def unpublish(app: AppContext, session_id: str, *, log: bool = True) -> dict | None:
+async def unpublish(
+    app: AppContext, session_id: str, *, log: bool = True, seal: bool = True
+) -> dict | None:
     """Delete the hosted copy and the local files; the row stays, marked unpublished. `log`
-    off: `replace` writes its own history line."""
+    off: `replace` writes its own history line. `seal` off: `replace` seals itself, in order."""
     session = app.repo.get(session_id)
     if session is None:
         return None
@@ -1380,9 +1382,10 @@ async def unpublish(app: AppContext, session_id: str, *, log: bool = True) -> di
             where="publish host" if row["place"] == "host" else "this computer",
             by=who.name if who else "",
         )
-    from .records import seal_later
+    if seal:
+        from .records import seal_later
 
-    seal_later(app, session_id, SEAL_UNPUBLISHED)
+        seal_later(app, session_id, SEAL_UNPUBLISHED)
     return row
 
 
@@ -1408,9 +1411,14 @@ async def replace(app: AppContext, session_id: str, job: JobContext, local_base:
     check_live(session, sel)
     job.update("Taking down the old link", 0.02)
     try:
-        await unpublish(app, session_id, log=False)
+        await unpublish(app, session_id, log=False, seal=False)
     except HTTPException as e:
         raise PublishError(str(e.detail)) from e
+    # Sealed here and waited for: in a background thread it could land after the new
+    # publication's seal, and the chain would read published, published, unpublished.
+    from .records import seal as seal_now
+
+    await asyncio.to_thread(seal_now, app, session_id, SEAL_UNPUBLISHED)
     try:
         result = await publish(app, session_id, sel, job, local_base, replaces=old["id"])
     except Exception:
