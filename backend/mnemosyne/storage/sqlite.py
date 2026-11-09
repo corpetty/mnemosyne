@@ -398,7 +398,10 @@ CREATE TABLE IF NOT EXISTS session_seals (
     content_hash TEXT NOT NULL,
     audio TEXT NOT NULL DEFAULT '{}',
     prev TEXT NOT NULL DEFAULT '',
-    chain TEXT NOT NULL
+    chain TEXT NOT NULL,
+    format INTEGER NOT NULL DEFAULT 1,
+    manifest TEXT,
+    audio_stat TEXT
 );
 CREATE INDEX IF NOT EXISTS session_seals_session ON session_seals(session_id);
 -- Flagged phrases (services/supervision.py): transcript lines with a review phrase, and
@@ -462,7 +465,9 @@ CREATE TABLE IF NOT EXISTS deletions (
     what TEXT NOT NULL,
     by TEXT NOT NULL DEFAULT '',
     role TEXT NOT NULL DEFAULT '',
-    reason TEXT NOT NULL DEFAULT ''
+    reason TEXT NOT NULL DEFAULT '',
+    chain_head TEXT NOT NULL DEFAULT '',
+    manifest_hash TEXT NOT NULL DEFAULT ''
 );
 -- Publications (services/publishing.py): a meeting's curated, encrypted copy, readable with a
 -- link that carries `key`. `token` authorizes updates on a publish host; `place` is "local" or
@@ -929,6 +934,22 @@ class SessionRepository:
         for col in ("approved_at", "hidden_at"):
             if col not in comment_cols:
                 self._conn.execute(f"ALTER TABLE comments ADD COLUMN {col} TEXT")
+        # Records v2 (docs/plans/2026-11-09-records-by-frontier.md 3.3, 3.6): a seal's format, its
+        # manifest and the local file stats; a deletion names the record it outlives.
+        seal_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(session_seals)")}
+        for col, decl in (
+            ("format", "INTEGER NOT NULL DEFAULT 1"),
+            ("manifest", "TEXT"),
+            ("audio_stat", "TEXT"),
+        ):
+            if col not in seal_cols:
+                self._conn.execute(f"ALTER TABLE session_seals ADD COLUMN {col} {decl}")
+        del_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(deletions)")}
+        for col in ("chain_head", "manifest_hash"):
+            if col not in del_cols:
+                self._conn.execute(
+                    f"ALTER TABLE deletions ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+                )
         self._conn.commit()
 
     def _migrate_fts_rowids(self) -> None:
@@ -2959,45 +2980,105 @@ class SessionRepository:
         return out
 
     def add_seal(
-        self, session_id: str, reason: str, content: str, audio: dict, *, force: bool = False
+        self,
+        session_id: str,
+        reason: str,
+        content: str = "",
+        audio: dict | None = None,
+        *,
+        force: bool = False,
+        manifest: dict | None = None,
+        audio_stat: dict | None = None,
     ) -> dict | None:
         """Chain a new seal to the meeting's last one; None when nothing changed since (unless
-        `force`: a seal that records an event, services/records.py EVENT_SEALS)."""
-        from .records import chain_hash
+        `force`: a seal that records an event, services/records.py EVENT_SEALS).
+
+        Without `manifest` this is a format 1 seal (`content` hash and `audio` hashes). With one
+        it is format 2: `content_hash` is the manifest's hash, `audio` stays empty, the chain
+        link is `chain_hash_v2`, and `audio_stat` (local file stats, not chained) is kept for
+        reusing digests. A v2 seal is skipped when the last row is v2 with the same manifest
+        hash; after a v1 row it is always written (that is the upgrade)."""
+        from .records import chain_hash, chain_hash_v2, manifest_hash
 
         at = datetime.now().isoformat()
         with self._lock, self._conn:
             last = self._conn.execute(
-                "SELECT content_hash, audio, chain FROM session_seals WHERE session_id=?"
+                "SELECT content_hash, audio, chain, format FROM session_seals WHERE session_id=?"
                 " ORDER BY id DESC",
                 (session_id,),
             ).fetchone()
+            prev = last["chain"] if last is not None else ""
+            if manifest is not None:
+                digest = manifest_hash(manifest)
+                if (
+                    not force
+                    and last is not None
+                    and last["format"] == 2
+                    and last["content_hash"] == digest
+                ):
+                    return None
+                chain = chain_hash_v2(prev, digest, at, reason)
+                self._conn.execute(
+                    "INSERT INTO session_seals (session_id, at, reason, content_hash, audio,"
+                    " prev, chain, format, manifest, audio_stat) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        session_id,
+                        at,
+                        reason,
+                        digest,
+                        "{}",
+                        prev,
+                        chain,
+                        2,
+                        json.dumps(manifest, sort_keys=True, separators=(",", ":")),
+                        json.dumps(audio_stat, sort_keys=True) if audio_stat is not None else None,
+                    ),
+                )
+                return {
+                    "at": at,
+                    "reason": reason,
+                    "content_hash": digest,
+                    "chain": chain,
+                    "format": 2,
+                }
+            audio = audio or {}
             if (
                 not force
                 and last is not None
+                and last["format"] == 1
                 and last["content_hash"] == content
                 and json.loads(last["audio"]) == audio
             ):
                 return None
-            prev = last["chain"] if last is not None else ""
             chain = chain_hash(prev, content, audio, at, reason)
             self._conn.execute(
                 "INSERT INTO session_seals (session_id, at, reason, content_hash, audio, prev,"
                 " chain) VALUES (?,?,?,?,?,?,?)",
                 (session_id, at, reason, content, json.dumps(audio, sort_keys=True), prev, chain),
             )
-        return {"at": at, "reason": reason, "content_hash": content, "chain": chain}
+        return {"at": at, "reason": reason, "content_hash": content, "chain": chain, "format": 1}
 
     def seals(self, session_id: str) -> list[dict]:
+        """The meeting's seals, oldest first: at, reason, content_hash, audio (v1 hashes; {} for
+        v2), prev, chain, format (1 or 2), manifest (parsed; None for v1), audio_stat (parsed;
+        None when not kept)."""
         if not self._readable(session_id):
             return []
         with self._lock:
             rows = self._conn.execute(
-                "SELECT at, reason, content_hash, audio, prev, chain FROM session_seals"
-                " WHERE session_id=? ORDER BY id",
+                "SELECT at, reason, content_hash, audio, prev, chain, format, manifest,"
+                " audio_stat FROM session_seals WHERE session_id=? ORDER BY id",
                 (session_id,),
             ).fetchall()
-        return [{**dict(r), "audio": json.loads(r["audio"])} for r in rows]
+        return [
+            {
+                **dict(r),
+                "audio": json.loads(r["audio"]),
+                "manifest": json.loads(r["manifest"]) if r["manifest"] else None,
+                "audio_stat": json.loads(r["audio_stat"]) if r["audio_stat"] else None,
+            }
+            for r in rows
+        ]
 
     def protected_ids(self, since: str) -> set[str]:
         """Meetings on legal hold, and (with `since`, an ISO date) created since then."""
@@ -3015,10 +3096,17 @@ class SessionRepository:
             )
 
     def log_deletion(self, session: Session, what: str, by: str, role: str, reason: str) -> None:
+        """Log a deletion, naming the meeting's last seal (`chain_head`, and `manifest_hash` when
+        that seal is format 2) so the record stays named after its seals cascade away."""
         with self._lock, self._conn:
+            head = self._conn.execute(
+                "SELECT chain, content_hash, format FROM session_seals WHERE session_id=?"
+                " ORDER BY id DESC",
+                (session.id,),
+            ).fetchone()
             self._conn.execute(
-                "INSERT INTO deletions (at, session_id, name, created_at, what, by, role, reason)"
-                " VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO deletions (at, session_id, name, created_at, what, by, role, reason,"
+                " chain_head, manifest_hash) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     datetime.now().isoformat(),
                     session.id,
@@ -3028,6 +3116,8 @@ class SessionRepository:
                     by,
                     role,
                     reason,
+                    head["chain"] if head is not None else "",
+                    head["content_hash"] if head is not None and head["format"] == 2 else "",
                 ),
             )
 
@@ -3035,7 +3125,8 @@ class SessionRepository:
         """Deleted meetings and audio (at within [start, end), ISO dates; blank = open)."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT at, session_id, name, created_at, what, by, role, reason FROM deletions"
+                "SELECT at, session_id, name, created_at, what, by, role, reason, chain_head,"
+                " manifest_hash FROM deletions"
                 " WHERE (?='' OR at>=?) AND (?='' OR at<?) ORDER BY at",
                 (start, start, end, end),
             ).fetchall()
@@ -4642,6 +4733,25 @@ class SessionRepository:
         rows = rows[:limit]
         changes = [(r["id"], r["sync_seq"], json.loads(r["sync_vv"] or "{}")) for r in rows]
         return changes, (changes[-1][1] if changes else seq), more
+
+    def sync_seq_of(self, session_id: str) -> int | None:
+        """The meeting's position in the change log (its `rev`); None without such a meeting."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT sync_seq FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        return None if row is None else int(row["sync_seq"])
+
+    def seal_candidates(self, after_seq: int, limit: int = 200) -> list[tuple[str, int]]:
+        """Meetings changed after `after_seq`, oldest change first, as [(id, sync_seq)]: what the
+        record sealer looks at. Same rule as `changes_since`: not other people's shared meetings."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, sync_seq FROM sessions WHERE sync_seq > ? AND shared_from = ''"
+                " ORDER BY sync_seq LIMIT ?",
+                (after_seq, limit),
+            ).fetchall()
+        return [(r["id"], r["sync_seq"]) for r in rows]
 
     def current_sync_seq(self) -> int:
         """The newest change number handed out (0 for none)."""
