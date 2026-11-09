@@ -1,0 +1,17 @@
+{
+  "bundle": {
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "externalBin": [
+      "binaries/mnemosyne-uv",
+      "binaries/mnemosyne-link",
+      "binaries/ffmpeg",
+      "binaries/ffprobe"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "15.4"
+    }
+  }
+}

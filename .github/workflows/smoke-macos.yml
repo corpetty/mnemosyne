@@ -1,0 +1,59 @@
+name: Smoke test (macOS)
+
+# Builds the unsigned Mnemosyne.app on Apple silicon and runs scripts/smoke-macos.sh against it:
+# first launch (uv installs the backend), Ogg playback in WKWebView (needs macOS 15.4+), and a
+# CPU transcription of the sample meeting. The .app is kept as an artifact for testers.
+on:
+  pull_request:
+    paths:
+      - "src-tauri/**"
+      - "scripts/**"
+      - "backend/pyproject.toml"
+      - "backend/uv.lock"
+      - "backend/mnemosyne/**"
+      - "src/**"
+      - ".github/workflows/smoke-macos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: Build and smoke test Mnemosyne.app
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            link
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # beforeBuildCommand (scripts/build-all.sh) builds the web app, stages the backend, fetches
+      # uv and ffmpeg and builds the link sidecar. No signing identity: the app is unsigned.
+      - name: Build the app
+        run: pnpm tauri build --bundles app
+      - name: Zip the app
+        run: |
+          app="$(ls -d src-tauri/target/release/bundle/macos/*.app)"
+          ls -la "$app/Contents/MacOS"
+          ditto -c -k --keepParent "$app" Mnemosyne-macos.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mnemosyne-macos-app
+          path: Mnemosyne-macos.zip
+          retention-days: 7
+      - name: First launch, playback, transcription
+        run: bash scripts/smoke-macos.sh "$(ls -d src-tauri/target/release/bundle/macos/*.app)"

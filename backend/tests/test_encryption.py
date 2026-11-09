@@ -28,6 +28,35 @@ from tests.test_notes_media import sha, webp
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 KEY = bytes(range(32))
 
+
+def test_database_made_by_the_linux_wheel_opens_with_the_configured_key(tmp_path):
+    """tests/vectors/sqlcipher_v0_6_0.db is a SQLCipher database made with sqlcipher3-binary 0.6.0
+    (the Linux wheel) and KEY, the way storage.sqlite._connect keys one:
+
+        c = sqlcipher3.connect(path)
+        c.execute("PRAGMA key = \"x'<KEY hex>'\"")
+        c.execute("CREATE TABLE note (id INTEGER PRIMARY KEY, body TEXT NOT NULL)")
+        c.execute("INSERT INTO note (id, body) VALUES (1, 'Mnemosyne remembers')")
+
+    Whatever wheel provides `sqlcipher3` (macOS builds its own) must still read it, or a user's
+    encrypted library would be locked out after a switch."""
+    from mnemosyne.storage.sqlite import _connect
+
+    db = tmp_path / "copy.db"
+    shutil.copy(Path(__file__).parent / "vectors" / "sqlcipher_v0_6_0.db", db)
+    conn = _connect(db, KEY)
+    try:
+        assert conn.execute("SELECT body FROM note WHERE id = 1").fetchone()["body"] == (
+            "Mnemosyne remembers"
+        )
+    finally:
+        conn.close()
+    import sqlcipher3
+
+    with pytest.raises(sqlcipher3.DatabaseError):  # a wrong key does not open it
+        _connect(db, bytes(32)).close()
+
+
 # ---- the file format -------------------------------------------------------------
 
 

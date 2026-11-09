@@ -21,10 +21,14 @@ dependencies = [
     "model2vec>=0.9",
     # Encryption at rest (opt-in): AES-GCM files, SQLCipher database, key in the keyring.
     "cryptography>=43",
-    "sqlcipher3-binary>=0.5.4",
+    # Both wheels provide the module `sqlcipher3`; the Linux one is the one we have always shipped.
+    "sqlcipher3-binary>=0.5.4; sys_platform == 'linux'",
+    "sqlcipher3>=0.6.5; sys_platform == 'darwin'",
     "keyring>=25",
     # Reading the desktop's calendars (GNOME Online Accounts) over D-Bus.
     "jeepney>=0.8",
+    # Process checks (app watch, recovery, scratch cleanup) that work on Linux and macOS alike.
+    "psutil>=7.0",
 ]
 
 [project.optional-dependencies]

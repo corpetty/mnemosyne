@@ -5,6 +5,7 @@ import ctypes
 import importlib.util
 import platform
 import shutil
+import sys
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -21,11 +22,30 @@ router = APIRouter(prefix="/api", tags=["system"])
 ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
 
 
+MAC_CAPTURE_PROBLEM = (
+    "Recording on a Mac comes in a later version. "
+    "You can already import recordings and transcribe them."
+)
+
+
+def _capture() -> tuple[bool, str | None]:
+    """Whether this computer can record, and if not, why."""
+    if sys.platform == "darwin":
+        return False, MAC_CAPTURE_PROBLEM
+    if shutil.which("pw-record") and shutil.which("pw-dump"):
+        return True, None
+    return (
+        False,
+        "The PipeWire tools (pw-record and pw-dump) are missing, and recording needs them.",
+    )
+
+
 class SystemInfo(ApiModel):
     gpu_driver: bool  # an NVIDIA driver: nvidia-smi on PATH, or libcuda loadable
     gpu_stack: bool  # torch and WhisperX are installed (the gpu extra)
     parakeet: bool  # onnx-asr is installed (the onnx extra)
-    pipewire: bool  # pw-record and pw-dump are available
+    capture: bool  # this computer can record (Linux: pw-record and pw-dump are available)
+    capture_problem: str | None  # why not, in words for the person; None when it can
     ffmpeg: bool
     hf_token: bool  # needed for speaker identification (pyannote)
     onnx_diarizer: bool  # sherpa-onnx is installed: speakers told apart on the CPU
@@ -79,6 +99,7 @@ async def system_info(ctx: AppContext = Depends(get_ctx)):
     transcriber = await asyncio.to_thread(resolve_transcriber, ctx.settings)
     live = await asyncio.to_thread(resolve_live_transcriber, ctx.settings)
     diarizer = await asyncio.to_thread(resolve_diarizer, ctx.settings)
+    capture, capture_problem = _capture()
     return SystemInfo(
         onnx_diarizer=_has("sherpa_onnx"),
         transcriber_in_use=transcriber,
@@ -87,7 +108,8 @@ async def system_info(ctx: AppContext = Depends(get_ctx)):
         gpu_driver=_gpu_driver(),
         gpu_stack=_has("torch") and _has("whisperx"),
         parakeet=_has("onnx_asr"),
-        pipewire=bool(shutil.which("pw-record") and shutil.which("pw-dump")),
+        capture=capture,
+        capture_problem=capture_problem,
         ffmpeg=bool(shutil.which("ffmpeg")),
         hf_token=bool(ctx.settings.hf_token),
         platform=f"{platform.system()} {platform.release()}",

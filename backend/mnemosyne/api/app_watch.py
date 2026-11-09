@@ -27,8 +27,9 @@ import os
 import signal
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING
+
+import psutil
 
 if TYPE_CHECKING:
     from .context import AppContext
@@ -47,26 +48,27 @@ ORPHAN_GRACE = 15 * 60.0  # seconds a recording goes on without the app
 RECORDING_JOBS = ("live", "copilot")
 
 
-def start_time(pid: int) -> int | None:
-    """When a process started (clock ticks since boot), to tell it from a later process that
+def start_time(pid: int) -> float | None:
+    """When a process started (seconds since the epoch), to tell it from a later process that
     reuses its pid. None when there is no such process."""
     try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-    except OSError:
+        return psutil.Process(pid).create_time()
+    except (psutil.Error, OSError):
         return None
-    # The command name (field 2) may contain spaces and parentheses; the rest follows the last ")".
-    fields = stat.rsplit(")", 1)[1].split()
-    try:
-        return int(fields[19])  # field 22 of the whole line
-    except (IndexError, ValueError):
-        return None
+
+
+def same_start(a: float | None, b: float | None) -> bool:
+    """Whether two start_time() readings are of the same process. The reading is the boot time
+    plus the start in clock ticks, and the boot time moves by a second when the clock is
+    adjusted, so equal means within a second (a reused pid starts later than that)."""
+    return a is not None and b is not None and abs(a - b) < 1.5
 
 
 def _ours(pid: int) -> bool:
     """Whether the process runs as the user this backend runs as."""
     try:
-        return Path(f"/proc/{pid}").stat().st_uid == os.getuid()
-    except OSError:
+        return psutil.Process(pid).uids().effective == os.getuid()
+    except (psutil.Error, OSError):
         return False
 
 
@@ -149,7 +151,7 @@ class AppWatch:
         return True
 
     def app_alive(self) -> bool:
-        return self._started is not None and start_time(self.pid) == self._started
+        return same_start(start_time(self.pid), self._started)
 
     async def run(self) -> None:
         while not self.done:

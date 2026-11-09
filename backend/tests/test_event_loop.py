@@ -13,6 +13,7 @@ from mnemosyne.audio import capture
 from mnemosyne.storage import crypto
 
 
+@pytest.mark.linux_only("pw-dump/pw-cli timeouts; no PipeWire on a Mac")
 def test_pipewire_not_answering_is_a_clear_error(monkeypatch):
     def hang(*args, **kwargs):
         raise subprocess.TimeoutExpired(args[0], 5)

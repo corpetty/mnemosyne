@@ -377,6 +377,10 @@ struct ReleaseLayout {
     web_dir: Option<PathBuf>,
     /// The remote-access sidecar (services/link.py).
     link: PathBuf,
+    /// macOS only: the backend's config file under Application Support (MNEMOSYNE_CONFIG_FILE).
+    config_file: Option<PathBuf>,
+    /// macOS only: the directory holding the sidecars (Contents/MacOS), put on the backend's PATH.
+    tool_dir: Option<PathBuf>,
 }
 
 /// An AppImage's files vanish when it exits (its mount goes away), but the backend may outlive
@@ -451,7 +455,9 @@ impl ReleaseLayout {
             .map_err(|e| format!("app local data dir: {e}"))?;
         let bundled_link = uv.with_file_name("mnemosyne-link");
         // The files the backend runs from: the AppImage's own vanish when it exits.
-        let files = if std::env::var_os("APPIMAGE").is_some() {
+        // A macOS bundle may be translocated (read-only) and an update replaces it under a
+        // backend that outlives the app, so it runs from a copy too.
+        let files = if cfg!(target_os = "macos") || std::env::var_os("APPIMAGE").is_some() {
             let version = app.package_info().version.to_string();
             runtime_copy(&resource_dir, &bundled_link, &local, &version)?
         } else {
@@ -469,7 +475,28 @@ impl ReleaseLayout {
         let offline = Some(resource_dir.join("offline")).filter(|d| d.join("uv-cache").is_dir());
         let python_dir = local.join("python");
         let web_dir = Some(files.join("web")).filter(|d| d.join("index.html").is_file());
-        Ok(Self { backend_dir, uv, venv, data_dir, python_dir, offline, web_dir, link })
+        let (config_file, tool_dir) = if cfg!(target_os = "macos") {
+            let config = app
+                .path()
+                .app_config_dir()
+                .map_err(|e| format!("app config dir: {e}"))?;
+            fs::create_dir_all(&config).map_err(|e| format!("create {:?}: {e}", config))?;
+            (Some(config.join("config.toml")), uv.parent().map(Path::to_path_buf))
+        } else {
+            (None, None)
+        };
+        Ok(Self {
+            backend_dir,
+            uv,
+            venv,
+            data_dir,
+            python_dir,
+            offline,
+            web_dir,
+            link,
+            config_file,
+            tool_dir,
+        })
     }
 
     fn python(&self) -> PathBuf {
@@ -738,6 +765,20 @@ fn release_command(layout: &ReleaseLayout) -> StdCommand {
         .env("PYTHONUNBUFFERED", "1");
     if let Some(web) = &layout.web_dir {
         cmd.env("WEB_DIR", web);
+    }
+    if let Some(config) = &layout.config_file {
+        cmd.env("MNEMOSYNE_CONFIG_FILE", config);
+    }
+    // Finder starts apps with PATH=/usr/bin:/bin:/usr/sbin:/sbin; ffmpeg, ffprobe (and the
+    // capture helper) are sidecars next to the executable, without the target triple.
+    if let Some(dir) = &layout.tool_dir {
+        let mut paths = vec![dir.clone()];
+        if let Some(old) = std::env::var_os("PATH") {
+            paths.extend(std::env::split_paths(&old));
+        }
+        if let Ok(joined) = std::env::join_paths(paths) {
+            cmd.env("PATH", joined);
+        }
     }
     cmd
 }
@@ -1051,6 +1092,7 @@ fn lib_loadable(name: &str) -> bool {
 }
 
 /// Whether the library the Linux tray loads at runtime can be found.
+#[cfg(target_os = "linux")]
 fn appindicator_available() -> bool {
     ["libayatana-appindicator3.so.1", "libappindicator3.so.1"]
         .iter()
@@ -1069,19 +1111,16 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let mark = MenuItem::with_id(app, "mark", "Mark this moment", false, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Mnemosyne", true, None::<&str>)?;
     // The window stopped repainting (frames.rs): a new X window, without a restart.
+    #[cfg(target_os = "linux")]
     let redraw = MenuItem::with_id(app, "redraw", "Redraw window", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(
-        app,
-        &[
-            &toggle,
-            &mark,
-            &show,
-            &redraw,
-            &PredefinedMenuItem::separator(app)?,
-            &quit,
-        ],
-    )?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = vec![&toggle, &mark, &show];
+    #[cfg(target_os = "linux")]
+    items.push(&redraw);
+    items.push(&separator);
+    items.push(&quit);
+    let menu = Menu::with_items(app, &items)?;
     let mut builder = TrayIconBuilder::with_id("main")
         .tooltip("Mnemosyne")
         .menu(&menu)
@@ -1211,7 +1250,12 @@ pub fn run() {
             // not stop the app. Without the appindicator library the tray crate panics,
             // so check for it first.
             app.manage(ShellPrefsState::load(app.handle()));
-            if !appindicator_available() {
+            // macOS has a menu bar item always; only Linux loads a library for it.
+            #[cfg(target_os = "linux")]
+            let tray_ok = appindicator_available();
+            #[cfg(not(target_os = "linux"))]
+            let tray_ok = true;
+            if !tray_ok {
                 warn!("System tray unavailable: no libayatana-appindicator3 or libappindicator3");
             } else if let Err(e) = build_tray(app.handle()) {
                 warn!("System tray unavailable: {e}");

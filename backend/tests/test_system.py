@@ -1,6 +1,9 @@
 """The machine probe used by the setup wizard."""
 
+import pytest
 
+
+@pytest.mark.linux_only("capture is the mnemosyne-capture sidecar on a Mac")
 def test_system_info(client, ctx, monkeypatch):
     from mnemosyne.api.routes import system
 
@@ -15,10 +18,33 @@ def test_system_info(client, ctx, monkeypatch):
     monkeypatch.setattr(system.ctypes, "CDLL", no_cuda)
     info = client.get("/api/system").json()
     assert info["gpu_driver"] is False and info["gpu_stack"] is False
-    assert info["parakeet"] is True and info["pipewire"] is True and info["ffmpeg"] is True
+    assert (
+        info["parakeet"] is True
+        and info["capture"] is True
+        and info["capture_problem"] is None
+        and info["ffmpeg"] is True
+    )
     assert info["hf_token"] is False
     ctx.settings.hf_token = "hf_x"
     assert client.get("/api/system").json()["hf_token"] is True
+
+
+def test_capture_by_platform(client, monkeypatch):
+    from mnemosyne.api.routes import system
+
+    monkeypatch.setattr(system.sys, "platform", "darwin")
+    monkeypatch.setattr(system.shutil, "which", lambda b: "/usr/bin/" + b)
+    info = client.get("/api/system").json()
+    assert info["capture"] is False
+    assert "Mac" in info["capture_problem"]
+
+    monkeypatch.setattr(system.sys, "platform", "linux")
+    monkeypatch.setattr(system.shutil, "which", lambda b: None)
+    info = client.get("/api/system").json()
+    assert info["capture"] is False and "pw-record" in info["capture_problem"]
+    monkeypatch.setattr(system.shutil, "which", lambda b: "/usr/bin/" + b)
+    info = client.get("/api/system").json()
+    assert info["capture"] is True and info["capture_problem"] is None
 
 
 def test_summary_merge_follows_the_sidecar(client, tmp_path, monkeypatch):

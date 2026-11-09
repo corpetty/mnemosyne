@@ -11,6 +11,7 @@ import dataclasses
 import json
 import struct
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -142,6 +143,8 @@ class RecordingSession:
 
 def list_devices() -> list[AudioDevice]:
     """List available PipeWire audio devices using pw-dump."""
+    if sys.platform == "darwin":
+        return []  # no PipeWire on a Mac; recording there comes later (plan P1)
     try:
         result = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired as e:

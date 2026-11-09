@@ -24,6 +24,7 @@ import shutil
 import socket
 import ssl
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -45,6 +46,19 @@ def lan_addresses() -> list[str]:
             found.append(s.getsockname()[0])
     except OSError:
         pass
+    if sys.platform == "darwin":
+        # getaddrinfo(gethostname()) goes to mDNS on a Mac and can stall for minutes when the
+        # name does not resolve (a CI runner, a renamed Mac): ask the interfaces instead.
+        import psutil
+
+        try:
+            for addrs in psutil.net_if_addrs().values():
+                for a in addrs:
+                    if a.family == socket.AF_INET and a.address not in found:
+                        found.append(a.address)
+        except OSError:
+            pass
+        return [ip for ip in found if not ipaddress.ip_address(ip).is_loopback]
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ip = info[4][0]
@@ -85,7 +99,7 @@ def ensure_certificate(folder: Path, hosts: list[str]) -> tuple[Path, Path]:
         except ValueError:
             sans.append(x509.DNSName(h))
     now = dt.datetime.now(dt.UTC)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"Mnemosyne on {hosts[0]}")])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"Mnemosyne on {hosts[0]}"[:64])])
     cert = (
         x509.CertificateBuilder()
         .subject_name(name)

@@ -282,6 +282,47 @@ jobs:
           touch "src-tauri/binaries/mnemosyne-link-$(rustc -vV | sed -n 's/^host: //p')"
       - run: cargo check --manifest-path src-tauri/Cargo.toml
 
+  macos:
+    name: "macOS: backend tests and shell check"
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      # Tests only need ffmpeg on PATH; the app bundles its own pinned build.
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Sync (no GPU or ONNX extras; ML is faked in tests)
+        working-directory: backend
+        run: uv sync --frozen --group dev
+      # Tests that name PipeWire, /proc, systemd or libc carry the linux_only marker (conftest).
+      - name: Test
+        working-directory: backend
+        run: uv run --frozen pytest -q -rfE -o faulthandler_timeout=60
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            link
+      - name: Stage bundle inputs (tauri-build verifies sidecar and resource paths)
+        run: |
+          bash scripts/stage-backend.sh
+          bash scripts/fetch-uv.sh
+          mkdir -p src-tauri/resources/web
+          triple="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$triple" = aarch64-apple-darwin
+          for name in mnemosyne-link ffmpeg ffprobe; do
+            touch "src-tauri/binaries/$name-$triple"
+          done
+      - run: cargo check --manifest-path src-tauri/Cargo.toml
+      # mDNS discovery needs multicast, which the hosted macOS VMs do not pass: that one test
+      # is skipped here (it runs on Linux). --no-fail-fast shows every other result.
+      - run: cargo test --no-fail-fast --manifest-path link/Cargo.toml -- --skip found_on_the_local_network
+
   link:
     name: Remote-access link (iroh tunnel)
     runs-on: ubuntu-24.04

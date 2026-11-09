@@ -1,6 +1,7 @@
 """DeepFilterNet behind the echo canceller (audio/noise_suppression.py), with a fake pw-cli."""
 
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -82,6 +83,7 @@ def fake_pwcli(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
+@pytest.mark.linux_only("PipeWire filter-chain (pw-cli); Mac words tested separately")
 async def test_manager_runs_and_restarts_with_noise_suppression(fake_pwcli):
     script, log, _ = fake_pwcli
     m = EchoCancelManager(pw_cli=str(script))
@@ -104,6 +106,7 @@ async def test_manager_runs_and_restarts_with_noise_suppression(fake_pwcli):
 
 
 @pytest.mark.anyio
+@pytest.mark.linux_only("PipeWire filter-chain (pw-cli); Mac words tested separately")
 async def test_manager_falls_back_to_plain_echo_cancellation(fake_pwcli):
     script, log, state = fake_pwcli
     state["chain_fails"] = True
@@ -135,6 +138,7 @@ def _fake_download(ctx, monkeypatch):
     return calls
 
 
+@pytest.mark.linux_only("PipeWire filter-chain (pw-cli); Mac words tested separately")
 def test_api_turns_noise_suppression_on_and_off(client, ctx, fake_pwcli, monkeypatch):
     script, log, _ = fake_pwcli
     ctx.echo = EchoCancelManager(pw_cli=str(script))
@@ -162,6 +166,7 @@ def test_api_turns_noise_suppression_on_and_off(client, ctx, fake_pwcli, monkeyp
     assert client.post("/api/audio/echo-cancel", json=bad).status_code == 422
 
 
+@pytest.mark.linux_only("PipeWire filter-chain (pw-cli); Mac words tested separately")
 def test_api_refuses_where_it_cannot_run(client, ctx, fake_pwcli, monkeypatch):
     script, _, _ = fake_pwcli
     ctx.echo = EchoCancelManager(pw_cli=str(script))
@@ -172,6 +177,7 @@ def test_api_refuses_where_it_cannot_run(client, ctx, fake_pwcli, monkeypatch):
     assert calls == [] and not ctx.settings.noise_suppression
 
 
+@pytest.mark.linux_only("PipeWire filter-chain (pw-cli); Mac words tested separately")
 def test_api_change_while_recording_waits(client, ctx, fake_pwcli, fake_pipewire, monkeypatch):
     script, log, _ = fake_pwcli
     ctx.echo = EchoCancelManager(pw_cli=str(script))
@@ -195,6 +201,7 @@ def test_api_change_while_recording_waits(client, ctx, fake_pwcli, fake_pipewire
 
 
 @pytest.mark.anyio
+@pytest.mark.linux_only("PipeWire filter-chain (pw-cli); Mac words tested separately")
 async def test_a_crashed_noise_suppressor_leaves_the_canceller_running(fake_pwcli):
     import asyncio
 
@@ -220,6 +227,7 @@ async def test_a_crashed_noise_suppressor_leaves_the_canceller_running(fake_pwcl
     assert not m.active  # a deliberate stop is not "crashed"
 
 
+@pytest.mark.linux_only("PipeWire filter-chain (pw-cli); Mac words tested separately")
 def test_recordings_take_the_mic_from_before_deepfilternet(client, ctx, fake_pwcli, monkeypatch):
     script, _, _ = fake_pwcli
     ctx.echo = EchoCancelManager(pw_cli=str(script))
@@ -267,3 +275,8 @@ async def test_start_recording_records_the_target_in_place_of_the_device(tmp_pat
     assert [p.device_id for p in rec.processes] == [146, 2]
     assert commands[0][commands[0].index("--target") + 1] == "mnemosyne_aec_raw"
     assert commands[1][commands[1].index("--target") + 1] == "alsa_input.mic"
+
+
+def test_noise_suppression_unsupported_in_mac_words_on_a_mac(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert ns.supported() == (False, "Not available on a Mac yet")

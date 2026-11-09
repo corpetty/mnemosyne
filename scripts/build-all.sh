@@ -18,5 +18,10 @@ bash "$SCRIPT_DIR/stage-backend.sh"
 echo "--- uv sidecar ---"
 bash "$SCRIPT_DIR/fetch-uv.sh"
 
+if [ "$(uname -s)" = "Darwin" ]; then
+  echo "--- ffmpeg and ffprobe sidecars ---"
+  bash "$SCRIPT_DIR/fetch-ffmpeg.sh"
+fi
+
 echo "--- remote-access sidecar ---"
 bash "$SCRIPT_DIR/build-link.sh"

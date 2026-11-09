@@ -22,6 +22,7 @@ import logging
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -120,6 +121,8 @@ class EchoCancelManager:
     # ---- capability ----------------------------------------------------
 
     def supported(self) -> tuple[bool, str | None]:
+        if sys.platform == "darwin":
+            return False, "Not available on a Mac yet"
         if shutil.which(self.pw_cli) is None:
             return False, "pw-cli not found (PipeWire tools not installed)"
         if not any(Path(p).is_file() for p in MODULE_PATHS):
