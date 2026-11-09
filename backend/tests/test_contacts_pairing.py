@@ -29,6 +29,10 @@ def ticket(endpoint_id: str) -> str:
     return "endpoint" + base64.b32encode(raw).decode().lower().rstrip("=")
 
 
+async def _stand_in_tunnel(_app) -> int:
+    return 18009
+
+
 class Node:
     """One person's computer: an app with remote access 'running' on a stand-in sidecar."""
 
@@ -49,6 +53,7 @@ class Node:
         self.ctx.link.status.running = True
         self.ctx.link.status.endpoint_id = self.endpoint
         self.ctx.link.status.ticket = ticket(self.endpoint)
+        self.ctx.tunnel.ensure = _stand_in_tunnel  # no real tunnel listener for a stand-in
         self.ops: list[tuple[str, dict]] = []
         self.unreachable: set[str] = set()  # endpoints dial refuses
         self.tamper_out = None  # (card_args) -> None: change what leaves with `pair`

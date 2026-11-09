@@ -62,9 +62,9 @@ pub async fn start_loopback_host(opts: HostOptions) -> Result<(SocketAddr, Share
     Ok((addr, app))
 }
 
-/// A minimal HTTP/1.1 request to `addr` from 127.0.0.1 (this machine's own call, unlike
-/// [`crate::connect_backend`], which comes from the tunnel source address). Returns the
-/// status and the body.
+/// A minimal HTTP/1.1 request to `addr` on this machine (here the loopback host's own; tunnelled
+/// peers reach the backend through [`crate::connect_backend`] instead). Returns the status and
+/// the body.
 pub async fn request(
     addr: SocketAddr,
     method: &str,

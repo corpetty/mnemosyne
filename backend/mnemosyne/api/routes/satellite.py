@@ -26,11 +26,10 @@ router = APIRouter(
 
 
 def _this_computer(request: Request, ctx: AppContext = Depends(get_ctx)) -> None:
-    from ..auth import TUNNEL_CLIENTS
+    from ..auth import is_tunnelled
 
     server = request.scope.get("server") or ("", 0)
-    client = request.scope.get("client") or ("", 0)
-    if client[0] in TUNNEL_CLIENTS or server[1] == ctx.settings.team_port:
+    if is_tunnelled(request.scope) or server[1] == ctx.settings.team_port:
         raise HTTPException(status_code=403, detail="Only on this computer")
 
 

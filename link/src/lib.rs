@@ -1,8 +1,9 @@
 //! Remote access to a Mnemosyne backend over iroh.
 //!
 //! The home side ([`serve_home`]) accepts iroh connections and turns each bidirectional stream
-//! from a paired device into a TCP connection to the backend on the same machine, so the
-//! backend and its token auth see ordinary local HTTP. A device that is not paired yet may only
+//! from a paired device into a TCP connection to the backend on the same machine, to its tunnel
+//! listener: a loopback port of its own where every request needs a token and is never taken
+//! for this machine's own (the desktop window's). A device that is not paired yet may only
 //! open a pairing stream: it redeems a one-time code with the backend (`POST
 //! /api/pairing/redeem`), which binds the device's endpoint id to a new paired device. The
 //! client side ([`Remote`], [`serve_local`]) listens on a local port and carries each TCP
@@ -39,7 +40,7 @@ use iroh::{
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncWrite, AsyncWriteExt},
-    net::{TcpListener, TcpSocket, TcpStream},
+    net::{TcpListener, TcpStream},
     sync::{mpsc, Mutex},
     task::JoinHandle,
 };
@@ -51,42 +52,15 @@ pub const ALPN: &[u8] = b"mnemosyne/link/1";
 pub const TUNNEL: u8 = b'T';
 /// A stream carrying one pairing request: JSON `{code, name, peer?, card?}` in, [`PairReply`] out.
 pub const PAIR: u8 = b'P';
-/// How often an open connection re-checks that its device is still paired.
-/// The source address of every connection made to the backend for a remote peer. The backend
-/// tells these from the desktop app's own requests (127.0.0.1) by it. If it cannot be bound (not
-/// Linux, or the loopback /8 is not routed) the connection comes from 127.0.0.1 and the backend
-/// cannot tell the two apart: a warning is logged once.
-pub const TUNNEL_SOURCE: &str = "127.0.0.2";
 
-/// Connect to the backend on behalf of a remote peer, from `TUNNEL_SOURCE`.
+/// Connect to the backend on behalf of a remote peer: to its tunnel listener ([`Home::backend`]),
+/// a loopback port of its own on which every request counts as tunnelled, never as this
+/// machine's own. There is no fallback: if it cannot be reached, the stream fails.
 async fn connect_backend(backend: SocketAddr) -> std::io::Result<TcpStream> {
-    static WARNED: std::sync::Once = std::sync::Once::new();
-    if backend.is_ipv4() {
-        let attempt = async {
-            let socket = TcpSocket::new_v4()?;
-            socket.bind(SocketAddr::new(TUNNEL_SOURCE.parse().unwrap(), 0))?;
-            socket.connect(backend).await
-        };
-        match attempt.await {
-            Ok(tcp) => return Ok(tcp),
-            Err(e)
-                if e.kind() == std::io::ErrorKind::AddrNotAvailable
-                    || e.kind() == std::io::ErrorKind::PermissionDenied
-                    || e.kind() == std::io::ErrorKind::InvalidInput =>
-            {
-                WARNED.call_once(|| {
-                    tracing::warn!(
-                        "cannot connect from {TUNNEL_SOURCE} ({e}); tunnelled requests will \
-                         look like this machine's own to the backend"
-                    )
-                });
-            }
-            Err(e) => return Err(e),
-        }
-    }
     TcpStream::connect(backend).await
 }
 
+/// How often an open connection re-checks that its device is still paired.
 const RECHECK: Duration = Duration::from_secs(5);
 
 /// Load the endpoint's secret key from `path` (hex), creating it (mode 0600) if missing.
@@ -293,7 +267,8 @@ pub struct PairReply {
 /// Where the home side forwards to, and where it learns which devices are paired.
 #[derive(Debug, Clone)]
 pub struct Home {
-    /// The backend's HTTP address (normally 127.0.0.1:8008).
+    /// The backend's tunnel listener (127.0.0.1:<port>, backend/mnemosyne/services/
+    /// tunnel_listener.py), never its main port: everything arriving there is a remote peer's.
     pub backend: SocketAddr,
     /// The backend's `paired_devices.json` (services/pairing.py).
     pub devices_file: PathBuf,

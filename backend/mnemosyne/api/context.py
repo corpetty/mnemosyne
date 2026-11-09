@@ -33,6 +33,7 @@ from ..services.storage_service import StorageService
 from ..services.summarization_service import SummarizationService
 from ..services.sync_peers import SyncPeerStore, dial_all
 from ..services.team_host import TeamHost
+from ..services.tunnel_listener import TunnelListener
 from ..services.users import UserService
 from ..storage.sqlite import SessionRepository, import_json_sessions
 
@@ -97,6 +98,8 @@ class AppContext:
     # A team server's per-person calendars (calendar_for), by ICS link.
     person_calendars: dict = field(default_factory=dict)
     team_host: TeamHost = field(default_factory=lambda: TeamHost())
+    # Where the link sidecar brings tunnelled connections in (services/tunnel_listener.py).
+    tunnel: TunnelListener = field(default_factory=lambda: TunnelListener())
     awake: KeepAwake = field(default_factory=lambda: KeepAwake())  # services/awake.py
     app: Any = None  # the FastAPI app, for the team listener (set by api/app.py)
     recovered: list = field(default_factory=list)  # RecoveredRecording, since this start
@@ -319,7 +322,7 @@ class AppContext:
             index=VectorIndex(repo, settings),
             pairing=PairingService(settings.data_dir / "paired_devices.json"),
             users=UserService(settings.data_dir / "users.json"),
-            link=LinkService(settings.data_dir, int(os.environ.get("MNEMOSYNE_BIND_PORT", "8008"))),
+            link=LinkService(settings.data_dir, 0),  # the port: the tunnel listener's, at start
             rooms_link=_rooms_link(settings),
             sync_peers=SyncPeerStore(settings.data_dir / "sync_peers.json"),
             jobs=JobManager(
@@ -428,11 +431,25 @@ class AppContext:
         return self.jobs.submit("supervision_scan", run)
 
     async def apply_remote_access(self) -> None:
+        """Run the link sidecar while remote access is on. It forwards tunnelled connections to
+        the tunnel listener, never to the main port: without the listener it is not started
+        (fail closed, the reason in its status)."""
+        from ..services.link import LinkStatus
+
         relays = ours.relays(self.settings)
-        if self.link.active and (not self.settings.remote_access or relays != self.link.relays):
+        moved = self.link.active and self.link.port != self.tunnel.port  # the listener restarted
+        if self.link.active and (
+            not self.settings.remote_access or relays != self.link.relays or moved
+        ):
             await self.link.stop()
         self.link.relays = relays
         if self.settings.remote_access and not self.link.active:
+            try:
+                self.link.port = await self.tunnel.ensure(self.app)
+            except RuntimeError as e:
+                logger.warning("Remote access not started: %s", e)
+                self.link.status = LinkStatus(error=f"remote access could not start: {e}")
+                return
             self.link.start()
 
     async def ensure_rooms(self) -> RoomsLink:
@@ -824,6 +841,7 @@ class AppContext:
         if self.live_bridges is not None:  # the rooms stay on their hosts
             await self.live_bridges.shutdown()
         await self.link.stop()
+        await self.tunnel.stop()
         await self.rooms_link.stop()
         await self.index.stop()
         for task in (

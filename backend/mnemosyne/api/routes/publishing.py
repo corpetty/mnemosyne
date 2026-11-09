@@ -24,6 +24,7 @@ from ...models.publication import (
     PublicationSelection,
 )
 from ...services import ours, publication_file, publishing
+from ..auth import is_tunnelled
 from ..context import AppContext, get_ctx
 
 router = APIRouter(tags=["publishing"])
@@ -208,7 +209,11 @@ async def save_file(
     """Write the made file to a path the desktop app's save dialog chose (as a clip's save,
     routes/clips.py), then delete it. Only for a client on this computer: in server mode the
     path would be on the server. Who may is the download's rule (its maker, or an admin)."""
-    if request.client is None or request.client.host not in ("127.0.0.1", "::1", "testclient"):
+    if (
+        request.client is None
+        or request.client.host not in ("127.0.0.1", "::1", "testclient")
+        or is_tunnelled(request.scope)  # another computer through the link sidecar
+    ):
         raise HTTPException(status_code=403, detail="Saving to a path only works on this computer")
     _session(ctx, session_id)
     found = publication_file.find(ctx, session_id, token)

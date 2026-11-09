@@ -46,6 +46,10 @@ def card_of(keys: PersonKeys, name="Ada", machines=(("Desk", "X1"), ("Laptop", "
     return Card(**body, sig=keys.sign(PersonKeys.canonical(body)))
 
 
+async def _stand_in_tunnel(_app) -> int:
+    return 18009
+
+
 class Node:
     """One computer: an app with remote access 'running' on a stand-in sidecar."""
 
@@ -68,6 +72,7 @@ class Node:
         self.ctx.link.status.running = True
         self.ctx.link.status.endpoint_id = self.endpoint
         self.ctx.link.status.ticket = ticket(self.endpoint)
+        self.ctx.tunnel.ensure = _stand_in_tunnel  # no real tunnel listener for a stand-in
         self.ops: list[tuple[str, dict]] = []
         self.listens: dict[str, str] = {}
         self.tamper_out = None  # (args) -> None: change what leaves with `pair`

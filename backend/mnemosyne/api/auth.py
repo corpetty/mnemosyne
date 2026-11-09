@@ -15,11 +15,13 @@ API as that person:
 the request runs with them in `access.current`, which decides what they see (access.py).
 
 Requests that came through the link sidecar's tunnel (other computers, other people's too)
-reach this process from 127.0.0.2 (TUNNEL_CLIENTS; link/src/lib.rs TUNNEL_SOURCE). They are never
-"this machine": a token is always required for them, even with no api_token and team mode off,
-and neither LOCAL_PATHS nor the tokenless desktop owner apply. Open paths stay open (redeeming a
-pairing code). If the sidecar could not bind 127.0.0.2 it connects from 127.0.0.1 and this
-distinction is lost.
+arrive on a loopback port of their own, the tunnel listener (services/tunnel_listener.py), which
+marks them `scope["tunnel"]` by the server they came in on, not by their address. They are never
+"this machine" (`is_tunnelled`): a token is always required for them, even with no api_token and
+team mode off, and neither LOCAL_PATHS, the tokenless desktop owner nor `loopback_main` apply.
+Open paths stay open (redeeming a pairing code). A connection from 127.0.0.2 (TUNNEL_CLIENTS) is
+tunnelled too: that is where an older sidecar binary connected from, during an update. Nothing
+falls back: the sidecar forwards only to the tunnel listener and is not started without it.
 
 The CHANNEL a request came in on is recorded in `scope["state"]["channel"]` (one of CHANNELS),
 with `on_team_port` and `loopback_main` beside it. On a main computer that also hosts a team
@@ -63,6 +65,7 @@ SHARE_PREFIX = "/api/share/"
 #   shell's remote access connects and cleared when it disconnects. The route itself also refuses
 #   anything not from the desktop app, whatever token it carries.
 LOCAL_PATHS = {"/api/system/attach", "/api/system", "/api/system/main"}
+# Where an older link sidecar connected from (before the tunnel listener): still tunnelled.
 TUNNEL_CLIENTS = {"127.0.0.2"}
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip")
@@ -80,6 +83,12 @@ LOCAL = "local"  # no sign-in needed at all: a plain main computer's own window
 CHANNELS = (DESKTOP_WINDOW, API_TOKEN, DEVICE, USER, CONTACT_CHANNEL, PHONE, LOCAL)
 # The owner of a computer that hosts a team (require_owner_channel); USER only with more checks.
 OWNER_CHANNELS = {DESKTOP_WINDOW, API_TOKEN, DEVICE, LOCAL}
+
+
+def is_tunnelled(scope: Scope) -> bool:
+    """Whether a request came through the link sidecar: on the tunnel listener
+    (services/tunnel_listener.py), or from an older sidecar's 127.0.0.2."""
+    return bool(scope.get("tunnel")) or (scope.get("client") or ("", 0))[0] in TUNNEL_CLIENTS
 
 
 def is_open(path: str) -> bool:
@@ -116,10 +125,11 @@ class TokenAuthMiddleware:
             return await self.app(scope, receive, send)
         token = self.ctx.settings.api_token
         path = scope.get("path", "")
-        tunnel = (scope.get("client") or ("", 0))[0] in TUNNEL_CLIENTS
+        tunnel = is_tunnelled(scope)
         required = bool(token) or self.ctx.settings.team_mode or tunnel
         headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
         state = scope.setdefault("state", {})
+        state["tunnel"] = tunnel
         server = scope.get("server") or ("", 0)
         state["on_team_port"] = server[1] == self.ctx.settings.team_port
         state["loopback_main"] = self._from_desktop_app(scope, headers)
@@ -232,9 +242,9 @@ class TokenAuthMiddleware:
 
 def from_desktop_app(ctx: AppContext, scope: Scope, headers: dict[str, str]) -> bool:
     """On 127.0.0.1, not on the network listener's port, not through the link sidecar's tunnel
-    and not passed on by a proxy."""
+    (`is_tunnelled`) and not passed on by a proxy."""
     server, client = scope.get("server") or ("", 0), scope.get("client") or ("", 0)
-    if client[0] in TUNNEL_CLIENTS:
+    if is_tunnelled(scope):
         return False
     if server[1] == ctx.settings.team_port or client[0] not in ("127.0.0.1", "::1"):
         return False

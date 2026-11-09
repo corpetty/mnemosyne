@@ -6,7 +6,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use mnemosyne_link::{bind_with, serve_home, serve_local, Home, Lan, Relays, Remote};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpSocket, TcpStream},
+    net::{TcpListener, TcpStream},
 };
 
 /// Answers POST /api/pairing/redeem like the backend (code "good" pairs the endpoint id by
@@ -217,25 +217,16 @@ async fn found_on_the_local_network() {
     home_ep.close().await;
 }
 
-#[tokio::test]
-async fn tunnel_reaches_backend_from_tunnel_source() {
-    if TcpSocket::new_v4()
-        .and_then(|s| s.bind("127.0.0.2:0".parse().unwrap()))
-        .is_err()
-    {
-        eprintln!("127.0.0.2 cannot be bound here: skipped");
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let devices_file = dir.path().join("paired_devices.json");
+/// A stand-in backend port that answers "hi" and logs where each connection came from.
+async fn logging_backend() -> (SocketAddr, Arc<std::sync::Mutex<Vec<SocketAddr>>>) {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let backend = listener.local_addr().unwrap();
+    let addr = listener.local_addr().unwrap();
     let log = seen.clone();
     tokio::spawn(async move {
         loop {
             let (mut tcp, peer) = listener.accept().await.unwrap();
-            log.lock().unwrap().push(peer.ip());
+            log.lock().unwrap().push(peer);
             tokio::spawn(async move {
                 let mut buf = [0u8; 1024];
                 let _ = tcp.read(&mut buf).await;
@@ -248,7 +239,21 @@ async fn tunnel_reaches_backend_from_tunnel_source() {
             });
         }
     });
+    (addr, seen)
+}
 
+/// Home with one paired device, serving `backend`; returns the device's local port (and the
+/// folder holding the devices file, kept while it is in scope).
+async fn paired_home(
+    backend: SocketAddr,
+) -> (
+    SocketAddr,
+    iroh::Endpoint,
+    iroh::Endpoint,
+    tempfile::TempDir,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let devices_file = dir.path().join("paired_devices.json");
     let home_ep = bind_with(iroh::SecretKey::generate(), &Relays::Off, Lan::Off, |b| b)
         .await
         .unwrap();
@@ -272,10 +277,38 @@ async fn tunnel_reaches_backend_from_tunnel_source() {
     let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local = tcp.local_addr().unwrap();
     tokio::spawn(serve_local(remote, tcp));
+    (local, home_ep, device_ep, dir)
+}
+
+/// Tunnelled streams go to the port home was given (the backend's tunnel listener), as plain
+/// loopback connections: the port, not a source address, is what tells the backend.
+#[tokio::test]
+async fn tunnel_connects_to_the_given_port() {
+    let (tunnel_port, seen) = logging_backend().await;
+    let (local, home_ep, device_ep, _dir) = paired_home(tunnel_port).await;
 
     assert!(get(local).await.ends_with("hi"));
-    let ips = seen.lock().unwrap().clone();
-    assert_eq!(ips, vec!["127.0.0.2".parse::<std::net::IpAddr>().unwrap()]);
+    let peers = seen.lock().unwrap().clone();
+    assert_eq!(peers.len(), 1);
+    assert!(peers[0].ip().is_loopback());
+
+    device_ep.close().await;
+    home_ep.close().await;
+}
+
+/// Fail closed: when the tunnel port cannot be reached the stream fails; nothing is tried on any
+/// other port (the backend's main port answers here, and is never connected to).
+#[tokio::test]
+async fn an_unreachable_tunnel_port_fails_the_stream() {
+    let (_main_port, main_seen) = logging_backend().await;
+    let closed = {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        l.local_addr().unwrap() // dropped: nothing listens there any more
+    };
+    let (local, home_ep, device_ep, _dir) = paired_home(closed).await;
+
+    assert!(!get(local).await.contains("hi"));
+    assert!(main_seen.lock().unwrap().is_empty());
 
     device_ep.close().await;
     home_ep.close().await;

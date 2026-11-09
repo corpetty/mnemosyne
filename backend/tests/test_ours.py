@@ -165,9 +165,10 @@ async def test_ensure_rooms_starts_with_our_relay_or_none(ctx, settings, tmp_pat
 
 @pytest.mark.anyio
 async def test_apply_remote_access_restarts_when_the_default_changes(
-    ctx, settings, tmp_path, monkeypatch
+    app, ctx, settings, tmp_path, monkeypatch
 ):
     fake_link.install(tmp_path, monkeypatch)
+    ctx.app = app  # what the lifespan sets: the tunnel listener serves it
     settings.remote_access = True
     settings.use_our_servers = False
     await ctx.apply_remote_access()
@@ -178,6 +179,7 @@ async def test_apply_remote_access_restarts_when_the_default_changes(
         assert ctx.link.relays == ours.OUR_RELAYS and ctx.link.active
     finally:
         await ctx.link.stop()
+        await ctx.tunnel.stop()
 
 
 # ---- guest notes ----

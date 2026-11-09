@@ -12,6 +12,7 @@ from ...models.base import ApiModel
 from ...services.clips import clip_filename, cut_clip, quote_text
 from ...services.origin import is_foreign, require_local_audio
 from ...storage.crypto import EncryptedFile, is_encrypted
+from ..auth import is_tunnelled
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/sessions", tags=["clips"])
@@ -120,7 +121,11 @@ async def save_clip(
 ):
     """Copy a clip to a path the desktop app's save dialog chose. Only for a client on this
     computer: in server mode the path would be on the server."""
-    if request.client is None or request.client.host not in ("127.0.0.1", "::1", "testclient"):
+    if (
+        request.client is None
+        or request.client.host not in ("127.0.0.1", "::1", "testclient")
+        or is_tunnelled(request.scope)  # another computer through the link sidecar
+    ):
         raise HTTPException(status_code=403, detail="Saving to a path only works on this computer")
     _require(ctx, session_id)
     source = _clip_path(ctx, session_id, clip_id)

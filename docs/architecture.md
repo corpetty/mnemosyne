@@ -414,8 +414,9 @@ derives the CONTACT tokens from it (HMAC per direction), stored as CONTACT devic
 table and travel in library sync. The owner's computers are the hub: `peer_shares` says which
 parts of a meeting a contact gets, and `GET /api/share/changes` builds a `SharedMeeting`
 (`services/shares.py`) carrying only those parts, signed with the owner's key. The recipient's
-`SharePuller` pulls these over the iroh tunnel (the link sidecar connects to the backend from
-127.0.0.2, so auth can tell tunnelled calls from local ones), verifies the signature and writes
+`SharePuller` pulls these over the iroh tunnel (the link sidecar connects to the backend's tunnel
+listener, a loopback port of its own, services/tunnel_listener.py, so auth can tell tunnelled calls
+from local ones by the port they came in on), verifies the signature and writes
 the copy with `apply_shared` (`sessions.shared_from`, read-only except comments, ticks and live
 notes). What the recipient does goes back as signed contributions to `/api/share/contributions`
 (`services/share_push.py`: a `share_outbox` row per comment write or tick, typed notes frames read

@@ -21,8 +21,10 @@ def fake_link(tmp_path, body: str) -> str:
     return str(script)
 
 
+TUNNEL_PORT = 18123  # a stand-in for the tunnel listener's port (services/tunnel_listener.py)
 READY = (
-    'assert sys.argv[1:4] == ["home", "--backend", "127.0.0.1:8008"], sys.argv\n'
+    'assert sys.argv[1:3] == ["home", "--tunnel"], sys.argv\n'
+    'assert sys.argv[3].startswith("127.0.0.1:") and sys.argv[3] != "127.0.0.1:8008", sys.argv\n'
     'print(json.dumps({"endpoint_id": "e1d", "ticket": "endpointe1d"}), flush=True)\n'
     "time.sleep(60)"
 )
@@ -37,7 +39,7 @@ async def wait_for(cond, timeout=5.0):
 
 
 async def test_runs_and_stops_the_sidecar(tmp_path):
-    link = LinkService(tmp_path, 8008, binary=fake_link(tmp_path, READY))
+    link = LinkService(tmp_path, TUNNEL_PORT, binary=fake_link(tmp_path, READY))
     link.start()
     await wait_for(lambda: link.status.running)
     assert (link.status.endpoint_id, link.status.ticket) == ("e1d", "endpointe1d")
@@ -48,7 +50,7 @@ async def test_runs_and_stops_the_sidecar(tmp_path):
 
 async def test_reports_a_sidecar_that_dies(tmp_path, monkeypatch):
     monkeypatch.setattr("mnemosyne.services.link.RESTART_DELAY", 60)
-    link = LinkService(tmp_path, 8008, binary=fake_link(tmp_path, "sys.exit(3)"))
+    link = LinkService(tmp_path, TUNNEL_PORT, binary=fake_link(tmp_path, "sys.exit(3)"))
     link.start()
     await wait_for(lambda: link.status.error is not None)
     assert "before it was ready" in link.status.error
@@ -57,11 +59,40 @@ async def test_reports_a_sidecar_that_dies(tmp_path, monkeypatch):
 
 async def test_missing_binary(tmp_path, monkeypatch):
     monkeypatch.setenv("MNEMOSYNE_LINK_BIN", str(tmp_path / "nope"))
-    link = LinkService(tmp_path, 8008)
+    link = LinkService(tmp_path, TUNNEL_PORT)
     link.start()
     await wait_for(lambda: link.status.error is not None)
     assert "not installed" in link.status.error
     await link.stop()
+
+
+async def test_never_started_without_a_tunnel_port(tmp_path, monkeypatch):
+    """Port 0 = no tunnel listener: the sidecar is not run at all (never the main port)."""
+    monkeypatch.setattr("mnemosyne.services.link.RESTART_DELAY", 60)
+    link = LinkService(tmp_path, 0, binary=fake_link(tmp_path, READY))
+    link.start()
+    await wait_for(lambda: link.status.error is not None)
+    assert "no tunnel listener" in link.status.error and link._proc is None
+    await link.stop()
+
+
+def test_the_sidecar_forwards_to_the_tunnel_listener(client, ctx, tmp_path, monkeypatch):
+    argv_file = tmp_path / "argv.json"
+    body = (
+        f"json.dump(sys.argv[1:], open({str(argv_file)!r}, 'w'))\n"
+        'print(json.dumps({"endpoint_id": "e1d", "ticket": "t"}), flush=True)\n'
+        "time.sleep(60)"
+    )
+    monkeypatch.setenv("MNEMOSYNE_LINK_BIN", fake_link(tmp_path, body))
+    client.put("/api/settings", json={"remote_access": True})
+    for _ in range(100):
+        if argv_file.exists() and argv_file.read_text():
+            break
+        time.sleep(0.05)
+    args = json.loads(argv_file.read_text())
+    assert ctx.tunnel.running and ctx.tunnel.port not in (0, 8008)
+    assert args[:3] == ["home", "--tunnel", f"127.0.0.1:{ctx.tunnel.port}"]
+    client.put("/api/settings", json={"remote_access": False})
 
 
 def test_setting_turns_it_on(client, ctx, tmp_path, monkeypatch):
