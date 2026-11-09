@@ -63,6 +63,10 @@
 			title="Share this meeting"
 			class="px-2 py-0.5 rounded border border-gray-800 {liveNow ? 'text-green-400' : 'text-gray-400'} hover:text-gray-200"
 		>Share</button>
+		{#if liveNow}
+			<!-- Beside the button, not in it: its name stays "Share". -->
+			<span class="ml-1 text-xs text-green-400">live notes link on</span>
+		{/if}
 	{/if}
 	{#if open && !way}
 		<div class="absolute right-0 z-30 mt-1 w-72 rounded-lg border border-gray-700 bg-gray-900 py-1 text-sm font-normal shadow-xl" role="menu">
