@@ -876,7 +876,11 @@ async def test_heartbeat_and_the_rooms_expiry(ctx, live, seals):
     await bridge.tick(now + lp.META_EVERY + 1)  # the heartbeat
     await _until(lambda: len(metas()) == 2, "the heartbeat")
     assert len(room_expiries()) == 1
-    await bridge.tick(now + lp.EXTEND_EVERY + 1)  # the room's expiry moved; the log pruned
+    # (2 s past the day, not 1: the heartbeat is due when the clock has moved META_EVERY since
+    # the last META, which is exactly EXTEND_EVERY - META_EVERY after the one above, and a sum
+    # of floats near that boundary can come out a few ulps short, which depends on the
+    # machine's uptime: a freshly booted CI runner failed here)
+    await bridge.tick(now + lp.EXTEND_EVERY + 2)  # the room's expiry moved; the log pruned
     assert len(room_expiries()) == 2 and room_expiries()[-1] == room_expiries()[0]
 
     def snapshots():
@@ -889,8 +893,11 @@ async def test_heartbeat_and_the_rooms_expiry(ctx, live, seals):
     await _until(lambda: len(metas()) == 4, "the heartbeat and META after the snapshot")
     await _until(lambda: not bridge.unacked, "the acks")
     assert live.rooms.rooms[room].snapshot_seq > 0
-    # The META after a snapshot is no news: idle, no snapshot follows it.
-    await bridge.tick(now + lp.EXTEND_EVERY + lp.SNAPSHOT_EVERY + 2)
+    # The META after a snapshot is no news: idle, no snapshot follows it, though one is due by
+    # the clock. (The clock here is the real one: the snapshot stamped its META with it, and a
+    # tick a day ahead of that would find a heartbeat due, and send a fifth META.)
+    await bridge.tick(time.monotonic() + lp.SNAPSHOT_EVERY + 2)
+    await asyncio.sleep(0.2)  # (nothing is to arrive: give it the time to)
     assert len(snapshots()) == 2 and len(metas()) == 4
     await reader.close()
 
