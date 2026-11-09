@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +28,13 @@ if TYPE_CHECKING:
     from ..api.context import AppContext
 
 logger = logging.getLogger(__name__)
+
+
+def joined_name(part: int) -> str:
+    """The file name of a meeting's audio joined up to `part`. Never used twice: records v2 takes a
+    file under the name of an erased one for a different file put in its place (a hand-off that
+    replaces sealed audio, a recording added after the audio was deleted)."""
+    return f"meeting_{part}_{secrets.token_hex(4)}.ogg"
 
 
 def next_part(session: Session) -> int:
@@ -126,7 +134,7 @@ async def add_part(
     offset = await asyncio.to_thread(audio_seconds, existing, app.file_key)
     for r in recordings:
         r.part, r.offset = part, offset
-    combined = part_mix.with_name(f"meeting_{part}.ogg")
+    combined = part_mix.with_name(joined_name(part))
     # Into a new file, then renamed: never read and write the meeting's audio at once.
     joining = part_mix.with_name(f".joining-{part}.ogg")
     await asyncio.to_thread(join, existing, part_mix, joining, app.file_key)
