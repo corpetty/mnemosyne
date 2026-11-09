@@ -545,11 +545,35 @@ impl Notes {
         if end < start {
             return Err(Error("last is before first".into()));
         }
+        Ok(self.mark_comment_range(start, end + 1, comment))
+    }
+
+    /// [`Notes::mark_comment`] over positions: mark `[start, end)` (code points of the
+    /// document's text, what the sidecar's `plain` indexes) as comment `comment`. For a caller
+    /// that located a passage in the text it just folded and marks it in the same run. A range
+    /// that is empty (`end <= start`) or past the end of the text is an error.
+    pub fn mark_comment_at(
+        &mut self,
+        start: usize,
+        end: usize,
+        comment: &str,
+    ) -> Result<Vec<Vec<u8>>, Error> {
+        if end <= start {
+            return Err(Error("end is not after start".into()));
+        }
+        if end > self.model().text.len() {
+            return Err(Error("end: past the end of the text".into()));
+        }
+        Ok(self.mark_comment_range(start, end, comment))
+    }
+
+    /// The shared tail: mark `[start, end)` (valid, non-empty) as `comment:<comment>`.
+    fn mark_comment_range(&mut self, start: usize, end: usize, comment: &str) -> Vec<Vec<u8>> {
         let before = self.web.clock();
         let mut minted = Vec::new();
         let kind = format!("{COMMENT_PREFIX}{comment}");
-        self.mark_inline(start, end + 1, &kind, Some(FLAG_VALUE), false, &mut minted);
-        Ok(self.new_frames(&before, &minted))
+        self.mark_inline(start, end, &kind, Some(FLAG_VALUE), false, &mut minted);
+        self.new_frames(&before, &minted)
     }
 
     /// Make the task line whose terminator is element `line` (its `seqIdAt`) `task` (open) or

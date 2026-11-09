@@ -27,6 +27,12 @@
 //!   `seqIdAt`, hex, both included) for a client that cannot author the mark. `frames` as in
 //!   `set_text`; `snapshot` includes the mark. An id that is unknown or deleted, or `last`
 //!   before `first`, is an error (the comment is detached).
+//! - `{"op":"mark_comment_at","notes":hex,"snapshot":b64|null,"frames":[b64],"start":n,"end":n,
+//!   "comment":id}` → as `mark_comment`: marks `comment:<id>` closed over `[start, end)`, code
+//!   points of the document's text (what the answer's `plain` indexes; a table cell separator
+//!   U+001F is one position), after applying `frames`, so a caller can fold, locate a passage
+//!   in `plain` and mark it in one run. `end <= start`, `end` past the text or an empty
+//!   `comment` is an error.
 //! - `{"op":"set_kind","notes":hex,"snapshot":b64|null,"frames":[b64],"line":hex,"kind":"task"|
 //!   "task_done"}` → as `mark_comment`: makes the task line whose terminating `\n` is element
 //!   `line` open or done. `frames` are what to broadcast, `[]` when the line already shows
@@ -107,6 +113,15 @@ enum Request {
         last: String,
         comment: String,
     },
+    MarkCommentAt {
+        notes: String,
+        snapshot: Option<String>,
+        #[serde(default)]
+        frames: Vec<String>,
+        start: usize,
+        end: usize,
+        comment: String,
+    },
     SetKind {
         notes: String,
         snapshot: Option<String>,
@@ -164,6 +179,21 @@ pub fn handle(request: Value) -> Result<Value, Error> {
                 return Err(Error("comment: empty".into()));
             }
             let out = notes.mark_comment(&first, &last, &comment)?;
+            Ok(answer(&notes, Some(out), &arrivals))
+        }
+        Request::MarkCommentAt {
+            notes,
+            snapshot,
+            frames,
+            start,
+            end,
+            comment,
+        } => {
+            let (mut notes, arrivals) = load(&notes, snapshot.as_deref(), &frames)?;
+            if comment.is_empty() {
+                return Err(Error("comment: empty".into()));
+            }
+            let out = notes.mark_comment_at(start, end, &comment)?;
             Ok(answer(&notes, Some(out), &arrivals))
         }
         Request::SetKind {
