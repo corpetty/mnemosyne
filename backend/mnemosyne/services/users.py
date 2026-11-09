@@ -166,7 +166,7 @@ class UserService:
             self._save()
             return user
 
-    def update(self, user_id: str, **changes) -> User:
+    def update(self, user_id: str, *, allow_no_admin: bool = False, **changes) -> User:
         with self._lock:
             self._fresh()
             user = self._users.get(user_id)
@@ -177,7 +177,7 @@ class UserService:
             for key in ("name", "email", "role", "disabled"):
                 if changes.get(key) is not None:
                     setattr(user, key, changes[key])
-            if not self._admins_left():
+            if not allow_no_admin and not self._admins_left():
                 self._load()  # undo: never leave a server nobody can administer
                 raise ValueError("At least one admin must stay enabled")
             self._save()

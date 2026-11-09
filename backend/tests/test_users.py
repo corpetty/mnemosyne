@@ -302,3 +302,37 @@ def test_saved_questions_and_digests_are_personal(team):
     assert [a["question"] for a in asks] == ["Ann?"]
     digests = client.get("/api/digests", headers=_h(people, "Bob")).json()
     assert [d["markdown"] for d in digests] == ["Bob's week"]  # same week, both kept
+
+
+H = {"Authorization": "Bearer adm"}
+
+
+def test_me_says_whether_this_computer_hosts_a_team(client, ctx):
+    me = client.get("/api/users/me").json()
+    assert me["hosts_team"] is False and me["personal"] is True
+    ctx.settings.team_mode = True
+    ctx.settings.api_token = "adm"
+    ctx.settings.team_owner_id = "owner0000001"
+    me = client.get("/api/users/me", headers=H).json()
+    assert me["hosts_team"] is True and me["personal"] is True
+    ctx.settings.team_owner_id = ""
+    me = client.get("/api/users/me", headers=H).json()
+    assert me["hosts_team"] is False and me["personal"] is False
+
+
+def test_set_role_demotes_the_last_admin_only_for_hosting(tmp_path, monkeypatch):
+    from mnemosyne import cli, config
+
+    settings = config.Settings(data_dir=tmp_path)
+    monkeypatch.setattr(config, "load_settings", lambda: settings)
+    users = UserService(tmp_path / "users.json")
+    pat = users.add("Pat", "", "admin")
+    with pytest.raises(SystemExit, match="--for-hosting"):
+        cli.users_command(["set-role", pat.id, "reviewer"])
+    cli.users_command(["set-role", pat.id, "reviewer", "--for-hosting"])
+    assert UserService(tmp_path / "users.json").get(pat.id).role == "reviewer"
+    settings.team_owner_id = "owner0000001"  # a configured owner needs no flag
+    sam = users.add("Sam", "", "member")
+    cli.users_command(["set-role", sam.id, "reviewer"])
+    with pytest.raises(SystemExit):
+        cli.users_command(["set-role", sam.id, "admin"])

@@ -48,6 +48,7 @@ from ...audio.capture import (
     RecordingProcess,
     RecordingSession,
 )
+from ...config import dedicated_team_server
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, SessionStatus
 from ...services import handoff as handoffs
@@ -277,7 +278,7 @@ async def handoff(request: Request, ctx: AppContext = Depends(get_ctx)):
     sample_rate, file, label}], session_id?} plus one WAV or Ogg file per source and part, in
     the field each source names). Idempotent by handoff_id. 413 over 4 GB."""
     device_id, sender = _sender(ctx, request)
-    if ctx.settings.team_mode:
+    if dedicated_team_server(ctx.settings):
         raise HTTPException(status_code=409, detail="A team server does not take hand-offs")
     length = request.headers.get("content-length")
     if length and length.isdigit() and int(length) > MAX_HANDOFF_BYTES:

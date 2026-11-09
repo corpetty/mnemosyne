@@ -42,6 +42,17 @@ def users_command(argv: list[str]) -> None:
     inv.add_argument("user_id")
     inv.add_argument("--address", default="https://<this server>")
     sub.add_parser("list", help="everyone, with their id and role")
+    setr = sub.add_parser(
+        "set-role",
+        help="change someone's role, even the last admin's (to host a team on this computer)",
+    )
+    setr.add_argument("user_id")
+    setr.add_argument("role", choices=ROLES)
+    setr.add_argument(
+        "--for-hosting",
+        action="store_true",
+        help="allow leaving no admin: this computer's owner is made admin when it hosts a team",
+    )
     args = parser.parse_args(argv)
 
     settings = load_settings()
@@ -50,6 +61,25 @@ def users_command(argv: list[str]) -> None:
         for u in users.list():
             state = " (disabled)" if u.disabled else ""
             print(f"{u.id}  {u.role:<8}  {u.name} <{u.email}>{state}")
+        return
+    if args.action == "set-role":
+        # The one way past "at least one admin must stay": a computer that hosts a team has its
+        # owner as admin (services/team_host.py turn_on adds or promotes them), so the other
+        # admins may go first. Needs a team owner already configured, or --for-hosting.
+        if args.role == "admin":
+            raise SystemExit("set-role only demotes; admins are made by invites or the app")
+        if not settings.team_owner_id and not args.for_hosting:
+            raise SystemExit(
+                "No team owner on this computer yet: add --for-hosting if you are about to "
+                "host a team here (its owner becomes the admin)"
+            )
+        try:
+            user = users.update(args.user_id, role=args.role, allow_no_admin=True)
+        except KeyError:
+            raise SystemExit(
+                f"No person with id {args.user_id} (see: mnemosyne-backend users list)"
+            ) from None
+        print(f"{user.name} is now a {user.role}")
         return
     if args.action == "add":
         if refusal := admin_refusal(settings, args.role):

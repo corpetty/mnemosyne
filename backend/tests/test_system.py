@@ -35,3 +35,19 @@ def test_setup_complete_is_a_setting(client):
     assert client.get("/api/settings").json()["values"]["setup_complete"] is False
     r = client.put("/api/settings", json={"setup_complete": True})
     assert r.json()["values"]["setup_complete"] is True
+
+
+H = {"Authorization": "Bearer adm"}
+
+
+def test_role_says_whether_this_computer_hosts_a_team(client, ctx):
+    plain = client.get("/api/system/role").json()
+    assert plain == {"role": "main", "hosts_team": False, "personal": True}
+    ctx.settings.team_mode = True
+    ctx.settings.api_token = "adm"
+    ctx.settings.team_owner_id = "owner0000001"
+    host = client.get("/api/system/role", headers=H).json()
+    assert host == {"role": "main", "hosts_team": True, "personal": True}
+    ctx.settings.team_owner_id = ""
+    server = client.get("/api/system/role", headers=H).json()
+    assert server == {"role": "team", "hosts_team": False, "personal": False}

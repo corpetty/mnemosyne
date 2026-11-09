@@ -16,10 +16,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...models.base import ApiModel
 from ...services import satellite
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 from .audio import Consent
 
-router = APIRouter(prefix="/api/satellite", tags=["satellite"])
+router = APIRouter(
+    prefix="/api/satellite", tags=["satellite"], dependencies=[Depends(require_owner_channel)]
+)
 
 
 def _this_computer(request: Request, ctx: AppContext = Depends(get_ctx)) -> None:

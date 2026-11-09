@@ -512,3 +512,18 @@ async def test_the_routes_are_this_computers_only(laptop, sat):
         assert r.json() == {"main": None, "reachable": False, "recording": None, "outbox": []}
         assert (await c.post("/api/satellite/start", json={})).status_code == 400
         assert (await c.post("/api/satellite/stop")).status_code == 404
+
+
+async def test_a_team_member_cannot_use_the_laptop_recorder_on_a_host(laptop_settings):
+    """On a computer that hosts a team the satellite routes are the owner's alone."""
+    laptop_settings.team_mode = True
+    laptop_settings.team_owner_id = "owner0000001"
+    app = create_app(laptop_settings, keystore=MemoryKeyStore())
+    ctx = app.state.ctx
+    user = ctx.users.add("Sam", "", "member")
+    code, _ = ctx.users.invite(user.id)
+    _, member = ctx.users.redeem(code, "browser")
+    async with client(app, member, peer=("192.168.1.20", 50000)) as c:
+        assert (await c.get("/api/satellite")).status_code == 403
+    async with client(app, "admin-laptop") as c:
+        assert (await c.get("/api/satellite")).status_code != 403

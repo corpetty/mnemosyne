@@ -6164,10 +6164,14 @@ export interface components {
             cloud_models: boolean;
             /** Email */
             email: string;
+            /** Hosts Team */
+            hosts_team: boolean;
             /** Id */
             id: string;
             /** Name */
             name: string;
+            /** Personal */
+            personal: boolean;
             /** Role */
             role: string;
             /** Supervision */
@@ -9819,6 +9823,10 @@ export interface components {
         };
         /** SystemRole */
         SystemRole: {
+            /** Hosts Team */
+            hosts_team: boolean;
+            /** Personal */
+            personal: boolean;
             /**
              * Role
              * @enum {string}

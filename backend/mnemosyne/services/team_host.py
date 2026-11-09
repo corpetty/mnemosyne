@@ -368,7 +368,12 @@ async def turn_on(ctx: AppContext, app, name: str = "") -> str:
         if u.role == access.ADMIN and not u.disabled and (owner is None or u.id != owner.id)
     ]
     if others:
-        raise RuntimeError("Make the other admins reviewers first: " + ", ".join(others))
+        hint = ""
+        owner_admin = owner is not None and owner.role == access.ADMIN and not owner.disabled
+        if not owner_admin:
+            # The others are the only admins: the app refuses to demote the last one.
+            hint = " (in a terminal: mnemosyne-backend users set-role <id> reviewer --for-hosting)"
+        raise RuntimeError("Make the other admins reviewers first: " + ", ".join(others) + hint)
     if owner is None:
         owner = ctx.users.add(name.strip() or owner_name(), "", access.ADMIN)
     adopted = ctx.repo.adopt_unowned(owner.id)

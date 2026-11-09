@@ -10,6 +10,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ... import access
+from ...config import dedicated_team_server, hosts_team, personal_allowed
 from ...jobs import Job
 from ...models.base import ApiModel
 from ...services import link, phonon_install
@@ -105,11 +106,18 @@ class SystemRole(ApiModel):
     # to it (team_mode). "Uses my main computer" is a role of the desktop shell, which alone
     # knows it is connected to another backend; it is never answered here.
     role: Literal["main", "team"]
+    hosts_team: bool  # a main computer that also hosts a team (role stays "main")
+    personal: bool  # personal features (sync, pairing, contacts, sharing) exist here
 
 
 @router.get("/system/role", response_model=SystemRole)
 async def system_role(ctx: AppContext = Depends(get_ctx)):
-    return SystemRole(role="team" if ctx.settings.team_mode else "main")
+    s = ctx.settings
+    return SystemRole(
+        role="team" if dedicated_team_server(s) else "main",
+        hosts_team=hosts_team(s),
+        personal=personal_allowed(s),
+    )
 
 
 class MainComputerStatus(ApiModel):

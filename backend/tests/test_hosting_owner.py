@@ -138,8 +138,6 @@ async def test_a_handoff_is_the_owners(hosting, keystore, fake_pipewire):
     _, token = hctx.pairing.add_desktop("Corey's laptop", "e" * 64)
     async with client(host, token, peer=TUNNEL) as laptop:
         r = await laptop.post("/api/connections/handoff", **handoff_form(meta()))
-    if r.status_code == 409 and "does not take hand-offs" in r.text:
-        pytest.skip("routes/handoff.py still refuses every team_mode computer (task 7)")
     assert r.status_code == 200, r.text
     sid = r.json()["session_id"]
     await finish(hctx, sid)
@@ -232,7 +230,9 @@ def test_hosting_is_refused_while_another_admin_exists(desktop):
     keep = ctx.sessions.create_session().id
     r = c.put("/api/team", json={"enabled": True, "name": "Corey"})
     assert r.status_code == 409
-    assert r.json()["detail"] == "Make the other admins reviewers first: Ann, Bo"
+    detail = r.json()["detail"]
+    assert detail.startswith("Make the other admins reviewers first: Ann, Bo")
+    assert "mnemosyne-backend users set-role" in detail  # Ann and Bo are the only admins
     assert ctx.settings.team_mode is False and ctx.settings.team_owner_id == ""
     assert ctx.repo.host_owner == "" and owner_of(ctx, keep) == ""
     assert [u.name for u in ctx.users.list() if u.role == access.ADMIN] == ["Ann", "Bo", "Gone"]

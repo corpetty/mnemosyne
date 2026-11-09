@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ... import access
+from ...config import hosts_team, personal_allowed
 from ...models.base import ApiModel
 from ...services import prefs, supervision
 from ...services.users import InvalidInvite, User, admin_refusal
@@ -27,6 +28,8 @@ class Me(ApiModel):
     role: str
     team_mode: bool
     cloud_models: bool  # OpenAI and Anthropic may be used (the local-only choice means something)
+    hosts_team: bool  # this computer is a main computer that also hosts a team
+    personal: bool  # personal features exist here (not on a dedicated team server)
     supervision: bool  # flagged meetings to review (services/supervision.py)
 
 
@@ -112,6 +115,8 @@ async def me(ctx: AppContext = Depends(get_ctx)):
             email="",
             role=access.ADMIN,
             team_mode=ctx.settings.team_mode,
+            hosts_team=hosts_team(ctx.settings),
+            personal=personal_allowed(ctx.settings),
             cloud_models=ctx.settings.cloud_models,
             supervision=supervision.enabled(ctx.settings),
         )
@@ -122,6 +127,8 @@ async def me(ctx: AppContext = Depends(get_ctx)):
         email=user.email if user else "",
         role=p.role,
         team_mode=ctx.settings.team_mode,
+        hosts_team=hosts_team(ctx.settings),
+        personal=personal_allowed(ctx.settings),
         cloud_models=ctx.settings.cloud_models,
         supervision=supervision.enabled(ctx.settings),
     )
