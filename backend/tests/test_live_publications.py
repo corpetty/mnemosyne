@@ -9,6 +9,7 @@ tests/fake_guest_room.py's FakeRoomHost (the room routes and its WebSocket) besi
 (`live` fixture); readers are GuestClients holding the link's key."""
 
 import asyncio
+import base64
 import hashlib
 import json
 import time
@@ -650,7 +651,7 @@ async def test_a_publish_sends_version_with_the_manifest_sha(ctx, live, seals):
     )
     assert frames[0] == (
         plf.Kind.META,
-        {"follow": True, "comments": False, "at": frames[0][1]["at"]},
+        {"follow": True, "comments": False, "notes": False, "at": frames[0][1]["at"]},
     )
     assert frames[1][0] is plf.Kind.VERSION and frames[1][1]["version"] == 1
 
@@ -1676,4 +1677,197 @@ async def test_turning_moderation_off_sends_the_waiting_threads(ctx, live, seals
     )
     assert frame["pending"] == {ana.rid: ["b" * 12]}
     assert [t["root"]["id"] for t in frame["threads"]] == ["a" * 12]
+    await ana.client.close()
+
+
+# ---- readers' comments on the published notes (M4, task 2d) ----
+
+NOTES = "Plans\nAna Lopez will send the budget to Cy Park.\nDone.\n"
+PASSAGE = "send the budget to Person 1"  # what readers read: Cy Park is not listed
+
+
+@pytest.fixture
+def sidecar(tmp_path, monkeypatch):
+    from mnemosyne.services import shared_notes
+    from tests import fake_link
+
+    monkeypatch.setattr(shared_notes, "FOLD_DELAY", 1000.0)  # folds only when a test asks
+    monkeypatch.setattr(shared_notes, "FOLD_EVERY", 1000.0)
+    return fake_link.install(tmp_path, monkeypatch)
+
+
+async def _notes_room(ctx, live, **sel):
+    """A meeting with notes naming someone the selection leaves out, published with comments
+    and the notes, a reader in its room."""
+    s = _meeting(ctx)
+    ctx.repo.update_fields(s.id, notes=NOTES)
+    sel = {"comments": True, "notes": True, "attendees": ["Ana Lopez", "Bo Chen"], **sel}
+    await _first(ctx, s.id, **sel)
+    bridge = await _bridge(ctx, s.id)
+    row = ctx.repo.live_publication(s.id)
+    reader = Reader(await _reader(live, ctx, s.id), row, bridge.room)
+    return s, bridge, row, reader
+
+
+async def _meta(reader) -> dict:
+    return (await _until(reader.metas, "META"))[-1]
+
+
+def _on_notes(cid: str, exact: str, n: int = 0, text: str = "Who is that?") -> dict:
+    return _create(cid, text, n, target="notes", exact=exact, prefix="Ana Lopez will ", suffix=".")
+
+
+def _marks_requests(sidecar) -> list[dict]:
+    return [r for r in sidecar.doc_requests if r["op"] == "mark_comment_at"]
+
+
+async def test_a_readers_notes_comment_marks_the_real_text(ctx, live, seals, quick, sidecar):
+    from mnemosyne.services import guest_notes, shared_notes
+    from tests.fake_link import doc_frame
+
+    s, bridge, row, ana = await _notes_room(ctx, live)
+    m = _opened(live.pub, {"url": row_url(ctx, s.id)})
+    assert PASSAGE in m.notes and "Cy" not in m.notes
+    assert (await _meta(ana))["notes"] is True
+    cid = "a" * 12
+    env = await ana.send(_on_notes(cid, PASSAGE))
+    assert (await _taken(bridge, 1)) == {"applied": 1}
+    (c,) = _comments(ctx, s.id)
+    assert (c.target, c.author_id, c.author) == ("notes", f"reader:{ana.rid}", "Ana (reader)")
+    assert c.anchor == {"mark": f"comment:{cid}"} and c.quote == PASSAGE
+    # The mark is on the real words, in the document, written as the reader.
+    plain, ranges = await _until(
+        lambda: (got := ctx.repo.notes_marks(s.id)) and got[1].get(cid) and got, "the mark"
+    )
+    assert plain[slice(*ranges[cid])] == "send the budget to Cy Park"
+    assert ctx.repo.notes_ops(s.id)[-1]["author_id"] == f"reader:{ana.rid}"
+    # THREADS: on the notes, the marked text as readers read it.
+    threads = await _until(
+        lambda: (t := ana.threads()) and not t[0]["root"]["detached"] and t, "THREADS, marked"
+    )
+    (t,) = threads
+    assert t["root"]["anchor"] == {
+        "target": "notes",
+        "target_id": None,
+        "quote_id": None,
+        "quote": PASSAGE,
+    }
+    assert t["root"]["rid"] == ana.rid and "Cy" not in json.dumps(threads)
+    # The same frame again (anyone in the room can copy it): no second comment, no second mark.
+    await ana.client.send(bytes([T_NOTES]) + env)
+    assert (await _taken(bridge, 2)) == {"applied": 1, "replay": 1}
+    assert len(_marks_requests(sidecar)) == 1 and len(_comments(ctx, s.id)) == 1
+    # C4: a reader's notes thread is an ordinary notes comment: the meeting's guests see it.
+    (g,) = guest_notes.threads_for_guests(ctx, s.id)
+    assert (g["root"]["id"], g["root"]["author"]) == (cid, "Ana (reader)")
+    assert g["root"]["mark"] == f"comment:{cid}"
+
+    # The quote readers get is what the mark covers now, not what the reader sent: the owner
+    # writes Bo Chen (listed: as is) over Cy Park (the toy's ranges stay where they were).
+    at = plain.index("Cy Park")
+    edit = doc_frame("o1", ["del", at, 7], ["ins", at, "Bo Chen"])
+    ctx.repo.append_notes_ops(s.id, [base64.b64decode(edit)], "", "Owner", True)
+    shared_notes.fold_blocking(ctx, s.id)
+    sel = PublicationSelection.model_validate(ctx.repo.live_publication(s.id)["selection"])
+    (t,) = lp.threads_for_readers(ctx, s.id, sel)
+    assert t["root"]["anchor"]["quote"] == "send the budget to Bo Chen"
+    assert t["root"]["changed"] is True and t["root"]["detached"] is False
+    await ana.client.close()
+
+
+async def test_a_notes_passage_that_is_not_there_stays_detached(ctx, live, seals, quick, sidecar):
+    s, bridge, row, ana = await _notes_room(ctx, live)
+    await ana.send(_on_notes("b" * 12, "words nobody wrote", text="Hm?"))
+    assert (await _taken(bridge, 1)) == {"applied": 1}
+    (c,) = _comments(ctx, s.id)
+    assert c.target == "notes" and c.quote == "words nobody wrote"
+    assert _marks_requests(sidecar) == []
+    assert "b" * 12 not in ((ctx.repo.notes_marks(s.id) or ("", {}))[1])
+    (t,) = await _until(ana.threads, "THREADS")
+    assert t["root"]["detached"] is True
+    assert t["root"]["anchor"] == {**lp.NO_ANCHOR, "target": "notes", "quote": "words nobody wrote"}
+    await ana.client.close()
+
+
+async def test_a_notes_passage_the_sidecar_cannot_mark_is_shown_by_its_quote(
+    ctx, live, seals, quick, monkeypatch
+):
+    """The sidecar answered the probe, and is gone when the mark is made: the comment exists,
+    detached, and readers still see it on the notes by its quote."""
+    from mnemosyne.services import shared_notes
+
+    monkeypatch.setattr(shared_notes, "available", lambda: True)
+    s, bridge, row, ana = await _notes_room(ctx, live)
+    assert bridge.notes_ok and (await _meta(ana))["notes"] is True
+    await ana.send(_on_notes("c" * 12, PASSAGE))
+    assert (await _taken(bridge, 1)) == {"applied": 1}
+    (c,) = _comments(ctx, s.id)
+    assert (c.target, c.quote) == ("notes", PASSAGE)
+    assert ctx.repo.notes_marks(s.id) is None and ctx.repo.notes_ops(s.id) == []
+    (t,) = await _until(ana.threads, "THREADS")
+    assert t["root"]["detached"] is True
+    assert t["root"]["anchor"] == {**lp.NO_ANCHOR, "target": "notes", "quote": PASSAGE}
+    await ana.client.close()
+
+
+async def test_without_a_sidecar_a_notes_comment_stays_on_the_meeting(ctx, live, seals, quick):
+    """No sidecar here: META says the notes take no comments; an op sent anyway (an older
+    page) keeps the thread on the meeting with the passage in its text (C5), never dropped."""
+    s, bridge, row, ana = await _notes_room(ctx, live)
+    assert not bridge.notes_ok
+    meta = await _meta(ana)
+    assert (meta["comments"], meta["notes"]) == (True, False)
+    await ana.send(_on_notes("d" * 12, PASSAGE, text="Who?"))
+    assert (await _taken(bridge, 1)) == {"applied": 1}
+    (c,) = _comments(ctx, s.id)
+    assert c.target == "" and c.text == f"On: “{PASSAGE}”\n\nWho?"
+    (t,) = await _until(ana.threads, "THREADS")
+    assert t["root"]["anchor"] == lp.NO_ANCHOR
+    await ana.client.close()
+
+
+async def test_notes_left_out_take_no_comments_and_show_none(ctx, live, seals, quick, sidecar):
+    s, bridge, row, ana = await _notes_room(ctx, live, notes=False)
+    assert bridge.notes_ok and (await _meta(ana))["notes"] is False
+    await ana.send(_on_notes("e" * 12, PASSAGE))
+    assert (await _taken(bridge, 1)) == {"refused": 1}
+    assert _comments(ctx, s.id) == [] and _marks_requests(sidecar) == []
+    # A notes thread a reader made while the notes were published is not shown now.
+    ctx.repo.add_comment(
+        s.id,
+        id="f" * 12,
+        text="On the notes",
+        author_id=f"reader:{ana.rid}",
+        author="Ana (reader)",
+        target="notes",
+        anchor={"mark": "comment:" + "f" * 12},
+        quote=PASSAGE,
+    )
+    sel = PublicationSelection.model_validate(ctx.repo.live_publication(s.id)["selection"])
+    assert lp.threads_for_readers(ctx, s.id, sel) == []
+    shown = lp.threads_for_readers(ctx, s.id, sel.model_copy(update={"notes": True}))
+    assert [t["root"]["anchor"]["target"] for t in shown] == ["notes"]
+    await ana.client.close()
+
+
+async def test_meta_says_notes_only_when_they_can_be_commented_on(ctx, live, seals, quick, sidecar):
+    s, bridge, row, ana = await _notes_room(ctx, live)
+    meta = await _meta(ana)
+    assert set(meta) == {"comments", "follow", "notes", "at"}
+    assert (meta["comments"], meta["notes"]) == (True, True)
+    # Comments off: no notes either.
+    await _first(ctx, s.id, comments=False, notes=True, attendees=["Ana Lopez", "Bo Chen"])
+    meta = await _until(lambda: (m := ana.metas()[-1])["comments"] is False and m, "META off")
+    assert meta["notes"] is False
+    # On again, the notes published but empty now.
+    ctx.repo.update_fields(s.id, notes="")
+    await _first(ctx, s.id, comments=True, notes=True, attendees=["Ana Lopez", "Bo Chen"])
+    meta = await _until(lambda: (m := ana.metas()[-1])["comments"] is True and m, "META on")
+    assert meta["notes"] is False
+    assert bridge._meta_state()[2] is False
+    # Notes again: the next look (a tick) says so.
+    ctx.repo.update_fields(s.id, notes=NOTES)
+    await bridge.tick()
+    meta = await _until(lambda: (m := ana.metas()[-1])["notes"] is True and m, "META notes")
+    assert meta["comments"] is True
     await ana.client.close()

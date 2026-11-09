@@ -1985,3 +1985,36 @@ async def test_an_old_host_without_media_does_not_stop_the_bridge(ctx, host, cap
     await ana.send(guest_frame(row, "g1", "from Ana\n"))
     await until(lambda: [o for o in ctx.repo.notes_ops(sid) if o["author_id"] == "guest:abc"])
     await ana.close()
+
+
+def test_threads_for_guests_leave_out_what_the_owner_hid(ctx):
+    """A reader's notes thread of a published link reaches guests (an ordinary comment, C4 of
+    the M4 plan), but none the owner hid for readers: a hidden first comment takes its thread,
+    a hidden reply goes alone."""
+    from datetime import UTC, datetime
+
+    sid = meeting(ctx)
+
+    def add(cid, author_id, author, parent=""):
+        fields = {"parent_id": parent} if parent else {"target": "notes", "quote": "launch"}
+        if not parent:
+            fields["anchor"] = {"mark": f"comment:{cid}"}
+        ctx.repo.add_comment(
+            sid, id=cid, text=f"Text {cid}", author_id=author_id, author=author, **fields
+        )
+
+    add("a" * 12, "reader:" + "1" * 16, "Ana (reader)")
+    add("a1" + "0" * 10, "", "Owner", parent="a" * 12)
+    add("a2" + "0" * 10, "reader:" + "2" * 16, "Bo (reader)", parent="a" * 12)
+    add("b" * 12, "reader:" + "2" * 16, "Bo (reader)")
+    add("c" * 12, "guest:abc", "Cat (guest)")
+    threads = guest_notes.threads_for_guests(ctx, sid)
+    assert [t["root"]["id"] for t in threads] == ["a" * 12, "b" * 12, "c" * 12]
+    assert threads[0]["root"]["author"] == "Ana (reader)"
+    now = datetime.now(UTC)
+    ctx.repo.set_comment_moderation("b" * 12, None, now)
+    ctx.repo.set_comment_moderation("a2" + "0" * 10, None, now)
+    threads = guest_notes.threads_for_guests(ctx, sid)
+    assert [t["root"]["id"] for t in threads] == ["a" * 12, "c" * 12]
+    assert [r["id"] for r in threads[0]["replies"]] == ["a1" + "0" * 10]
+    assert "Text " + "b" * 12 not in json.dumps(threads)

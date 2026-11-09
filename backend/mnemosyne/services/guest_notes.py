@@ -591,13 +591,19 @@ def _guest_comment(c: Comment) -> dict:
 
 
 def threads_for_guests(app: AppContext, session_id: str) -> list[dict]:
-    """The threads on the meeting's notes, oldest first, as guests see them."""
+    """The threads on the meeting's notes, oldest first, as guests see them: a reader's of a
+    published link too (an ordinary comment), but none the owner hid (`hidden_at`, the
+    publication's Hide): a hidden first comment takes its thread, a hidden reply goes alone, as
+    for readers (live_publications._reader_view)."""
     with shared_notes.unrestricted():
         listed = comments.threads(app, session_id)
     return [
-        {"root": _guest_comment(t.root), "replies": [_guest_comment(r) for r in t.replies]}
+        {
+            "root": _guest_comment(t.root),
+            "replies": [_guest_comment(r) for r in t.replies if r.hidden_at is None],
+        }
         for t in listed.threads
-        if t.root.target == "notes"
+        if t.root.target == "notes" and t.root.hidden_at is None
     ]
 
 
