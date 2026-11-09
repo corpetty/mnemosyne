@@ -108,7 +108,9 @@
 	// The effective value; sent only after the person changes it (the backend keeps "automatic" otherwise).
 	let useOurServers = $state(true);
 	let ourTouched = $state(false);
-	const blankHost = $derived(useOurServers ? "Blank: Mnemosyne's host" : 'Blank: none');
+	const blankHost = $derived(useOurServers ? "Blank: Mnemosyne's host" : 'Blank: none, served by this computer');
+	// The desktop app starts its own backend on 127.0.0.1; --host only applies to one started by hand.
+	const inDesktopApp = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 	const blankRelay = $derived(useOurServers ? "Blank: Mnemosyne's relay" : 'Blank: none');
 
 	const WHISPER_MODELS = ['tiny', 'base', 'small', 'medium', 'medium.en', 'large-v2', 'large-v3', 'large-v3-turbo'];
@@ -1385,7 +1387,7 @@
 				</div>
 				<div class="grid grid-cols-2 gap-3">
 					<label class="col-span-2">
-						<span class={labelClass}>Publish host (blank: none, links are served by this computer)</span>
+						<span class={labelClass}>Publish host ({useOurServers ? "blank: Mnemosyne's host" : 'blank: none, links are served by this computer'})</span>
 						<input type="url" bind:value={form.publish_host} disabled={locked('publish_host')} placeholder={blankHost} class={inputClass} />
 					</label>
 					<label class="col-span-2">
@@ -1463,7 +1465,11 @@
 			<section>
 				<h3 class="text-lg font-semibold text-gray-200 mb-1">Server mode</h3>
 				<p class="text-xs text-gray-500 mb-3">
-					To let other machines use this backend, run it with <code class="text-gray-400">--host 0.0.0.0</code> and set a token here; every request must then carry it.
+					{#if inDesktopApp}
+						This app's backend listens only on this computer. To record from a phone, set a phone address (for example a Tailscale HTTPS name, see docs/remote-access.md) and an API token here; to use it from another computer, turn on Remote access below.
+					{:else}
+						To let other machines use this backend, run it with <code class="text-gray-400">--host 0.0.0.0</code> and set a token here; every request must then carry it.
+					{/if}
 				</p>
 				<label class="block max-w-md">
 					<span class={labelClass}>
@@ -1488,7 +1494,7 @@
 						<span class="text-xs text-gray-600">iroh-relay servers you run, e.g. <code>https://relay.example.org</code> (docs/remote-access.md). Paired computers follow this; after changing it, pair them again.</span>
 					</label>
 				{/if}
-				{#if !readOnly}<RemoteAccessHome enabled={settings.values.remote_access} relays={settings.values.remote_relays} tokenSet={settings.secrets_set.api_token} />{/if}
+				{#if !readOnly}<RemoteAccessHome enabled={settings.values.remote_access} relays={settings.values.remote_relays} ourServers={settings.values.use_our_servers !== false} tokenSet={settings.secrets_set.api_token} />{/if}
 				{#if !readOnly}<SyncSettings enabled={settings.values.remote_access} tokenSet={settings.secrets_set.api_token} />{/if}
 				{#if !readOnly && !connectionState.me?.team_mode}<ContactsSettings enabled={settings.values.remote_access} tokenSet={settings.secrets_set.api_token} />{/if}
 				<label class="block max-w-md mt-3">

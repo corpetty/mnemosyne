@@ -13,6 +13,13 @@ def test_phone_link_local_only(client, monkeypatch):
     assert body["reachable"] is False and "server mode" in body["note"]
 
 
+def test_phone_link_in_the_desktop_app_does_not_offer_host(client, monkeypatch):
+    monkeypatch.delenv("MNEMOSYNE_BIND_HOST", raising=False)
+    monkeypatch.setenv("MNEMOSYNE_APP_PID", "1")
+    note = client.get("/api/server/phone").json()["note"]
+    assert "0.0.0.0" not in note and "phone address" in note
+
+
 def test_phone_link_server_mode(client, ctx, monkeypatch):
     monkeypatch.setenv("MNEMOSYNE_BIND_HOST", "0.0.0.0")
     monkeypatch.setenv("MNEMOSYNE_BIND_PORT", "8008")
