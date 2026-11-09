@@ -36,8 +36,8 @@ A real-time audio transcription, diarization, and summarization desktop app for 
 - **Speakers that stick**: rename a speaker once and the app remembers the voice, labelling that person automatically in future meetings
 - **Level meters and a capture self-test**: see every source's level while recording, check a mic before a call, and verify that system audio is really captured from your output (it plays a short tone and checks it arrives)
 - **Echo cancellation** with one click: PipeWire's WebRTC canceller is loaded on demand and exposed as a virtual mic, so no headphones are needed, with optional DeepFilterNet noise suppression behind it
-- **Server mode**: point the app at a backend on another machine (with a bearer token) and work with its sessions
-- **Team server**: one machine for a group, opened in Chrome or Edge with nothing to install; everyone signs in with an invite link and has their own meetings, reviewers read everyone's, admins manage people; start one from the desktop app with "Share this computer with my team" (docs/team-server.md)
+- **Your devices**: one always-on main computer holds the library and does the work; a laptop paired with it shows that library and records into it with its own microphone and call audio, keeping recordings until the main computer can be reached (Settings → Devices and people, docs/remote-access.md)
+- **Team server**: one machine for a group, opened in Chrome or Edge with nothing to install; everyone signs in with an invite link and has their own meetings, reviewers read everyone's, admins manage people; start one from the desktop app with Settings → Devices and people → Team server (docs/team-server.md)
 - **Recording in the browser**: the microphone and a call's audio (a shared tab or screen) sent to the server as they are recorded, with an optional consent prompt kept in the meeting's history
 - **Records**: earlier transcripts and summaries kept, chained seals that show changes made outside the app, a retention period, legal holds, a deletion log and a zip export with checksums
 - **Flagged phrases**: lines using phrases you list wait in a Review view until someone signs them off
@@ -257,7 +257,7 @@ cd backend && uv run mnemosyne-bench --synthetic --transcriber parakeet --diariz
 The browser tests need Chromium once: `pnpm exec playwright install chromium`. Demo mode
 (`MNEMOSYNE_DEMO=1`, see `backend/mnemosyne/demo.py`) is also handy for trying the UI with
 no models or LLM server: run `bash tests-e2e/start-backend.sh` and point the app at
-`http://127.0.0.1:8018` in Settings → Connection.
+`http://127.0.0.1:8018` in Settings → Devices and people → Advanced → Connect to a backend by address.
 
 ### Releases
 
