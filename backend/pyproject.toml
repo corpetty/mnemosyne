@@ -27,6 +27,8 @@ dependencies = [
     "keyring>=25",
     # Reading the desktop's calendars (GNOME Online Accounts) over D-Bus.
     "jeepney>=0.8",
+    # Process checks (app watch, recovery, scratch cleanup) that work on Linux and macOS alike.
+    "psutil>=7.0",
 ]
 
 [project.optional-dependencies]

@@ -3,6 +3,7 @@
 import json
 import struct
 import subprocess
+import sys
 import time
 import wave
 from pathlib import Path
@@ -73,6 +74,35 @@ def test_stop_orphan_recorders_only_stops_ours(tmp_path):
         assert theirs.poll() is None
     finally:
         for p in (mine, theirs):
+            p.kill()
+            p.wait()
+
+
+def test_recorders_are_found_by_either_name(tmp_path):
+    """pw-record (Linux) and mnemosyne-capture (the macOS sidecar, wav path as `--output=`) both
+    count; any other process holding the path does not."""
+    wav = tmp_path / "rec_device_1.wav"
+    wav.write_bytes(b"")
+    pw = subprocess.Popen(["bash", "-c", f"exec -a pw-record tail -f {wav}"])
+    capture = subprocess.Popen(["bash", "-c", f"exec -a /opt/bin/mnemosyne-capture tail -f {wav}"])
+    sidecar = tmp_path / "mnemosyne-capture"  # a stand-in: Python under the sidecar's name
+    sidecar.symlink_to(sys.executable)
+    flagged = subprocess.Popen(
+        [str(sidecar), "-c", "import time; time.sleep(60)", f"--output={wav}"]
+    )
+    other = subprocess.Popen(["tail", "-f", str(wav)])
+    try:
+        deadline = time.monotonic() + 10
+        want = {pw.pid, capture.pid, flagged.pid}
+        while set(recovery._recorders_writing({str(wav)})) != want:
+            assert time.monotonic() < deadline, recovery._recorders_writing({str(wav)})
+            time.sleep(0.05)
+        assert other.pid not in recovery._recorders_writing({str(wav)})
+        assert recovery.stop_orphan_recorders([wav]) == 3
+        assert pw.wait(timeout=5) is not None and capture.wait(timeout=5) is not None
+        assert other.poll() is None
+    finally:
+        for p in (pw, capture, flagged, other):
             p.kill()
             p.wait()
 

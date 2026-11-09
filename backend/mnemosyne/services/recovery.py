@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import psutil
+
 from ..audio.capture import AudioDevice, RecordingSession, convert_to_opus
 from ..audio.mixer import mix_audio_files
 from ..models.base import ApiModel
@@ -108,37 +110,40 @@ def repair_wav(path: Path, fix: bool = True) -> float:
     return 0.0
 
 
+# What the recorder processes are called: pw-record on Linux, the capture sidecar on macOS.
+RECORDER_NAMES = ("pw-record", "mnemosyne-capture")
+
+
 def _recorders_writing(paths: set[str]) -> list[int]:
-    """pids of pw-record processes whose output is one of `paths`."""
+    """pids of recorder processes (RECORDER_NAMES) whose output is one of `paths`."""
     pids = []
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        info = proc.info
+        argv = info.get("cmdline") or []
+        # argv[0] first: a recorder started with another argv[0] has a different kernel name.
+        names = {os.path.basename(argv[0])} if argv else set()
+        names.add(info.get("name") or "")
+        if not names & set(RECORDER_NAMES):
             continue
-        try:
-            argv = (entry / "cmdline").read_bytes().split(b"\0")
-        except OSError:
-            continue
-        if not argv or os.path.basename(argv[0].decode(errors="replace")) != "pw-record":
-            continue
-        if any(a.decode(errors="replace") in paths for a in argv[1:]):
-            pids.append(int(entry.name))
+        # The output is an argument, alone or as `--flag=path`.
+        if any(a in paths or a.partition("=")[2] in paths for a in argv[1:]):
+            pids.append(info["pid"])
     return pids
 
 
 def _parent(pid: int) -> int | None:
     try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-        return int(stat.rsplit(")", 1)[1].split()[1])
-    except (OSError, IndexError, ValueError):
+        return psutil.Process(pid).ppid()
+    except (psutil.Error, OSError):
         return None
 
 
 def _is_python(pid: int) -> bool:
     try:
-        argv0 = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[0]
-    except OSError:
+        argv = psutil.Process(pid).cmdline()
+    except (psutil.Error, OSError):
         return False
-    return os.path.basename(argv0.decode(errors="replace")).startswith("python")
+    return bool(argv) and os.path.basename(argv[0]).lower().startswith("python")
 
 
 def recorder_owner(wavs: list[Path]) -> int | None:
@@ -153,8 +158,8 @@ def recorder_owner(wavs: list[Path]) -> int | None:
 
 
 def stop_orphan_recorders(wavs: list[Path], timeout: float = 3.0) -> int:
-    """Stop pw-record processes left over from a previous backend that still write to `wavs`.
-    SIGTERM lets pw-record finish its header. Returns how many were stopped."""
+    """Stop recorder processes left over from a previous backend that still write to `wavs`.
+    SIGTERM lets the recorder finish its header. Returns how many were stopped."""
     pids = _recorders_writing({str(p) for p in wavs})
     for pid in pids:
         try:
@@ -165,7 +170,7 @@ def stop_orphan_recorders(wavs: list[Path], timeout: float = 3.0) -> int:
     deadline = time.monotonic() + timeout
     while waiting and time.monotonic() < deadline:
         time.sleep(0.1)
-        waiting = [p for p in waiting if Path(f"/proc/{p}").exists()]
+        waiting = [p for p in waiting if psutil.pid_exists(p)]
     for pid in waiting:  # the header is repaired afterwards anyway
         try:
             os.kill(pid, signal.SIGKILL)

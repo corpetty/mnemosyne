@@ -28,6 +28,7 @@ from tests.test_notes_media import sha, webp
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 KEY = bytes(range(32))
 
+
 def test_database_made_by_the_linux_wheel_opens_with_the_configured_key(tmp_path):
     """tests/vectors/sqlcipher_v0_6_0.db is a SQLCipher database made with sqlcipher3-binary 0.6.0
     (the Linux wheel) and KEY, the way storage.sqlite._connect keys one:
@@ -50,7 +51,9 @@ def test_database_made_by_the_linux_wheel_opens_with_the_configured_key(tmp_path
         )
     finally:
         conn.close()
-    with pytest.raises(Exception):  # a wrong key does not open it
+    import sqlcipher3
+
+    with pytest.raises(sqlcipher3.DatabaseError):  # a wrong key does not open it
         _connect(db, bytes(32)).close()
 
 

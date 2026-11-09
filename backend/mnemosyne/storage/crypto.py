@@ -24,6 +24,8 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Protocol
 
+import psutil
+
 MAGIC = b"MNEMENC1"
 CHUNK = 64 * 1024
 NONCE = 12
@@ -272,6 +274,13 @@ def _scratch_dir() -> Path:
     return root
 
 
+def _pid_alive(pid: int) -> bool:
+    try:
+        return psutil.pid_exists(pid)
+    except (OverflowError, ValueError, OSError):
+        return False  # not a pid at all
+
+
 def clean_scratch() -> None:
     """Remove plaintext copies left behind by backends that crashed (called at startup)."""
     import shutil
@@ -280,7 +289,7 @@ def clean_scratch() -> None:
     if not root.is_dir():
         return
     for folder in root.iterdir():
-        if folder.name.isdigit() and not Path(f"/proc/{folder.name}").exists():
+        if folder.name.isdigit() and not _pid_alive(int(folder.name)):
             shutil.rmtree(folder, ignore_errors=True)
 
 
