@@ -7,6 +7,12 @@ it shows, and it is encrypted on your computer before it goes anywhere.
 For how it works inside, see "Publishing" in [architecture.md](architecture.md); for the HTTP
 interface, [api-reference.md](api-reference.md) (Publishing).
 
+To publish, open the meeting's **Share** menu and choose **A page…** (the same dialog is under the
+meeting's "More" menu as **Publish…**). Settings → Devices and people → *Links for people without
+Mnemosyne* holds the defaults (how long new pages last, where they are kept) and lists your
+publications; the publish host, its upload token and Mnemosyne's server switch are under that tab's
+**Advanced**.
+
 ## What a publication is, and what it never contains
 
 A publication is a snapshot of parts of the meeting: the title, date and length, the summary,
@@ -50,11 +56,11 @@ audio is never in it either, except a short clip for each quote you choose to at
 **This computer: who can reach it.** The link's address depends on how others can reach your
 machine, and the dialog says which case you are in (`local_reach`):
 
-- *team*: "Share this computer with my team" is on, so the link uses that listener (Tailscale name
+- *team*: this computer is a team server (Settings → Devices and people → This computer → Team server), so the link uses that listener (Tailscale name
   first, else a LAN address). Everyone who can reach that port can open it.
-- *phone_url*: you set the phone address in Settings; the link uses it.
+- *phone_url*: you set the phone address (Settings → Devices and people → My devices → Add a device → A phone); the link uses it.
 - *this device*: neither is set. The link only works on this computer (127.0.0.1); nobody else can
-  open it. Turn on team sharing, or use a file or a publish host.
+  open it. Make this computer a team server, set a phone address, or use a file or a publish host.
 
 **A file** with no password carries its key inside: anyone holding the file can read it. With a
 password (at least 8 characters) the key is derived from it (PBKDF2-SHA-256, 600,000 rounds) and
@@ -228,14 +234,14 @@ With no `publish_host`, the dialog offers Mnemosyne's server and preselects it (
 holds the same ciphertext any host does and has the same limits plus a per-client write budget of 200 MiB
 per rolling 24 hours (429 `write_budget`). Operator, what is kept and for how long:
 [privacy notice](https://notes.petty.services/privacy), run from [deploy/ours/](../deploy/ours/README.md).
-The upload token for your own host is never sent to it. Turn **Use Mnemosyne's servers** off in Settings
+The upload token for your own host is never sent to it. Turn **Use Mnemosyne's relay and notes server** off (Settings → Devices and people → Advanced)
 and a meeting can be published only from this computer or as a file, unless you set `publish_host`.
 
 ## Running your own publish host
 
 A small Rust program ([`publish-host/`](../publish-host)) behind Caddy stores the encrypted copies
 and serves the viewer page. It has no way to decrypt. Setup, limits, open or closed uploads
-(`PUBLISH_UPLOAD_TOKEN`, entered in Settings as the publish host token) and operation are in
+(`PUBLISH_UPLOAD_TOKEN`, entered under Advanced as the upload token) and operation are in
 [deploy/publish/README.md](../deploy/publish/README.md).
 
 ## The trust note

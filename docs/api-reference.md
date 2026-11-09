@@ -16,7 +16,9 @@ open. Run the backend with `--host 0.0.0.0` to serve a LAN; there is no TLS, so 
 networks, or reach it through Tailscale ([remote-access.md](remote-access.md)).
 
 A paired phone has its own token (below), which opens only `POST /api/audio/import` and
-`GET /api/pairing/me`; every other path answers it with `401`.
+`GET /api/pairing/me`; every other path answers it with `401`. A few paths the desktop app needs before
+it can hold a token are open to it on this machine (`LOCAL_PATHS`; see "Auth: `LOCAL_PATHS`" below).
+The API token itself is made by pairing (`POST /api/pairing/prepare`), not typed by the person.
 
 
 ### Recording from a phone
@@ -282,6 +284,63 @@ backend now ends with that app. `watching` is false for a backend not started by
 stays independent. On start the shell calls `/health`: a backend of its own version is taken over,
 an older one is stopped (SIGTERM; its recording is recovered by the new backend), anything else on
 the port is an error.
+
+### `GET|PUT|DELETE /api/system/main`
+The main computer this computer uses (docs/remote-access.md; services/main_computer.py). **The
+desktop app on this computer only** (`403` for anyone else, whatever token they carry, and through
+the tunnel or the team port). The shell calls `PUT {url, token, name}` when its remote-access tunnel
+comes up (at pairing and at each launch) and `DELETE` when the pairing is forgotten. `url` must be the
+shell's own tunnel, `http://127.0.0.1:<port>` and nothing else (`400` otherwise: a local program cannot
+point this computer's recordings at another host); `token` is the one the pairing returned. All three
+answer `{connected, name, url}`; the token is stored in `<data_dir>/main_computer.json` (0600, not
+backed up) and never returned. `PUT` also wakes the outbox worker, so recordings waiting for the main
+computer go now.
+
+### Auth: `LOCAL_PATHS`
+`/api/system/attach`, `/api/system` and `/api/system/main` (`LOCAL_PATHS`, api/auth.py) are open to the
+desktop app on this machine even when an `api_token` is set: the shell does not know the token (pairing
+makes it, the person never sees it). "This machine" means a loopback client on a non-team port, with a
+loopback `Host` and none of `Forwarded` / `X-Forwarded-*` / `X-Real-IP`; a request that came through the
+link sidecar's tunnel (127.0.0.2) is never local. `/api/system` joined the list in this version so the
+shell's `gpu_install_wanted` check keeps working once pairing has made an API token (the shell never has
+it). Everything else needs the token as before.
+
+### `POST /api/connections/handoff`
+A finished recording from a paired computer (a DESKTOP device's token) or from this computer's own
+owner becomes a meeting here: a recording a laptop made while the main computer was away, or the
+complete audio of one it streamed that dropped. `multipart/form-data` with a JSON part `meta`
+(`{handoff_id, title, started_at, ended_at, notes, sources: [{source: "mic"|"system", part, offset,
+sample_rate, file, label}], session_id?}`) and one file per source and part, in the field each source
+names (16-bit PCM WAV or Ogg; 64 files, 4 GB, `meta` 8 MB at most). Answers `{session_id, replaced}` as
+soon as the audio is on disk (a crash after that is recovered at the next start like an interrupted
+recording) and queues the `finish` job per part, which transcribes per `auto_transcribe`. The meeting's
+origin is this computer, its history says `handed_over` (who, `handoff_id`, parts, times).
+Idempotent: a retry of the same `handoff_id` from the same device returns the same meeting, and `409`
+"being received" while the first is still arriving. With `session_id` it REPLACES the audio of a
+meeting that same device streamed (`recording_started` with `by_device`), only before anything has
+transcribed it and only if every recording of it came from that stream; otherwise `409`. `403` for a
+phone, a contact or a team member, `409` on a team server, `400` for a bad `meta` or a file that is
+neither WAV nor Ogg, `413` over 4 GB.
+
+### Recording for a main computer: `/api/satellite/*`
+The local half of the laptop recorder (services/satellite.py; docs/architecture.md). **This computer
+only** (`403` through the tunnel or the team port: another computer must not open this one's
+microphone); the window of a computer that uses a main computer calls them on its OWN backend,
+`http://127.0.0.1:8008`, not on the main computer. They never create a meeting here.
+
+| Method | Path | What |
+|--------|------|------|
+| GET | `/api/satellite` | `{main: {name} \| null, reachable, recording, outbox}`. `main` is null on a computer that is not paired as a laptop. `recording`: `{local_id, session_id, streaming, title, started_at, sources: [{source, label, captured, sent, connected, gap}]}`. `outbox`: `[{id, title, started_at, parts, state: recording\|waiting\|sending\|failed, last_error, replaces}]` |
+| POST | `/api/satellite/start` | `{mic_device?, system_device?, title?, consent?}` (device ids from this computer's `/api/devices`) → `{session_id, local_id, streaming}`. Connected: the main computer starts a browser-style recording (`session_id` is its meeting) and the PCM is streamed to `/api/record/{id}/{source}`; otherwise `streaming` is false and the recording is kept here |
+| POST | `/api/satellite/stop` | `{notes?}` → `{local_id, session_id, outcome: streamed\|handing_over\|waiting}`. `handing_over`: the stream had a gap, the complete local audio is sent through the hand-off before the main computer transcribes |
+| POST | `/api/satellite/outbox/{id}/new-meeting` | A waiting or refused (`failed`) item goes as a NEW meeting, not as the complete audio of the meeting it streamed into |
+| DELETE | `/api/satellite/outbox/{id}` | Delete a waiting or refused item's audio from this computer for good (`409` while recording or sending) |
+
+The outbox worker retries a waiting item after 1, 2, 5, 10 and 30 minutes and at once when the shell
+reports the main computer back (`PUT /api/system/main`). An item is deleted here only after the main
+computer has answered with its meeting. A refusal other than `409` busy or `429` (and a `409` that says
+the streamed meeting can no longer be replaced) stops the retries: the item stays `failed` with
+`last_error`.
 
 ---
 

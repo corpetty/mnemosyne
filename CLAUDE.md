@@ -227,6 +227,20 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   a new id, so a vanished line's state moves to the line with the same text and owner.
 - `src/lib/notes/ui/` imports only from `src/lib/notes/` (never `$lib/stores`, `$lib/api`, toasts): the guest Vite
   entry bundles it. App-only behaviour comes in through the host and provider objects.
+- The role is DERIVED, never stored: team when `team_mode`, "uses my main computer" when the desktop shell is connected through
+  remote access (`connectionState.remote`/`usesMain`; `GET /api/system/role` answers main|team only, the shell alone knows the
+  third), else main. Do not add a `machine_role` setting; choosing a role in the UI turns on what it needs.
+- Pairing generates the API token (and remote access): the person never types one, and a window that sent none must carry the
+  new one (`preparePairing` in api/backend.ts). The window's own backend's token lives under `mnemosyne.connection.local`
+  (`connectionState.localToken`) because `mnemosyne.connection` holds whatever backend it is connected to now; `useLocal()`
+  restores it, so leaving a main computer does not lock the window out of its own backend.
+- A laptop's recordings stream to the MAIN computer (`/api/record` after `start-browser`) and hand off through
+  `POST /api/connections/handoff`; they are never put into the laptop's own library (no session is made there) and never
+  replace a transcribed meeting's audio. The recorder is services/satellite.py on the laptop's own backend (`/api/satellite/*`,
+  this computer only); the window calls it at `LOCAL_BACKEND` (api/local.ts), not through the main connection.
+- `/api/devices` is AUDIO devices (microphones, sinks); what is connected to this computer (phones, computers, sync peers,
+  contacts) is `/api/connections/devices`. `/api/system`, `/api/system/attach` and `/api/system/main` are in auth.py
+  `LOCAL_PATHS`; `/api/system/main` also refuses everything but the desktop shell.
 
 - Records seals: a change to a sealed part's payload or encoding (storage/records.py PARTS, a summary_data or comment field) changes
   digests of unchanged meetings. Regenerate backend/tests/vectors/records_v2.json (scripts/make_records_vectors.py) only on purpose,
@@ -673,6 +687,25 @@ app touched a meeting without changing a part, so a later outside edit is a prob
 verifiable. Export adds notes.md, comments.json, external_notes.json, summary_data.json, record.json; `mnemosyne-backend records
 verify <zip>` (services/records_check.py; exit 0/1/2, `--json`) checks one offline. RecordsCard shows the pending line and erased
 lines; `adopt_unowned` touches each adopted meeting. The notes' hashseq frontier is deferred (plan section 6).
+
+Devices and people (unreleased, docs/plans/2026-11-09-connections-design.md, built 2026-11-09 on branch connections): one Settings tab
+"Devices and people" replaces "Server mode", the Remote access box and the pairing steps that named them ("Notes & sharing" became
+"Notes"): This computer (role cards: main / uses my main computer / team server; components/ThisComputer.svelte), My devices (MyDevices.svelte:
+one list from `GET /api/connections/devices`, routes/connections.py; Add a device = a computer invite or a phone QR; "More" = another main
+computer, SyncSettings), People (ContactsSettings + `shared_in_*`), Links for people without Mnemosyne, Advanced (collapsed: Mnemosyne's
+relay and notes server, relays, publish host and token, guest settings, Connect by address, the API token), Team server (team role only).
+Pairing prepares itself (services/pairing_prep.py `prepare_pairing`, `POST /api/pairing/prepare`: API token + remote access + sidecar, or a
+plain 409 reason); `use_our_servers` no longer follows `cloud_models`; the setup wizard asks first "Is this your main computer?"; one Share
+button in the meeting header (ShareButton.svelte: People with Mnemosyne / A link to the live notes / A page / Team members). Uses my main
+computer: the shell (src-tauri/src/remote.rs) keeps the pairing token in remote.json and tells its backend `PUT /api/system/main`; the main
+computer takes `POST /api/connections/handoff` (routes/handoff.py, services/handoff.py: idempotent by handoff id, replaces a streamed meeting's
+audio only before transcription); the laptop's backend records (services/satellite.py, `/api/satellite/*`): streamed to the main computer
+while it is reachable, kept in an outbox (`<data_dir>/outbox/`, retried with backoff) when not; app_watch keeps such a recording alive. UI:
+api/local.ts, stores/satellite.svelte.ts, SatelliteBanner, OutboxList (status bar "n recordings waiting", Send as a new meeting / Discard
+for a refused one), LibraryCopy ("Keep a copy of the library on this laptop" = library sync through the tunnel). Known limits: laptop
+recordings always make a new meeting, no level meters during one, no consent hand-over for offline recordings, no acknowledgement of the last
+bytes in flight at Stop. A laptop paired before this version is paired again once (the token was not kept). e2e: tests-e2e/devices.spec.ts
+(a second demo backend on 8058 for the pairing specs; the laptop window is a stubbed local backend).
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

@@ -285,7 +285,31 @@ per-device token (`services/pairing.py`, hashed in `<data_dir>/paired_devices.js
 the phone page's upload path, and can be revoked on its own. Recording, devices and echo
 cancellation act on the machine running the backend; a remote backend is for working with its
 sessions, imports and summaries from elsewhere. The Tauri shell still starts a local backend, which is
-simply unused while a remote URL is configured.
+unused for the library while a remote URL is configured (a paired laptop uses it to record: below).
+
+### The laptop recorder (uses my main computer)
+
+A computer paired as a laptop (Settings → Devices and people; docs/remote-access.md) shows the main
+computer's library through the shell's iroh tunnel, but records through its OWN backend, so the main
+computer's `pw-record` is never the one hearing it. The role is derived, never stored: team when
+`team_mode` is on, "uses my main computer" when the shell is connected through remote access
+(`connectionState.remote`), else main. The shell tells its backend where the main computer is
+(`PUT /api/system/main`, `services/main_computer.py`, from `src-tauri/src/remote.rs`, which keeps the
+pairing token in `remote.json`), and `services/satellite.py` (`/api/satellite/*`, this computer only)
+records: pw-record captures as for a local recording, and one `SourceStream` per source tails the
+growing WAV and sends new PCM to the main computer's `/api/record/{id}/{source}` (the browser
+recorder's stream, after `POST /api/audio/start-browser`), so live transcription, speakers and the
+copilot run there. The files are always kept. A gap in a stream (a reconnect: bytes in flight may be
+lost) makes Stop leave the meeting untranscribed and send the complete local audio through
+`POST /api/connections/handoff` with `session_id` set, which replaces the streamed audio before
+anything has transcribed it (`routes/handoff.py` `_check_replace`; otherwise 409 and the item fails,
+to be sent as a new meeting or discarded). With the main computer unreachable the recording is an
+outbox item (`<data_dir>/outbox/<id>/`, sealed at rest, retried with backoff, scanned at startup)
+handed over as a new meeting. The hand-off is idempotent by `handoff_id` (the outbox id, kept in
+`services/handoff.py`): a retry after a lost answer returns the same meeting, and the laptop deletes
+its copy only after it. The main computer logs `handed_over` in the meeting's history and finishes it
+like a stopped recording (`finish` job, `auto_transcribe`). `api/app_watch.py` treats an active
+laptop recording like a local one: it outlives a crashed window by the grace period.
 
 ### Speaker bleed removal
 

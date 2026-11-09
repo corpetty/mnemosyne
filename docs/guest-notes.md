@@ -11,8 +11,9 @@ publish a finished meeting instead, see [publishing.md](publishing.md).
 
 ## Starting them
 
-- In the meeting's header choose **Invite guests**, or use the same button next to the Copilot on
-  the recording screen.
+- In the meeting's header open **Share** and choose **A link to the live notes…**, or use the
+  live-notes button next to the Copilot on the recording screen. While a link is on, the Share
+  button is joined by the words "live notes link on".
 - The panel shows the link. **Copy** it, or **Show QR code** for people in the room.
 - A line shows who is here; it updates as guests come and go.
 - Under the link the panel says how guests reach you: "Works while this computer is on", whether
@@ -20,7 +21,7 @@ publish a finished meeting instead, see [publishing.md](publishing.md).
   address, and "Also kept on <host> after the meeting" when a publish host holds a copy (see
   [How guests reach the notes](#how-guests-reach-the-notes)).
 - If nothing can carry guest notes (no sidecar, no relay, no tunnel, no host), the panel says so
-  and offers Settings.
+  and offers Settings → Devices and people.
 
 You can start guest notes before, during or after the recording. One link exists per meeting at a
 time. Meetings shared with you by someone else cannot be opened to guests.
@@ -71,7 +72,7 @@ than you meant, press **New link** (below).
 
 ## How guests reach the notes
 
-By default there is nothing to set up. Which way is used follows `guest_transport` in Settings
+By default there is nothing to set up. Which way is used follows `guest_transport` (Settings → Devices and people → Advanced → How guests reach the notes)
 (`auto`, `iroh`, `tunnel` or `host`; `auto` is the default and tries them in this order):
 
 1. **Straight to this computer over iroh.** Guests' browsers connect to your computer through a
@@ -137,10 +138,13 @@ strict content-security policy that lists the relays it may talk to.
 
 ## Settings
 
+These live in Settings → Devices and people: *Links for people without Mnemosyne* holds when a link ends
+after a recording, and **Advanced** the rest.
+
 - `guest_transport`: `auto` (default), `iroh`, `tunnel` or `host`.
 - `guest_page_url`: where the guest page is loaded from. Blank is the copy on GitHub Pages.
 - `guest_host`: a publish host just for guest notes; else `publish_host`, else Mnemosyne's host.
-- `use_our_servers`: Settings, "Use Mnemosyne's servers" (Publishing). Automatic is on, except on team servers; a value you set wins. Off removes the relay and host defaults: guest notes then use a tunnel, or your own relay and host.
+- `use_our_servers`: Settings → Devices and people → Advanced, "Use Mnemosyne's relay and notes server". Automatic is on, except on team servers; a value you set wins. Off removes the relay and host defaults: guest notes then use a tunnel, or your own relay and host.
 - `remote_relays`: the relays for iroh, shared with remote access. Blank means Mnemosyne's relay (or none, with `use_our_servers` off).
 - `guest_notes_end_hours`: see below.
 
