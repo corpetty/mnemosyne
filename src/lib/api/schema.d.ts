@@ -1519,6 +1519,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/satellite/outbox/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Discard
+         * @description Delete a waiting or refused recording's audio from this computer, for good. Never while
+         *     it is being recorded or handed over (409).
+         */
+        delete: operations["discard_api_satellite_outbox__item_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/satellite/outbox/{item_id}/new-meeting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * As New Meeting
+         * @description A waiting or refused recording goes to the main computer as a NEW meeting, not as the
+         *     complete audio of the meeting it streamed into (refused once that one was transcribed).
+         */
+        post: operations["as_new_meeting_api_satellite_outbox__item_id__new_meeting_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/satellite/start": {
         parameters: {
             query?: never;
@@ -6536,6 +6578,11 @@ export interface components {
             members: components["schemas"]["OrganizationMember-Output"][];
             /** Name */
             name: string;
+        };
+        /** OutboxDeleted */
+        OutboxDeleted: {
+            /** Id */
+            id: string;
         };
         /** OutboxEntry */
         OutboxEntry: {
@@ -12896,6 +12943,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SatelliteStatus"];
+                };
+            };
+        };
+    };
+    discard_api_satellite_outbox__item_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutboxDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    as_new_meeting_api_satellite_outbox__item_id__new_meeting_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutboxEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

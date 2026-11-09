@@ -7,7 +7,8 @@ watch it:
 
 - The app is gone and nothing is going on: shut down.
 - The app is gone while jobs run (a transcription, a summary): finish them, then shut down.
-- The app is gone during a recording: keep recording for ORPHAN_GRACE, so that a relaunched app
+- The app is gone during a recording (this computer's own, or one it makes for its main
+  computer: services/satellite.py): keep recording for ORPHAN_GRACE, so that a relaunched app
   picks the recording up (it attaches with POST /api/system/attach and shows it), and say so in
   a desktop notification: nothing records unseen. When nobody comes back, stop and save the
   recording the way Stop does, then shut down.
@@ -175,8 +176,10 @@ class AppWatch:
             for s, r in self.ctx.active_recordings.items()
             if r.is_recording and not (serving and is_browser(r))  # a teammate's goes on
         ]
+        sat = self.ctx.satellite
+        for_main = sat is not None and sat.active is not None and not sat.active.stopping
         now = self._clock()
-        if recording:
+        if recording or for_main:
             if self.orphaned_since is None:
                 self.orphaned_since = now
                 minutes = round(self.grace / 60)
@@ -195,7 +198,7 @@ class AppWatch:
             if now - self.orphaned_since < self.grace:
                 return
             logger.warning("Nobody came back for the recording; stopping and saving it")
-            await self._save(recording)
+            await self._save(recording, for_main)
             await asyncio.to_thread(
                 self._notify,
                 "Mnemosyne saved the recording",
@@ -226,12 +229,20 @@ class AppWatch:
         self.done = True
         self._exit()
 
-    async def _save(self, session_ids: list[str]) -> None:
+    async def _save(self, session_ids: list[str], for_main: bool = False) -> None:
         from .routes.audio import stop_active
 
         for session_id in session_ids:
             job, _ = await stop_active(self.ctx, session_id, transcribe=False, reason="app_gone")
             await self.ctx.jobs.wait(job.id)
+        if for_main:
+            # Stopped as Stop does: the main computer gets it (streamed, or from the outbox).
+            from fastapi import HTTPException
+
+            try:
+                await self.ctx.satellite.stop()
+            except HTTPException:
+                pass  # stopped meanwhile
 
 
 def watch_app(ctx: AppContext) -> tuple[AppWatch, asyncio.Task] | None:

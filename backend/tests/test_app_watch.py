@@ -98,6 +98,47 @@ def test_a_recording_waits_for_the_app_then_is_saved(client, ctx, watched, fake_
     assert w.events.exits == 1
 
 
+def test_a_recording_for_the_main_computer_waits_for_the_app_too(client, ctx, watched):
+    """services/satellite.py: a laptop's recording for its main computer is a recording like
+    any other here (the main computer is out of reach: it records into the outbox)."""
+    from mnemosyne.services.satellite import FakeCapture, Satellite
+
+    w = watched
+    sat = ctx.satellite = Satellite(ctx, FakeCapture(auto=False))
+    r = client.post("/api/satellite/start", json={"mic_device": 1})
+    assert r.status_code == 200, r.text
+    local_id = r.json()["local_id"]
+    _gone(w.app)
+    client.portal.call(w.watch.check)
+    assert w.events.notes == ["Mnemosyne closed while recording"] and w.events.exits == 0
+    assert sat.active is not None
+
+    again = _app()
+    try:
+        assert client.post("/api/system/attach", json={"pid": again.pid}).json() == {
+            "watching": True
+        }
+        w.clock[0] = 1000
+        client.portal.call(w.watch.check)
+        assert w.watch.orphaned_since is None and sat.active is not None
+        assert client.get("/api/satellite").json()["recording"]["local_id"] == local_id
+    finally:
+        _gone(again)
+
+    client.portal.call(w.watch.check)
+    w.clock[0] = 1059
+    client.portal.call(w.watch.check)
+    assert sat.active is not None and w.events.exits == 0
+    w.clock[0] = 1061
+    client.portal.call(w.watch.check)
+    assert sat.active is None
+    assert sat.outbox.items[local_id].state == "waiting"  # for the main computer, not here
+    assert ctx.sessions.list_sessions() == []
+    assert w.events.notes[-1] == "Mnemosyne saved the recording"
+    assert w.events.exits == 1
+    client.portal.call(sat.shutdown)
+
+
 def test_attach_without_a_watch_leaves_the_backend_independent(client):
     """Server mode, or a backend started by hand: an app does not get to end it."""
     assert client.post("/api/system/attach", json={"pid": 1}).json() == {"watching": False}
