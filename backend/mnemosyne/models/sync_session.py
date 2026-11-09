@@ -135,6 +135,9 @@ class SyncPublication(ApiModel):
     origin: str = ""
     sign_key: str = ""
     box_key: str = ""
+    # {rid: {at, on, name}}: readers whose comments the owner turned off. Merged per rid
+    # (`merge_blocked`), apart from which row wins.
+    blocked_readers: dict[str, dict] = Field(default_factory=dict)
 
 
 def _when(text: str) -> datetime:
@@ -147,6 +150,32 @@ def _rank(p: SyncPublication) -> tuple:
     times an unpublished one beats a live one (a deletion must not be undone by a tie), then
     the higher version."""
     return (_when(p.updated_at), bool(p.unpublished_at), p.version)
+
+
+def _blocked_at(entry: dict) -> datetime:
+    try:
+        return _when(str(entry.get("at") or ""))
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+
+
+def _blocked_rank(entry: dict) -> tuple:
+    return (_blocked_at(entry), bool(entry.get("on")))
+
+
+def merge_blocked(a: dict[str, dict], b: dict[str, dict]) -> dict[str, dict]:
+    """Two block lists after two machines meet: per reader, the entry with the later `at` (a
+    later unblock beats an earlier block and the other way round); at equal times a block
+    wins, so a tie never lets a blocked reader in."""
+    out = dict(a)
+    for rid, theirs in b.items():
+        mine = out.get(rid)
+        if mine is None:
+            out[rid] = theirs
+            continue
+        if _blocked_rank(theirs) > _blocked_rank(mine):
+            out[rid] = theirs
+    return out
 
 
 def merge_publications(
@@ -168,6 +197,9 @@ def merge_publications(
         update: dict = {"version": max(mine.version, p.version)}
         if not win.sign_key and lose.sign_key:  # keys made once never go missing in a merge
             update.update(sign_key=lose.sign_key, box_key=lose.box_key)
+        # The block list is merged per reader, whichever row wins: a block and the unblock
+        # that follows it each have their own time.
+        update["blocked_readers"] = merge_blocked(mine.blocked_readers, p.blocked_readers)
         by_id[p.id] = win.model_copy(update=update)
     live = [p for p in by_id.values() if not p.unpublished_at]
     if len(live) > 1:

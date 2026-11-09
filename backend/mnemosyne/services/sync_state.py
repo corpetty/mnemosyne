@@ -156,6 +156,7 @@ def export_session(repo: SessionRepository, session_id: str, device_id: str) -> 
                 origin=x["origin"] or device_id,
                 sign_key=_b64(x["sign_key"]),
                 box_key=_b64(x["box_key"]),
+                blocked_readers=json.loads(x.get("blocked_readers") or "{}"),
             )
             for x in rows["publications"]
         ],

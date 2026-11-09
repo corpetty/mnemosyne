@@ -236,6 +236,34 @@ async def unpublish(session_id: str, request: Request, ctx: AppContext = Depends
     return publishing.to_model(ctx, row, session, _base(request))
 
 
+@router.post(
+    "/api/sessions/{session_id}/publication/readers/{rid}/block", response_model=Publication
+)
+async def block_reader(
+    session_id: str,
+    rid: str,
+    request: Request,
+    hide: bool = False,
+    ctx: AppContext = Depends(get_ctx),
+):
+    """Turn comments off for one reader of the live publication (`rid`: the id their browser
+    made, see a comment's `rid`): their later comments, edits and deletes are dropped. With
+    `hide=1`, what they wrote is also hidden from the other readers. Owner or admin."""
+    session, row = publishing.block_reader(ctx, session_id, rid, hide=hide)
+    return publishing.to_model(ctx, row, session, _base(request))
+
+
+@router.post(
+    "/api/sessions/{session_id}/publication/readers/{rid}/unblock", response_model=Publication
+)
+async def unblock_reader(
+    session_id: str, rid: str, request: Request, ctx: AppContext = Depends(get_ctx)
+):
+    """Turn comments on again for a reader. Comments hidden by a block stay hidden."""
+    session, row = publishing.unblock_reader(ctx, session_id, rid)
+    return publishing.to_model(ctx, row, session, _base(request))
+
+
 @router.get("/api/publications", response_model=list[PublicationListItem])
 async def list_publications(request: Request, ctx: AppContext = Depends(get_ctx)):
     """Live publications of the meetings the caller can see, newest first."""

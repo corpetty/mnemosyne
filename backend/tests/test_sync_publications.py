@@ -483,3 +483,74 @@ def test_a_merge_never_drops_keys_the_newer_row_lacks():
         (merged,) = merge_publications([ours], [theirs])
         assert merged.updated_at == new.updated_at
         assert (merged.sign_key, merged.box_key) == ("c2lnbg==", "Ym94")
+
+
+# ---- the block list of a live publication (M4, task 3) ----------------------------------------
+
+RID = "ab" * 8
+RID2 = "cd" * 8
+
+
+async def test_a_block_travels_and_a_later_unblock_on_the_other_computer_wins(nodes, host):  # noqa: F811
+    a, b = nodes
+    sid = talk(a)
+    await publish(a, sid, where="host", expires_days=30, comments=True)
+    pub_id = row(a, sid)["id"]
+    await pull(b, a)
+    # Blocked on A (as the owner's route does: no new publication, updated_at kept).
+    before = a.repo.sync_state(sid)[1]
+    updated = row(a, sid)["updated_at"]
+    a.repo.set_blocked_reader(pub_id, RID, True, "2026-11-09T10:00:00+00:00", "Ana")
+    assert row(a, sid)["updated_at"] == updated
+    assert a.repo.sync_state(sid)[1][a.id] == before[a.id] + 1
+    await pull(b, a)
+    assert row(b, sid)["blocked_readers"][RID] == {
+        "at": "2026-11-09T10:00:00+00:00",
+        "on": True,
+        "name": "Ana",
+    }
+    # Unblocked on B later, and another reader blocked on A meanwhile: both survive the meeting.
+    b.repo.set_blocked_reader(pub_id, RID, False, "2026-11-09T11:00:00+00:00", "Ana")
+    a.repo.set_blocked_reader(pub_id, RID2, True, "2026-11-09T11:30:00+00:00", "Bo")
+    await pull(a, b)
+    await pull(b, a)
+    for node in (a, b):
+        blocked = row(node, sid)["blocked_readers"]
+        assert blocked[RID]["on"] is False and blocked[RID2]["on"] is True
+    # Nothing else changed: the selection and version are as published.
+    assert row(a, sid)["version"] == 1 and row(a, sid)["selection"]["comments"] is True
+
+
+def test_merge_blocked_rules():
+    def pub(at, blocked, **kw):
+        t = datetime(2026, 11, 9, 12, 0, 0) + timedelta(minutes=at)
+        return SyncPublication(
+            id="p",
+            key="a2V5",
+            token="t",
+            where="host",
+            version=1,
+            selection={},
+            created_at=t.isoformat(),
+            updated_at=t.isoformat(),
+            blocked_readers=blocked,
+            **kw,
+        )
+
+    def e(at, on, name=""):
+        return {"at": f"2026-11-09T{at}+00:00", "on": on, "name": name}
+
+    ours = pub(9, {RID: e("10:00", True, "Ana")})  # the newer row, with the older block state
+    theirs = pub(1, {RID: e("11:00", False, "Ana"), RID2: e("09:00", True, "Bo")})
+    for a, b in ((ours, theirs), (theirs, ours)):
+        (merged,) = merge_publications([a], [b])
+        assert merged.updated_at == ours.updated_at  # the newer row still wins the rest
+        assert merged.blocked_readers[RID]["on"] is False  # the later unblock wins per reader
+        assert merged.blocked_readers[RID2]["on"] is True  # and the union is kept
+    # At the same instant a block wins: a tie never lets a blocked reader in.
+    tie_a, tie_b = pub(1, {RID: e("10:00", True)}), pub(1, {RID: e("10:00", False)})
+    for a, b in ((tie_a, tie_b), (tie_b, tie_a)):
+        assert merge_publications([a], [b])[0].blocked_readers[RID]["on"] is True
+    # An older peer sends no list: ours stays.
+    (merged,) = merge_publications([ours], [pub(1, {})])
+    assert merged.blocked_readers == ours.blocked_readers

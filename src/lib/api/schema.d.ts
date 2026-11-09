@@ -2575,6 +2575,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/publication/readers/{rid}/block": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Block Reader
+         * @description Turn comments off for one reader of the live publication (`rid`: the id their browser
+         *     made, see a comment's `rid`): their later comments, edits and deletes are dropped. With
+         *     `hide=1`, what they wrote is also hidden from the other readers. Owner or admin.
+         */
+        post: operations["block_reader_api_sessions__session_id__publication_readers__rid__block_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/publication/readers/{rid}/unblock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unblock Reader
+         * @description Turn comments on again for a reader. Comments hidden by a block stay hidden.
+         */
+        post: operations["unblock_reader_api_sessions__session_id__publication_readers__rid__unblock_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/records": {
         parameters: {
             query?: never;
@@ -4327,6 +4369,26 @@ export interface components {
             last_restore: components["schemas"]["RestoreResult"] | null;
             /** Restore Pending */
             restore_pending: string | null;
+        };
+        /**
+         * BlockedReader
+         * @description A reader of a live publication the owner turned comments off for (M4). `rid` is the id the
+         *     reader's browser made for itself, so this blocks a browser profile, not a person. `name` is
+         *     the name last seen on one of their comments ("" if none).
+         */
+        BlockedReader: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Rid */
+            rid: string;
         };
         /** Body_add_file_api_assets_file_post */
         Body_add_file_api_assets_file_post: {
@@ -6435,6 +6497,8 @@ export interface components {
         Publication: {
             /** Behind */
             behind: boolean;
+            /** Blocked Readers */
+            blocked_readers: components["schemas"]["BlockedReader"][];
             /**
              * Created At
              * Format: date-time
@@ -9066,6 +9130,12 @@ export interface components {
          *     publication, as the SENDER sees it (its own sync id when it is its own).
          */
         SyncPublication: {
+            /** Blocked Readers */
+            blocked_readers: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
             /**
              * Box Key
              * @default
@@ -14663,6 +14733,72 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    block_reader_api_sessions__session_id__publication_readers__rid__block_post: {
+        parameters: {
+            query?: {
+                hide?: boolean;
+            };
+            header?: never;
+            path: {
+                session_id: string;
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Publication"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unblock_reader_api_sessions__session_id__publication_readers__rid__unblock_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Publication"];
                 };
             };
             /** @description Validation Error */
