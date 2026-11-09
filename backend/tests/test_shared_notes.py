@@ -1187,3 +1187,122 @@ def test_edit_blocking_leaves_a_meeting_waiting_for_its_document(ctx, sidecar):
         ctx, sid, lambda *a: called.append(a), shared_notes.COPILOT_AUTHOR
     )
     assert out == [] and called == [] and ctx.repo.notes_ops(sid) == []
+
+
+# ---- a reader's passage marked where it is (mark_comment_located_blocking) -----------------
+
+
+def test_a_located_mark_is_made_against_the_fold_it_located_in(ctx, sidecar):
+    from mnemosyne.services import notes_anchor
+
+    sid = meeting(ctx)
+    text = "Plans\nAda Lovelace will send the budget.\n## Summary\nThe budget is late.\n"
+    ctx.repo.append_notes_ops(
+        sid,
+        [frame("f1", ["ins", 0, text]), frame("f2", ["ref", 2, "sec:summary"])],
+        "u1",
+        "Ann",
+        True,
+    )
+    seen = []
+    rendered = notes_anchor.as_read("Plans\n\nPerson 2 will send the budget.\n")
+    anchor = {"exact": "Person 2 will send", "prefix": "Plans\n", "suffix": " the budget."}
+
+    def locate(plain, refs):
+        seen.append((plain, [r["ref"] for r in refs]))
+        # Ann types meanwhile: logged after the state was read, not part of this fold.
+        ctx.repo.append_notes_ops(sid, [frame("f3", ["ins", 0, "Top\n"])], "u1", "Ann", True)
+        return notes_anchor.locate(
+            plain, refs, anchor, rendered, lambda s: s.replace("Ada Lovelace", "Person 2")
+        )
+
+    out = shared_notes.mark_comment_located_blocking(ctx, sid, "c1", locate, "reader:r1", "Rita")
+    assert seen == [(text, ["sec:summary"])]
+    assert [seq for seq, _ in out] == [4]
+    fold, mark = sidecar.doc_requests[-3:-1]  # then the fold again, with Ann's frame
+    assert (fold["op"], mark["op"]) == ("fold", "mark_comment_at")
+    assert fold["snapshot"] == mark["snapshot"] and fold["frames"] == mark["frames"]
+    start = text.index("Ada Lovelace")
+    assert (mark["start"], mark["end"], mark["comment"]) == (start, start + 22, "c1")
+    ops = ctx.repo.notes_ops(sid)
+    assert [(o["author_id"], o["author"]) for o in ops][-1] == ("reader:r1", "Rita")
+    assert not ctx.repo.has_unfolded_notes(sid)
+    plain, ranges = ctx.repo.notes_marks(sid)
+    assert ranges["c1"] == [start, start + 22]  # the toy's ranges do not follow edits
+
+
+@pytest.mark.anyio
+async def test_a_located_mark_reaches_the_meetings_connections(ctx, sidecar):
+    sid = meeting(ctx)
+    ctx.repo.append_notes_ops(sid, [frame("f1", ["ins", 0, "Hello world\n"])], "u1", "Ann", True)
+    shared_notes.fold_blocking(ctx, sid)
+    member = tap()
+    shared_notes.attach(ctx, sid, member)
+
+    async def mark():
+        out = await asyncio.to_thread(
+            shared_notes.mark_comment_located_blocking,
+            ctx,
+            sid,
+            "c1",
+            lambda plain, refs: (6, 11),
+            "reader:r1",
+            "Rita",
+        )
+        await asyncio.sleep(0.05)  # the delivery scheduled on the loop from the thread
+        return out
+
+    out = await mark()
+    assert len(out) == 1
+    assert drain(member) == [("bytes", out[0][1])]
+    # The same mark again: the sidecar has it, nothing is appended or sent.
+    assert await mark() == [] and drain(member) == []
+
+
+def test_nothing_located_marks_nothing(ctx, sidecar):
+    sid = meeting(ctx, notes="Written before\n")
+    out = shared_notes.mark_comment_located_blocking(
+        ctx, sid, "c1", lambda plain, refs: None, "reader:r1", "Rita"
+    )
+    assert out == []
+    # The meeting's document was made first (seeded from its notes), as for a join.
+    assert [o["author"] for o in ctx.repo.notes_ops(sid)] == ["seed"]
+    assert "mark_comment_at" not in [r["op"] for r in sidecar.doc_requests]
+
+
+def test_a_range_the_sidecar_refuses_leaves_the_comment_detached(ctx, sidecar):
+    sid = meeting(ctx)
+    ctx.repo.append_notes_ops(sid, [frame("f1", ["ins", 0, "Short\n"])], "u1", "Ann", True)
+    with pytest.raises(shared_notes.NotesDocError):
+        shared_notes.mark_comment_located_blocking(
+            ctx, sid, "c1", lambda plain, refs: (2, 500), "reader:r1", "Rita"
+        )
+    with pytest.raises(shared_notes.NotesDocError):
+        shared_notes.mark_comment_located_blocking(
+            ctx, sid, "c1", lambda plain, refs: (3, 3), "reader:r1", "Rita"
+        )
+    assert [o["author"] for o in ctx.repo.notes_ops(sid)] == ["Ann"]
+
+
+@pytest.mark.anyio
+async def test_mark_comment_located_off_the_loop(ctx, sidecar):
+    sid = meeting(ctx)
+    ctx.repo.append_notes_ops(sid, [frame("f1", ["ins", 0, "Hello world\n"])], "u1", "Ann", True)
+    assert await shared_notes.mark_comment_located(
+        ctx, sid, "c1", lambda plain, refs: (0, 5), "reader:r1", "Rita"
+    )
+    assert ctx.repo.notes_marks(sid)[1]["c1"] == [0, 5]
+    assert not await shared_notes.mark_comment_located(
+        ctx, sid, "c2", lambda plain, refs: (0, 99), "reader:r1", "Rita"
+    )
+    assert not await shared_notes.mark_comment_located(
+        ctx, sid, "c3", lambda plain, refs: None, "reader:r1", "Rita"
+    )
+
+
+def test_a_located_mark_without_a_sidecar(ctx):
+    sid = meeting(ctx, notes="Hello\n")
+    with pytest.raises(shared_notes.NotesDocError):
+        shared_notes.mark_comment_located_blocking(
+            ctx, sid, "c1", lambda plain, refs: (0, 5), "reader:r1", "Rita"
+        )

@@ -598,6 +598,81 @@ def mark_comment_blocking(
         return list(zip(seqs, frames, strict=True))
 
 
+# locate(plain, refs) -> [start, end) in code points of plain, or None: see
+# mark_comment_located_blocking (services/notes_anchor.py `locator` makes one).
+Locate = Callable[[str, list[dict]], tuple[int, int] | None]
+
+
+def mark_comment_located_blocking(
+    app: AppContext,
+    session_id: str,
+    comment_id: str,
+    locate: Locate,
+    author_id: str,
+    author: str,
+) -> list[tuple[int, bytes]]:
+    """Put the mark `comment:<comment_id>` on a passage found by `locate`, for a commenter who
+    has no element ids (a publication's reader: live_publications). Under the meeting's lock:
+    the document is seeded or caught up (as for a join), the state is read ONCE and folded for
+    its `plain` and `refs`; `locate(plain, refs)` gives [start, end) in code points of that
+    `plain`, or None; and the sidecar's `mark_comment_at` marks that range against the SAME
+    snapshot and frames, so nothing typed meanwhile can move the text between the two runs.
+    The mark's frames are logged as `author` (`author_id`), stored as mark_comment_blocking's,
+    sent to the meeting's connections (with any seeding or catch-up) and returned; [] when
+    `locate` found nothing or the meeting waits for its document from library sync (the
+    comment stays detached). From a thread, never the event loop. Raises NotesDocError (no
+    sidecar, a failing run, a range the sidecar refuses)."""
+    binary = _binary()
+    if binary is None:
+        raise NotesDocError("mnemosyne-link not found")
+    if needs_doc_from_sync(app, session_id):
+        return []
+    out: list[tuple[int, bytes]] = []
+    with hub(app).lock(session_id):
+        seeded = seed_blocking(app, session_id)
+        caught = [] if seeded else _catch_up_locked(app, session_id, binary)[0]
+        snapshot, ops, last = _state(app, session_id)
+        request = {
+            "notes": notes_origin(session_id),
+            "snapshot": snapshot,
+            "frames": [_b64(f) for _, f in ops],
+        }
+        state = _run_doc(binary, {"op": "fold", **request})
+        plain = state.get("plain")
+        if not isinstance(plain, str):
+            raise NotesDocError("unreadable fold reply: no plain text")
+        found = locate(plain, refs_of(state) or [])
+        if found is not None:
+            start, end = found
+            reply = _run_doc(
+                binary,
+                {
+                    "op": "mark_comment_at",
+                    **request,
+                    "start": int(start),
+                    "end": int(end),
+                    "comment": comment_id,
+                },
+            )
+            try:
+                frames = [_unb64(f) for f in reply["frames"]]
+                folded = _unb64(reply["snapshot"])
+                rendered = str(reply["markdown"])
+            except (KeyError, TypeError, ValueError) as e:
+                raise NotesDocError(f"unreadable mark_comment_at reply: {e}") from e
+            seqs = app.repo.append_notes_ops(session_id, frames, author_id, author, False)
+            if seqs:
+                _store_written(
+                    app, session_id, binary, reply, folded, rendered, seqs, ops, last, None
+                )
+                out = list(zip(seqs, frames, strict=True))
+    if seeded or caught or out:
+        _on_loop(app, _deliver, app, session_id, seeded + caught + out, None)
+    if caught:
+        _on_loop(app, _announce_edit, app, session_id, API_AUTHOR, None)
+    return out
+
+
 # ---- ticking a task line (phase 11, services/notes_items.py `write_fields`) ----------------
 
 
@@ -838,6 +913,28 @@ async def mark_comment(
         return False
     if frames:
         _deliver(app, session_id, frames, None)
+    return bool(frames)
+
+
+async def mark_comment_located(
+    app: AppContext,
+    session_id: str,
+    comment_id: str,
+    locate: Locate,
+    author_id: str = "",
+    author: str = "",
+) -> bool:
+    """mark_comment_located_blocking, off the event loop (it delivers the frames itself).
+    False when the passage was not found or could not be marked (logged): the comment is then
+    detached, shown by its quote."""
+    _remember_loop(app)
+    try:
+        frames = await asyncio.to_thread(
+            mark_comment_located_blocking, app, session_id, comment_id, locate, author_id, author
+        )
+    except NotesDocError as e:
+        logger.info("Could not mark comment %s in the notes of %s: %s", comment_id, session_id, e)
+        return False
     return bool(frames)
 
 
