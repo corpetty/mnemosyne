@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { importMeeting, openApp } from './fixtures';
 
 const BACKEND = 'http://127.0.0.1:8018';
@@ -452,4 +452,168 @@ test('readers comment on the published notes: the owner sees the mark, another r
   } finally {
     await ctxB.close();
   }
+});
+
+// Blocking a reader (M4, items 2 and 3; docs/plans/2026-11-09-live-publications-m4.md). The owner
+// blocks a reader from the comment in the Comments card, with the tick that hides their comments.
+// THREADS then lists the reader's key in `blocked`: that reader's page swaps the composer for one
+// line, and every other reader loses the hidden thread. Unblocking brings the composer back (what
+// was hidden stays hidden). "Replace the link" ends the old link and carries the choices over to a
+// new one. Both need the same set-up: a summarized meeting published to the host with comments on.
+const BLOCKED_LINE = 'The owner has stopped taking comments from you on this page.';
+const BLOCKED_COMMENT = 'Is the October date firm, though?';
+const AFTER_UNBLOCK = 'Thanks, that settles it for me.';
+
+async function publishSummarized(page: Page, request: APIRequestContext, outputDir: string): Promise<string> {
+  const set = await request.put(`${BACKEND}/api/settings`, { data: { publish_host: PUBLISH_HOST } });
+  expect(set.ok()).toBeTruthy();
+  await openApp(page);
+  await importMeeting(page, outputDir, NAME);
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  await page.getByRole('button', { name: 'Summarize', exact: true }).click();
+  await expect(page.getByText('Update the docs before the release').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'More for this meeting' }).click();
+  await page.getByRole('menuitem', { name: /^Publish…/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'Publish this meeting' });
+  await dialog.getByRole('group', { name: 'Where' }).getByRole('button', { name: 'Publish host' }).click();
+  await expect(dialog.getByRole('checkbox', { name: 'Readers may comment' })).toBeChecked();
+  await dialog.getByRole('button', { name: 'Publish', exact: true }).click();
+  const link = dialog.getByLabel('Link', { exact: true });
+  await expect(link).toBeVisible();
+  const url = await link.inputValue();
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toHaveCount(0);
+  return url;
+}
+
+test('the owner blocks a reader: their page loses the composer, others lose the hidden thread, and an unblock brings the composer back', async ({
+  page,
+  context,
+  browser,
+  request
+}, info) => {
+  test.setTimeout(300_000);
+  const url = await publishSummarized(page, request, info.outputDir);
+
+  // 1. Reader A names themself and comments on the decision; reader B (another context, another
+  // reader key) sees the thread.
+  const a = await context.newPage();
+  await a.goto(url);
+  await expect(a.getByRole('heading', { name: NAME, level: 1 })).toBeVisible();
+  const composeA = a.getByTestId('reader-compose');
+  await expect(composeA).toBeVisible({ timeout: 15_000 });
+  await composeA.getByLabel('Your name, shown with your comments').fill('Ana');
+  await composeA.getByRole('button', { name: 'Continue' }).click();
+  await a.locator('[data-anchor^="decision:"]').first().getByRole('button', { name: 'Comment', exact: true }).click();
+  await composeA.getByLabel('Your comment').fill(BLOCKED_COMMENT);
+  await composeA.getByRole('button', { name: 'Send', exact: true }).click();
+  const threadsA = a.locator('[data-thread]');
+  await expect(threadsA.filter({ hasText: BLOCKED_COMMENT })).toBeVisible();
+  await expect(a.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(1, ROUND_TRIP);
+
+  const ctxB = await browser.newContext();
+  try {
+    const b = await ctxB.newPage();
+    await b.goto(url);
+    await expect(b.getByRole('heading', { name: NAME, level: 1 })).toBeVisible();
+    const threadsB = b.locator('[data-thread]');
+    await expect(threadsB.filter({ hasText: BLOCKED_COMMENT })).toBeVisible(ROUND_TRIP);
+
+    // 2. The owner blocks Ana from her comment, with the comments hidden (ticked by default).
+    const card = page.getByRole('region', { name: 'Comments' });
+    const ownerThread = card.locator('[data-comment-thread]').filter({ hasText: BLOCKED_COMMENT });
+    await expect(ownerThread).toBeVisible(ROUND_TRIP);
+    await expect(ownerThread).not.toContainText('blocked');
+    await ownerThread.getByRole('button', { name: 'Block', exact: true }).click();
+    await expect(ownerThread.getByText(/^Block Ana.* from commenting on the published page\?$/)).toBeVisible();
+    await expect(ownerThread.getByRole('checkbox', { name: 'Also hide their comments from readers' })).toBeChecked();
+    // Cancel closes it without blocking anyone.
+    await ownerThread.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(ownerThread.getByText(/from commenting on the published page\?$/)).toHaveCount(0);
+    await expect(a.getByTestId('reader-blocked')).toHaveCount(0);
+    await ownerThread.getByRole('button', { name: 'Block', exact: true }).click();
+    await ownerThread.getByRole('button', { name: 'Block', exact: true }).click(); // the confirm's own button
+    await expect(ownerThread).toContainText('· blocked', ROUND_TRIP);
+    await expect(ownerThread).toContainText('hidden from readers');
+    await expect(ownerThread.getByRole('button', { name: 'Unblock', exact: true })).toBeVisible();
+
+    // 3. Ana's page swaps the composer for the one line and offers no Reply, Edit or Delete.
+    await expect(a.getByTestId('reader-blocked')).toHaveText(BLOCKED_LINE, ROUND_TRIP);
+    await expect(a.getByTestId('reader-compose')).toHaveCount(0);
+    await expect(a.getByRole('button', { name: 'Reply', exact: true })).toHaveCount(0);
+    await expect(a.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
+    await expect(a.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
+
+    // 4. Reader B no longer sees the hidden thread, and still reads the page and may comment.
+    await expect(threadsB.filter({ hasText: BLOCKED_COMMENT })).toHaveCount(0, ROUND_TRIP);
+    await expect(b.getByTestId('reader-blocked')).toHaveCount(0);
+    await expect(b.getByTestId('reader-compose')).toBeVisible();
+
+    // 5. The publish dialog lists the blocked reader; unblocking there ends the block.
+    await page.getByRole('button', { name: /^Published · v\d+/ }).click();
+    const published = page.getByRole('dialog', { name: 'Publish this meeting' });
+    await expect(published).toContainText('1 reader blocked from commenting');
+    await published.getByRole('button', { name: 'Unblock', exact: true }).click();
+    await expect(published).not.toContainText('reader blocked');
+    await published.getByRole('button', { name: /^(Close|Cancel)$/ }).click();
+    await expect(published).toHaveCount(0);
+    await expect(ownerThread).not.toContainText('· blocked');
+    await expect(ownerThread.getByRole('button', { name: 'Block', exact: true })).toBeVisible();
+
+    // 6. Ana's composer is back and a new comment reaches B; the one hidden at the block stays hidden.
+    await expect(a.getByTestId('reader-blocked')).toHaveCount(0, ROUND_TRIP);
+    await expect(composeA).toBeVisible();
+    await composeA.getByLabel('Comment on this meeting').fill(AFTER_UNBLOCK);
+    await composeA.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(threadsB.filter({ hasText: AFTER_UNBLOCK })).toBeVisible(ROUND_TRIP);
+    await expect(threadsB.filter({ hasText: BLOCKED_COMMENT })).toHaveCount(0);
+    await expect(a.getByTestId('reader-blocked')).toHaveCount(0);
+  } finally {
+    await ctxB.close();
+  }
+});
+
+test('the owner replaces the link: the old one says "No longer published", the new one opens the meeting', async ({
+  page,
+  context,
+  request
+}, info) => {
+  test.setTimeout(240_000);
+  const url = await publishSummarized(page, request, info.outputDir);
+
+  // An open reader of the old link.
+  const old = await context.newPage();
+  await old.goto(url);
+  await expect(old.getByRole('heading', { name: NAME, level: 1 })).toBeVisible();
+  await expect(old.getByTestId('reader-compose')).toBeVisible({ timeout: 15_000 });
+
+  // The owner asks to replace the link, reads the warning, and confirms.
+  await page.getByRole('button', { name: /^Published · v\d+/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'Publish this meeting' });
+  await dialog.getByRole('button', { name: 'Replace the link', exact: true }).click();
+  await expect(dialog.getByText('Everyone with the old link loses it; send the new one to the people who should keep reading.')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Yes', exact: true }).click();
+  await expect(page.getByText('The link is replaced. The old one no longer works.')).toBeVisible({ timeout: 60_000 });
+
+  // The dialog shows the new link as after a first publish.
+  const link = dialog.getByLabel('Link', { exact: true });
+  await expect(link).not.toHaveValue(url);
+  const newUrl = await link.inputValue();
+  expect(newUrl).toContain(`${PUBLISH_HOST}/p/`);
+  expect(newUrl).toContain('#');
+  await expect(dialog.getByRole('button', { name: 'Open', exact: true })).toBeVisible();
+
+  // The old link is gone, for the page that had it open and for a fresh visit.
+  await expect(old.getByRole('heading', { name: 'No longer published' })).toBeVisible({ timeout: 15_000 });
+  const again = await context.newPage();
+  await again.goto(url);
+  await expect(again.getByRole('heading', { name: 'No longer published' })).toBeVisible({ timeout: 15_000 });
+
+  // The new link opens the meeting, kept up to date and open to comments, as before.
+  const fresh = await context.newPage();
+  await fresh.goto(newUrl);
+  await expect(fresh.getByRole('heading', { name: NAME, level: 1 })).toBeVisible();
+  await expect(fresh.getByText('Kept up to date as the meeting changes')).toBeVisible();
+  await expect(fresh.getByTestId('reader-compose')).toBeVisible({ timeout: 15_000 });
 });
