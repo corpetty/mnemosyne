@@ -69,6 +69,8 @@ SEAL_UPDATED = "publication updated"
 SEAL_UNPUBLISHED = "unpublished"
 # The history line of a version made by the watcher (follow): no seal, see `publish(auto=)`.
 EVENT_AUTO_UPDATED = "publication_auto_updated"
+# Replace the link (`replace`): one line for the unpublish and the new publication.
+EVENT_REPLACED = "publication_replaced"
 LIVE_NEEDS_HOST = "Live updates and comments need a publish host"
 _PREVIEW_ID = "0" * 16
 _ID = re.compile(r"^[0-9a-f]{16}$")
@@ -1055,13 +1057,15 @@ async def publish(
     local_base: str = "",
     *,
     auto: bool = False,
+    replaces: str | None = None,
 ) -> dict:
     """The publish job: a new publication, or a new version of the meeting's live one.
     `local_base`: this backend's address as the caller reached it, for links to this computer
     when it has no other (local_address). `auto`: the watcher's version of a publication kept
     up to date (services/live_publications.py): the same work, but it is logged as
     `publication_auto_updated`, adds no seal (the seal is on a person's acts: publish, update,
-    unpublish) and keeps `published_by`."""
+    unpublish) and keeps `published_by`. `replaces`: the id of the publication `replace` just
+    unpublished; the history line says so (`publication_replaced`) instead of `published`."""
     session = app.repo.get(session_id)
     if session is None:
         raise PublishError("The meeting is gone")
@@ -1282,13 +1286,17 @@ async def publish(
     if sel.where == "local":
         row["origin"] = ""  # the files that serve it are here
     app.repo.put_publication(row)
+    kind = EVENT_AUTO_UPDATED if auto else ("published" if version == 1 else "publication_updated")
+    if replaces and version == 1:
+        kind = EVENT_REPLACED
     _log(
         app,
         session_id,
-        EVENT_AUTO_UPDATED if auto else ("published" if version == 1 else "publication_updated"),
+        kind,
         row,
         sel,
         len(new_images),
+        **({"replaces": replaces} if replaces else {}),
     )
     if not auto:
         from .records import seal_later
@@ -1314,6 +1322,7 @@ def _log(
     row: dict,
     sel: PublicationSelection,
     images: int = 0,
+    **extra: Any,
 ):
     who = access.principal()
     parts = ["title", *[p for p in PARTS if getattr(sel, p)]]
@@ -1335,11 +1344,13 @@ def _log(
         host=row["host_url"],
         expires_at=row["expires_at"],
         by=who.name if who else "",
+        **extra,
     )
 
 
-async def unpublish(app: AppContext, session_id: str) -> dict | None:
-    """Delete the hosted copy and the local files; the row stays, marked unpublished."""
+async def unpublish(app: AppContext, session_id: str, *, log: bool = True) -> dict | None:
+    """Delete the hosted copy and the local files; the row stays, marked unpublished. `log`
+    off: `replace` writes its own history line."""
     session = app.repo.get(session_id)
     if session is None:
         return None
@@ -1360,18 +1371,59 @@ async def unpublish(app: AppContext, session_id: str) -> dict | None:
     app.repo.mark_unpublished(row["id"], at)
     row.update(unpublished_at=at, updated_at=at)
     who = access.principal()
-    history.log(
-        app,
-        session_id,
-        "unpublished",
-        publication=row["id"],
-        where="publish host" if row["place"] == "host" else "this computer",
-        by=who.name if who else "",
-    )
+    if log:
+        history.log(
+            app,
+            session_id,
+            "unpublished",
+            publication=row["id"],
+            where="publish host" if row["place"] == "host" else "this computer",
+            by=who.name if who else "",
+        )
     from .records import seal_later
 
     seal_later(app, session_id, SEAL_UNPUBLISHED)
     return row
+
+
+async def replace(app: AppContext, session_id: str, job: JobContext, local_base: str = "") -> dict:
+    """The replace job (C8): unpublish the meeting's publication (the host's copy and its room
+    first), then publish a new one with the STORED selection: a new id and key, fresh owner
+    keys, an empty block list, the same `follow` / `comments` / `moderate`. Whoever has the old
+    link loses it. One history line, `publication_replaced` (old id, new id, never a key); the
+    two steps seal as they always do."""
+    session = app.repo.get(session_id)
+    if session is None:
+        raise PublishError("The meeting is gone")
+    if not access.can_write(session.owner_id):
+        raise access.Forbidden("Only the meeting's owner or an admin can replace the link")
+    old = app.repo.live_publication(session_id)
+    if old is None:
+        raise PublishError("This meeting is not published")
+    if why := served_elsewhere_message(app, old):
+        raise PublishError(why)
+    sel = PublicationSelection.model_validate(old["selection"])
+    # What can fail before anything is taken down fails now.
+    check_request(app, session, sel)
+    check_live(session, sel)
+    job.update("Taking down the old link", 0.02)
+    try:
+        await unpublish(app, session_id, log=False)
+    except HTTPException as e:
+        raise PublishError(str(e.detail)) from e
+    try:
+        result = await publish(app, session_id, sel, job, local_base, replaces=old["id"])
+    except Exception:
+        history.log(
+            app,
+            session_id,
+            "unpublished",
+            publication=old["id"],
+            where="publish host" if old["place"] == "host" else "this computer",
+            by=(access.principal().name if access.principal() else ""),
+        )
+        raise
+    return result
 
 
 # ---- blocking readers (live publications, M4) ----------------------------------------------

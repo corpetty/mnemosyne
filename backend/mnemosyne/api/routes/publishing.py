@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.background import BackgroundTask
 
+from ... import access
 from ...jobs import Job
 from ...models.base import ApiModel
 from ...models.publication import (
@@ -234,6 +235,29 @@ async def unpublish(session_id: str, request: Request, ctx: AppContext = Depends
     if row is None:
         raise HTTPException(status_code=404, detail="This meeting is not published")
     return publishing.to_model(ctx, row, session, _base(request))
+
+
+@router.post("/api/sessions/{session_id}/publication/replace", response_model=Job)
+async def replace_link(session_id: str, request: Request, ctx: AppContext = Depends(get_ctx)):
+    """Replace the link: unpublish and publish again with the same choices, in one `publish`
+    job whose result is {publication}. The old link dies, readers and their blocks are gone;
+    the new publication has its own link and keys. Owner or admin."""
+    session = _session(ctx, session_id)
+    if not access.can_write(session.owner_id):
+        raise access.Forbidden("Only the meeting's owner or an admin can replace the link")
+    row = ctx.repo.live_publication(session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="This meeting is not published")
+    if why := publishing.served_elsewhere_message(ctx, row):
+        raise HTTPException(status_code=409, detail=why)
+    if any(j.kind == "publish" for j in ctx.jobs.list(session_id=session_id, active_only=True)):
+        raise HTTPException(status_code=409, detail="This meeting is being published already")
+    base = _base(request)
+
+    async def run(job):
+        return await publishing.replace(ctx, session_id, job, base)
+
+    return ctx.jobs.submit("publish", run, session_id=session_id)
 
 
 @router.post(

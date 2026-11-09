@@ -22,6 +22,7 @@ export interface PublishingApi {
 	previewPublication(sessionId: string, selection: PublicationSelection): Promise<unknown>;
 	publishSession(sessionId: string, selection: PublicationSelection): Promise<Job>;
 	unpublishSession(sessionId: string): Promise<Publication>;
+	replacePublication(sessionId: string): Promise<Job>;
 	blockReader(sessionId: string, rid: string, hide: boolean): Promise<Publication>;
 	unblockReader(sessionId: string, rid: string): Promise<Publication>;
 	listPublications(): Promise<PublicationListItem[]>;
@@ -82,6 +83,7 @@ const defaultApi: PublishingApi = {
 	previewPublication: backend.previewPublication,
 	publishSession: backend.publishSession,
 	unpublishSession: backend.unpublishSession,
+	replacePublication: backend.replacePublication,
 	blockReader: backend.blockReader,
 	unblockReader: backend.unblockReader,
 	listPublications: backend.listPublications,
@@ -97,7 +99,7 @@ export function errorText(e: unknown, fallback: string): string {
 	return m.replace(/^\d{3}: /, '') || fallback;
 }
 
-type Busy = 'publish' | 'unpublish' | 'file' | null;
+type Busy = 'publish' | 'unpublish' | 'replace' | 'file' | null;
 /** One image of the notes in the dialog's list (generated `NotesImage`). */
 export type NotesImage = PublicationDefaults['notes_images'][number];
 type MeetingRef = Pick<SessionDetail, 'id' | 'name' | 'attendees' | 'participants'>;
@@ -456,6 +458,32 @@ export class PublishingState {
 			return false;
 		} finally {
 			this.busy = null;
+		}
+	}
+
+	/** Replace the link: the old one stops working, a new one carries the same choices. The new link
+	 * is shown as after a first publish. */
+	async replace(): Promise<Publication | null> {
+		const id = this.dialogFor;
+		if (!id || this.busy || !this.publications[id]) return null;
+		this.busy = 'replace';
+		this.error = '';
+		this.stage = '';
+		try {
+			const done = await this.#follow(await this.#api.replacePublication(id));
+			const pub = (done.result as { publication?: Publication } | null)?.publication ?? null;
+			if (!pub) throw new Error('The backend did not say what it published');
+			this.publications[id] = pub;
+			if (this.dialogFor === id) this.justPublished = true;
+			if (this.list) void this.loadList();
+			if (this.dialogFor === id) void this.refreshPreview();
+			return pub;
+		} catch (e) {
+			this.error = errorText(e, 'Could not replace the link');
+			return null;
+		} finally {
+			this.busy = null;
+			this.stage = '';
 		}
 	}
 

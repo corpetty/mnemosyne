@@ -266,6 +266,8 @@
 				const what = e.kind === 'published' ? 'Published' : 'Publication updated';
 				return `${what} (version ${d.version}, on ${where})${d.by ? ` by ${d.by}` : ''}`;
 			}
+			case 'publication_replaced':
+				return `Replaced the published link${d.by ? ` by ${d.by}` : ''}`;
 			case 'unpublished':
 				return `Unpublished${d.by ? ` by ${d.by}` : ''}`;
 			case 'reader_blocked':

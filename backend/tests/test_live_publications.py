@@ -767,6 +767,25 @@ async def test_unpublish_deletes_the_room_after_the_publication(ctx, live, seals
     assert not lp._room_file(ctx, row["id"]).exists()
 
 
+async def test_replacing_the_link_moves_the_bridge_to_a_new_room(ctx, live, seals):
+    s = _meeting(ctx)
+    await _first(ctx, s.id, comments=True)
+    bridge = await _bridge(ctx, s.id)
+    old_row, old_room = ctx.repo.live_publication(s.id), bridge.room
+
+    class Job(_Job):
+        pass
+
+    await publishing.replace(ctx, s.id, Job())
+    new_row = ctx.repo.live_publication(s.id)
+    assert new_row["id"] != old_row["id"]
+    assert ctx.live_bridges.get(old_row["id"]) is None and not bridge.running
+    assert live.rooms.rooms[old_room].deleted
+    fresh = await _bridge(ctx, s.id)
+    assert fresh.room != old_room and ctx.live_bridges.get(new_row["id"]) is fresh
+    assert live.pub.room == fresh.room  # the host names the new room
+
+
 async def test_retire_deletes_the_room_when_the_pointer_is_already_gone(ctx, live, seals):
     """With the publication (and so its room pointer) gone from the host, retiring still
     deletes the room it knows, and a pointer route answering 404 raises nothing."""

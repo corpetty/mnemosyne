@@ -1322,6 +1322,11 @@ export async function unpublishSession(sessionId: string): Promise<Publication> 
   return request(`/api/sessions/${sessionId}/publication`, { method: 'DELETE' });
 }
 
+/** Replace the link: a `publish` job (unpublish, then publish with the same choices) whose result is {publication}. */
+export async function replacePublication(sessionId: string): Promise<Job> {
+  return request(`/api/sessions/${sessionId}/publication/replace`, { method: 'POST' });
+}
+
 /** Stop one reader (by `rid`) commenting on the published page; `hide` also hides their comments. */
 export async function blockReader(sessionId: string, rid: string, hide: boolean): Promise<Publication> {
   return request(`/api/sessions/${sessionId}/publication/readers/${encodeURIComponent(rid)}/block?hide=${hide}`, {
