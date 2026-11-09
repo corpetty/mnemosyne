@@ -33,6 +33,16 @@ This machine's id in version vectors is its sync id; meetings from before sync c
 revisions under "" (or none at all) and are CLAIMED at every start: "" becomes the sync id. It
 runs always, peers or not: the repository counts new revisions under the sync id from the start,
 and a meeting must never carry both keys.
+
+On a computer with a team owner (`team_owner_id`: it hosts a team, or did) sync carries only
+that person's own meetings (owner '' or theirs, not a contact's): served, taken, deleted and
+fetched (`own`). Members' meetings, their tombstones and their names never leave, and nothing
+that arrives changes or deletes one; meetings that arrive are the owner's. That holds after
+hosting is turned off too: the members' meetings are still in the database.
+
+A tombstone never deletes a meeting the records rules keep (a legal hold, or inside the records
+period: `records.check_delete`): it stays, its history says why, and the tombstone is not
+passed on. On every computer, not only a team's.
 """
 
 from __future__ import annotations
@@ -46,6 +56,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from .. import config
 from ..models.sync_session import SyncSession, SyncTombstone
 from .sync_peers import SyncPairingError, SyncPeer, ensure_dialed, now_iso
 
@@ -67,6 +78,9 @@ BACKOFF_FIRST, BACKOFF_MAX = 60.0, 600.0
 # is harmless: a tombstone we have is skipped.
 TOMBSTONE_MARGIN = timedelta(hours=2)
 TOMBSTONE_CURSOR = "sync_tombstones_since:"  # + peer id, in the repository's meta table
+# + peer id + ":" + meeting id: the time of a peer's tombstone this computer did not apply
+# (the records keep the meeting), so the re-reads of later rounds log it only once.
+KEPT_TOMBSTONE = "sync_kept:"
 REQUEST_TIMEOUT = 60.0
 MEDIA_RETRY = 300.0  # seconds before a blob the fold found missing is asked for again
 
@@ -141,6 +155,21 @@ class SyncService:
     @property
     def me(self) -> str:
         return self.ctx.sync_peers.self_info().id
+
+    @property
+    def own(self) -> str:
+        """This computer's team owner (`team_owner_id`, kept after hosting is turned off), ""
+        for none: sync then carries only that person's own meetings."""
+        return getattr(self.ctx.settings, "team_owner_id", "") or ""
+
+    def carries(self, session_id: str) -> bool:
+        """Whether sync carries this stored meeting (False for an unknown one)."""
+        return bool(self.ctx.repo.is_synced(session_id, self.own))
+
+    @property
+    def available(self) -> bool:
+        """Library sync exists here: not on a dedicated team server (`config.personal_allowed`)."""
+        return config.personal_allowed(self.ctx.settings)
 
     def claim(self) -> int:
         """Version vectors from before sync (the "" key, or none at all) become this machine's.
@@ -432,7 +461,7 @@ class SyncService:
         from ..models.sync import SyncContacts
         from . import contacts
 
-        if self.ctx.settings.team_mode:
+        if not self.available:
             return
         r = await client.get("/api/sync/contacts")
         if r.status_code in (404, 409):
@@ -579,7 +608,7 @@ class SyncService:
         that served the page. A peer without a blob (404) or a refused one is skipped (the
         document's own references ask again later, see `want_media`); a transport error ends the
         round, the cursor stays and the next round asks again."""
-        if self.ctx.settings.team_mode:
+        if not self.available:
             return
         for sid in dict.fromkeys(session_ids):
             for sha in await asyncio.to_thread(self._without_bytes, sid):
@@ -618,9 +647,9 @@ class SyncService:
         computer, then the other peers. Only notes and schedules: at most one try per blob in
         `MEDIA_RETRY` seconds, none for a meeting nobody synced or without peers."""
         loop = self._loop
-        if self.ctx.settings.team_mode or loop is None or loop.is_closed():
+        if not self.available or loop is None or loop.is_closed():
             return
-        if not self.ctx.sync_peers.peers():
+        if not self.ctx.sync_peers.peers() or not self.carries(session_id):
             return
         now = time.monotonic()
         self._media_asked = {k: t for k, t in self._media_asked.items() if now - t < MEDIA_RETRY}
@@ -728,6 +757,11 @@ class SyncService:
         sid = theirs.id
         if self.ctx.repo.has_tombstone(sid):
             return _Outcome("ignored", sid)
+        if self.ctx.repo.is_synced(sid, self.own) is False:
+            # A meeting sync does not carry has this id here (a team member's, or one a contact
+            # shared): never touched. Reported like any other meeting under our id.
+            logger.warning("Sync: %s from %s names a meeting sync does not carry", sid, peer.name)
+            return _Outcome("clash", sid, theirs.name)
         with shared_notes.hub(self.ctx).lock(sid):
             # What was typed here is folded in first, so our version is current.
             shared_notes.fold_blocking(self.ctx, sid)
@@ -749,10 +783,10 @@ class SyncService:
         from .sync_merge import apply, both_docs, merge, vv_relation
         from .sync_state import export_session, same_meeting, write_session
 
-        repo, me, sid = self.ctx.repo, self.me, theirs.id
-        ours = export_session(repo, sid, me)
+        repo, me, own, sid = self.ctx.repo, self.me, self.own, theirs.id
+        ours = export_session(repo, sid, me, own)
         if ours is None:
-            write_session(repo, theirs, local_device_id=me, vv=theirs.vv, bump=False)
+            write_session(repo, theirs, local_device_id=me, vv=theirs.vv, bump=False, owner=own)
             if theirs.notes_doc is not None:
                 sync_notes.adopt(self.ctx, sid, theirs.notes_doc, peer.name)
             self._remember(peer, sid)
@@ -791,7 +825,7 @@ class SyncService:
             theirs = theirs.model_copy(
                 update={"publications": merge_publications(ours.publications, theirs.publications)}
             )
-            write_session(repo, theirs, local_device_id=me, vv=theirs.vv, bump=False)
+            write_session(repo, theirs, local_device_id=me, vv=theirs.vv, bump=False, owner=own)
             if adopt_doc:
                 sync_notes.adopt(self.ctx, sid, theirs.notes_doc, peer.name)
             self._remember(peer, sid)
@@ -828,7 +862,7 @@ class SyncService:
         had been served to the peer at our revision in it."""
         from .sync_state import base_json, export_session
 
-        doc = export_session(self.ctx.repo, sid, self.me)
+        doc = export_session(self.ctx.repo, sid, self.me, self.own)
         if doc is not None:
             self.ctx.repo.serve_snapshot(sid, peer.id, doc.vv.get(self.me, 0), base_json(doc))
 
@@ -837,21 +871,76 @@ class SyncService:
         here), and the tombstone kept so it is passed on and never comes back. Its time is ours
         (when we learned of it), so a third computer reading our tombstones from its cursor
         sees it; who deleted it and its name stay. None when the meeting is busy here
-        (recording, a job): it waits for the next round."""
+        (recording, a job): it waits for the next round.
+
+        Never a meeting sync does not carry (a team member's, a contact's: `carries`), and
+        never one the records keep (`_kept`): that one stays, its history says so, and the
+        tombstone is not kept or passed on."""
         repo, sid = self.ctx.repo, t.session_id
         if repo.has_tombstone(sid):
             return _Outcome("ignored", sid)
         if sid in self.state(peer.id).clashes:  # their meeting under our id, not ours
             return _Outcome("ignored", sid)
         here = repo.sync_state(sid) is not None
+        if here and not self.carries(sid):
+            logger.warning(
+                "Sync: a tombstone from %s names a meeting sync does not carry", peer.name
+            )
+            return _Outcome("ignored", sid)
+        if here and self._kept(peer, t):
+            return _Outcome("ignored", sid)
         if here and sid in self.ctx.busy_sessions():
             logger.info("Sync: %s was deleted on %s; waiting until it is not busy", sid, peer.name)
             return None
         if here:
+            self._log_deletion(peer, sid)
             self.ctx.sessions.delete_session(sid)
             logger.info("Sync: deleted %s (deleted on %s)", sid, peer.name)
         repo.add_tombstone(sid, datetime.now().isoformat(), t.device, t.name)
         return _Outcome("deleted" if here else "ignored", sid, t.name)
+
+    def _kept(self, peer: SyncPeer, t: SyncTombstone) -> bool:
+        """Whether the records keep this meeting although the peer deleted it: on legal hold, or
+        inside the records period (`records.check_delete`, asked without a reason, so an admin's
+        exception for a period does not apply to a delete nobody here asked for). The first time
+        a peer's tombstone is kept, the meeting's history says so (`kept_despite_peer_delete`);
+        the re-reads of later rounds log nothing."""
+        from .. import access
+        from . import history, records
+
+        sid = t.session_id
+        session = self.ctx.repo.get(sid)
+        if session is None:
+            return False
+        try:
+            records.check_delete(self.ctx, session, "meeting", log=False)
+            return False
+        except (access.Forbidden, ValueError):
+            pass
+        if session.legal_hold:
+            reason = f"On legal hold ({session.legal_hold})"
+        else:
+            until = records.kept_until(self.ctx, session)
+            reason = f"Kept as a record until {until.isoformat()}" if until else "Kept as a record"
+        key = f"{KEPT_TOMBSTONE}{peer.id}:{sid}"
+        if self.ctx.repo.get_meta(key) != t.at:
+            self.ctx.repo.set_meta(key, t.at)
+            history.log(self.ctx, sid, "kept_despite_peer_delete", source=peer.name, reason=reason)
+            logger.info("Sync: %s was deleted on %s and is kept here: %s", sid, peer.name, reason)
+        return True
+
+    def _log_deletion(self, peer: SyncPeer, sid: str) -> None:
+        """The deletion log (services/records.py) hears of a delete that came from a peer, as of
+        one made here. Never stops the delete."""
+        session = self.ctx.repo.get(sid)
+        if session is None:
+            return
+        try:
+            self.ctx.repo.log_deletion(
+                session, "meeting", f"Sync ({peer.name})", "", f"Deleted on {peer.name}"
+            )
+        except Exception:
+            logger.warning("Sync: the deletion of %s was not logged", sid, exc_info=True)
 
     # ---- serving ----------------------------------------------------------------------------
 
@@ -873,15 +962,15 @@ class SyncService:
         from . import shared_notes
         from .sync_state import base_json, export_session
 
-        repo, me = self.ctx.repo, self.me
+        repo, me, own = self.ctx.repo, self.me, self.own
         limit = max(1, min(limit, 200))
-        changes, next_since, more = repo.changes_since(since, limit)
-        total = len(repo.changes_since(since, limit=10**9)[0]) if more else len(changes)
+        changes, next_since, more = repo.changes_since(since, limit, own)
+        total = len(repo.changes_since(since, 10**9, own)[0]) if more else len(changes)
         docs, seqs = [], []
         for sid, seq, _vv in changes:
             # The notes document goes out folded (and caught up with text written around it).
             shared_notes.fold_blocking(self.ctx, sid)
-            doc = export_session(repo, sid, me)
+            doc = export_session(repo, sid, me, own)
             if doc is None:
                 continue
             if peer is not None:
@@ -891,7 +980,7 @@ class SyncService:
         return SyncChanges(
             sessions=docs,
             seqs=seqs,
-            tombstones=[SyncTombstone(**t) for t in repo.tombstones_since(tombstones_since)],
+            tombstones=[SyncTombstone(**t) for t in repo.tombstones_since(tombstones_since, own)],
             next_since=next_since,
             more=more,
             total=total,

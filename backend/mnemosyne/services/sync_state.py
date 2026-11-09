@@ -43,10 +43,14 @@ def _b64(raw) -> str:
     return base64.b64encode(bytes(raw)).decode("ascii") if raw else ""
 
 
-def export_session(repo: SessionRepository, session_id: str, device_id: str) -> SyncSession | None:
+def export_session(
+    repo: SessionRepository, session_id: str, device_id: str, own: str = ""
+) -> SyncSession | None:
     """The meeting as the portable document, or None when there is no such meeting. Its
     origin is `device_id` (this machine's sync id) when it was recorded here ('' in the
-    database), so the receiver can tell whose audio it is."""
+    database), so the receiver can tell whose audio it is. Its owner goes out as '' when it is
+    `own` (this computer's team owner): ownership is each computer's (`write_session`), and an
+    older peer that writes it verbatim must not hand the meeting to a user id of ours."""
     rows = repo.sync_rows(session_id)
     if rows is None:
         return None
@@ -77,7 +81,7 @@ def export_session(repo: SessionRepository, session_id: str, device_id: str) -> 
         speakers_reviewed=bool(r["speakers_reviewed"]),
         agenda=[AgendaItem.model_validate(a) for a in json.loads(r["agenda"] or "[]")],
         meeting_type=r["meeting_type"],
-        owner_id=r["owner_id"],
+        owner_id="" if own and r["owner_id"] == own else r["owner_id"],
         origin_audio=r["audio_file"],
         transcript=[
             TranscriptSegment(
@@ -229,6 +233,7 @@ def write_session(
     local_device_id: str,
     vv: dict[str, int],
     bump: bool,
+    owner: str = "",
 ) -> str:
     """Write a meeting that arrived (or a merge of it with ours) into the library; returns
     its id. See `SessionRepository.apply_synced` for what is written and what is left alone.
@@ -239,11 +244,12 @@ def write_session(
     `bump=True` (a merge) counts a new revision of ours in it; `bump=False` stores `vv` as
     given. Both advance the meeting in our change log, so a third machine hears of it.
     `local_device_id` must be the repository's own `device_id` when `bump` is set: the
-    revision is counted under it."""
+    revision is counted under it. `owner`: who a new meeting belongs to here (the team owner,
+    else ''); an existing one keeps its owner, whatever the document says."""
     if bump and repo.device_id != local_device_id:
         raise ValueError("local_device_id is not this repository's device id")
     origin = "" if s.origin == local_device_id else s.origin
-    sid = repo.apply_synced(s, origin=origin, vv=vv, bump=bump)
+    sid = repo.apply_synced(s, origin=origin, vv=vv, bump=bump, owner=owner)
     if s.notes_items is not None:  # an older peer's document has none: ours stay
         repo.set_notes_items(sid, settle_notes_items(repo.notes_items(sid) or [], s.notes_items))
     return sid

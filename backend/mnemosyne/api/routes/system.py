@@ -10,9 +10,11 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ... import access
+from ...config import dedicated_team_server, hosts_team, personal_allowed
 from ...jobs import Job
 from ...models.base import ApiModel
 from ...services import link, phonon_install
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -104,11 +106,18 @@ class SystemRole(ApiModel):
     # to it (team_mode). "Uses my main computer" is a role of the desktop shell, which alone
     # knows it is connected to another backend; it is never answered here.
     role: Literal["main", "team"]
+    hosts_team: bool  # a main computer that also hosts a team (role stays "main")
+    personal: bool  # personal features (sync, pairing, contacts, sharing) exist here
 
 
 @router.get("/system/role", response_model=SystemRole)
 async def system_role(ctx: AppContext = Depends(get_ctx)):
-    return SystemRole(role="team" if ctx.settings.team_mode else "main")
+    s = ctx.settings
+    return SystemRole(
+        role="team" if dedicated_team_server(s) else "main",
+        hosts_team=hosts_team(s),
+        personal=personal_allowed(s),
+    )
 
 
 class MainComputerStatus(ApiModel):
@@ -133,6 +142,9 @@ def _desktop_app_only(request: Request, ctx: AppContext = Depends(get_ctx)) -> N
 
 
 SHELL_ONLY = [Depends(_desktop_app_only)]
+# The main computer this one uses is the owner's own business: on a computer that hosts a team
+# the guard comes first, then the shell check.
+MAIN_ONLY = [Depends(require_owner_channel), Depends(_desktop_app_only)]
 
 
 def _main_status(ctx: AppContext) -> MainComputerStatus:
@@ -142,13 +154,13 @@ def _main_status(ctx: AppContext) -> MainComputerStatus:
     return MainComputerStatus(connected=True, name=main.name, url=main.url)
 
 
-@router.get("/system/main", response_model=MainComputerStatus, dependencies=SHELL_ONLY)
+@router.get("/system/main", response_model=MainComputerStatus, dependencies=MAIN_ONLY)
 async def get_main_computer(ctx: AppContext = Depends(get_ctx)):
     """The main computer this one uses, as the desktop shell last said."""
     return _main_status(ctx)
 
 
-@router.put("/system/main", response_model=MainComputerStatus, dependencies=SHELL_ONLY)
+@router.put("/system/main", response_model=MainComputerStatus, dependencies=MAIN_ONLY)
 async def set_main_computer(body: MainComputerRequest, ctx: AppContext = Depends(get_ctx)):
     """The desktop shell connected to the main computer through remote access (and at each
     launch): where its tunnel is, the token and the name (services/main_computer.py)."""
@@ -162,7 +174,7 @@ async def set_main_computer(body: MainComputerRequest, ctx: AppContext = Depends
     return _main_status(ctx)
 
 
-@router.delete("/system/main", response_model=MainComputerStatus, dependencies=SHELL_ONLY)
+@router.delete("/system/main", response_model=MainComputerStatus, dependencies=MAIN_ONLY)
 async def clear_main_computer(ctx: AppContext = Depends(get_ctx)):
     """The desktop shell disconnected from the main computer (forgot it)."""
     ctx.main_computer_store().clear()

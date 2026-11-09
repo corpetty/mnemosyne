@@ -15,7 +15,7 @@ from ...export.obsidian import ObsidianExporter
 from ...jobs import Job
 from ...models.base import ApiModel
 from ...models.session import ActionItem
-from ...services import history, shared_with_me
+from ...services import history, host_scope, shared_with_me
 from ...services.vault_sync import write_note
 from ..context import AppContext, get_ctx
 
@@ -217,7 +217,13 @@ def before_export(ctx: AppContext, session, vault_path: str):
 
 
 def write_decisions(ctx: AppContext, vault_path: str):
-    """Rewrite Decisions.md (obsidian_decisions_log) from the meetings the caller can read."""
+    """Rewrite Decisions.md (obsidian_decisions_log) from the meetings the caller can read
+    (and that may reach the vault: never a team member's, services/host_scope.py)."""
+    with host_scope.vault_only(ctx):
+        return _write_decisions(ctx, vault_path)
+
+
+def _write_decisions(ctx: AppContext, vault_path: str):
     from ...export.topic_notes import write_decisions_log
 
     meetings = []
@@ -253,7 +259,16 @@ def _decision_index(ctx: AppContext):
 
 def export_session(ctx: AppContext, session, vault_path: str, decisions: bool = True):
     """Write the meeting note and, when enabled, the notes of the people in it and the
-    decisions log (`decisions=False`: the caller writes it once after many meetings)."""
+    decisions log (`decisions=False`: the caller writes it once after many meetings). A team
+    member's meeting is refused (Forbidden) on a computer with a team owner, and everything
+    read for the other notes is held to what may reach the vault (services/host_scope.py)."""
+    if not host_scope.vault_allows(ctx, session):
+        raise access.Forbidden(host_scope.NOT_IN_VAULT)
+    with host_scope.vault_only(ctx):
+        return _export_session(ctx, session, vault_path, decisions)
+
+
+def _export_session(ctx: AppContext, session, vault_path: str, decisions: bool):
     session = before_export(ctx, session, vault_path)
     exporter = build_exporter(ctx, vault_path, session)
     exporter.image_file = _images(ctx, session, exporter)
@@ -322,6 +337,7 @@ async def export_markdown(session_id: str, ctx: AppContext = Depends(get_ctx)):
 
 @router.post("/sessions/{session_id}/export/obsidian", response_model=ExportResponse)
 async def export_to_obsidian(session_id: str, ctx: AppContext = Depends(get_ctx)):
+    host_scope.require_vault_owner(ctx)
     vault_path = ctx.settings.obsidian_vault_path
     if not vault_path:
         raise HTTPException(status_code=400, detail="Obsidian vault path not configured")
@@ -329,6 +345,8 @@ async def export_to_obsidian(session_id: str, ctx: AppContext = Depends(get_ctx)
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if not host_scope.vault_allows(ctx, session):
+        raise HTTPException(status_code=403, detail=host_scope.NOT_IN_VAULT)
     if session.shared_from and not ctx.settings.shared_in_obsidian:
         raise HTTPException(
             status_code=409,
@@ -352,6 +370,7 @@ async def export_all_to_obsidian(ctx: AppContext = Depends(get_ctx)):
     """Write every summarized meeting the caller may change to the vault again (an
     `obsidian_export_all` job), e.g. after changing how tasks are written. Its result is
     {exported, failed, total}."""
+    host_scope.require_vault_owner(ctx)
     vault_path = ctx.settings.obsidian_vault_path
     if not vault_path:
         raise HTTPException(status_code=400, detail="Obsidian vault path not configured")
@@ -364,6 +383,7 @@ async def export_all_to_obsidian(ctx: AppContext = Depends(get_ctx)):
         if s.has_summary
         and not s.origin
         and access.can_write(s.owner_id)
+        and host_scope.vault_allows(ctx, s)
         and (shared or not s.shared_from)
     ]
 

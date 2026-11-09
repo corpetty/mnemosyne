@@ -58,8 +58,10 @@ outside the database, so they are checked even while encrypted meetings are lock
   is also a paired computer and shows once, as `sync`; a contact is one row for all its machines (`id` =
   the person key). `can` is a short phrase for what it may do; `remove` is the path to `DELETE`. Sync peers
   and contacts are not listed on a team server.
-- `GET /api/system/role` → `{role: "main" | "team"}` (`team` when `team_mode`). Whether this computer
-  uses another one is known to the desktop shell only.
+- `GET /api/system/role` → `{role: "main" | "team", hosts_team, personal}`. `team` only for a dedicated
+  team server (team mode, no owner); a computer that hosts a team stays `main` with `hosts_team` true.
+  `personal`: sync, pairing, contacts and sharing with people exist here (false only on a dedicated
+  server). Whether this computer uses another one is known to the desktop shell only.
 - `POST /api/pairing/redeem` `{code, name, endpoint_id?}` → `{device, token}`. No token needed; the
   code works once. A desktop code needs `endpoint_id`, which the link sidecar sets from the
   connection's verified iroh key; a phone code must not have one. `403` when the code is unknown,
@@ -114,7 +116,7 @@ history (at most once per person per half hour).
 
 | Method | Path | |
 |---|---|---|
-| GET | `/api/users/me` | who this token is (`id` "" for the desktop app or `api_token`), `role`, `team_mode`, `cloud_models`, `supervision` |
+| GET | `/api/users/me` | who this token is (`id` "" for the desktop app or `api_token`), `role`, `team_mode`, `hosts_team`, `personal`, `owner` (this request is the owner's channel; nobody on a dedicated server), `cloud_models`, `supervision` |
 | GET | `/api/users` | everyone's name and role; emails and devices for admins |
 | POST | `/api/users` | admin: `{name, email, role}` → the person and a one-time invite `code` |
 | PATCH | `/api/users/{id}` | admin: `name`, `email`, `role`, `disabled` (the last enabled admin stays) |
@@ -233,6 +235,37 @@ With `web_dir` set to the output of `pnpm build`, the backend serves the web app
 outside `/api/`, `/ws`, `/health`, `/m` and the docs, without a token (the data behind `/api/` still
 needs one). Its `index.html` carries `<meta name="mnemosyne-backend" content="same-origin">`, so the
 app talks to the server it was loaded from.
+
+### A computer that hosts a team (docs/plans/2026-11-09-team-hosting.md)
+`config.hosts_team` (team mode with `team_owner_id`) keeps the owner's personal features and adds a
+second kind of caller. The owner is the desktop window, the `api_token`, a paired desktop device and
+the owner's own user token on the main port; members, reviewers, contacts, phones and the owner's
+token on the team listener are not (`api/auth.py` `is_owner_channel`). Nothing below changes on a plain
+computer or a dedicated server.
+
+- Owner-only routes answer **403 "Only the owner of this computer can do this"** to anyone else:
+  `/api/sync/*`, `/api/pairing/*` (all but redeem), `/api/contacts/*`, `/api/connections/*` and the
+  hand-off (`/api/connections/handoff`), `/api/satellite/*`, `/api/sessions/{id}/peer-shares`,
+  `/api/system/main`, `PUT /api/settings` and `PUT /api/team`.
+- `GET /api/settings` for a caller who is not an owner channel returns the personal settings
+  (`PERSONAL_SETTINGS`: vault path, relays, phone URL, calendar, People switches) at their defaults,
+  secrets as not set; what the team's web app reads stays.
+- Reads follow `access.ReadScope`: the owner everything; a member their own and what is granted to
+  them or to `*`; a reviewer every team meeting and the personal ones granted to them; a contact only
+  its own peer shares (never a team grant to everyone, on any computer). Not readable = 404. The
+  WebSocket stream sends events about no meeting only to owner channels unless the type is in
+  `TEAM_EVENTS`.
+- Only the owner can be an admin: `POST /api/users`, `PATCH /api/users/{id}` and the invite route
+  answer **409** when the role would make anyone else an admin.
+- `PUT /api/sessions/{id}/peer-shares/{person}` answers **403** for a member's meeting, even to the owner (only
+  the owner's own meetings go to contacts).
+- Recording stop/restart (`/api/audio/stop|restart/{id}`) and bookmarks (`POST|PATCH|DELETE
+  …/bookmarks`) need write access to the meeting: reading it (a reviewer, a read-only share) gives 403.
+- `X-Mnemosyne-Client: mcp` (sent by the MCP server): the request runs in the owner's own view
+  (`access.limited_to`), so MCP tools never read a member's meeting. A privacy default, not a security
+  boundary.
+- Library sync carries only the owner's meetings (`sessions.owner_id` '' or the owner); the team's
+  never sync, and a peer's delete never removes a meeting records keep.
 
 ### Sharing this computer: `GET|PUT /api/team`
 The desktop app can make its own computer the team's server (`services/team_host.py`). `PUT

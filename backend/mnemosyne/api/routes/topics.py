@@ -8,6 +8,7 @@ from ... import access
 from ...config import save_settings
 from ...jobs import Job, JobContext
 from ...models.base import ApiModel
+from ...services import host_scope
 from ...services.topics import (
     THREAD_PROMPT,
     Thread,
@@ -110,6 +111,7 @@ async def save_topic_note(request: TopicNoteRequest, ctx: AppContext = Depends(g
     from ...export.obsidian import note_stem
     from ...export.topic_notes import NoteConflict, write_topic_note
 
+    host_scope.require_vault_owner(ctx)
     st = ctx.settings
     if not st.obsidian_vault_path:
         raise HTTPException(status_code=400, detail="Obsidian vault path not configured")
@@ -121,6 +123,11 @@ async def save_topic_note(request: TopicNoteRequest, ctx: AppContext = Depends(g
         raise HTTPException(status_code=400, detail=f"Vault not found: {vault}")
 
     def run() -> Path:
+        # Never a team member's meeting in a note in the vault (services/host_scope.py).
+        with host_scope.vault_only(ctx):
+            return write(ctx)
+
+    def write(ctx: AppContext) -> Path:
         from ...services.shared_with_me import excluded
 
         thread = build_thread(ctx.repo, ctx.index, q)

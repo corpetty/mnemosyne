@@ -18,6 +18,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from ..config import personal_allowed
 from ..models.contact import Card, CardMachine
 from ..models.session import ActionItem, Chapter, SummaryData
 from ..models.shared_meeting import SharedMeeting, SharedOwner, ShareParts
@@ -76,7 +77,7 @@ def seed_demo(app: AppContext) -> bool:
     server, locked, or already there). Never raises."""
     from ..demo import enabled
 
-    if not enabled() or app.settings.team_mode or app.locked:
+    if not enabled() or not personal_allowed(app.settings) or app.locked:
         return False
     try:
         person = ada_person()

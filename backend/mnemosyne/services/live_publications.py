@@ -63,6 +63,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict
 
 from .. import access
+from ..config import hosts_team
 from . import pub_live_format as plf
 from .room_connection import (
     CLOSE_BAD_TOKEN,
@@ -282,7 +283,7 @@ class Watcher:
         publishing off, a selection `check_live` refuses, or nobody to publish as."""
         from ..models.publication import PublicationSelection
         from .origin import is_foreign
-        from .publishing import PublishError, _dt, _now, allowed, check_live, served_by
+        from .publishing import PublishError, _dt, _now, check_live, served_by
 
         app = self.ctx
         row = app.repo.live_publication(session_id)
@@ -293,7 +294,7 @@ class Watcher:
         session = app.repo.get(session_id)
         if session is None or is_foreign(session):
             return None
-        if served_by(app, row) is not None or not allowed(app):
+        if served_by(app, row) is not None:
             return None
         try:
             sel = PublicationSelection.model_validate(row["selection"])
@@ -301,7 +302,7 @@ class Watcher:
         except (PublishError, ValueError):
             return None
         who = self._owner(session)
-        if who is _NOBODY:
+        if who is _NOBODY or not _allowed_for(app, who):
             return None
         return row, session, sel, who
 
@@ -309,11 +310,9 @@ class Watcher:
         """The principal the job runs as: the meeting's owner as a user of this backend (so a
         team server's rules, `check_may_publish`, hold), unrestricted on a desktop whose
         meetings have no such owner (as its own requests are), `_NOBODY` on a team server
-        whose owner is gone or disabled."""
-        user = self.ctx.users.get(session.owner_id) if session.owner_id else None
-        if user is not None and not user.disabled:
-            return access.Principal(user.id, user.name, user.role)
-        return _NOBODY if self.ctx.settings.team_mode else None
+        whose owner is gone or disabled. A meeting with no owner on a computer that hosts a team
+        is its owner's (`_publisher`)."""
+        return _publisher(self.ctx, session)
 
     def _submit(self, session_id: str, sel: PublicationSelection, who: Any) -> Job:
         from . import publishing
@@ -891,18 +890,42 @@ def wanted(row: dict | None) -> bool:
     return expires is None or expires > datetime.now(UTC)
 
 
+def _publisher(app: AppContext, session: Session) -> Any:
+    """Who an automatic version of this meeting runs as: its owner as a user of this backend,
+    which on a computer that hosts a team is also the owner of a meeting with none (older ones,
+    made before its owner was stamped on them); unrestricted (None) on a desktop whose meetings
+    have no such owner; `_NOBODY` on a team server whose owner is gone or disabled."""
+    st = app.settings
+    owner_id = session.owner_id or (st.team_owner_id if hosts_team(st) else "")
+    user = app.users.get(owner_id) if owner_id else None
+    if user is not None and not user.disabled:
+        return access.Principal(user.id, user.name, user.role)
+    return _NOBODY if st.team_mode else None
+
+
+def _allowed_for(app: AppContext, who: Any) -> bool:
+    """`publishing.allowed` as `who` (the background watcher has no signed-in caller of its own)."""
+    from .publishing import allowed
+
+    token = access.current.set(who)
+    try:
+        return allowed(app)
+    finally:
+        access.current.reset(token)
+
+
 def _origin_here(app: AppContext, row: dict) -> bool:
     """This machine bridges the publication: publishing is on and the meeting was recorded
     here (not on the other computer of a library-sync pair, not shared with us)."""
     from .origin import is_foreign
-    from .publishing import allowed
     from .shared_notes import unrestricted
 
-    if not allowed(app):
-        return False
     with unrestricted():
         session = app.repo.get(row["session_id"])
-    return session is not None and not is_foreign(session) and not session.shared_from
+    if session is None or is_foreign(session) or session.shared_from:
+        return False
+    who = _publisher(app, session)
+    return who is not _NOBODY and _allowed_for(app, who)
 
 
 def _valid_room(room: str) -> bool:

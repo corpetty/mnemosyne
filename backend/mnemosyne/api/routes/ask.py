@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ...jobs import Job
 from ...models.ask import Ask, Passage
 from ...models.base import ApiModel
+from ...services import host_scope
 from ...services.pipeline import ask_question
 from ..context import AppContext, get_ctx
 from .export import ExportResponse, build_exporter
@@ -64,6 +65,7 @@ async def save_ask_note(ask_id: str, ctx: AppContext = Depends(get_ctx)):
     from ...export.obsidian import note_stem
     from ...export.topic_notes import NoteConflict
 
+    host_scope.require_vault_owner(ctx)
     st = ctx.settings
     if not st.obsidian_vault_path:
         raise HTTPException(status_code=400, detail="Obsidian vault path not configured")
@@ -73,14 +75,23 @@ async def save_ask_note(ask_id: str, ctx: AppContext = Depends(get_ctx)):
     ask = ctx.repo.get_ask(ask_id)
     if ask is None:
         raise HTTPException(status_code=404, detail="Not found")
+    # An answer drawn on a team member's meeting (granted to the owner) stays out of the vault.
+    scope = host_scope.vault(ctx)
+    allowed = ctx.repo.ids_seen_by(scope) if scope else None
+    if allowed is not None and any(
+        c.session_id not in allowed and ctx.repo.session_owner(c.session_id) is not None
+        for c in ask.citations
+    ):
+        raise HTTPException(status_code=403, detail=host_scope.NOT_IN_VAULT)
 
     def run() -> Path:
         stems = {}
-        for c in ask.citations:
-            s = ctx.repo.get(c.session_id)
-            if s is not None:
-                stems[c.session_id] = note_stem(s)
-        exporter = build_exporter(ctx, st.obsidian_vault_path)
+        with host_scope.vault_only(ctx):
+            for c in ask.citations:
+                s = ctx.repo.get(c.session_id)
+                if s is not None:
+                    stems[c.session_id] = note_stem(s)
+            exporter = build_exporter(ctx, st.obsidian_vault_path)
         return write_ask_note(
             vault,
             st.obsidian_subfolder,

@@ -674,12 +674,7 @@ def _visible_to(app: AppContext, owner_id: str) -> set[str] | None:
     server), else None = all. The job runs as whoever started it, who may see more or less."""
     if not (app.settings.team_mode and owner_id):
         return None
-    repo = app.repo
-    with repo._lock:
-        rows = repo._conn.execute(
-            f"SELECT id FROM sessions WHERE {repo._SEES}", (owner_id, owner_id)
-        ).fetchall()
-    return {r["id"] for r in rows}
+    return app.repo.ids_seen_by(access.ReadScope(access.OWN_AND_GRANTED, owner_id))
 
 
 def open_task_offers(

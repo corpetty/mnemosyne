@@ -156,9 +156,10 @@ export class PublishingState {
 		this.#pollMs = pollMs;
 	}
 
-	/** Publishing is on: always on the desktop, on a team server once an admin allows it. */
+	/** Publishing is on: always on the desktop and for the owner of a computer that hosts a team,
+	 * for everyone else on a team server once an admin allows it. */
 	get allowed(): boolean {
-		return !connectionState.me?.team_mode || this.allowPublishing;
+		return connectionState.isOwner || this.allowPublishing;
 	}
 
 	/** The images of the open meeting's notes, in order, each once. */

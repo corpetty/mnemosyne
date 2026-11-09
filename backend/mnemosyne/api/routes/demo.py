@@ -5,6 +5,7 @@ meeting without audio. 404 unless demo mode is on, 409 on a team server."""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from ...config import personal_allowed
 from ...demo import enabled
 from ...models.session import CopilotItem, CopilotNotes
 from ..context import AppContext, get_ctx
@@ -20,7 +21,7 @@ class DemoShare(BaseModel):
 def _check(ctx: AppContext) -> None:
     if not enabled():
         raise HTTPException(status_code=404, detail="Not found")
-    if ctx.settings.team_mode:
+    if not personal_allowed(ctx.settings):
         raise HTTPException(status_code=409, detail="Not available on a team server")
 
 

@@ -30,20 +30,31 @@
 	import { publishingState } from '$lib/stores/publishing.svelte.js';
 	import type { DesktopCalendar, IndexStatus, ProviderModels, SettingsResponse, SettingsUpdate, SpeakerProfile, SystemInfo } from '$lib/types/index.js';
 
-	// a team server: settings belong to its admins (members and reviewers only read them).
+	// a team server or a computer that hosts a team: settings belong to its admins (members and reviewers only read them).
 	const readOnly = $derived(!!connectionState.me?.id && connectionState.me.role !== 'admin');
 	const teamAdmin = $derived(!!connectionState.me?.team_mode && connectionState.me.role === 'admin');
 	// This computer's role is derived, not stored: a team server when team mode is on (the role
 	// endpoint), "uses my main computer" when this window is connected through remote access, else main.
 	let systemRole = $state<'main' | 'team' | null>(null);
+	let hostsTeamRole = $state<boolean | null>(null);
 	$effect(() => {
 		void connectionState.me?.team_mode; // a team server was started or stopped
 		getSystemRole()
-			.then((r) => (systemRole = r.role))
-			.catch(() => (systemRole = null));
+			.then((r) => {
+				systemRole = r.role;
+				hostsTeamRole = r.hosts_team;
+			})
+			.catch(() => {
+				systemRole = null;
+				hostsTeamRole = null;
+			});
 	});
-	const teamMode = $derived(systemRole ? systemRole === 'team' : !!connectionState.me?.team_mode);
+	const teamMode = $derived(
+		systemRole ? systemRole === 'team' : !!connectionState.me?.team_mode && !connectionState.me.hosts_team
+	);
 	const role = $derived<Role>(teamMode ? 'team' : connectionState.remote ? 'satellite' : 'main');
+	// A main computer that also hosts a team (role stays main): the team section is shown there too.
+	const hostsTeam = $derived(hostsTeamRole ?? !!connectionState.me?.hosts_team);
 	let settings = $state<SettingsResponse | null>(null);
 	// What the engines set to Automatic resolve to on this machine (for the hint beside them).
 	let system = $state<SystemInfo | null>(null);
@@ -1600,9 +1611,9 @@
 				</div>
 			</details>
 
-			{#if role === 'team' && !readOnly}
-				<section aria-label="Team server settings">
-					<h3 class="text-lg font-semibold text-gray-200 mb-3">Team server</h3>
+			{#if (role === 'team' || hostsTeam) && !readOnly}
+				<section aria-label={hostsTeam ? 'Your team settings' : 'Team server settings'}>
+					<h3 class="text-lg font-semibold text-gray-200 mb-3">{hostsTeam ? 'Your team' : 'Team server'}</h3>
 					<div class="space-y-5">
 						{#if teamAdmin}<TeamPeopleSettings />{/if}
 						{#if teamAdmin}
@@ -1622,6 +1633,7 @@
 							<p class="text-xs text-gray-500 mb-3">
 								Lines of a meeting's transcript that use one of these phrases are flagged, and the meeting waits in the Review view
 								until a reviewer marks it reviewed. A flag is a line to read in context, not a finding. Empty: nothing is flagged.
+								{#if hostsTeam}On this computer they apply to your team's meetings, not your own.{/if}
 							</p>
 							<label class="block">
 								<span class={labelClass}>Phrases (comma-separated; changing them checks every meeting again)</span>

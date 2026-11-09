@@ -63,8 +63,10 @@ def _reviewed(last_found: str | None, last_review: str | None) -> bool:
 
 
 def _meeting(ctx: AppContext, session_id: str) -> MeetingSupervision:
-    flags = ctx.repo.flags(session_id)
-    reviews = ctx.repo.reviews(session_id)
+    # The owner's own meetings on a host are outside phrase review: older flags are kept, not shown.
+    hidden = ctx.repo.meeting_outside_team(session_id)
+    flags = [] if hidden else ctx.repo.flags(session_id)
+    reviews = [] if hidden else ctx.repo.reviews(session_id)
     return MeetingSupervision(
         flags=[Flag(**f) for f in flags],
         reviews=[Review(at=r["at"], by=r["by"], note=r["note"]) for r in reviews],

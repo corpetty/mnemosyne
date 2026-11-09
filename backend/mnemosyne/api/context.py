@@ -15,7 +15,7 @@ from fastapi import Request, WebSocket
 from .. import access
 from ..audio.capture import RecordingSession
 from ..audio.echo_cancel import EchoCancelManager
-from ..config import Settings
+from ..config import Settings, hosts_team
 from ..events import EventBus
 from ..jobs import JobManager
 from ..search.index import VectorIndex
@@ -144,6 +144,22 @@ class AppContext:
         from ..services import notes_summary
 
         notes_summary.register()
+        self.follow_hosting()
+
+    def follow_hosting(self, *, adopt: bool = False) -> None:
+        """New meetings by unrestricted callers belong to the owner while this computer hosts a
+        team (`repo.host_owner`), and to nobody otherwise. `adopt`: at startup, also give the
+        owner the meetings that came without one (from an older peer); one UPDATE, `shared_from`
+        ones left alone. Never raises."""
+        owner = self.settings.team_owner_id if hosts_team(self.settings) else ""
+        self.repo.host_owner = owner
+        if adopt and owner and not self.locked:
+            try:
+                n = self.repo.adopt_unowned(owner)
+                if n:
+                    logger.info("Gave %d meetings without an owner to the host's owner", n)
+            except Exception:
+                logger.warning("Could not adopt meetings without an owner", exc_info=True)
 
     def _summary_changed(self, session_id: str) -> None:
         """The repository wrote a meeting's summary (from any thread): its notes' Summary
@@ -339,6 +355,7 @@ class AppContext:
         from ..services.sync_service import SyncService
 
         ctx.sync = SyncService(ctx)  # also names this machine in version vectors
+        ctx.follow_hosting(adopt=True)  # strays from an older peer
         from ..services.share_announce import ShareAnnouncer
 
         ctx.share_announce = ShareAnnouncer(ctx)
@@ -375,6 +392,7 @@ class AppContext:
 
         before = self.settings
         self.settings = settings
+        self.follow_hosting()
         if supervision.enabled(settings) and (
             not supervision.enabled(before) or settings.review_phrases != before.review_phrases
         ):
@@ -512,7 +530,11 @@ class AppContext:
         me = access.user_id()
         if any(j.kind == "digest" and j.owner_id == me for j in self.jobs.list(active_only=True)):
             return None
-        if not any(s.summary.strip() for s in self.repo.sessions_between(*week)):
+        from ..services import host_scope
+
+        with host_scope.owner_digest(self):  # his digest: vault scope
+            due = any(s.summary.strip() for s in self.repo.sessions_between(*week))
+        if not due:
             return None
         logger.info("Scheduled digest for %s %s", range_label(*week), me)
         return self.jobs.submit("digest", make_digest(self, *week))
@@ -654,6 +676,7 @@ class AppContext:
         apply_path_rebase(self.repo, self.settings)  # a restore from another machine
         self.keystore.set(master)
         self.master_key, self.locked = master, False
+        self.follow_hosting(adopt=True)
         try:
             self.person.ensure()
         except Exception:

@@ -467,7 +467,9 @@ CREATE TABLE IF NOT EXISTS deletions (
     role TEXT NOT NULL DEFAULT '',
     reason TEXT NOT NULL DEFAULT '',
     chain_head TEXT NOT NULL DEFAULT '',
-    manifest_hash TEXT NOT NULL DEFAULT ''
+    manifest_hash TEXT NOT NULL DEFAULT '',
+    owner_id TEXT NOT NULL DEFAULT '',
+    shared_from TEXT NOT NULL DEFAULT ''
 );
 -- Publications (services/publishing.py): a meeting's curated, encrypted copy, readable with a
 -- link that carries `key`. `token` authorizes updates on a publish host; `place` is "local" or
@@ -540,11 +542,15 @@ CREATE TABLE IF NOT EXISTS sync_served (
     at TEXT NOT NULL,
     PRIMARY KEY (session_id, peer_id, rev)
 );
+-- A tombstone's owner_id: whose meeting it was here ('' for one learned from a peer; '?' for
+-- one from before the column on a computer that had owners), so a computer with a team owner
+-- serves only its owner's (`tombstones_since`).
 CREATE TABLE IF NOT EXISTS sync_tombstones (
     session_id TEXT PRIMARY KEY,
     at TEXT NOT NULL,
     device TEXT NOT NULL,
-    name TEXT NOT NULL
+    name TEXT NOT NULL,
+    owner_id TEXT NOT NULL DEFAULT ''
 );
 -- Contacts (services/contacts.py): other people's keys, global to the library, not meeting data.
 -- `card` is their signed card, `secret` the pair's shared secret, `machines` runtime state per
@@ -761,6 +767,11 @@ class SessionRepository:
         # This machine's id in version vectors (services/sync sets it at startup). '' until
         # then: writes still bump the change counter and count under the key "" in sync_vv.
         self.device_id = ""
+        # Who a new meeting belongs to when its creator is unrestricted (the API token, a paired
+        # laptop, a phone, automation): the owner of a computer that hosts a team (api/context.py
+        # sets it with `config.hosts_team`), else "". A meeting that names its owner keeps it, and
+        # a contact's meeting (`shared_from`) is never made through `save`.
+        self.host_owner = ""
         self._open(db_path, key)
 
     def reopen(self, db_path: Path, key: bytes | None = None) -> None:
@@ -908,7 +919,8 @@ class SessionRepository:
             )
         # Who may read a meeting beyond its owner: team-mode shares and live peer shares, as
         # (session_id, user_id). A contact reads as the Principal "p:" + person[:16].
-        # Recreated on every open: the definition may change.
+        # Recreated on every open: the definition may change. The read rule itself (`_sees`)
+        # reads the two tables apart: a team grant to everyone ("*") must never reach a contact.
         self._conn.execute("DROP VIEW IF EXISTS share_grants")
         self._conn.execute(
             "CREATE VIEW share_grants(session_id, user_id) AS"
@@ -945,11 +957,27 @@ class SessionRepository:
             if col not in seal_cols:
                 self._conn.execute(f"ALTER TABLE session_seals ADD COLUMN {col} {decl}")
         del_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(deletions)")}
-        for col in ("chain_head", "manifest_hash"):
+        # owner_id, shared_from: whose meeting it was, so the log follows the read rule once the
+        # meeting is gone (`deletions`); '' in entries from before.
+        for col in ("chain_head", "manifest_hash", "owner_id", "shared_from"):
             if col not in del_cols:
                 self._conn.execute(
                     f"ALTER TABLE deletions ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
                 )
+        # Whose meeting a tombstone was (library sync serves a team owner's only). Tombstones from
+        # before carry no owner: on a computer that ever had owners (a team) they may be a
+        # member's, so they become '?' (unknown), which a computer with a team owner never
+        # serves; elsewhere every tombstone was the person's own ('').
+        tomb_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(sync_tombstones)")}
+        if "owner_id" not in tomb_cols:
+            self._conn.execute(
+                "ALTER TABLE sync_tombstones ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''"
+            )
+            if self._conn.execute(
+                "SELECT 1 FROM sessions WHERE owner_id<>''"
+                " UNION ALL SELECT 1 FROM deletions WHERE owner_id<>'' LIMIT 1"
+            ).fetchone():
+                self._conn.execute("UPDATE sync_tombstones SET owner_id='?'")
         self._conn.commit()
 
     def _migrate_fts_rowids(self) -> None:
@@ -1122,26 +1150,85 @@ class SessionRepository:
             ).fetchone()
         return None if row is None else row["owner_id"]
 
-    # A member reads their own meetings and those shared with them, alone or with everyone.
-    _SEES = "(owner_id=? OR id IN (SELECT session_id FROM share_grants WHERE user_id IN (?, '*')))"
-    _SEES_S = _SEES.replace("(owner_id", "(s.owner_id").replace(" id IN", " s.id IN")  # sessions s
+    # Who reads what (access.read_scope): one SQL condition on `sessions` per scope. A member
+    # reads their own meetings and team grants to them or to everyone ("*", session_shares),
+    # never a meeting a contact shared with this computer's owner (shared_from). A
+    # reviewer on a computer that hosts a team reads every team meeting (owned by a member) and
+    # the owner's personal ones (owner '' or the host, or a contact's: shared_from) only when
+    # granted to them or to everyone, never a contact's. A contact reads only their live peer
+    # shares: a team grant to everyone is not for them, on any computer.
+    def read_scope(self) -> access.ReadScope:
+        return access.read_scope(self.host_owner)
 
-    def _readable(self, session_id: str) -> bool:
-        only = access.read_owner()
-        if only is None:
+    @staticmethod
+    def _sees(scope: access.ReadScope, alias: str = "") -> tuple[str, tuple]:
+        """(condition, params) for the meetings `scope` may read; `alias` is the sessions
+        table's alias in the query ("" for none)."""
+        cond, params = SessionRepository._sees_kind(scope, alias)
+        for extra in scope.also:  # a limit on top of who the caller is (access.limited_to)
+            more, more_params = SessionRepository._sees(extra, alias)
+            cond, params = f"({cond} AND {more})", (*params, *more_params)
+        return cond, params
+
+    @staticmethod
+    def _sees_kind(scope: access.ReadScope, alias: str) -> tuple[str, tuple]:
+        a = alias + "." if alias else ""
+        granted = f"{a}id IN (SELECT session_id FROM session_shares WHERE user_id IN (?, '*'))"
+        if scope.kind == access.OWN:
+            return f"({a}owner_id IN ('', ?) AND {a}shared_from='')", (scope.host,)
+        if scope.kind == access.PERSONAL:
+            return f"({a}owner_id IN ('', ?) OR {a}shared_from<>'')", (scope.host,)
+        if scope.kind == access.VIEW:
+            return (
+                f"({a}owner_id IN ('', ?) OR {a}shared_from<>'' OR {granted})",
+                (scope.host, scope.user_id),
+            )
+        if scope.kind == access.OWN_AND_GRANTED:
+            return (
+                f"({a}shared_from='' AND ({a}owner_id=? OR {granted}))",
+                (scope.user_id, scope.user_id),
+            )
+        if scope.kind == access.PERSONAL_SHARES:
+            return (
+                f"{a}id IN (SELECT session_id FROM peer_shares"
+                " WHERE revoked_at='' AND 'p:' || substr(person, 1, 16)=?)",
+                (scope.user_id,),
+            )
+        if scope.kind == access.TEAM_WIDE:
+            return (
+                f"({a}shared_from='' AND ({a}owner_id NOT IN ('', ?) OR {granted}))",
+                (scope.host, scope.user_id),
+            )
+        return "1", ()
+
+    def ids_seen_by(self, scope: access.ReadScope) -> set[str] | None:
+        """The meetings `scope` may read, or None for all of them."""
+        if scope.everything:
+            return None
+        cond, params = self._sees(scope)
+        with self._lock:
+            rows = self._conn.execute(f"SELECT id FROM sessions WHERE {cond}", params)
+            return {r["id"] for r in rows}
+
+    def _readable(self, session_id: str, scope: access.ReadScope | None = None) -> bool:
+        """May the caller read this meeting? True for an unknown one (callers check that)."""
+        scope = scope or self.read_scope()
+        if scope.everything:
             return True
+        cond, params = self._sees(scope)
         with self._lock:
             row = self._conn.execute(
-                f"SELECT {self._SEES} AS ok FROM sessions WHERE id=?",
-                (only, only, session_id),
+                f"SELECT {cond} AS ok FROM sessions WHERE id=?", (*params, session_id)
             ).fetchone()
         return row is None or bool(row["ok"])
 
     def _check_write(self, session_id: str) -> None:
+        """Hidden (404) when the caller may not even read the meeting (the same rule as every
+        read), Forbidden when they read it but may not change it."""
         owner = self._owner(session_id)
+        if owner is not None and not self._readable(session_id):
+            raise access.Hidden("Session not found")
         if owner is not None and not access.can_write(owner):
-            if not self._readable(session_id):
-                raise access.Hidden("Session not found")
             raise access.Forbidden("This is someone else's meeting")
         if not access.is_internal() and self._shared_from(session_id):
             raise access.Forbidden(
@@ -1169,12 +1256,7 @@ class SessionRepository:
 
     def visible_ids(self) -> set[str] | None:
         """The meetings the caller may see, or None for all of them."""
-        only = access.read_owner()
-        if only is None:
-            return None
-        with self._lock:
-            rows = self._conn.execute(f"SELECT id FROM sessions WHERE {self._SEES}", (only, only))
-            return {r["id"] for r in rows}
+        return self.ids_seen_by(self.read_scope())
 
     def owner_of(self, session_id: str) -> str | None:
         return self._owner(session_id)
@@ -1192,14 +1274,13 @@ class SessionRepository:
                EXISTS(SELECT 1 FROM segments g WHERE g.session_id = s.id) AS has_transcript
         FROM sessions s {where} ORDER BY s.created_at DESC
         """
-        only = access.read_owner()
+        scope = self.read_scope()
         with self._lock:
-            if only is None:
+            if scope.everything:
                 rows = self._conn.execute(sql.format(where="")).fetchall()
             else:
-                rows = self._conn.execute(
-                    sql.format(where="WHERE " + self._SEES_S), (only, only)
-                ).fetchall()
+                cond, params = self._sees(scope, "s")
+                rows = self._conn.execute(sql.format(where="WHERE " + cond), params).fetchall()
         return [
             SessionSummary(
                 id=r["id"],
@@ -1227,12 +1308,12 @@ class SessionRepository:
 
     def get(self, session_id: str) -> Session | None:
         """The meeting, or None when there is none or the caller may not see it."""
-        only = access.read_owner()
+        scope = self.read_scope()
         with self._lock:
             row = self._conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
             if row is None:
                 return None
-        if only is not None and row["owner_id"] != only and not self._readable(session_id):
+        if not self._readable(session_id, scope):
             return None
         with self._lock:
             seg_rows = self._conn.execute(
@@ -1344,7 +1425,11 @@ class SessionRepository:
         loaded before a fold must not put the old ones back."""
         self._check_write(session.id)
         owner = self._owner(session.id)
-        session.owner_id = owner if owner is not None else (session.owner_id or access.user_id())
+        session.owner_id = (
+            owner
+            if owner is not None
+            else (session.owner_id or access.user_id() or self.host_owner)
+        )
         session.updated_at = datetime.now()
         data_json = session.summary_data.model_dump_json() if session.summary_data else None
         with self._lock, self._conn:
@@ -2846,7 +2931,7 @@ class SessionRepository:
         self._check_write(session_id)
         with self._lock, self._conn:
             row = self._conn.execute(
-                "SELECT name, shared_from FROM sessions WHERE id=?", (session_id,)
+                "SELECT name, shared_from, owner_id FROM sessions WHERE id=?", (session_id,)
             ).fetchone()
             # The cascade removes the meeting's peer_shares: keep who had one, so the contact
             # still hears the meeting is gone (`shared_tombstones_since`).
@@ -2864,15 +2949,18 @@ class SessionRepository:
                 )
                 # A meeting shared with us is the owner's to delete: it leaves no tombstone, or
                 # our other computers would delete their copy and we could not pull it again.
+                # Its owner stays with it: a computer with a team owner never serves a member's
+                # (`tombstones_since`), whose name it carries.
                 if tombstone and row is not None and not row["shared_from"]:
                     self._conn.execute(
-                        "INSERT OR REPLACE INTO sync_tombstones(session_id, at, device, name)"
-                        " VALUES (?,?,?,?)",
+                        "INSERT OR REPLACE INTO sync_tombstones(session_id, at, device, name,"
+                        " owner_id) VALUES (?,?,?,?,?)",
                         (
                             session_id,
                             datetime.now().isoformat(),
                             self.device_id if device_id is None else device_id,
                             row["name"],
+                            row["owner_id"],
                         ),
                     )
         return cur.rowcount > 0
@@ -3080,12 +3168,29 @@ class SessionRepository:
             for r in rows
         ]
 
+    def outside_team(self, owner_id: str, shared_from: str = "") -> bool:
+        """On a computer that hosts a team (`host_owner`): is a meeting with this owner and
+        `shared_from` outside the team, i.e. the owner's own (owner '' or the host) or a
+        contact's? Records rules and phrase review are for the members' meetings only
+        (docs/plans/2026-11-09-team-hosting.md D5). False on any other computer."""
+        return bool(self.host_owner) and (bool(shared_from) or owner_id in ("", self.host_owner))
+
+    def meeting_outside_team(self, session_id: str) -> bool:
+        """`outside_team` for a stored meeting (False for an unknown one)."""
+        owner = self._owner(session_id)
+        return owner is not None and self.outside_team(owner, self._shared_from(session_id))
+
     def protected_ids(self, since: str) -> set[str]:
-        """Meetings on legal hold, and (with `since`, an ISO date) created since then."""
+        """Meetings on legal hold, and (with `since`, an ISO date) created since then. On a
+        computer that hosts a team the records period reaches the members' meetings only; a
+        legal hold is the owner's explicit choice and holds any meeting."""
+        team, params = "", ()
+        if self.host_owner:
+            team, params = " AND shared_from='' AND owner_id NOT IN ('', ?)", (self.host_owner,)
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id FROM sessions WHERE legal_hold<>'' OR (?<>'' AND created_at>=?)",
-                (since, since),
+                f"SELECT id FROM sessions WHERE legal_hold<>'' OR (?<>'' AND created_at>=?{team})",
+                (since, since, *params),
             ).fetchall()
         return {r["id"] for r in rows}
 
@@ -3107,7 +3212,8 @@ class SessionRepository:
             ).fetchone()
             cur = self._conn.execute(
                 "INSERT INTO deletions (at, session_id, name, created_at, what, by, role, reason,"
-                " chain_head, manifest_hash) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                " chain_head, manifest_hash, owner_id, shared_from)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     datetime.now().isoformat(),
                     session.id,
@@ -3119,6 +3225,8 @@ class SessionRepository:
                     reason,
                     head["chain"] if head is not None else "",
                     head["content_hash"] if head is not None and head["format"] == 2 else "",
+                    session.owner_id or "",
+                    session.shared_from or "",
                 ),
             )
             return int(cur.lastrowid)
@@ -3132,15 +3240,48 @@ class SessionRepository:
         return {r["id"] for r in rows}
 
     def deletions(self, start: str = "", end: str = "") -> list[dict]:
-        """Deleted meetings and audio (at within [start, end), ISO dates; blank = open)."""
+        """Deleted meetings and audio (at within [start, end), ISO dates; blank = open), as far
+        as the caller may read them: a meeting still here (its audio deleted) by the read rule,
+        a deleted one by whose it was (`owner_id`, `shared_from` stored with the entry; a
+        caller with a narrower scope than everything never sees entries of unknown owner)."""
+        scope = self.read_scope()
         with self._lock:
             rows = self._conn.execute(
                 "SELECT at, session_id, name, created_at, what, by, role, reason, chain_head,"
-                " manifest_hash FROM deletions"
+                " manifest_hash, owner_id, shared_from FROM deletions"
                 " WHERE (?='' OR at>=?) AND (?='' OR at<?) ORDER BY at",
                 (start, start, end, end),
             ).fetchall()
-        return [dict(r) for r in rows]
+        visible = self.ids_seen_by(scope)
+        out = []
+        for r in rows:
+            row = dict(r)
+            owner, shared_from = row.pop("owner_id"), row.pop("shared_from")
+            if visible is not None and r["session_id"] not in visible:
+                if self._owner(r["session_id"]) is not None or not self._was_seen(
+                    scope, owner, shared_from
+                ):
+                    continue
+            out.append(row)
+        return out
+
+    @staticmethod
+    def _was_seen(scope: access.ReadScope, owner: str, shared_from: str) -> bool:
+        """Whether `scope` could read a deleted meeting of this owner (grants are gone with it:
+        only ownership counts)."""
+        if any(not SessionRepository._was_seen(x, owner, shared_from) for x in scope.also):
+            return False
+        if scope.kind == access.ALL:
+            return True
+        if scope.kind == access.OWN_AND_GRANTED:
+            return bool(owner) and owner == scope.user_id
+        if scope.kind == access.TEAM_WIDE:
+            return not shared_from and owner not in ("", scope.host)
+        if scope.kind == access.OWN:
+            return not shared_from and owner in ("", scope.host)
+        if scope.kind in (access.PERSONAL, access.VIEW):
+            return bool(shared_from) or owner in ("", scope.host)
+        return False
 
     # ---- supervision (services/supervision.py) --------------------------
 
@@ -3231,11 +3372,19 @@ class SessionRepository:
                (SELECT r.note FROM supervision_reviews r WHERE r.session_id = s.id
                 ORDER BY r.id DESC LIMIT 1) AS note
         FROM sessions s JOIN supervision_flags f ON f.session_id = s.id
+        {where}
         GROUP BY s.id ORDER BY s.created_at DESC
         """
+        # On a computer that hosts a team only the members' meetings are reviewed. Flags the
+        # owner's own meetings got before hosting started stay in the table (a review is
+        # part of a record) and come back if hosting is turned off; they are just not listed.
+        where, params = "", ()
+        if self.host_owner:
+            where = "WHERE s.shared_from='' AND s.owner_id NOT IN ('', ?)"
+            params = (self.host_owner,)
         visible = self.visible_ids()
         with self._lock:
-            rows = self._conn.execute(sql).fetchall()
+            rows = self._conn.execute(sql.format(where=where), params).fetchall()
         return [dict(r) for r in rows if visible is None or r["id"] in visible]
 
     def set_action_item_done(self, session_id: str, idx: int, done: bool) -> bool:
@@ -3409,16 +3558,22 @@ class SessionRepository:
         return True
 
     def adopt_unowned(self, owner_id: str) -> int:
-        """Meetings that belong to nobody (made before team mode) become this person's. The owner
-        is part of the meeting's record (`meta`), so each meeting gets a new version (`_touch`,
-        without moving `updated_at`: nothing changed for a reader), or a seal made before would
-        show it as changed outside the app. Library sync is refused in team mode: no travel."""
+        """Meetings that belong to nobody (made before team mode, or arriving from an older
+        peer) become this person's, except a contact's (`shared_from`: it belongs to its sender
+        and stays unowned). The owner is part of the meeting's record (`meta`), so each meeting
+        gets a new version (`_touch`, without moving `updated_at`: nothing changed for a reader),
+        or a seal made before would show it as changed outside the app."""
         with self._lock, self._conn:
             ids = [
                 r["id"]
-                for r in self._conn.execute("SELECT id FROM sessions WHERE owner_id=''").fetchall()
+                for r in self._conn.execute(
+                    "SELECT id FROM sessions WHERE owner_id='' AND shared_from=''"
+                ).fetchall()
             ]
-            self._conn.execute("UPDATE sessions SET owner_id=? WHERE owner_id=''", (owner_id,))
+            self._conn.execute(
+                "UPDATE sessions SET owner_id=? WHERE owner_id='' AND shared_from=''",
+                (owner_id,),
+            )
             for sid in ids:
                 self._touch(sid, keep_updated=True)
             return len(ids)
@@ -4326,12 +4481,12 @@ class SessionRepository:
         return r["updated_at"] if r else None
 
     def all_vectors(self) -> list:
-        visible = self.visible_ids()
+        """Every chunk's vector, whoever asks: the index keeps one copy for all callers and
+        filters by the caller's scope at query time (search/index.py `query`)."""
         with self._lock:
-            rows = self._conn.execute(
+            return self._conn.execute(
                 "SELECT session_id, kind, first_idx, last_idx, vec FROM chunk_vectors"
             ).fetchall()
-        return rows if visible is None else [r for r in rows if r["session_id"] in visible]
 
     def indexed_session_count(self) -> int:
         with self._lock:
@@ -4736,16 +4891,36 @@ class SessionRepository:
         for sid in dict.fromkeys(s for old_s, _, new_s, _ in moves for s in (old_s, new_s)):
             self._touch(sid)
 
+    @staticmethod
+    def _synced(own: str) -> tuple[str, tuple]:
+        """(condition, params) for the meetings library sync carries: never a meeting a contact
+        shared with us (`shared_from`), and with a team owner `own` (`team_owner_id`) only that
+        person's own meetings (owner '' or `own`), never a team member's."""
+        if own:
+            return "shared_from = '' AND owner_id IN ('', ?)", (own,)
+        return "shared_from = ''", ()
+
+    def is_synced(self, session_id: str, own: str = "") -> bool | None:
+        """Whether library sync carries this meeting (`_synced`); None when there is none."""
+        cond, params = self._synced(own)
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT {cond} AS ok FROM sessions WHERE id=?", (*params, session_id)
+            ).fetchone()
+        return None if row is None else bool(row["ok"])
+
     def changes_since(
-        self, seq: int, limit: int = 200
+        self, seq: int, limit: int = 200, own: str = ""
     ) -> tuple[list[tuple[str, int, dict[str, int]]], int, bool]:
         """Meetings changed after `seq`, oldest change first: ([(id, sync_seq, sync_vv)],
-        the seq to ask from next time, whether there are more than `limit`)."""
+        the seq to ask from next time, whether there are more than `limit`). Only what sync
+        carries (`_synced`, `own`: the team owner, "" for none)."""
+        cond, params = self._synced(own)
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, sync_seq, sync_vv FROM sessions WHERE sync_seq > ?"
-                " AND shared_from = '' ORDER BY sync_seq LIMIT ?",
-                (seq, limit + 1),
+                f"SELECT id, sync_seq, sync_vv FROM sessions WHERE sync_seq > ? AND {cond}"
+                " ORDER BY sync_seq LIMIT ?",
+                (seq, *params, limit + 1),
             ).fetchall()
         more = len(rows) > limit
         rows = rows[:limit]
@@ -4776,13 +4951,16 @@ class SessionRepository:
         value = self.get_meta("sync_seq")
         return int(value) if value else 0
 
-    def tombstones_since(self, at: str = "") -> list[dict]:
-        """Meetings deleted after the ISO time `at` ("" = all), oldest first."""
+    def tombstones_since(self, at: str = "", own: str = "") -> list[dict]:
+        """Meetings deleted after the ISO time `at` ("" = all), oldest first. With a team owner
+        `own`, only that person's own (owner '' or `own`): never a member's, nor one of unknown
+        owner ('?', from before tombstones kept it)."""
+        mine, params = ("", ()) if not own else (" AND owner_id IN ('', ?)", (own,))
         with self._lock:
             rows = self._conn.execute(
-                "SELECT session_id, at, device, name FROM sync_tombstones WHERE at > ?"
+                f"SELECT session_id, at, device, name FROM sync_tombstones WHERE at > ?{mine}"
                 " ORDER BY at, session_id",
-                (at,),
+                (at, *params),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -4905,7 +5083,9 @@ class SessionRepository:
                 ),
             }
 
-    def apply_synced(self, s: SyncSession, *, origin: str, vv: dict[str, int], bump: bool) -> str:
+    def apply_synced(
+        self, s: SyncSession, *, origin: str, vv: dict[str, int], bump: bool, owner: str = ""
+    ) -> str:
         """Write a meeting that arrived from a peer (or a merge of it with ours): the apply
         path of library sync, apart from `save` (which stamps `updated_at` and fires
         `on_new_session`) and from every access check. One transaction. `origin` is
@@ -4923,7 +5103,11 @@ class SessionRepository:
         revision in the vector counts one more (`_touch`, which also sets `updated_at` to now).
         Without it (a fast-forward) the vector stays as given and `updated_at` is the document's,
         so the meeting is identical on both machines; either way `sync_seq` advances, so a third
-        machine asking us for changes hears of the meeting. Returns the meeting id."""
+        machine asking us for changes hears of the meeting. Returns the meeting id.
+
+        Ownership is this computer's, never the document's: a new meeting belongs to `owner`
+        (the team owner, else ''), an existing one keeps its owner, so a sync round never
+        resets it."""
         sid = s.id
         here = origin == ""
         vv_json = json.dumps(dict(sorted(vv.items())))
@@ -4942,7 +5126,6 @@ class SessionRepository:
                 int(s.speakers_reviewed),
                 json.dumps([a.model_dump() for a in s.agenda]),
                 s.meeting_type,
-                s.owner_id,
                 origin,
                 vv_json,
             )
@@ -4951,15 +5134,15 @@ class SessionRepository:
                 self._conn.execute(
                     "INSERT INTO sessions(name, updated_at, summary, summary_data, notes,"
                     " participants, attendees, local_only, copilot_notes, speakers_reviewed,"
-                    " agenda, meeting_type, owner_id, origin, sync_vv, id, created_at, status,"
+                    " agenda, meeting_type, origin, sync_vv, owner_id, id, created_at, status,"
                     " audio_file) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
-                    (*common, sid, s.created_at.isoformat(), status.value),
+                    (*common, owner, sid, s.created_at.isoformat(), status.value),
                 )
             else:
                 sets = (
                     "name=?, updated_at=?, summary=?, summary_data=?, notes=?, participants=?,"
                     " attendees=?, local_only=?, copilot_notes=?, speakers_reviewed=?, agenda=?,"
-                    " meeting_type=?, owner_id=?, origin=?, sync_vv=?, created_at=?"
+                    " meeting_type=?, origin=?, sync_vv=?, created_at=?"
                 )
                 if here:
                     self._conn.execute(

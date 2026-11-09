@@ -753,7 +753,7 @@ function onConnected(): () => void {
   sessionState.loadSessions();
   wsState.connect();
   void syncState.load();
-  if (!connectionState.me?.team_mode) void contactsState.load();
+  if (connectionState.ownsPersonal) void contactsState.load();
   transcriptState.init();
   void resumeActiveRecording();
   jobsState.init();

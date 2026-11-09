@@ -78,6 +78,18 @@ class ConnectionState {
     this.token = onLocal && !s.token ? this.localToken : s.token;
   }
 
+  /** Personal features (contacts, sharing with people) are this caller's: everyone on a plain
+   * computer, only the owner on one that hosts a team, nobody on a dedicated team server. */
+  get ownsPersonal(): boolean {
+    const me = this.me;
+    return !me?.team_mode || (me.personal && me.owner);
+  }
+
+  /** The owner of this computer is asking, however it hosts a team (members and reviewers never). */
+  get isOwner(): boolean {
+    return !this.me?.team_mode || !!this.me.owner;
+  }
+
   get isLocal(): boolean {
     // The remote-access tunnel listens on 127.0.0.1, but the backend is on another machine.
     if (this.remote) return false;

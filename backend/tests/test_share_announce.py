@@ -128,3 +128,12 @@ async def test_team_mode_never_pokes(setup):
     assert ann.calls == []
     ann.start()  # no loop either
     assert ann._task is None
+
+
+async def test_a_hosting_computer_still_pokes(setup):
+    """Only a dedicated team server (no owner) goes quiet; a computer that hosts a team pokes."""
+    ctx, ann, row = setup
+    ctx.settings.team_mode = True
+    ctx.settings.team_owner_id = "u-owner"
+    ctx.repo.put_peer_share(meeting(ctx), row["person"], {}, "me")
+    assert await ann.tick() == [row["person"]]

@@ -21,6 +21,14 @@
 		['reviewer', 'Reviewer: reads every meeting'],
 		['admin', 'Admin: everything, people and settings']
 	];
+	// A main computer that hosts a team: its owner is the only admin, and reviewers read the team's
+	// meetings, not the owner's own (docs/plans/2026-11-09-team-hosting.md).
+	const hosting = $derived(!!connectionState.me?.hosts_team);
+	const HOST_ROLES: [string, string][] = [
+		['member', 'Member: their own meetings'],
+		['reviewer', "Reviewer: reads the team's meetings"]
+	];
+	const rolesFor = (current: string) => (hosting && current !== 'admin' ? HOST_ROLES : ROLES);
 
 	function linkFor(i: UserInvite): string {
 		// This computer shared with a team: its network address, not 127.0.0.1.
@@ -88,9 +96,15 @@
 <section aria-label="People and access">
 	<h3 class="text-lg font-semibold text-gray-200 mb-1">People and access</h3>
 	<p class="text-xs text-gray-500 mb-3">
-		Everyone who uses this server. Members see only their own meetings, reviewers read all of them, admins also manage
-		people and settings. Nobody has a password: each invite link signs one browser in, works once and expires after a
-		week. Opening, playing and exporting a meeting is noted in its history.
+		{#if hosting}
+			Everyone who signs in to this computer. Members see only their own meetings; reviewers read the team's meetings,
+			and yours only when you share them. You are the only admin.
+		{:else}
+			Everyone who uses this server. Members see only their own meetings, reviewers read all of them, admins also manage
+			people and settings.
+		{/if}
+		Nobody has a password: each invite link signs one browser in, works once and expires after a week. Opening, playing
+		and exporting a meeting is noted in its history.
 	</p>
 
 	{#if invite}
@@ -120,7 +134,7 @@
 					</td>
 					<td>
 						<select value={p.role} onchange={(e) => change(p, { role: e.currentTarget.value })} aria-label="Role of {p.name}" class="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-200">
-							{#each ROLES as [value]}<option {value}>{value}</option>{/each}
+							{#each rolesFor(p.role) as [value]}<option {value}>{value}</option>{/each}
 						</select>
 					</td>
 					<td class="text-xs text-gray-400">{seen(p)}</td>
@@ -146,7 +160,7 @@
 		<label class="text-xs text-gray-400">Email<input bind:value={email} type="email" class="block mt-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100" /></label>
 		<label class="text-xs text-gray-400">Role
 			<select bind:value={role} class="block mt-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100">
-				{#each ROLES as [value, label]}<option {value}>{label}</option>{/each}
+				{#each rolesFor('member') as [value, label]}<option {value}>{label}</option>{/each}
 			</select>
 		</label>
 		<button type="submit" disabled={busy || !name.trim()} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50">Add and invite</button>

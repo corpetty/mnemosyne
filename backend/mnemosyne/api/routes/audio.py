@@ -411,8 +411,9 @@ async def stop(
     seals and (by default) queues transcription. Encoding a long meeting takes a while (about
     18 s for 30 minutes), and the UI should not wait for it."""
     recording = ctx.active_recordings.get(session_id)
-    if recording is None or not recording.is_recording:
+    if recording is None or not recording.is_recording or not _sees(ctx, session_id):
         raise HTTPException(status_code=404, detail="No active recording for this session")
+    ctx.repo._check_write(session_id)  # reading the meeting is not enough to control its recording
     transcribe = request.transcribe if request is not None else None
     job, want_transcribe = await stop_active(ctx, session_id, transcribe)
     return StopRecordingResponse(
@@ -539,8 +540,9 @@ async def restart(session_id: str, ctx: AppContext = Depends(get_ctx)):
     Save what was recorded and go on recording into the same meeting as its next part, from
     the same devices, found again by name (a recreated node has a new id)."""
     recording = ctx.active_recordings.get(session_id)
-    if recording is None or not recording.is_recording:
+    if recording is None or not recording.is_recording or not _sees(ctx, session_id):
         raise HTTPException(status_code=404, detail="No active recording for this session")
+    ctx.repo._check_write(session_id)  # reading the meeting is not enough to control its recording
     if is_browser(recording):
         raise HTTPException(
             status_code=400, detail="A browser recording reconnects from the browser"
@@ -596,11 +598,17 @@ class ActiveRecording(ApiModel):
     clock: PartClock | None = None
 
 
+def _sees(ctx: AppContext, session_id: str) -> bool:
+    """May the caller read this recording's meeting (the repository's read rule)? A recording
+    is as private as its meeting: its live transcript most of all."""
+    return ctx.repo.read_scope().everything or ctx.repo.exists(session_id)
+
+
 @router.get("/active", response_model=list[ActiveRecording])
 async def active(ctx: AppContext = Depends(get_ctx)):
     out = []
     for session_id, recording in ctx.active_recordings.items():
-        if not recording.is_recording:
+        if not recording.is_recording or not _sees(ctx, session_id):
             continue
         live = ctx.live.get(session_id)
         segments = (
@@ -629,7 +637,7 @@ async def active(ctx: AppContext = Depends(get_ctx)):
 @router.get("/status/{session_id}", response_model=RecordingStatus)
 async def status(session_id: str, ctx: AppContext = Depends(get_ctx)):
     recording = ctx.active_recordings.get(session_id)
-    if recording is None:
+    if recording is None or not _sees(ctx, session_id):
         return {"session_id": session_id, "is_recording": False, "exists": False}
     return {
         "session_id": session_id,

@@ -6,11 +6,11 @@
 	import { teamState } from '$lib/stores/team.svelte.js';
 	import type { TeamStatus } from '$lib/types/index.js';
 
-	// The team server role (backend services/team_host.py): this computer becomes the team's
-	// server. Only the desktop app on this computer may turn it on or off. Settings → Devices and
+	// Hosting a team (backend services/team_host.py): this computer, a main computer, also serves
+	// the team. Only the desktop app on this computer may turn it on or off. Settings → Devices and
 	// people shows it in two places that share one status (`teamState.host`): `role` in "This
-	// computer" (start, addresses, stop) and `options` in "Team server" (Tailscale name, keep
-	// sharing when I quit, keep this computer awake).
+	// computer" under Main computer (start, addresses, stop) and `options` in "Your team" (Tailscale
+	// name, keep sharing when I quit, keep this computer awake).
 	let { part = 'role' }: { part?: 'role' | 'options' } = $props();
 	const status = $derived(teamState.host);
 	let name = $state('');
@@ -59,7 +59,7 @@
 	}
 
 	async function toggle(enabled: boolean) {
-		if (!enabled && !confirm('Stop being a team server? People on your team can no longer reach this computer. Their accounts and meetings stay.')) return;
+		if (!enabled && !confirm('Stop hosting? People on your team can no longer reach this computer. Their accounts and meetings stay.')) return;
 		busy = true;
 		error = '';
 		try {
@@ -67,7 +67,7 @@
 			await refreshMe();
 			if (enabled) await teamState.load();
 		} catch (e) {
-			error = e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not change the team server';
+			error = e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not change team hosting';
 		} finally {
 			busy = false;
 		}
@@ -99,11 +99,11 @@
 {/snippet}
 
 {#if status?.can_change && part === 'role'}
-	<div aria-label="Team server" class="mt-3">
+	<div aria-label="Team hosting" class="mt-3">
 		<p class="text-xs text-gray-500 mb-3">
-			Makes this computer your team's server: people on your network open its address in a browser, sign in with an
-			invite link, and record, read and share meetings there. You become the first admin and the meetings you have are
-			yours. Nothing else to install; this computer must be on while they use it.
+			People on your network open this computer's address in a browser, sign in with an invite link, and record, read
+			and share meetings there. You become the first admin and the meetings you have are yours. Nothing else to
+			install; this computer must be on while they use it.
 		</p>
 		{#if !status.enabled}
 			<div class="flex flex-wrap items-end gap-3">
@@ -119,7 +119,7 @@
 					onclick={() => toggle(true)}
 					disabled={busy || !name.trim()}
 					class="px-3 py-1.5 text-sm rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-50"
-				>{busy ? 'Starting…' : 'Make this a team server'}</button>
+				>{busy ? 'Starting…' : 'Host a team'}</button>
 			</div>
 		{:else}
 			<div class="rounded border border-gray-800 bg-gray-900 p-3 text-sm space-y-2">
@@ -149,7 +149,7 @@
 							The certificate is made by this computer, so browsers warn the first time: choose to continue (Advanced →
 							Accept).
 						{/if}
-						Recording in a browser needs an HTTPS address. Add people under Team server below and send each their invite link.
+						Recording in a browser needs an HTTPS address. Add people under Your team below and send each their invite link.
 					</p>
 					{#if status.firewall_hint}
 						<p class="text-xs text-gray-500">
@@ -161,13 +161,13 @@
 					<p class="text-amber-400">The team server is on but not listening{status.error ? `: ${status.error}` : ''}.</p>
 					<button onclick={() => toggle(true)} disabled={busy} class="text-sm text-blue-400 hover:text-blue-300">Try again</button>
 				{/if}
-				<button onclick={() => toggle(false)} disabled={busy} class="text-sm text-gray-400 hover:text-red-400">Stop being a team server</button>
+				<button onclick={() => toggle(false)} disabled={busy} class="text-sm text-gray-400 hover:text-red-400">Stop hosting</button>
 			</div>
 		{/if}
 		{#if error}<p class="text-sm text-red-400 mt-2">{error}</p>{/if}
 	</div>
 {:else if status?.can_change && part === 'options' && status.enabled}
-	<div aria-label="Team server options" class="space-y-2">
+	<div aria-label="Team hosting options" class="space-y-2">
 		{#if status.running}{@render tailscale(status)}{/if}
 		<label class="flex items-start gap-2 text-sm text-gray-300 pt-1">
 			<input
@@ -178,7 +178,7 @@
 			/>
 			<span>
 				Keep sharing when I quit Mnemosyne
-				<span class="block text-xs text-gray-500">Your team can go on using this computer until you log out or open Mnemosyne and stop being a team server.</span>
+				<span class="block text-xs text-gray-500">Your team can go on using this computer until you log out or open Mnemosyne and stop hosting.</span>
 			</span>
 		</label>
 		<label class="flex items-start gap-2 text-sm text-gray-300">

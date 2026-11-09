@@ -7,6 +7,10 @@ flagged too, and the reviewer decides.
 Flags follow the transcript: a new transcription replaces them (it comes from the audio); an
 edit or a change of phrases only adds, so editing a line never hides what was said. A review
 covers the flags found before it; a flag found later puts the meeting back in the queue.
+
+On a main computer that hosts a team only the members' meetings are scanned and listed: the
+owner's own meetings stay outside phrase review (`SessionRepository.outside_team`). Flags such a
+meeting got before hosting started are kept, not listed, and listed again if hosting ends.
 """
 
 from __future__ import annotations
@@ -48,6 +52,8 @@ def scan(app: AppContext, session_id: str, replace: bool = False) -> int:
         session = app.repo.get(session_id)
         if session is None:
             return 0
+        if app.repo.outside_team(session.owner_id, session.shared_from):
+            return 0  # on a computer that hosts a team: members' meetings only
         phrases = parse_keywords(app.settings.review_phrases)
         return app.repo.set_flags(session_id, find(session.transcript, phrases), replace)
     except Exception:

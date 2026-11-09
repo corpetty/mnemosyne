@@ -4,8 +4,10 @@
 
 <script lang="ts">
 	// Settings → Devices and people → This computer: what this computer is to the others.
-	// The selected card is the current role (derived, not stored): a team server when team mode is
-	// on, "uses my main computer" when this window is connected through remote access, else main.
+	// The selected card is the current role (derived, not stored): a team server when this is a
+	// dedicated team server, "uses my main computer" when this window is connected through remote
+	// access, else main. A main computer can also host a team ("Host a team on this computer").
+	import { onExternalClick } from '$lib/app/externalLink.js';
 	import LibraryCopy from './LibraryCopy.svelte';
 	import RemoteConnect from './RemoteConnect.svelte';
 	import TeamHostSettings from './TeamHostSettings.svelte';
@@ -27,7 +29,7 @@
 			title: 'Uses my main computer',
 			text: "A laptop: shows your main computer's library and records into it."
 		},
-		{ id: 'team', title: 'Team server', text: 'Other people sign in to this computer.' }
+		{ id: 'team', title: 'Team server', text: 'A computer that belongs to a team, not to one person.' }
 	];
 </script>
 
@@ -68,17 +70,31 @@
 				Your devices reach this computer while Mnemosyne runs. To keep it running with the window closed, turn on
 				“Closing the window keeps Mnemosyne running in the tray” in General → Window.
 			</p>
+			<div class="mt-4">
+				<h4 class="text-sm font-medium text-gray-300">Host a team on this computer</h4>
+				<p class="text-xs text-gray-500">
+					Teammates sign in to this computer from a browser and record there. Your library, your devices and sharing with
+					people keep working; teammates' meetings never go to your other computers, your vault or the people you share
+					with.
+				</p>
+				<TeamHostSettings part="role" />
+			</div>
 		{/if}
 	{:else if pick === 'satellite'}
 		<RemoteConnect />
 		{#if role === 'satellite'}<LibraryCopy />{/if}
-	{:else}
-		{#if role !== 'team'}
-			<p class="text-xs text-gray-500">
-				Others sign in to this computer from a browser. Library sync and sharing with people who use Mnemosyne stop, and
-				members cannot publish or open live-notes links until you allow it.
-			</p>
-		{/if}
+	{:else if role === 'team'}
 		<TeamHostSettings part="role" />
+	{:else}
+		<p class="text-xs text-gray-500">
+			On a team server, library sync, laptops and sharing with people are off. It is set up on its own machine (see the
+			<a
+				href="https://github.com/corpetty/mnemosyne/blob/main/docs/team-server.md"
+				onclick={onExternalClick}
+				target="_blank"
+				rel="noopener noreferrer"
+				class="underline hover:text-gray-300">team server guide</a
+			>). To let teammates use this computer while it stays yours, choose Main computer → Host a team on this computer.
+		</p>
 	{/if}
 </section>

@@ -11,7 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from ... import access
+from ... import access, config
 from ...models.base import ApiModel
 from ...models.contact import Card
 from ...models.sync import SyncPeerPayload, SyncPersonOffer, SyncRedeemSelf
@@ -25,13 +25,17 @@ from ...services.pairing import (
     PairedDevice,
 )
 from ...services.pairing_prep import PairingUnavailable, prepare_pairing
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 from .mobile import phone_page_urls
 
 logger = logging.getLogger(__name__)
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 router = APIRouter(prefix="/api/pairing", tags=["pairing"])
-ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
+# Personal: on a computer that hosts a team only its owner pairs, lists or removes devices.
+# The guard comes first so another caller learns nothing else. Redeeming a code and `/me` are
+# open to the device being paired.
+ADMIN = [Depends(require_owner_channel), Depends(access.require_admin)]
 
 
 class CodeRequest(BaseModel):
@@ -84,11 +88,12 @@ def _info(d: PairedDevice) -> PairedDeviceInfo:
 
 
 def _refuse_team(ctx: AppContext, kind: str) -> None:
-    if kind == SYNC and ctx.settings.team_mode:
+    # Library sync: refused on a dedicated team server, open on a hosting computer's owner.
+    if kind == SYNC and not config.personal_allowed(ctx.settings):
         raise HTTPException(
             status_code=409, detail="Library sync is for personal computers, not a team server"
         )
-    if kind == CONTACT_CODE and ctx.settings.team_mode:
+    if kind == CONTACT_CODE and not config.personal_allowed(ctx.settings):
         raise HTTPException(
             status_code=409, detail="Contacts are for personal computers, not a team server"
         )
@@ -154,7 +159,7 @@ async def _redeem_contact(body: RedeemRequest, ctx: AppContext) -> RedeemRespons
     """A contact code: store the redeemer's card, write their CONTACT devices and answer with
     our card and the token they will present to us. Everything is checked before anything is
     stored or the code used up."""
-    if ctx.settings.team_mode:
+    if not config.personal_allowed(ctx.settings):
         raise HTTPException(
             status_code=409, detail="Contacts are for personal computers, not a team server"
         )
@@ -239,7 +244,7 @@ async def redeem(body: RedeemRequest, ctx: AppContext = Depends(get_ctx)):
     offer: SyncPersonOffer | None = None
     if syncing:
         peer = body.peer
-        if ctx.settings.team_mode:
+        if not config.personal_allowed(ctx.settings):
             raise HTTPException(
                 status_code=403, detail="Library sync is for personal computers, not a team server"
             )

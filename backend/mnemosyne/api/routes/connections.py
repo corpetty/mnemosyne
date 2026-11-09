@@ -11,13 +11,15 @@ from typing import Literal
 from fastapi import APIRouter, Depends
 
 from ... import access
+from ...config import personal_allowed
 from ...models.base import ApiModel
 from ...services.contacts import my_or_card_name
 from ...services.pairing import DESKTOP, PHONE
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/connections", tags=["connections"])
-ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
+ADMIN = [Depends(require_owner_channel), Depends(access.require_admin)]
 
 CAN = {
     "phone": "Sends recordings",
@@ -62,7 +64,7 @@ def _row(
 
 def connected_devices(ctx: AppContext) -> list[ConnectedDevice]:
     """Oldest first. Sync peers and contacts are left out on a team server, which refuses both."""
-    team = ctx.settings.team_mode
+    team = not personal_allowed(ctx.settings)
     out: list[ConnectedDevice] = []
     peers = {} if team else {p.endpoint_id: p for p in ctx.sync_peers.peers()}
     sync_seen: dict[str, datetime | None] = {}  # peer id -> when its paired device was last used

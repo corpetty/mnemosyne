@@ -7,9 +7,10 @@ from fastapi.testclient import TestClient
 
 from mnemosyne import access
 from mnemosyne.api.app import create_app
+from mnemosyne.config import Settings
 from mnemosyne.models.session import Session
 from mnemosyne.models.transcript import TranscriptSegment
-from mnemosyne.services.users import InvalidInvite, UserService
+from mnemosyne.services.users import ONLY_OWNER_ADMIN, InvalidInvite, UserService, admin_refusal
 
 # ---- the user store ------------------------------------------------------------------------
 
@@ -28,6 +29,34 @@ def test_invite_redeem_verify_and_sign_out(tmp_path):
     assert token not in (tmp_path / "users.json").read_text()  # hashes only
     users.forget_token(token)
     assert users.verify(token) is None
+
+
+def test_an_invite_can_be_looked_at_without_being_used(tmp_path):
+    clock = [1000.0]
+    users = UserService(tmp_path / "users.json", clock=lambda: clock[0])
+    sam = users.add("Sam", "", "member")
+    code, _ = users.invite(sam.id)
+    assert users.invited(code).id == sam.id and users.invited(code).id == sam.id
+    assert users.invited("nope") is None
+    users.redeem(code, "Laptop")
+    assert users.invited(code) is None  # used
+    other, _ = users.invite(sam.id)
+    clock[0] += 8 * 24 * 3600
+    assert users.invited(other) is None  # expired
+
+
+def test_only_the_owner_is_an_admin_on_a_computer_that_hosts_a_team():
+    host = Settings(team_mode=True, team_owner_id="u1")
+    assert admin_refusal(host, "admin") == ONLY_OWNER_ADMIN  # a new person
+    assert admin_refusal(host, "admin", "u2") == ONLY_OWNER_ADMIN
+    assert admin_refusal(host, "admin", "u1") == ""  # the owner
+    assert admin_refusal(host, "reviewer", "u2") == admin_refusal(host, None, "u2") == ""
+    for s in (
+        Settings(team_mode=True),  # a dedicated server
+        Settings(),  # a plain computer
+        Settings(team_owner_id="u1"),  # hosting turned off
+    ):
+        assert admin_refusal(s, "admin") == admin_refusal(s, "admin", "u2") == ""
 
 
 def test_invites_expire_and_disabled_people_are_out(tmp_path):
@@ -273,3 +302,74 @@ def test_saved_questions_and_digests_are_personal(team):
     assert [a["question"] for a in asks] == ["Ann?"]
     digests = client.get("/api/digests", headers=_h(people, "Bob")).json()
     assert [d["markdown"] for d in digests] == ["Bob's week"]  # same week, both kept
+
+
+H = {"Authorization": "Bearer adm"}
+
+
+def test_me_says_whether_this_computer_hosts_a_team(client, ctx):
+    me = client.get("/api/users/me").json()
+    assert me["hosts_team"] is False and me["personal"] is True
+    ctx.settings.team_mode = True
+    ctx.settings.api_token = "adm"
+    ctx.settings.team_owner_id = "owner0000001"
+    me = client.get("/api/users/me", headers=H).json()
+    assert me["hosts_team"] is True and me["personal"] is True
+    ctx.settings.team_owner_id = ""
+    me = client.get("/api/users/me", headers=H).json()
+    assert me["hosts_team"] is False and me["personal"] is False
+
+
+def test_me_says_whether_the_caller_is_the_owner(settings, keystore):
+    from mnemosyne.api.app import create_app
+
+    def me(c, token=None):
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        return c.get("/api/users/me", headers=headers).json()
+
+    def desktop(app):  # the desktop window: 127.0.0.1, as the app makes its requests
+        return TestClient(app, base_url="http://127.0.0.1:8008", client=("127.0.0.1", 50000))
+
+    # A plain computer: every caller is the owner.
+    with desktop(create_app(settings, keystore=keystore)) as c:
+        assert me(c)["owner"] is True
+
+    # A computer that hosts a team: the window and the API token are the owner; a member, even
+    # from this machine, is not.
+    settings.team_mode = True
+    settings.api_token = "adm"
+    app = create_app(settings, keystore=keystore)
+    ctx = app.state.ctx
+    boss = ctx.users.add("Boss", "", "admin")
+    ctx.settings.team_owner_id = boss.id
+    ann = ctx.users.add("Ann", "", "member")
+    code, _ = ctx.users.invite(ann.id)
+    ann_token = ctx.users.redeem(code, "test")[1]
+    with desktop(app) as c:
+        window = me(c)
+        assert window["owner"] is True and window["hosts_team"] is True and window["id"] == boss.id
+        assert me(c, "adm")["owner"] is True
+        member = me(c, ann_token)
+        assert member["owner"] is False and member["id"] == ann.id
+
+        # A dedicated team server: nobody is the owner, an admin included.
+        ctx.settings.team_owner_id = ""
+        assert me(c, "adm")["owner"] is False
+
+
+def test_set_role_demotes_the_last_admin_only_for_hosting(tmp_path, monkeypatch):
+    from mnemosyne import cli, config
+
+    settings = config.Settings(data_dir=tmp_path)
+    monkeypatch.setattr(config, "load_settings", lambda: settings)
+    users = UserService(tmp_path / "users.json")
+    pat = users.add("Pat", "", "admin")
+    with pytest.raises(SystemExit, match="--for-hosting"):
+        cli.users_command(["set-role", pat.id, "reviewer"])
+    cli.users_command(["set-role", pat.id, "reviewer", "--for-hosting"])
+    assert UserService(tmp_path / "users.json").get(pat.id).role == "reviewer"
+    settings.team_owner_id = "owner0000001"  # a configured owner needs no flag
+    sam = users.add("Sam", "", "member")
+    cli.users_command(["set-role", sam.id, "reviewer"])
+    with pytest.raises(SystemExit):
+        cli.users_command(["set-role", sam.id, "admin"])

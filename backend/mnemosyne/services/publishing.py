@@ -88,8 +88,10 @@ class Gone(LookupError):
 
 
 def allowed(app: AppContext) -> bool:
-    """Publishing is on: always on the desktop, on a team server once an admin allows it."""
-    return not app.settings.team_mode or app.settings.allow_publishing
+    """Publishing is on: always on the desktop, on a team server once an admin allows it. The
+    owner of a computer that hosts a team may whatever the switch says (it governs the team)."""
+    st = app.settings
+    return not st.team_mode or st.allow_publishing or access.is_host_owner(st)
 
 
 def check_may_publish(app: AppContext, session: Session) -> None:

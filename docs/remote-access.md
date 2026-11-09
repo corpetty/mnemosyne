@@ -111,8 +111,8 @@ setup above (with the library copy if you want one).
 
 They connect directly on the same network and through the relays elsewhere, and pull each other's
 changes every half minute and right after a change. Removing a computer stops the sync; what was
-already synced stays on both. Sync is not available on a team server (it is its own role: see
-[team-server.md](team-server.md)).
+already synced stays on both. Sync is refused only on a dedicated team server (see [team-server.md](team-server.md)), not on a
+computer that hosts a team: there it syncs only its owner's own meetings, never the team's.
 
 ## How the connection is made
 
@@ -140,7 +140,7 @@ connects, never what is sent; the [privacy notice](https://notes.petty.services/
 kept (counts only, no client addresses in logs).
 
 Whether it is used follows **Use Mnemosyne's relay and notes server** (Settings → Devices and people →
-Advanced; `use_our_servers`): automatic means on, except on team servers, and it has nothing to do
+Advanced; `use_our_servers`): automatic means on, except on a dedicated team server, and it has nothing to do
 with the AI tab's cloud-model switch. With it off and **Relays** blank there is no relay at all:
 paired computers connect directly or on the same network (mDNS). A relay you set under **Relays**
 (`remote_relays`) always wins. To use your own, run the open-source iroh-relay server (a ready config

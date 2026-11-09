@@ -72,6 +72,33 @@ def test_shared_with_one_person_they_read_it_and_change_nothing(team):
     assert "unshared" in [e["kind"] for e in ctx.repo.events(s.id)]
 
 
+def test_a_read_only_share_cannot_stop_or_restart_the_recording(team):
+    class Rec:
+        is_recording = True
+        started_at = 0.0
+        processes = []
+        part = 1
+        problems = {}
+
+    client, ctx, people = team
+    s = _meeting(ctx, people, "Ann", "Planning")
+    bob = people["Bob"][1]
+    client.put(
+        f"/api/sessions/{s.id}/shares",
+        json={"user_ids": [people["Bob"][0].id]},
+        headers=people["Ann"][1],
+    )
+    cat = people["Cat"][1]
+    ctx.active_recordings[s.id] = Rec()
+    try:
+        for path in (f"/api/audio/stop/{s.id}", f"/api/audio/restart/{s.id}"):
+            assert client.post(path, headers=bob, json={}).status_code == 403, path
+            assert client.post(path, headers=cat, json={}).status_code == 404, path  # not shared
+        assert ctx.active_recordings[s.id].is_recording
+    finally:
+        ctx.active_recordings.clear()
+
+
 def test_shared_with_everyone(team):
     client, ctx, people = team
     s = _meeting(ctx, people, "Ann", "All hands")

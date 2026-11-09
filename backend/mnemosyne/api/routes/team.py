@@ -1,5 +1,6 @@
 """Share this computer with a team (services/team_host.py): its status, and turning it on and off.
-Changing it is for the desktop app itself (an admin on 127.0.0.1, not over the network)."""
+Changing it is for the desktop app itself (an admin on 127.0.0.1, not over the network or
+through a proxy), and on a computer that already hosts a team only for its owner's channel."""
 
 import asyncio
 import socket
@@ -9,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ... import access
 from ...models.base import ApiModel
 from ...services import team_host
+from ..auth import request_from_desktop_app, require_owner_channel
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/team", tags=["team"])
@@ -40,9 +42,9 @@ class TeamChange(ApiModel):
 
 
 def _local(request: Request, ctx: AppContext) -> bool:
-    server = request.scope.get("server") or ("", 0)
-    client = request.scope.get("client") or ("", 0)
-    return server[1] != ctx.settings.team_port and client[0] in ("127.0.0.1", "::1")
+    """The desktop app on this machine: 127.0.0.1, the main port, not the link tunnel and not
+    passed on by a proxy (`tailscale serve`, Caddy), whatever token came with it (api/auth.py)."""
+    return request_from_desktop_app(ctx, request)
 
 
 def _status(request: Request, ctx: AppContext, tailscale: str) -> TeamStatus:
@@ -75,7 +77,7 @@ async def status(request: Request, ctx: AppContext = Depends(get_ctx)):
     return _status(request, ctx, await asyncio.to_thread(team_host.tailscale_name))
 
 
-@router.put("", response_model=TeamStatus)
+@router.put("", response_model=TeamStatus, dependencies=[Depends(require_owner_channel)])
 async def change(body: TeamChange, request: Request, ctx: AppContext = Depends(get_ctx)):
     if not (_local(request, ctx) and access.is_admin()):
         raise access.Forbidden("Sharing is turned on and off in the desktop app on this computer")

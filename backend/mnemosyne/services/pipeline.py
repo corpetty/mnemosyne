@@ -405,12 +405,15 @@ def _item_line(a) -> str:
 def _auto_export(app: AppContext, session_id: str) -> str | None:
     """Export to Obsidian after a summary; failures are logged, never raised."""
     from ..api.routes.export import export_session
+    from . import host_scope
     from .origin import skip_foreign
 
     try:
         session = app.sessions.get_session(session_id)
         if session is not None and skip_foreign(session, "Auto-export"):
             return None  # the computer that recorded it exports it
+        if session is not None and not host_scope.vault_allows(app, session):
+            return None  # a team member's meeting never reaches the owner's vault
         path = export_session(app, session, app.settings.obsidian_vault_path)
         logger.info("Auto-exported session %s to %s", session_id, path)
         return str(path)
@@ -666,23 +669,26 @@ def ask_question(
     """Build the ask job runner; the saved Ask is the job result."""
 
     async def run(ctx: JobContext) -> dict:
-        from . import shared_with_me
+        from . import host_scope, shared_with_me
         from .ask_service import answer_question
 
         st = app.settings
         prov = provider or st.default_provider
         ctx.update("Searching your meetings...")
-        ask = await answer_question(
-            app.repo,
-            app.summarizer,
-            question,
-            prov,
-            model or st.default_model,
-            extra_instructions=glossary_instructions(parse_glossary(st.glossary)),
-            index=app.index,
-            exclude_local_only=exclude_local_only,
-            exclude_ids=await asyncio.to_thread(shared_with_me.excluded, app, "shared_in_ask"),
-        )
+        # The owner of a computer with a team asks over his own meetings and those granted to
+        # him, not every member's; a member asks over what a member reads (the repository's rule).
+        with host_scope.owner_view(app):
+            ask = await answer_question(
+                app.repo,
+                app.summarizer,
+                question,
+                prov,
+                model or st.default_model,
+                extra_instructions=glossary_instructions(parse_glossary(st.glossary)),
+                index=app.index,
+                exclude_local_only=exclude_local_only,
+                exclude_ids=await asyncio.to_thread(shared_with_me.excluded, app, "shared_in_ask"),
+            )
         app.repo.save_ask(ask)
         ctx.update("Answer ready")
         return ask.model_dump(mode="json")
@@ -722,6 +728,7 @@ def make_digest(app: AppContext, start, end, provider: str = "", model: str = ""
     """Build the digest job runner; the saved Digest is the job result."""
 
     async def run(ctx: JobContext) -> dict:
+        from . import host_scope
         from .digest_service import build_digest, write_to_vault
 
         st = app.settings
@@ -729,7 +736,9 @@ def make_digest(app: AppContext, start, end, provider: str = "", model: str = ""
         mdl = model or st.default_model
         extra = glossary_instructions(parse_glossary(st.glossary))
         ctx.update("Gathering meetings...")
-        sessions = await asyncio.to_thread(app.repo.sessions_between, start, end)
+        # The owner's digest goes to his vault: his meetings and those shared with him only.
+        with host_scope.owner_digest(app):
+            sessions = await asyncio.to_thread(app.repo.sessions_between, start, end)
         if is_cloud(prov):
             sessions = [s for s in sessions if not s.local_only]
         if not st.shared_in_digest:  # meetings shared with you: only when asked for
@@ -743,7 +752,7 @@ def make_digest(app: AppContext, start, end, provider: str = "", model: str = ""
 
         ctx.update(f"Writing the digest with {prov}/{mdl or 'default model'}")
         digest = await build_digest(sessions, start, end, complete, prov, mdl)
-        if st.obsidian_vault_path:
+        if st.obsidian_vault_path and host_scope.digest_to_vault(app):
             try:
                 digest.path = str(
                     write_to_vault(digest, st.obsidian_vault_path, st.obsidian_subfolder)

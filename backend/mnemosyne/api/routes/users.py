@@ -8,9 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ... import access
+from ...config import hosts_team, personal_allowed
 from ...models.base import ApiModel
 from ...services import prefs, supervision
-from ...services.users import InvalidInvite, User
+from ...services.users import InvalidInvite, User, admin_refusal
+from ..auth import is_owner_channel
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -27,6 +29,11 @@ class Me(ApiModel):
     role: str
     team_mode: bool
     cloud_models: bool  # OpenAI and Anthropic may be used (the local-only choice means something)
+    hosts_team: bool  # this computer is a main computer that also hosts a team
+    personal: bool  # personal features exist here (not on a dedicated team server)
+    # This request is the owner's: the window, the API token or a paired computer on a hosting
+    # computer (auth.is_owner_channel), anyone on a plain computer; nobody on a dedicated server.
+    owner: bool
     supervision: bool  # flagged meetings to review (services/supervision.py)
 
 
@@ -76,6 +83,14 @@ class Redeemed(ApiModel):
     user: UserInfo
 
 
+def _only_owner_admin(ctx: AppContext, role: str | None, user_id: str = "") -> None:
+    """409 when this would make someone besides the owner an admin on a computer that hosts a
+    team (services/users.py `admin_refusal`)."""
+    message = admin_refusal(ctx.settings, role, user_id)
+    if message:
+        raise HTTPException(status_code=409, detail=message)
+
+
 def _info(u: User, full: bool) -> UserInfo:
     return UserInfo(
         id=u.id,
@@ -95,8 +110,9 @@ def _info(u: User, full: bool) -> UserInfo:
 
 
 @router.get("/me", response_model=Me)
-async def me(ctx: AppContext = Depends(get_ctx)):
+async def me(request: Request, ctx: AppContext = Depends(get_ctx)):
     p = access.principal()
+    owner = personal_allowed(ctx.settings) and is_owner_channel(ctx, request.state)
     if p is None:
         return Me(
             id="",
@@ -104,6 +120,9 @@ async def me(ctx: AppContext = Depends(get_ctx)):
             email="",
             role=access.ADMIN,
             team_mode=ctx.settings.team_mode,
+            hosts_team=hosts_team(ctx.settings),
+            personal=personal_allowed(ctx.settings),
+            owner=owner,
             cloud_models=ctx.settings.cloud_models,
             supervision=supervision.enabled(ctx.settings),
         )
@@ -114,6 +133,9 @@ async def me(ctx: AppContext = Depends(get_ctx)):
         email=user.email if user else "",
         role=p.role,
         team_mode=ctx.settings.team_mode,
+        hosts_team=hosts_team(ctx.settings),
+        personal=personal_allowed(ctx.settings),
+        owner=owner,
         cloud_models=ctx.settings.cloud_models,
         supervision=supervision.enabled(ctx.settings),
     )
@@ -149,6 +171,7 @@ async def list_users(ctx: AppContext = Depends(get_ctx)):
 
 @router.post("", response_model=Invite, dependencies=[Depends(admin_only)])
 async def add_user(body: NewUser, ctx: AppContext = Depends(get_ctx)):
+    _only_owner_admin(ctx, body.role)
     try:
         user = ctx.users.add(body.name, body.email, body.role)
     except ValueError as e:
@@ -159,6 +182,7 @@ async def add_user(body: NewUser, ctx: AppContext = Depends(get_ctx)):
 
 @router.patch("/{user_id}", response_model=UserInfo, dependencies=[Depends(admin_only)])
 async def change_user(user_id: str, body: UserChange, ctx: AppContext = Depends(get_ctx)):
+    _only_owner_admin(ctx, body.role, user_id)
     try:
         user = ctx.users.update(user_id, **body.model_dump(exclude_none=True))
     except KeyError as e:
@@ -170,6 +194,9 @@ async def change_user(user_id: str, body: UserChange, ctx: AppContext = Depends(
 
 @router.post("/{user_id}/invite", response_model=Invite, dependencies=[Depends(admin_only)])
 async def invite(user_id: str, ctx: AppContext = Depends(get_ctx)):
+    existing = ctx.users.get(user_id)
+    if existing is not None:
+        _only_owner_admin(ctx, existing.role, user_id)
     try:
         code, expires = ctx.users.invite(user_id)
     except KeyError as e:
@@ -199,6 +226,9 @@ async def sign_out_everywhere(user_id: str, ctx: AppContext = Depends(get_ctx)):
 
 @router.post("/redeem", response_model=Redeemed)
 async def redeem(body: RedeemRequest, ctx: AppContext = Depends(get_ctx)):
+    pending = ctx.users.invited(body.code)
+    if pending is not None:
+        _only_owner_admin(ctx, pending.role, pending.id)
     try:
         user, token = ctx.users.redeem(body.code, body.device)
     except InvalidInvite as e:

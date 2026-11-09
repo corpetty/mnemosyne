@@ -35,7 +35,11 @@ class Backend:
         self._transport = transport
 
     def client(self) -> httpx.AsyncClient:
-        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        # Says the request is an assistant's: on a computer with a team owner the backend
+        # answers it from his view (granted meetings, not every member's), services/host_scope.py.
+        headers = {"X-Mnemosyne-Client": "mcp"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
         return httpx.AsyncClient(
             base_url=self.url, headers=headers, timeout=30, transport=self._transport
         )

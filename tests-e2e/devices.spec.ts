@@ -129,7 +129,7 @@ test('a laptop streams a recording to its main computer: the meeting is the main
   const title = 'Laptop streamed e2e';
   try {
     expect(await (await request.get(`${LAPTOP}/api/satellite`)).json()).toMatchObject({ main: null, recording: null, outbox: [] });
-    expect(await (await request.get(`${LAPTOP}/api/system/role`)).json()).toEqual({ role: 'main' });
+    expect(await (await request.get(`${LAPTOP}/api/system/role`)).json()).toEqual({ role: 'main', hosts_team: false, personal: true });
     // Only the tunnel of the desktop app is a main computer's address.
     const bad = await request.put(`${LAPTOP}/api/system/main`, { data: { url: 'http://example.com:80', token: 'x', name: 'x' } });
     expect(bad.status()).toBe(400);
