@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .. import config
 from .link import LinkError
 
 if TYPE_CHECKING:
@@ -215,7 +216,7 @@ async def forget(ctx: AppContext, peer: SyncPeer) -> None:
 
 def check_can_pair(ctx: AppContext) -> None:
     st = ctx.settings
-    if st.team_mode:
+    if not config.personal_allowed(st):  # a dedicated team server; a hosting computer may
         raise SyncPairingError("Library sync is for personal computers, not a team server")
     if not st.remote_access or not ctx.link.status.running or not ctx.link.status.ticket:
         raise SyncPairingError("Turn on remote access first: syncing goes through it")
@@ -310,7 +311,7 @@ async def pair_with_invite(
     from .link import endpoint_id_from_ticket
     from .pairing_prep import prepare_pairing
 
-    if ctx.settings.team_mode:
+    if not config.personal_allowed(ctx.settings):
         raise SyncPairingError("Library sync is for personal computers, not a team server")
     await prepare_pairing(ctx)  # the API token and remote access; PairingUnavailable (409)
     check_can_pair(ctx)

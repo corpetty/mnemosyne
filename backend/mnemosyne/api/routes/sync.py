@@ -10,7 +10,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
-from ... import access
+from ... import access, config
 from ...models.sync import (
     SyncChanges,
     SyncClash,
@@ -102,7 +102,10 @@ def _status(ctx: AppContext) -> SyncStatus:
 
 
 def _no_team(ctx: AppContext) -> None:
-    if ctx.settings.team_mode:
+    """Library sync is personal: refused on a dedicated team server, open on a computer that
+    hosts a team (to its owner, the router's guard), which serves only the owner's own meetings
+    (services/sync_service.py)."""
+    if not config.personal_allowed(ctx.settings):
         raise HTTPException(409, "Library sync is for personal computers, not a team server")
 
 
@@ -245,8 +248,10 @@ async def get_media(
 ):
     """The bytes of an image of a meeting's notes (the document only carries its row), for the
     computer that synced the meeting. Decrypted here; the caller seals them when it encrypts.
-    404 when the bytes are not here."""
+    404 when the bytes are not here, and for a meeting sync does not carry (a team member's)."""
     _sync_peer(request, ctx)
+    if not await asyncio.to_thread(ctx.sync.carries, session_id):
+        raise HTTPException(404, "No such image")
     try:
         data = await asyncio.to_thread(notes_media.read, ctx, session_id, sha256)
     except (FileNotFoundError, ValueError) as e:

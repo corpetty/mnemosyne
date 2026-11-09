@@ -542,11 +542,15 @@ CREATE TABLE IF NOT EXISTS sync_served (
     at TEXT NOT NULL,
     PRIMARY KEY (session_id, peer_id, rev)
 );
+-- A tombstone's owner_id: whose meeting it was here ('' for one learned from a peer; '?' for
+-- one from before the column on a computer that had owners), so a computer with a team owner
+-- serves only its owner's (`tombstones_since`).
 CREATE TABLE IF NOT EXISTS sync_tombstones (
     session_id TEXT PRIMARY KEY,
     at TEXT NOT NULL,
     device TEXT NOT NULL,
-    name TEXT NOT NULL
+    name TEXT NOT NULL,
+    owner_id TEXT NOT NULL DEFAULT ''
 );
 -- Contacts (services/contacts.py): other people's keys, global to the library, not meeting data.
 -- `card` is their signed card, `secret` the pair's shared secret, `machines` runtime state per
@@ -960,6 +964,20 @@ class SessionRepository:
                 self._conn.execute(
                     f"ALTER TABLE deletions ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
                 )
+        # Whose meeting a tombstone was (library sync serves a team owner's only). Tombstones from
+        # before carry no owner: on a computer that ever had owners (a team) they may be a
+        # member's, so they become '?' (unknown), which a computer with a team owner never
+        # serves; elsewhere every tombstone was the person's own ('').
+        tomb_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(sync_tombstones)")}
+        if "owner_id" not in tomb_cols:
+            self._conn.execute(
+                "ALTER TABLE sync_tombstones ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''"
+            )
+            if self._conn.execute(
+                "SELECT 1 FROM sessions WHERE owner_id<>''"
+                " UNION ALL SELECT 1 FROM deletions WHERE owner_id<>'' LIMIT 1"
+            ).fetchone():
+                self._conn.execute("UPDATE sync_tombstones SET owner_id='?'")
         self._conn.commit()
 
     def _migrate_fts_rowids(self) -> None:
@@ -2913,7 +2931,7 @@ class SessionRepository:
         self._check_write(session_id)
         with self._lock, self._conn:
             row = self._conn.execute(
-                "SELECT name, shared_from FROM sessions WHERE id=?", (session_id,)
+                "SELECT name, shared_from, owner_id FROM sessions WHERE id=?", (session_id,)
             ).fetchone()
             # The cascade removes the meeting's peer_shares: keep who had one, so the contact
             # still hears the meeting is gone (`shared_tombstones_since`).
@@ -2931,15 +2949,18 @@ class SessionRepository:
                 )
                 # A meeting shared with us is the owner's to delete: it leaves no tombstone, or
                 # our other computers would delete their copy and we could not pull it again.
+                # Its owner stays with it: a computer with a team owner never serves a member's
+                # (`tombstones_since`), whose name it carries.
                 if tombstone and row is not None and not row["shared_from"]:
                     self._conn.execute(
-                        "INSERT OR REPLACE INTO sync_tombstones(session_id, at, device, name)"
-                        " VALUES (?,?,?,?)",
+                        "INSERT OR REPLACE INTO sync_tombstones(session_id, at, device, name,"
+                        " owner_id) VALUES (?,?,?,?,?)",
                         (
                             session_id,
                             datetime.now().isoformat(),
                             self.device_id if device_id is None else device_id,
                             row["name"],
+                            row["owner_id"],
                         ),
                     )
         return cur.rowcount > 0
@@ -4870,16 +4891,36 @@ class SessionRepository:
         for sid in dict.fromkeys(s for old_s, _, new_s, _ in moves for s in (old_s, new_s)):
             self._touch(sid)
 
+    @staticmethod
+    def _synced(own: str) -> tuple[str, tuple]:
+        """(condition, params) for the meetings library sync carries: never a meeting a contact
+        shared with us (`shared_from`), and with a team owner `own` (`team_owner_id`) only that
+        person's own meetings (owner '' or `own`), never a team member's."""
+        if own:
+            return "shared_from = '' AND owner_id IN ('', ?)", (own,)
+        return "shared_from = ''", ()
+
+    def is_synced(self, session_id: str, own: str = "") -> bool | None:
+        """Whether library sync carries this meeting (`_synced`); None when there is none."""
+        cond, params = self._synced(own)
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT {cond} AS ok FROM sessions WHERE id=?", (*params, session_id)
+            ).fetchone()
+        return None if row is None else bool(row["ok"])
+
     def changes_since(
-        self, seq: int, limit: int = 200
+        self, seq: int, limit: int = 200, own: str = ""
     ) -> tuple[list[tuple[str, int, dict[str, int]]], int, bool]:
         """Meetings changed after `seq`, oldest change first: ([(id, sync_seq, sync_vv)],
-        the seq to ask from next time, whether there are more than `limit`)."""
+        the seq to ask from next time, whether there are more than `limit`). Only what sync
+        carries (`_synced`, `own`: the team owner, "" for none)."""
+        cond, params = self._synced(own)
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, sync_seq, sync_vv FROM sessions WHERE sync_seq > ?"
-                " AND shared_from = '' ORDER BY sync_seq LIMIT ?",
-                (seq, limit + 1),
+                f"SELECT id, sync_seq, sync_vv FROM sessions WHERE sync_seq > ? AND {cond}"
+                " ORDER BY sync_seq LIMIT ?",
+                (seq, *params, limit + 1),
             ).fetchall()
         more = len(rows) > limit
         rows = rows[:limit]
@@ -4910,13 +4951,16 @@ class SessionRepository:
         value = self.get_meta("sync_seq")
         return int(value) if value else 0
 
-    def tombstones_since(self, at: str = "") -> list[dict]:
-        """Meetings deleted after the ISO time `at` ("" = all), oldest first."""
+    def tombstones_since(self, at: str = "", own: str = "") -> list[dict]:
+        """Meetings deleted after the ISO time `at` ("" = all), oldest first. With a team owner
+        `own`, only that person's own (owner '' or `own`): never a member's, nor one of unknown
+        owner ('?', from before tombstones kept it)."""
+        mine, params = ("", ()) if not own else (" AND owner_id IN ('', ?)", (own,))
         with self._lock:
             rows = self._conn.execute(
-                "SELECT session_id, at, device, name FROM sync_tombstones WHERE at > ?"
+                f"SELECT session_id, at, device, name FROM sync_tombstones WHERE at > ?{mine}"
                 " ORDER BY at, session_id",
-                (at,),
+                (at, *params),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -5039,7 +5083,9 @@ class SessionRepository:
                 ),
             }
 
-    def apply_synced(self, s: SyncSession, *, origin: str, vv: dict[str, int], bump: bool) -> str:
+    def apply_synced(
+        self, s: SyncSession, *, origin: str, vv: dict[str, int], bump: bool, owner: str = ""
+    ) -> str:
         """Write a meeting that arrived from a peer (or a merge of it with ours): the apply
         path of library sync, apart from `save` (which stamps `updated_at` and fires
         `on_new_session`) and from every access check. One transaction. `origin` is
@@ -5057,7 +5103,11 @@ class SessionRepository:
         revision in the vector counts one more (`_touch`, which also sets `updated_at` to now).
         Without it (a fast-forward) the vector stays as given and `updated_at` is the document's,
         so the meeting is identical on both machines; either way `sync_seq` advances, so a third
-        machine asking us for changes hears of the meeting. Returns the meeting id."""
+        machine asking us for changes hears of the meeting. Returns the meeting id.
+
+        Ownership is this computer's, never the document's: a new meeting belongs to `owner`
+        (the team owner, else ''), an existing one keeps its owner, so a sync round never
+        resets it."""
         sid = s.id
         here = origin == ""
         vv_json = json.dumps(dict(sorted(vv.items())))
@@ -5076,7 +5126,6 @@ class SessionRepository:
                 int(s.speakers_reviewed),
                 json.dumps([a.model_dump() for a in s.agenda]),
                 s.meeting_type,
-                s.owner_id,
                 origin,
                 vv_json,
             )
@@ -5085,15 +5134,15 @@ class SessionRepository:
                 self._conn.execute(
                     "INSERT INTO sessions(name, updated_at, summary, summary_data, notes,"
                     " participants, attendees, local_only, copilot_notes, speakers_reviewed,"
-                    " agenda, meeting_type, owner_id, origin, sync_vv, id, created_at, status,"
+                    " agenda, meeting_type, origin, sync_vv, owner_id, id, created_at, status,"
                     " audio_file) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
-                    (*common, sid, s.created_at.isoformat(), status.value),
+                    (*common, owner, sid, s.created_at.isoformat(), status.value),
                 )
             else:
                 sets = (
                     "name=?, updated_at=?, summary=?, summary_data=?, notes=?, participants=?,"
                     " attendees=?, local_only=?, copilot_notes=?, speakers_reviewed=?, agenda=?,"
-                    " meeting_type=?, owner_id=?, origin=?, sync_vv=?, created_at=?"
+                    " meeting_type=?, origin=?, sync_vv=?, created_at=?"
                 )
                 if here:
                     self._conn.execute(

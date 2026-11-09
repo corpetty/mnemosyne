@@ -11,7 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from ... import access
+from ... import access, config
 from ...models.base import ApiModel
 from ...models.contact import Card
 from ...models.sync import SyncPeerPayload, SyncPersonOffer, SyncRedeemSelf
@@ -88,7 +88,8 @@ def _info(d: PairedDevice) -> PairedDeviceInfo:
 
 
 def _refuse_team(ctx: AppContext, kind: str) -> None:
-    if kind == SYNC and ctx.settings.team_mode:
+    # Library sync: refused on a dedicated team server, open on a hosting computer's owner.
+    if kind == SYNC and not config.personal_allowed(ctx.settings):
         raise HTTPException(
             status_code=409, detail="Library sync is for personal computers, not a team server"
         )
@@ -243,7 +244,7 @@ async def redeem(body: RedeemRequest, ctx: AppContext = Depends(get_ctx)):
     offer: SyncPersonOffer | None = None
     if syncing:
         peer = body.peer
-        if ctx.settings.team_mode:
+        if not config.personal_allowed(ctx.settings):
             raise HTTPException(
                 status_code=403, detail="Library sync is for personal computers, not a team server"
             )
