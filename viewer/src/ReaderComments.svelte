@@ -316,7 +316,7 @@
 <section bind:this={sectionEl} aria-labelledby="reader-comments-heading" data-testid="reader-comments">
 	<h2 id="reader-comments-heading" class="text-sm font-semibold text-gray-300">Comments</h2>
 
-	{#if blocked}
+	{#if blocked && canAct}
 		<p class="mt-2 text-xs text-gray-500" data-testid="reader-blocked">{'The owner has stopped taking comments from you on this page.'}</p>
 	{:else if canAct}
 		<div bind:this={composeEl} class="mt-2 space-y-2 rounded-md border border-gray-600 bg-gray-900 p-2" data-testid="reader-compose">
