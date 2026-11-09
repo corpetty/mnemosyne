@@ -140,7 +140,7 @@ connects, never what is sent; the [privacy notice](https://notes.petty.services/
 kept (counts only, no client addresses in logs).
 
 Whether it is used follows **Use Mnemosyne's relay and notes server** (Settings → Devices and people →
-Advanced; `use_our_servers`): automatic means on, except on team servers, and it has nothing to do
+Advanced; `use_our_servers`): automatic means on, except on a dedicated team server, and it has nothing to do
 with the AI tab's cloud-model switch. With it off and **Relays** blank there is no relay at all:
 paired computers connect directly or on the same network (mDNS). A relay you set under **Relays**
 (`remote_relays`) always wins. To use your own, run the open-source iroh-relay server (a ready config

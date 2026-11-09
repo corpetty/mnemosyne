@@ -614,7 +614,7 @@ publish host `notes.petty.services` (petty.services, Corey's consultancy), from 
 addresses, Caddy + Let's Encrypt, privacy notice at /privacy, update.sh + hourly timer pulling each release's guest page
 and viewer, no client addresses in logs, Prometheus counts on loopback). n0's relays are no longer a default anywhere.
 services/ours.py resolves relays and hosts: blank `remote_relays` = ours, blank `publish_host`/`guest_host` = ours, else
-none; `use_our_servers` (None = automatic: on, except team servers; an explicit value wins; GET
+none; `use_our_servers` (None = automatic: on, except dedicated team servers (team mode without an owner); an explicit value wins; GET
 shows the effective one). Guest notes: iroh through our relay plus the mirror on our host by default; `relay_kind`
 "ours"/"custom"/"none"; the upload token never goes to our host; publishing preselects "Mnemosyne's server". publish-host
 gained `--write-bytes-per-day` (200 MiB per client, 429 `write_budget`, rooms close 4429) and `--metrics-listen`. link:
