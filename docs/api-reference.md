@@ -926,6 +926,15 @@ answer has `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`;
   the 20 MiB total; the 20 MiB limit is on padded sizes), `Cache-Control: public, max-age=31536000, immutable`; `404` if the current
   version does not hold it.
 
+`POST …/publication/readers/{rid}/block?hide=0|1` and `POST …/publication/readers/{rid}/unblock` (owner or admin;
+`404` when the meeting has no live publication) turn a reader's comments off or on and answer the `Publication`. Block
+drops the reader's later comment ops (`blocked` in the bridge's result); `hide=1` also hides their existing comments
+(`hidden_at`); unblock leaves hidden comments hidden. The blocks are kept in `publications.blocked_readers`
+(`{rid: {on, name, at}}`), travel with library sync, and are never in the manifest. `POST …/publication/replace`
+(owner or admin; `404` not published, `409` published elsewhere or a publish job already running) answers a `Job`
+(`publish`) whose result is `{publication}`: unpublish, then publish with the stored selection, so the link, keys
+and blocks are new. History: `publication_replaced`.
+
 #### Live publication frames
 
 Between the owner's backend (services/live_publications.py, the bridge) and readers' browsers, through a room
@@ -939,8 +948,8 @@ backend/tests/vectors/publication_live_v1.json (checked by Python and TypeScript
 | Kind | Name | Direction | Protection | Body |
 | --- | --- | --- | --- | --- |
 | 1 | `VERSION` | owner to readers | signed | `{version, sha256, published_at, expires_at}`: the new manifest's address |
-| 2 | `THREADS` | owner to readers | signed (also the room's snapshot) | reader-started threads, redacted, and `pending` (`{rid: [comment ids]}`) |
-| 3 | `META` | owner to readers | signed | `{comments, follow, at}`; also the heartbeat |
+| 2 | `THREADS` | owner to readers | signed (also the room's snapshot) | reader-started threads, redacted, `pending` (`{rid: [comment ids]}`) and `blocked` (`[rid]`, ids only; absent from an older owner) |
+| 3 | `META` | owner to readers | signed | `{comments, follow, notes, at}`; `notes` = readers may comment on the published notes (absent from an older owner: false); also the heartbeat |
 | 4 | `COMMENT` | reader to owner | boxed to the owner's X25519 key, signed by the reader | `{op: create/reply/edit/delete, id, parent_id, text, name, at, anchor}` |
 
 Owner frames carry an Ed25519 signature that binds the room and the kind; readers check it against the key in the
@@ -1928,6 +1937,11 @@ lines in order, `[{line, done, text, links: [[start, end, url]], frame}]` (`line
 line or its kind, else null). The op `set_kind` `{notes, snapshot, frames, line, kind: "task"|"task_done"}` makes
 that task line open or done and answers like `mark_comment` (`frames` to broadcast, `[]` when it already shows
 `kind`; an unknown, deleted or non-task line is an error). The backend uses it for a tick made outside the editor.
+
+The op `mark_comment_at` `{notes, snapshot, frames, start, end, comment}` marks `comment:<id>` over `[start, end)`, code
+points of the answer's `plain`, after applying `frames`, and answers like `mark_comment`; an empty range, an `end` past
+the text or an empty `comment` is an error. The backend folds, locates a reader's quoted passage in `plain`
+(services/notes_anchor.py) and marks it in one run (`shared_notes` `mark_comment_located`).
 
 ### Sections the backend writes
 

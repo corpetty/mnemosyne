@@ -174,6 +174,9 @@ Guest notes are part of the meeting, not a separate document:
   summary and the MCP server like the rest of the notes. Deleting it later is editing your notes.
 - Their comments are ordinary comments on the notes: searchable, synced to your other computers,
   and in the records export.
+- Comments that readers of a published link made on the notes (see [publishing.md](publishing.md)) are ordinary comments
+  too, so guests see them on the notes. Comments the owner hid in the publication (**Hide**) are not sent to guests, and
+  neither are replies hidden alone.
 - Each start, end and stop is a line in the meeting's history and seals a record version
   (`guest_notes.json` in the export lists them; the key and token are never in it).
 - Deleting the meeting deletes its room.

@@ -142,7 +142,7 @@ someone shared with you cannot be live either.
 
 Tick **Readers may comment** and anyone with the link can comment on the published page, under a name they
 type the first time. They can comment on a decision, a question, an action item, a quote, a passage of the
-summary, or the meeting as a whole. They can edit and delete their own comments. Nothing proves a name: it is
+summary, a passage of the published notes, or the meeting as a whole. They can edit and delete their own comments. Nothing proves a name: it is
 what the person typed, and your app shows it as "Ana (reader)" with a line saying it came from the published
 link.
 
@@ -160,12 +160,33 @@ link.
 - **A cleared browser is a new reader.** A reader's identity is a key in their browser. Clear the site's
   data, use another device or close a private window, and they are someone new: their old comments stay, but
   they can no longer edit them. You can still delete them.
+- **The notes.** When the notes are published, a reader can select a passage of them and comment. Your app finds
+  that passage in the live notes and marks it like a comment of your own, so the thread shows against the same
+  words for you and for guests. If the passage cannot be found any more, or this computer has no notes engine, the
+  thread stays on the meeting as a whole with the passage quoted ("On: ...").
 - **Caps.** A comment is at most 4,000 characters, a name 80, and a reader can make 20 changes in 10
-  minutes. More are ignored.
+  minutes; all readers together 60 in 10 minutes. More are ignored.
 - **How they travel.** Comments travel as encrypted frames: other readers cannot read a comment from
   the room before you let it out, or edit one that is not theirs. Reader comments are ordinary comments of
   the meeting: they are searchable, sync with your other computer and are in the records export.
 - **Where it applies.** Hosted publications only, as above.
+
+### Blocking a reader
+
+On a reader's comment in the comments panel, **Block** turns comments off for that reader: their later comments, edits and
+deletes are dropped, their page hides the comment buttons and says the owner has turned comments off for them.
+Optionally their existing comments are hidden from the other readers; **Unblock** turns comments on again (hidden
+comments stay hidden until you show them). The history names the reader's id and name.
+
+What it does not do. It does not stop anyone reading: the reader still holds the link and can read every
+version. It identifies a browser, not a person: a reader who clears the site's data, uses another browser or
+device, or opens a private window is someone new and can comment again. Blocking is for a reader who is being a
+nuisance, not for cutting someone off.
+
+**Replace the link** is the way to cut readers off. It unpublishes the publication and publishes it again with the
+same choices: a new link and new keys, the old link answers "gone", and every block and reader identity is
+gone with it. You must send the new link to the readers you still want. If the host fails between the two steps the
+meeting is left unpublished (the history and the dialog say so); publish it again.
 
 ## Team servers
 

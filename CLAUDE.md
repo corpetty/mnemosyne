@@ -194,7 +194,7 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - Reader threads and the manifest are redacted by ONE implementation, `publishing.Redaction` (names, identifiers, the attendee
   list). `threads_for_readers` must keep using it; a second copy would let an owner's reply leak a name the manifest hides.
 - Anything sent to readers of a publication goes through a pub-live frame type with `extra="forbid"` (a test asserts the key set
-  of every outgoing frame). Never add a field to THREADS/META/VERSION that carries text not already in the manifest.
+  of every outgoing frame; META `notes` and THREADS `blocked` are the latest fields). Never add a field to THREADS/META/VERSION that carries text not already in the manifest.
 
 - Never `pgrep`/`pkill` with a pattern that appears in your own command line; use the
   `pgre[p]` bracket trick or `fuser -k <port>/tcp`. A `uv run uvicorn` child survives
@@ -615,7 +615,7 @@ sync, share, bridge, viewer, guest); `img.src` is set only from the provider's o
 address; a blob nothing has shown for 7 days is swept (after one more fold of the meeting); caps 2,000,000 bytes an image,
 50,000,000 a meeting, 25,000,000 a room (2 MiB + 128 KiB sealed a blob), 20 MiB per publication with clips.
 
-Live publications (released as 0.30.0, docs/plans/2026-11-05-live-publications.md, use in docs/publishing.md, bytes in the plan's "Data
+Live publications (released as 0.30.0, M4 unreleased, docs/plans/2026-11-05-live-publications.md, use in docs/publishing.md, bytes in the plan's "Data
 and formats"): a hosted publication can be kept up to date (`PublicationSelection.follow`) and take reader comments
 (`comments`, `moderate`, `moderated_since`); "this computer" and the file never go live. services/live_publications.py has the
 watcher (polls the change log every 5 s; quiet 10 s, `MAX_WAIT` 60 s, `GAP` 30 s; submits the ordinary `publish` job with the
@@ -632,6 +632,15 @@ comments. Comments apply as actor `reader:<rid>`; `comments.approve`/`hide` (`ap
 THREADS. Viewer: viewer/src/live.ts, ReaderComments.svelte; owner side: PublishDialog.svelte, CommentThread.svelte. Unpublish
 deletes the publication, then the room (the plan says room first; the code's order lets a reader who hears 4410 find 410). An older
 host (no pointer route) gives `live = "unsupported"`: versions still upload, viewers poll each minute.
+M4 (unreleased, docs/plans/2026-11-09-live-publications-m4.md; "this computer" live was dropped): services/room_connection.py
+`RoomConnection` is the one connect loop of guest_notes.Bridge and PubBridge. Readers comment on the published notes
+(target `notes`, META `notes`): services/notes_anchor.py aligns the quoted passage with the document's `plain` and verifies it
+by re-redacting; shared_notes `mark_comment_located` seeds the document, folds and marks through the sidecar op
+`mark_comment_at` (positions in); not placed or no sidecar = the thread on the meeting with "On: ...". Owner blocks:
+`publications.blocked_readers` (`{rid: {on, name, at}}`, synced), `POST .../publication/readers/{rid}/block|unblock`,
+THREADS `blocked`, `RATE_TOTAL` 60 ops per 10 min across readers; blocking stops that browser's comments only (a cleared
+browser is a new rid, nothing stops reading). `POST .../publication/replace` = unpublish then publish (history
+`publication_replaced`; a host failure between leaves it unpublished). `threads_for_guests` drops `hidden_at` comments.
 
 Summaries in the notes (released as 0.29.0, docs/plans/2026-11-04-summaries-in-notes.md): the live copilot adds each new point
 once to the notes under a Copilot heading (`copilot_to_notes`), and a summarize writes a Summary section in its place that

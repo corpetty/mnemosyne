@@ -1,6 +1,6 @@
 # Live publications M4: notes anchors, per-reader revocation, RoomConnection, "this computer" live
 
-Status: plan, 2026-11-09, against main at abb1d5a = Release 0.30.0. Nothing built yet.
+Status: built 2026-11-09 on branch live-pubs-m4 (items 1-3; item 4, "this computer" live, was dropped, see "Answered 2026-11-09"), against main at abb1d5a = Release 0.30.0. Not released.
 
 0.30.0 (2026-11-06) shipped docs/plans/2026-11-05-live-publications.md whole, 13b included; its "M4 later (not
 scheduled)" list is this milestone, plus what Corey asked for on 2026-11-09. Every statement below about the
@@ -707,4 +707,15 @@ the full backend suite. Locally: single test files, `pnpm check`, Vitest per fil
 
 ## Changed while building
 
-(empty)
+- Notes comments seed and catch up the document first (a meeting whose notes were never opened as a document has none to
+  mark), then locate and mark; the rest of the plan's order holds.
+- Without a sidecar a notes comment lands on the meeting as a whole with its quote ("On: ..."), the `body` rule; the
+  reader's words are never dropped.
+- A blocked reader gets no comment buttons (not just a hidden composer); while comments are off, THREADS' `blocked` line
+  is not shown.
+- History lines for a block, an unblock and a hide name the blocked reader's rid and name.
+- Replace the link is unpublish then publish in one `publish` job. A host failure between the two leaves the meeting
+  unpublished; the history line and the dialog say so.
+- `threads_for_guests` no longer sends comments with `hidden_at` (the gap flagged under Risks), a hidden first comment
+  taking its thread.
+
