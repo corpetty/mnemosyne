@@ -1,6 +1,6 @@
 name: Smoke test (macOS)
 
-# Builds the unsigned Mnemosyne.app on Apple silicon and runs scripts/smoke-macos.sh against it:
+# Builds Mnemosyne.app signed with a self-signed certificate on Apple silicon and runs scripts/smoke-macos.sh against it:
 # first launch (uv installs the backend), Ogg playback in WKWebView (needs macOS 15.4+), and a
 # CPU transcription of the sample meeting. The .app is kept as an artifact for testers.
 on:
@@ -17,6 +17,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  APPLE_SIGNING_IDENTITY: "Mnemosyne Test Signing"
 
 jobs:
   app:
@@ -41,10 +44,21 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # A self-signed identity keeps macOS microphone / system-audio grants across updates. Without the
+      # secrets (forks, until Corey makes them) a throwaway certificate with the same name is used.
+      - name: Signing identity
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+        run: bash scripts/macos-signing-keychain.sh
       # beforeBuildCommand (scripts/build-all.sh) builds the web app, stages the backend, fetches
-      # uv and ffmpeg and builds the link sidecar. No signing identity: the app is unsigned.
+      # uv and ffmpeg and builds the link sidecar. Tauri signs with APPLE_SIGNING_IDENTITY
+      # from the keychain made above.
       - name: Build the app
         run: pnpm tauri build --bundles app
+      - name: Verify the signature
+        run: bash scripts/verify-macos-signature.sh "$(ls -d src-tauri/target/release/bundle/macos/*.app)" "$APPLE_SIGNING_IDENTITY"
       - name: Zip the app
         run: |
           app="$(ls -d src-tauri/target/release/bundle/macos/*.app)"
