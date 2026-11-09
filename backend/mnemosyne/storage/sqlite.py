@@ -467,7 +467,9 @@ CREATE TABLE IF NOT EXISTS deletions (
     role TEXT NOT NULL DEFAULT '',
     reason TEXT NOT NULL DEFAULT '',
     chain_head TEXT NOT NULL DEFAULT '',
-    manifest_hash TEXT NOT NULL DEFAULT ''
+    manifest_hash TEXT NOT NULL DEFAULT '',
+    owner_id TEXT NOT NULL DEFAULT '',
+    shared_from TEXT NOT NULL DEFAULT ''
 );
 -- Publications (services/publishing.py): a meeting's curated, encrypted copy, readable with a
 -- link that carries `key`. `token` authorizes updates on a publish host; `place` is "local" or
@@ -913,7 +915,8 @@ class SessionRepository:
             )
         # Who may read a meeting beyond its owner: team-mode shares and live peer shares, as
         # (session_id, user_id). A contact reads as the Principal "p:" + person[:16].
-        # Recreated on every open: the definition may change.
+        # Recreated on every open: the definition may change. The read rule itself (`_sees`)
+        # reads the two tables apart: a team grant to everyone ("*") must never reach a contact.
         self._conn.execute("DROP VIEW IF EXISTS share_grants")
         self._conn.execute(
             "CREATE VIEW share_grants(session_id, user_id) AS"
@@ -950,7 +953,9 @@ class SessionRepository:
             if col not in seal_cols:
                 self._conn.execute(f"ALTER TABLE session_seals ADD COLUMN {col} {decl}")
         del_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(deletions)")}
-        for col in ("chain_head", "manifest_hash"):
+        # owner_id, shared_from: whose meeting it was, so the log follows the read rule once the
+        # meeting is gone (`deletions`); '' in entries from before.
+        for col in ("chain_head", "manifest_hash", "owner_id", "shared_from"):
             if col not in del_cols:
                 self._conn.execute(
                     f"ALTER TABLE deletions ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
@@ -1127,26 +1132,68 @@ class SessionRepository:
             ).fetchone()
         return None if row is None else row["owner_id"]
 
-    # A member reads their own meetings and those shared with them, alone or with everyone.
-    _SEES = "(owner_id=? OR id IN (SELECT session_id FROM share_grants WHERE user_id IN (?, '*')))"
-    _SEES_S = _SEES.replace("(owner_id", "(s.owner_id").replace(" id IN", " s.id IN")  # sessions s
+    # Who reads what (access.read_scope): one SQL condition on `sessions` per scope. A member
+    # reads their own meetings and team grants to them or to everyone ("*", session_shares),
+    # never a meeting a contact shared with this computer's owner (shared_from). A
+    # reviewer on a computer that hosts a team reads every team meeting (owned by a member) and
+    # the owner's personal ones (owner '' or the host, or a contact's: shared_from) only when
+    # granted to them or to everyone, never a contact's. A contact reads only their live peer
+    # shares: a team grant to everyone is not for them, on any computer.
+    def read_scope(self) -> access.ReadScope:
+        return access.read_scope(self.host_owner)
 
-    def _readable(self, session_id: str) -> bool:
-        only = access.read_owner()
-        if only is None:
+    @staticmethod
+    def _sees(scope: access.ReadScope, alias: str = "") -> tuple[str, tuple]:
+        """(condition, params) for the meetings `scope` may read; `alias` is the sessions
+        table's alias in the query ("" for none)."""
+        a = alias + "." if alias else ""
+        granted = f"{a}id IN (SELECT session_id FROM session_shares WHERE user_id IN (?, '*'))"
+        if scope.kind == access.OWN_AND_GRANTED:
+            return (
+                f"({a}shared_from='' AND ({a}owner_id=? OR {granted}))",
+                (scope.user_id, scope.user_id),
+            )
+        if scope.kind == access.PERSONAL_SHARES:
+            return (
+                f"{a}id IN (SELECT session_id FROM peer_shares"
+                " WHERE revoked_at='' AND 'p:' || substr(person, 1, 16)=?)",
+                (scope.user_id,),
+            )
+        if scope.kind == access.TEAM_WIDE:
+            return (
+                f"({a}shared_from='' AND ({a}owner_id NOT IN ('', ?) OR {granted}))",
+                (scope.host, scope.user_id),
+            )
+        return "1", ()
+
+    def ids_seen_by(self, scope: access.ReadScope) -> set[str] | None:
+        """The meetings `scope` may read, or None for all of them."""
+        if scope.everything:
+            return None
+        cond, params = self._sees(scope)
+        with self._lock:
+            rows = self._conn.execute(f"SELECT id FROM sessions WHERE {cond}", params)
+            return {r["id"] for r in rows}
+
+    def _readable(self, session_id: str, scope: access.ReadScope | None = None) -> bool:
+        """May the caller read this meeting? True for an unknown one (callers check that)."""
+        scope = scope or self.read_scope()
+        if scope.everything:
             return True
+        cond, params = self._sees(scope)
         with self._lock:
             row = self._conn.execute(
-                f"SELECT {self._SEES} AS ok FROM sessions WHERE id=?",
-                (only, only, session_id),
+                f"SELECT {cond} AS ok FROM sessions WHERE id=?", (*params, session_id)
             ).fetchone()
         return row is None or bool(row["ok"])
 
     def _check_write(self, session_id: str) -> None:
+        """Hidden (404) when the caller may not even read the meeting (the same rule as every
+        read), Forbidden when they read it but may not change it."""
         owner = self._owner(session_id)
+        if owner is not None and not self._readable(session_id):
+            raise access.Hidden("Session not found")
         if owner is not None and not access.can_write(owner):
-            if not self._readable(session_id):
-                raise access.Hidden("Session not found")
             raise access.Forbidden("This is someone else's meeting")
         if not access.is_internal() and self._shared_from(session_id):
             raise access.Forbidden(
@@ -1174,12 +1221,7 @@ class SessionRepository:
 
     def visible_ids(self) -> set[str] | None:
         """The meetings the caller may see, or None for all of them."""
-        only = access.read_owner()
-        if only is None:
-            return None
-        with self._lock:
-            rows = self._conn.execute(f"SELECT id FROM sessions WHERE {self._SEES}", (only, only))
-            return {r["id"] for r in rows}
+        return self.ids_seen_by(self.read_scope())
 
     def owner_of(self, session_id: str) -> str | None:
         return self._owner(session_id)
@@ -1197,14 +1239,13 @@ class SessionRepository:
                EXISTS(SELECT 1 FROM segments g WHERE g.session_id = s.id) AS has_transcript
         FROM sessions s {where} ORDER BY s.created_at DESC
         """
-        only = access.read_owner()
+        scope = self.read_scope()
         with self._lock:
-            if only is None:
+            if scope.everything:
                 rows = self._conn.execute(sql.format(where="")).fetchall()
             else:
-                rows = self._conn.execute(
-                    sql.format(where="WHERE " + self._SEES_S), (only, only)
-                ).fetchall()
+                cond, params = self._sees(scope, "s")
+                rows = self._conn.execute(sql.format(where="WHERE " + cond), params).fetchall()
         return [
             SessionSummary(
                 id=r["id"],
@@ -1232,12 +1273,12 @@ class SessionRepository:
 
     def get(self, session_id: str) -> Session | None:
         """The meeting, or None when there is none or the caller may not see it."""
-        only = access.read_owner()
+        scope = self.read_scope()
         with self._lock:
             row = self._conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
             if row is None:
                 return None
-        if only is not None and row["owner_id"] != only and not self._readable(session_id):
+        if not self._readable(session_id, scope):
             return None
         with self._lock:
             seg_rows = self._conn.execute(
@@ -3116,7 +3157,8 @@ class SessionRepository:
             ).fetchone()
             cur = self._conn.execute(
                 "INSERT INTO deletions (at, session_id, name, created_at, what, by, role, reason,"
-                " chain_head, manifest_hash) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                " chain_head, manifest_hash, owner_id, shared_from)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     datetime.now().isoformat(),
                     session.id,
@@ -3128,6 +3170,8 @@ class SessionRepository:
                     reason,
                     head["chain"] if head is not None else "",
                     head["content_hash"] if head is not None and head["format"] == 2 else "",
+                    session.owner_id or "",
+                    session.shared_from or "",
                 ),
             )
             return int(cur.lastrowid)
@@ -3141,15 +3185,42 @@ class SessionRepository:
         return {r["id"] for r in rows}
 
     def deletions(self, start: str = "", end: str = "") -> list[dict]:
-        """Deleted meetings and audio (at within [start, end), ISO dates; blank = open)."""
+        """Deleted meetings and audio (at within [start, end), ISO dates; blank = open), as far
+        as the caller may read them: a meeting still here (its audio deleted) by the read rule,
+        a deleted one by whose it was (`owner_id`, `shared_from` stored with the entry; a
+        caller with a narrower scope than everything never sees entries of unknown owner)."""
+        scope = self.read_scope()
         with self._lock:
             rows = self._conn.execute(
                 "SELECT at, session_id, name, created_at, what, by, role, reason, chain_head,"
-                " manifest_hash FROM deletions"
+                " manifest_hash, owner_id, shared_from FROM deletions"
                 " WHERE (?='' OR at>=?) AND (?='' OR at<?) ORDER BY at",
                 (start, start, end, end),
             ).fetchall()
-        return [dict(r) for r in rows]
+        visible = self.ids_seen_by(scope)
+        out = []
+        for r in rows:
+            row = dict(r)
+            owner, shared_from = row.pop("owner_id"), row.pop("shared_from")
+            if visible is not None and r["session_id"] not in visible:
+                if self._owner(r["session_id"]) is not None or not self._was_seen(
+                    scope, owner, shared_from
+                ):
+                    continue
+            out.append(row)
+        return out
+
+    @staticmethod
+    def _was_seen(scope: access.ReadScope, owner: str, shared_from: str) -> bool:
+        """Whether `scope` could read a deleted meeting of this owner (grants are gone with it:
+        only ownership counts)."""
+        if scope.everything:
+            return True
+        if scope.kind == access.OWN_AND_GRANTED:
+            return bool(owner) and owner == scope.user_id
+        if scope.kind == access.TEAM_WIDE:
+            return not shared_from and owner not in ("", scope.host)
+        return False
 
     # ---- supervision (services/supervision.py) --------------------------
 
