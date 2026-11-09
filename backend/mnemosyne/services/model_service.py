@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def rss_mb() -> float:
-    """This process's resident memory, in MB (0 where /proc is missing)."""
+    """This process's resident memory, in MB."""
     try:
         with open("/proc/self/status") as f:
             for line in f:
@@ -25,7 +25,12 @@ def rss_mb() -> float:
                     return int(line.split()[1]) / 1024
     except OSError:
         pass
-    return 0.0
+    try:  # no /proc (macOS)
+        import psutil
+
+        return psutil.Process().memory_info().rss / (1024 * 1024)
+    except Exception:
+        return 0.0
 
 
 def release_memory() -> None:

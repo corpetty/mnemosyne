@@ -1,6 +1,9 @@
 """The machine probe used by the setup wizard."""
 
+import pytest
 
+
+@pytest.mark.linux_only("capture is the mnemosyne-capture sidecar on a Mac")
 def test_system_info(client, ctx, monkeypatch):
     from mnemosyne.api.routes import system
 

@@ -31,6 +31,7 @@ def fake_pwcli(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
+@pytest.mark.linux_only("PipeWire echo canceller (pw-cli); Mac words tested separately")
 async def test_manager_start_status_stop(fake_pwcli):
     script, log = fake_pwcli
     m = EchoCancelManager(pw_cli=str(script))
@@ -44,6 +45,7 @@ async def test_manager_start_status_stop(fake_pwcli):
     assert not (await m.status()).active
 
 
+@pytest.mark.linux_only("PipeWire echo canceller (pw-cli); Mac words tested separately")
 def test_manager_unsupported_when_missing(monkeypatch):
     monkeypatch.setattr(ec, "MODULE_PATHS", ("/nonexistent.so",))
     m = EchoCancelManager(pw_cli="pw-cli")
@@ -52,6 +54,7 @@ def test_manager_unsupported_when_missing(monkeypatch):
 
 
 @pytest.mark.anyio
+@pytest.mark.linux_only("PipeWire echo canceller (pw-cli); Mac words tested separately")
 async def test_manager_stops_when_no_source_appears(fake_pwcli, monkeypatch):
     script, _ = fake_pwcli
     monkeypatch.setattr(ec, "find_source_node", lambda node_name=ec.SOURCE_NODE: None)
@@ -61,6 +64,7 @@ async def test_manager_stops_when_no_source_appears(fake_pwcli, monkeypatch):
     assert not m.active
 
 
+@pytest.mark.linux_only("PipeWire echo canceller (pw-cli); Mac words tested separately")
 def test_echo_cancel_api(client, ctx, fake_pwcli, monkeypatch):
     script, log = fake_pwcli
     ctx.echo = EchoCancelManager(pw_cli=str(script))
@@ -81,6 +85,7 @@ def test_echo_cancel_api_unsupported(client, ctx, monkeypatch):
     assert client.post("/api/audio/echo-cancel", json={"enabled": True}).status_code == 400
 
 
+@pytest.mark.linux_only("PipeWire echo canceller (pw-cli); Mac words tested separately")
 def test_devices_flag_echo_cancelled_source(monkeypatch):
     from mnemosyne.audio import capture
 
@@ -188,6 +193,7 @@ def test_load_command_refuses_our_own_source_and_odd_names(bad):
 
 
 @pytest.mark.anyio
+@pytest.mark.linux_only("PipeWire echo canceller (pw-cli); Mac words tested separately")
 async def test_a_new_mic_restarts_the_module(fake_pwcli):
     script, log = fake_pwcli
     m = EchoCancelManager(pw_cli=str(script))
@@ -202,6 +208,7 @@ async def test_a_new_mic_restarts_the_module(fake_pwcli):
     await m.stop()
 
 
+@pytest.mark.linux_only("PipeWire echo canceller (pw-cli); Mac words tested separately")
 def test_echo_cancel_api_mic_and_deferred_restart(
     client, ctx, fake_pwcli, fake_pipewire, monkeypatch
 ):

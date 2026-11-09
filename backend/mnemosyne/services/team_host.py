@@ -99,7 +99,7 @@ def ensure_certificate(folder: Path, hosts: list[str]) -> tuple[Path, Path]:
         except ValueError:
             sans.append(x509.DNSName(h))
     now = dt.datetime.now(dt.UTC)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"Mnemosyne on {hosts[0]}")])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"Mnemosyne on {hosts[0]}"[:64])])
     cert = (
         x509.CertificateBuilder()
         .subject_name(name)

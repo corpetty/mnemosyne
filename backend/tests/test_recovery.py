@@ -78,6 +78,7 @@ def test_stop_orphan_recorders_only_stops_ours(tmp_path):
             p.wait()
 
 
+@pytest.mark.linux_only("exec -a does not rename a process on a Mac")
 def test_recorders_are_found_by_either_name(tmp_path):
     """pw-record (Linux) and mnemosyne-capture (the macOS sidecar, wav path as `--output=`) both
     count; any other process holding the path does not."""
