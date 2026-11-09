@@ -86,7 +86,11 @@
 					{/if}
 				</p>
 				{#if record.verification.seals}
-					{#if record.verification.ok}
+					{#if record.verification.ok && record.verification.pending}
+						<p class="text-gray-500">
+							{'Changes since '}{record.verification.last_sealed_at ? when(record.verification.last_sealed_at) : 'the last seal'}{' are being sealed.'}
+						</p>
+					{:else if record.verification.ok}
 						<p class="text-green-300">
 							Sealed {record.verification.seals} time{record.verification.seals === 1 ? '' : 's'}, last {record.verification.last_sealed_at ? when(record.verification.last_sealed_at) : ''}: unchanged since.
 						</p>
@@ -94,9 +98,24 @@
 						<ul class="list-disc pl-4 text-red-300">
 							{#each record.verification.problems as p}<li>{p}</li>{/each}
 						</ul>
+						{#if record.verification.pending}
+							<p class="text-gray-500">
+								{'Changes since '}{record.verification.last_sealed_at ? when(record.verification.last_sealed_at) : 'the last seal'}{' are being sealed.'}
+							</p>
+						{/if}
 					{/if}
 					<p class="break-all text-gray-600" title="Proves this record later: an export carries it too">Chain head {record.verification.chain_head}</p>
 				{/if}
+				{#each record.verification.erased as e (e.sha256 + e.at)}
+					<p class={e.matched ? 'text-gray-400' : 'text-red-300'}>
+						Audio deleted {when(e.at)} by {e.by}: {e.reason}. Still verifiable against copies (SHA-256 {e.sha256.slice(0, 12)}…){e.matched
+							? ''
+							: '. It did not match the last seal when deleted.'}
+					</p>
+				{/each}
+				{#each record.verification.parts.filter((x) => x.status === 'unavailable') as x (x.name)}
+					<p class="text-gray-500">{x.name}: {x.detail}</p>
+				{/each}
 				{#if record.versions.length}
 					<div>
 						<p class="text-gray-300">Earlier versions</p>
