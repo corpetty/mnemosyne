@@ -12,6 +12,7 @@ from ...config import hosts_team, personal_allowed
 from ...models.base import ApiModel
 from ...services import prefs, supervision
 from ...services.users import InvalidInvite, User, admin_refusal
+from ..auth import is_owner_channel
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -30,6 +31,9 @@ class Me(ApiModel):
     cloud_models: bool  # OpenAI and Anthropic may be used (the local-only choice means something)
     hosts_team: bool  # this computer is a main computer that also hosts a team
     personal: bool  # personal features exist here (not on a dedicated team server)
+    # This request is the owner's: the window, the API token or a paired computer on a hosting
+    # computer (auth.is_owner_channel), anyone on a plain computer; nobody on a dedicated server.
+    owner: bool
     supervision: bool  # flagged meetings to review (services/supervision.py)
 
 
@@ -106,8 +110,9 @@ def _info(u: User, full: bool) -> UserInfo:
 
 
 @router.get("/me", response_model=Me)
-async def me(ctx: AppContext = Depends(get_ctx)):
+async def me(request: Request, ctx: AppContext = Depends(get_ctx)):
     p = access.principal()
+    owner = personal_allowed(ctx.settings) and is_owner_channel(ctx, request.state)
     if p is None:
         return Me(
             id="",
@@ -117,6 +122,7 @@ async def me(ctx: AppContext = Depends(get_ctx)):
             team_mode=ctx.settings.team_mode,
             hosts_team=hosts_team(ctx.settings),
             personal=personal_allowed(ctx.settings),
+            owner=owner,
             cloud_models=ctx.settings.cloud_models,
             supervision=supervision.enabled(ctx.settings),
         )
@@ -129,6 +135,7 @@ async def me(ctx: AppContext = Depends(get_ctx)):
         team_mode=ctx.settings.team_mode,
         hosts_team=hosts_team(ctx.settings),
         personal=personal_allowed(ctx.settings),
+        owner=owner,
         cloud_models=ctx.settings.cloud_models,
         supervision=supervision.enabled(ctx.settings),
     )

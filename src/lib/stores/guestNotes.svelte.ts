@@ -11,9 +11,10 @@ class GuestNotesState {
   allowGuestNotes = $state(false);
   settingsLoaded = $state(false);
 
-  /** Guest notes are on: always on the desktop, on a team server once an admin allows it. */
+  /** Guest notes are on: always on the desktop and for the owner of a computer that hosts a team,
+   * for everyone else on a team server once an admin allows it. */
   get allowed(): boolean {
-    return !connectionState.me?.team_mode || this.allowGuestNotes;
+    return connectionState.isOwner || this.allowGuestNotes;
   }
 
   async loadSettings() {

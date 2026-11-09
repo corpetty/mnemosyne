@@ -96,3 +96,29 @@ describe('preparePairing', () => {
 		expect(store.token).toBe('fresh-token');
 	});
 });
+
+describe('who owns the personal features', () => {
+	const me = (team_mode: boolean, personal: boolean, owner: boolean) =>
+		({ team_mode, personal, owner }) as unknown as import('../types/index.js').Me;
+
+	it('everyone on a plain computer, even before /me answers', async () => {
+		const { connectionState } = await fresh();
+		expect([connectionState.ownsPersonal, connectionState.isOwner]).toEqual([true, true]);
+		connectionState.me = me(false, true, true);
+		expect([connectionState.ownsPersonal, connectionState.isOwner]).toEqual([true, true]);
+	});
+
+	it('only the owner on a computer that hosts a team', async () => {
+		const { connectionState } = await fresh();
+		connectionState.me = me(true, true, true);
+		expect([connectionState.ownsPersonal, connectionState.isOwner]).toEqual([true, true]);
+		connectionState.me = me(true, true, false); // a member
+		expect([connectionState.ownsPersonal, connectionState.isOwner]).toEqual([false, false]);
+	});
+
+	it('nobody on a dedicated team server', async () => {
+		const { connectionState } = await fresh();
+		connectionState.me = me(true, false, false);
+		expect([connectionState.ownsPersonal, connectionState.isOwner]).toEqual([false, false]);
+	});
+});

@@ -27,7 +27,7 @@
 	const session = $derived(sessionState.activeSession);
 	const sid = $derived(session?.id ?? '');
 	const visible = $derived(
-		!!session && !connectionState.me?.team_mode && contactsState.available && !session.shared_from
+		!!session && connectionState.ownsPersonal && contactsState.available && !session.shared_from
 	);
 	const shares = $derived(contactsState.peerShares[sid] ?? []);
 	const label = $derived(shares.length ? `Shared · ${shares.length}` : 'Share');
@@ -36,7 +36,7 @@
 		available = visible;
 	});
 	$effect(() => {
-		if (!connectionState.me?.team_mode && !contactsState.loaded) void contactsState.load();
+		if (connectionState.ownsPersonal && !contactsState.loaded) void contactsState.load();
 	});
 	$effect(() => {
 		if (visible && sid) void contactsState.loadShares(sid);

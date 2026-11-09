@@ -320,6 +320,43 @@ def test_me_says_whether_this_computer_hosts_a_team(client, ctx):
     assert me["hosts_team"] is False and me["personal"] is False
 
 
+def test_me_says_whether_the_caller_is_the_owner(settings, keystore):
+    from mnemosyne.api.app import create_app
+
+    def me(c, token=None):
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        return c.get("/api/users/me", headers=headers).json()
+
+    def desktop(app):  # the desktop window: 127.0.0.1, as the app makes its requests
+        return TestClient(app, base_url="http://127.0.0.1:8008", client=("127.0.0.1", 50000))
+
+    # A plain computer: every caller is the owner.
+    with desktop(create_app(settings, keystore=keystore)) as c:
+        assert me(c)["owner"] is True
+
+    # A computer that hosts a team: the window and the API token are the owner; a member, even
+    # from this machine, is not.
+    settings.team_mode = True
+    settings.api_token = "adm"
+    app = create_app(settings, keystore=keystore)
+    ctx = app.state.ctx
+    boss = ctx.users.add("Boss", "", "admin")
+    ctx.settings.team_owner_id = boss.id
+    ann = ctx.users.add("Ann", "", "member")
+    code, _ = ctx.users.invite(ann.id)
+    ann_token = ctx.users.redeem(code, "test")[1]
+    with desktop(app) as c:
+        window = me(c)
+        assert window["owner"] is True and window["hosts_team"] is True and window["id"] == boss.id
+        assert me(c, "adm")["owner"] is True
+        member = me(c, ann_token)
+        assert member["owner"] is False and member["id"] == ann.id
+
+        # A dedicated team server: nobody is the owner, an admin included.
+        ctx.settings.team_owner_id = ""
+        assert me(c, "adm")["owner"] is False
+
+
 def test_set_role_demotes_the_last_admin_only_for_hosting(tmp_path, monkeypatch):
     from mnemosyne import cli, config
 

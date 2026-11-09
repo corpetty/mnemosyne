@@ -6170,6 +6170,8 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Owner */
+            owner: boolean;
             /** Personal */
             personal: boolean;
             /** Role */
