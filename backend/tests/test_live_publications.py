@@ -389,6 +389,56 @@ async def test_it_runs_as_the_owner_on_a_team_server(ctx, host, seals, watcher, 
     assert host.version == 2
 
 
+async def test_on_a_hosting_computer_its_owner_updates_with_the_switch_off(
+    ctx, host, seals, watcher, clock
+):
+    """A meeting with no owner (made before hosting) is the host's owner's, who needs no
+    `allow_publishing` (docs/plans/2026-11-09-team-hosting.md I15)."""
+    from mnemosyne import access
+
+    corey = ctx.users.add("Corey", "corey@example.org", access.ADMIN)
+    s = _meeting(ctx)
+    await _first(ctx, s.id)
+    ctx.settings.team_mode = True
+    ctx.settings.team_owner_id = corey.id
+    assert not ctx.settings.allow_publishing
+    watcher.start()
+    ctx.repo.update_fields(s.id, summary="Ana Lopez and Bo decided to ship Monday.")
+    await _at(watcher, clock, 0)
+    (job,) = await _at(watcher, clock, 11)
+    assert job.status == "completed", job.error
+    assert job.owner_id == corey.id
+    assert host.version == 2
+
+
+async def test_on_a_hosting_computer_a_members_meeting_updates_only_when_the_team_may(
+    ctx, host, seals, watcher, clock
+):
+    from mnemosyne import access
+
+    corey = ctx.users.add("Corey", "corey@example.org", access.ADMIN)
+    ann = ctx.users.add("Ann Owner", "ann@example.org", access.MEMBER)
+    s = _meeting(ctx, owner_id=ann.id)
+    token = access.current.set(access.Principal(ann.id, ann.name, ann.role))
+    try:
+        await _first(ctx, s.id)
+    finally:
+        access.current.reset(token)
+    ctx.settings.team_mode = True
+    ctx.settings.team_owner_id = corey.id
+    watcher.start()
+    ctx.repo.update_fields(s.id, summary="Ana Lopez and Bo decided to ship Monday.")
+    for t in (0, 11, 100, 111):
+        assert await _at(watcher, clock, t) == []  # the switch is off: not even for the owner
+    assert host.version == 1
+    ctx.settings.allow_publishing = True
+    ctx.repo.update_fields(s.id, summary="Ana Lopez and Bo decided to ship Tuesday.")
+    await _at(watcher, clock, 200)
+    (job,) = await _at(watcher, clock, 211)
+    assert job.status == "completed", job.error
+    assert job.owner_id == ann.id and host.version == 2
+
+
 async def test_a_change_while_the_backend_was_down_is_caught_up_at_start(
     ctx, host, seals, watcher, clock
 ):

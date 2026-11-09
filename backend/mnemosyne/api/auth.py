@@ -37,7 +37,7 @@ from fastapi import HTTPException, Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .. import access
-from ..config import hosts_team
+from ..config import hosts_team, personal_allowed
 from ..services.pairing import CONTACT, DESKTOP
 from .context import AppContext, get_ctx
 
@@ -198,7 +198,7 @@ class TokenAuthMiddleware:
         if (
             scope["type"] != "http"
             or not path.startswith(SHARE_PREFIX)
-            or self.ctx.settings.team_mode
+            or not personal_allowed(self.ctx.settings)
             or not device.person
         ):
             return None

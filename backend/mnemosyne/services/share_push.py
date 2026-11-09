@@ -39,6 +39,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from .. import access
+from ..config import personal_allowed
 from ..models.shared_meeting import ContributionBatch, ContributionResponse
 from . import contacts, shared_with_me
 
@@ -59,7 +60,7 @@ EXCERPT = 80
 def _owner_of(app: AppContext, session_id: str) -> str:
     """The owner's person key when my write on this meeting has to travel, else "": the meeting
     is shared with me and this is not the app's own (internal) write."""
-    if access.is_internal() or app.settings.team_mode:
+    if access.is_internal() or not personal_allowed(app.settings):
         return ""
     return app.repo.shared_from(session_id)
 
@@ -118,7 +119,7 @@ def notes_typed(app: AppContext, session_id: str) -> None:
     were mine, which `push` reads off the log), a push follows. Thread-safe, never raises."""
     try:
         owner = app.repo.shared_from(session_id)
-        if owner and not app.settings.team_mode:
+        if owner and personal_allowed(app.settings):
             _announce(app, session_id)
             schedule(app, owner)
     except Exception:  # noqa: BLE001
@@ -394,7 +395,7 @@ async def push(app: AppContext, row: dict, *, repull: bool = False) -> PushSumma
     for a pull round when something was accepted (a push the pull round did not start itself).
     One push per contact at a time; the second waits and then sends what is left."""
     summary = PushSummary()
-    if app.settings.team_mode or app.share_pull is None:
+    if not personal_allowed(app.settings) or app.share_pull is None:
         return summary
     person = row["person"]
     name = contacts.my_or_card_name(row) or "This contact"

@@ -805,6 +805,52 @@ def test_team_servers_publish_only_when_allowed(team, seals):
     assert admin["url"] == pub["url"]
 
 
+def _as(ctx, user):
+    return access.current.set(access.Principal(user.id, user.name, user.role))
+
+
+def test_a_dedicated_server_refuses_even_its_admin_with_the_switch_off(team):
+    """I1: team mode without an owner keeps today's rule for everyone."""
+    client, ctx, people = team
+    admin, admin_auth = people["Admin"]
+    reset = _as(ctx, admin)
+    try:
+        s = _meeting(ctx)
+    finally:
+        access.current.reset(reset)
+    assert not ctx.settings.team_owner_id
+    r = client.put(f"/api/sessions/{s.id}/publication", json={}, headers=admin_auth)
+    assert r.status_code == 403 and "turned off" in r.json()["detail"]
+
+
+def test_the_owner_of_a_hosting_computer_publishes_with_the_switch_off(team, seals):
+    """I15: on a computer that hosts a team the switch governs the team, not its owner."""
+    client, ctx, people = team
+    admin, admin_auth = people["Admin"]
+    ann, ann_auth = people["Ann"]
+    ctx.settings.team_owner_id = admin.id
+    assert not ctx.settings.allow_publishing
+    reset = _as(ctx, admin)
+    try:
+        mine = _meeting(ctx)
+    finally:
+        access.current.reset(reset)
+    pub = _publish(client, mine.id, admin_auth)
+    assert pub["url"] and pub["published_by"] == "Admin"
+    assert client.get("/api/publications", headers=admin_auth).status_code == 200
+
+    # A member still needs the switch, and gets the same refusal as on any team server.
+    reset = _as(ctx, ann)
+    try:
+        theirs = _meeting(ctx)
+    finally:
+        access.current.reset(reset)
+    r = client.put(f"/api/sessions/{theirs.id}/publication", json={}, headers=ann_auth)
+    assert r.status_code == 403 and "turned off" in r.json()["detail"]
+    ctx.settings.allow_publishing = True
+    assert _publish(client, theirs.id, ann_auth)["published_by"] == "Ann"
+
+
 def test_hiding_identifiers_hides_emails_and_phones(ctx):
     s = _meeting(ctx)
     contact = "Write to ana@example.org or call +1 415 555 0134 by 12:30 on 2026-10-21, room 42."

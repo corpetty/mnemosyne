@@ -393,7 +393,7 @@ def check_may_start(app: AppContext, session: Session) -> None:
     """Forbidden (team server rules) or GuestNotesUnavailable. Blocking the first time (the
     sidecar probe): call it in a thread."""
     st = app.settings
-    if st.team_mode and not st.allow_guest_notes:
+    if st.team_mode and not st.allow_guest_notes and not access.is_host_owner(st):
         raise access.Forbidden("Guest notes are turned off on this server; an admin can allow them")
     if not access.can_write(session.owner_id):
         raise access.Forbidden(

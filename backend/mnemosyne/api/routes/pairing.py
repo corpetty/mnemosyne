@@ -93,7 +93,7 @@ def _refuse_team(ctx: AppContext, kind: str) -> None:
         raise HTTPException(
             status_code=409, detail="Library sync is for personal computers, not a team server"
         )
-    if kind == CONTACT_CODE and ctx.settings.team_mode:
+    if kind == CONTACT_CODE and not config.personal_allowed(ctx.settings):
         raise HTTPException(
             status_code=409, detail="Contacts are for personal computers, not a team server"
         )
@@ -159,7 +159,7 @@ async def _redeem_contact(body: RedeemRequest, ctx: AppContext) -> RedeemRespons
     """A contact code: store the redeemer's card, write their CONTACT devices and answer with
     our card and the token they will present to us. Everything is checked before anything is
     stored or the code used up."""
-    if ctx.settings.team_mode:
+    if not config.personal_allowed(ctx.settings):
         raise HTTPException(
             status_code=409, detail="Contacts are for personal computers, not a team server"
         )

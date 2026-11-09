@@ -13,6 +13,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from ... import access
+from ...config import personal_allowed
 from ...models.contact import Card
 from ...models.share_hub import (
     SHARE_PROTOCOL,
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 def _no_team(ctx: AppContext = Depends(get_ctx)) -> None:
-    if ctx.settings.team_mode:
+    if not personal_allowed(ctx.settings):
         raise HTTPException(409, "Sharing with other people is for personal computers")
 
 

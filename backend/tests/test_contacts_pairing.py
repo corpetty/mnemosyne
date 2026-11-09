@@ -530,3 +530,40 @@ async def test_dial_contacts_skips_removed_ones_and_never_raises(nodes, caplog):
     b.ctx.settings.team_mode = True
     await contacts.dial_contacts(b.ctx)  # nothing to do on a team server
     assert b.ops == []
+
+
+async def test_a_hosting_computer_pairs_contacts_but_a_dedicated_server_does_not(nodes):
+    """A computer with a team owner is somebody's computer: its owner pairs contacts as on any
+    other (docs/plans/2026-11-09-team-hosting.md 1(b)); a team member cannot."""
+    a, b = nodes
+    owner = a.ctx.users.add("Corey", "", "admin")
+    member = a.ctx.users.add("Sam", "", "member")
+    a.ctx.settings.team_mode = True
+    a.ctx.settings.team_owner_id = owner.id
+    a.ctx.follow_hosting()
+
+    invite = await a.code()  # the API token is the owner's channel
+    code, _ = a.ctx.users.invite(member.id)
+    _, member_token = a.ctx.users.redeem(code, "browser")
+    async with a.client(None) as c:
+        for r in (
+            await c.post(
+                "/api/contacts/codes", headers={"Authorization": f"Bearer {member_token}"}
+            ),
+            await c.get("/api/contacts", headers={"Authorization": f"Bearer {member_token}"}),
+        ):
+            assert r.status_code == 403
+    assert (await pair(b, invite)).status_code == 200
+    assert [r["person"] for r in a.ctx.repo.contacts()] == [b.person]
+    # The contact's token opens /api/share/ on the host, as that contact.
+    to_a, _ = contacts.tokens(a.ctx.repo.contact(b.person)["secret"], b.person, a.person)
+    async with a.client(None) as c:
+        r = await c.get("/api/share/hello", headers={"Authorization": f"Bearer {to_a}"})
+        assert r.status_code == 200 and r.json()["person"] == a.person
+        # ... and a member's token never opens it.
+        r = await c.get("/api/share/hello", headers={"Authorization": f"Bearer {member_token}"})
+        assert r.status_code in (401, 403)
+    # Without an owner it is a dedicated server again: nothing works.
+    a.ctx.settings.team_owner_id = ""
+    async with a.client() as c:
+        assert (await c.post("/api/contacts/codes")).status_code == 409

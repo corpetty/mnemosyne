@@ -255,9 +255,9 @@ HOSTING = {
     "api_token": ("api_token", True),
     "device": ("device", True),
     "phone": ("phone", False),
-    # Contacts are still refused while team_mode is on (api/auth.py `_contact_principal`);
-    # the people-sharing task lets them in on a host.
-    "contact": (None, False),
+    # A contact is let in on /api/share/ as a contact (api/auth.py `_contact_principal`), and is
+    # not the owner's channel.
+    "contact": ("contact", False),
     "owner_main": ("user", True),
     "owner_team": ("user", False),
     "owner_team_loopback": ("user", False),
@@ -494,7 +494,7 @@ def test_on_a_host_the_owner_channels_get_past_the_guard(make_machine):
 
 def test_a_contact_and_a_phone_do_not_reach_the_personal_routes_even_unguarded(make_machine):
     """Without the widened DEVICE_PATHS a phone is not let in at all, and on a host a contact
-    token opens only /api/share/ (and not even that while team_mode is on)."""
+    token opens only /api/share/ (as a contact: never the personal routes)."""
     m = make_machine("hosting")
     for method, path in PERSONAL_ROUTES:
         for caller in ("phone", "contact"):
@@ -705,3 +705,36 @@ def test_the_cli_adds_admins_as_before_elsewhere(settings, tmp_path, monkeypatch
     _cli_settings(settings, tmp_path, monkeypatch, **changes)
     users_command(["add", "Pat", "--role", "admin"])
     assert "Invite link" in capsys.readouterr().out
+
+
+# ---- people and devices on a host (task 6) --------------------------------------------
+
+
+@pytest.mark.parametrize(("kind", "lists_people"), [("hosting", True), ("dedicated", False)])
+def test_the_connected_devices_of_a_host_include_contacts_and_sync_peers(
+    make_machine, kind, lists_people
+):
+    """A dedicated server lists neither (it refuses both); a host lists them for its owner."""
+    from mnemosyne.services.sync_peers import SyncPeer
+
+    m = make_machine(kind)
+    m.ctx.sync_peers.add(
+        SyncPeer("peer-1", "Desk 2", "ee" * 32, "ticket", "tok", "2026-11-01T00:00:00+00:00")
+    )
+    client, headers, _ = m.client("api_token")
+    r = client.get("/api/connections/devices", headers=headers)
+    assert r.status_code == 200, r.text
+    kinds = {d["kind"] for d in r.json()}
+    assert {"contact", "sync"} <= kinds if lists_people else not ({"contact", "sync"} & kinds)
+    assert {"computer", "phone"} <= kinds
+
+
+def test_a_members_token_never_reaches_contacts_on_a_host(make_machine):
+    m = make_machine("hosting")
+    for caller in ("member", "reviewer", "other_admin", "contact"):
+        client, headers, _ = m.client(caller)
+        for method, path in (("GET", "/api/contacts"), ("POST", "/api/contacts/codes")):
+            r = client.request(method, path, headers=headers, json={})
+            assert r.status_code in (401, 403), (caller, path, r.status_code)
+    client, headers, _ = m.client("api_token")
+    assert client.get("/api/contacts", headers=headers).status_code == 200

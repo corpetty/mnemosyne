@@ -190,6 +190,37 @@ async def team(settings, keystore, sidecar):
     await h.close()
 
 
+async def test_the_owner_of_a_hosting_computer_needs_no_switch_but_a_member_does(team, sealed):
+    """I15: with a team owner at this computer `allow_guest_notes` governs the team only; a
+    dedicated server (no owner) still holds its admin to the switch too."""
+    app, ctx, people, host = team
+    admin, admin_auth = people["Admin"]
+    ann, ann_auth = people["Ann"]
+    reset = access.current.set(access.Principal(admin.id, admin.name, admin.role))
+    try:
+        mine = meeting(ctx, owner_id=admin.id)
+    finally:
+        access.current.reset(reset)
+    reset = access.current.set(access.Principal(ann.id, ann.name, ann.role))
+    try:
+        theirs = meeting(ctx, owner_id=ann.id)
+    finally:
+        access.current.reset(reset)
+    assert not ctx.settings.allow_guest_notes
+
+    async with api(app, admin_auth) as owner:  # a dedicated server: refused, admin or not
+        r = await owner.put(url(mine))
+        assert r.status_code == 403 and "turned off" in r.json()["detail"]
+        ctx.settings.team_owner_id = admin.id  # now it hosts a team, and he is its owner
+        room = (await owner.put(url(mine))).json()
+        assert room["url"] and room["started_by"] == "Admin"
+    async with api(app, ann_auth) as member:
+        r = await member.put(url(theirs))
+        assert r.status_code == 403 and "turned off" in r.json()["detail"]
+        ctx.settings.allow_guest_notes = True
+        assert (await member.put(url(theirs))).json()["url"]
+
+
 async def test_a_team_server_needs_it_turned_on_and_readers_get_no_link(team, sealed):
     app, ctx, people, host = team
     ann, ann_auth = people["Ann"]

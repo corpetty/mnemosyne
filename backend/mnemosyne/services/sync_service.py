@@ -481,13 +481,7 @@ class SyncService:
                 return
         else:
             st.warning = None
-        try:
-            changed = await contacts.apply_peer_rows(
-                self.ctx, [c.model_dump() for c in got.contacts]
-            )
-        except contacts.ContactsRefused as e:  # contacts not open here yet (a hosting computer)
-            logger.info("Sync with %s: its contacts not taken: %s", peer.name, e)
-            return
+        changed = await contacts.apply_peer_rows(self.ctx, [c.model_dump() for c in got.contacts])
         if changed:
             self._spawn(contacts.dial_in_background(self.ctx, changed))
 

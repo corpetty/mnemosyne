@@ -519,3 +519,46 @@ async def test_a_notes_comment_is_marked_once_on_both_computers(pair, sidecar):
     assert marks_in(recipient, sid, c["id"]) == 1
     # And nothing of it is sent a second time.
     assert (await send(owner, recipient)).state == "nothing"
+
+
+# ---- a recipient that hosts a team (docs/plans/2026-11-09-team-hosting.md, task 6) ----------
+
+
+def host_a_team(node: Node) -> tuple[str, str]:
+    """The node's computer now shares itself with a team: (the owner's id, a member's id)."""
+    owner = node.ctx.users.add("Recipient", "", "admin")
+    member = node.ctx.users.add("Sam", "", "member")
+    node.ctx.settings.team_mode = True
+    node.ctx.settings.team_owner_id = owner.id
+    node.ctx.follow_hosting()
+    return owner.id, member.id
+
+
+async def test_a_hosting_recipient_pulls_and_contributes_and_only_the_owner_reads(pair):
+    from mnemosyne import access
+
+    owner, recipient = pair
+    owner_id, member_id = host_a_team(recipient)
+    sid = await arrive(owner, recipient)  # the pull runs on a host
+    assert recipient.puller._available()
+    copy = recipient.repo.get(sid)
+    assert copy.shared_from == owner.person and copy.owner_id == ""
+
+    # Nobody but the owner of this computer reads it: not a member, not a reviewer.
+    for who, sees in (
+        (None, True),
+        (access.Principal(owner_id, "Recipient", access.ADMIN), True),
+        (access.Principal(member_id, "Sam", access.MEMBER), False),
+        (access.Principal("u-rae", "Rae", access.REVIEWER), False),
+    ):
+        token = access.current.set(who)
+        try:
+            assert (recipient.repo.get(sid) is not None) is sees, who
+        finally:
+            access.current.reset(token)
+
+    # What the owner of this computer does on it still travels to the sharer.
+    await comment(recipient, sid)
+    assert (await status(recipient, sid))["waiting"]["comments"] == 1
+    await send(owner, recipient)
+    assert [c.text for c in owner_comments(owner, sid)] == ["Spring works"]

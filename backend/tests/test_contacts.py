@@ -360,3 +360,18 @@ def test_old_device_files_load_and_contacts_persist(tmp_path):
     assert sorted(d.endpoint_id for d in again.contacts_for("p" * 64)) == [EP_B, EP_C]
     assert again.revoke_contact("p" * 64) == 2 and again.verify("shared") is None
     assert again.verify("tok") is not None
+
+
+@pytest.mark.anyio
+async def test_contacts_work_on_a_hosting_computer_not_a_dedicated_server(me, ada):
+    """`team_mode` with an owner at this computer keeps contacts (docs/plans/2026-11-09-team-
+    hosting.md 1(b)); without one they stay refused."""
+    me.settings.team_mode = True
+    me.settings.team_owner_id = "u-owner"
+    row = contacts.upsert_contact(me, card_of(ada), contacts.new_secret())
+    assert contacts.info(me, row).name == "Ada"
+    assert contacts.build_card(me).person == me.person.public_hex
+    contacts.require_available(me)
+    me.settings.team_owner_id = ""
+    with pytest.raises(contacts.ContactsRefused):
+        contacts.require_available(me)

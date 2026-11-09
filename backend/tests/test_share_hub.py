@@ -428,3 +428,162 @@ def test_peer_shares_are_closed_in_team_mode(hub, client):
     assert client.get(url(sid), headers=ADMIN).status_code == 409
     assert client.put(url(sid, hub.ada.person), json={}, headers=ADMIN).status_code == 409
     assert client.delete(url(sid, hub.ada.person), headers=ADMIN).status_code == 409
+
+
+# ---- on a computer that hosts a team (docs/plans/2026-11-09-team-hosting.md, task 6) ---------
+
+
+@pytest.fixture
+def hosted(hub):
+    """The hub's computer, now sharing itself with a team: an owner (Corey), a member (Sam) and a
+    reviewer (Rae). The API token (ADMIN) is the owner's channel."""
+    hub.owner = hub.users.add("Corey", "", "admin")
+    hub.sam = hub.users.add("Sam", "", "member")
+    hub.rae = hub.users.add("Rae", "", "reviewer")
+    hub.settings.team_mode = True
+    hub.settings.team_owner_id = hub.owner.id
+    hub.follow_hosting()
+    return hub
+
+
+def members_meeting(ctx, owner_id: str, name="Sam's standup") -> str:
+    s = Session(
+        name=name,
+        owner_id=owner_id,
+        created_at=datetime(2026, 10, 21, 10, 0),
+        summary="Sam's private summary.",
+        transcript=[TranscriptSegment(text="Sam talks.", speaker="Sam", start=0, end=4)],
+    )
+    return ctx.repo.save(s).id
+
+
+def test_the_hub_works_for_a_contact_on_a_host(hosted, client):
+    assert client.get("/api/share/hello", headers=hosted.ada.headers).status_code == 200
+    sid = meeting(hosted)
+    assert hosted.repo.get(sid).owner_id == hosted.owner.id  # stamped: the owner's own
+    assert client.put(url(sid, hosted.ada.person), json={}, headers=ADMIN).status_code == 200
+    got = pull(client, hosted.ada).json()
+    assert [s["id"] for s in got["sessions"]] == [sid]
+    # A contact is not the owner's channel: it manages nothing.
+    assert client.get(url(sid), headers=hosted.ada.headers).status_code in (401, 403)
+
+
+def test_the_hub_serves_only_peer_share_rows_on_a_host(hosted, client):
+    """A member's meeting shared with everyone, the owner's own meeting, one he shared with Ada."""
+    members = members_meeting(hosted, hosted.sam.id)
+    hosted.repo.set_shares(members, {"*"}, "Sam")
+    other_own = meeting(hosted, "Not shared")
+    shared = meeting(hosted)
+    share(hosted, shared, hosted.ada)
+    assert [s["id"] for s in pull(client, hosted.ada).json()["sessions"]] == [shared]
+    assert pull(client, hosted.bob).json()["sessions"] == []
+    assert other_own != shared
+
+
+def test_a_contact_does_not_match_a_team_grant_to_everyone(hosted, client):
+    """I8: `'*'` in `session_shares` is the team's, not the contacts'. A contribution to a
+    meeting shared with everyone is refused as not shared with the contact, and nothing of it
+    is readable as that contact."""
+    from mnemosyne import access
+
+    members = members_meeting(hosted, hosted.sam.id)
+    hosted.repo.set_shares(members, {"*"}, "Sam")
+    shared = meeting(hosted)
+    share(hosted, shared, hosted.ada)
+
+    record = shares.make_contribution(
+        hosted.ada.keys,
+        "comment",
+        members,
+        {"op": "create", "comment_id": "c0ffee000002", "text": "hi"},
+    )
+    r = client.post(
+        "/api/share/contributions",
+        json={"records": [record.model_dump(mode="json")], "frames": {}},
+        headers=hosted.ada.headers,
+    )
+    assert r.status_code == 200
+    assert [(x["ok"], x["reason"]) for x in r.json()["results"]] == [
+        (False, "This meeting is not shared with you")
+    ]
+    assert hosted.repo.list_comments(members) == []
+
+    token = access.current.set(contacts.principal_of(hosted.ada.row))
+    try:
+        assert hosted.repo.get(members) is None
+        assert [s.id for s in hosted.repo.list_summaries()] == [shared]
+        assert not hosted.repo.exists(members)
+    finally:
+        access.current.reset(token)
+
+
+def test_a_member_s_meeting_cannot_be_shared_with_people_even_by_the_owner(hosted, client):
+    """I9: People shares are the owner's own meetings; a member's meeting is refused (403) even
+    to the owner's channel, but his own, and one left without an owner, can be shared."""
+    members = members_meeting(hosted, hosted.sam.id)
+    r = client.put(url(members, hosted.ada.person), json={}, headers=ADMIN)
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Only your own meetings can be shared with people"
+    assert hosted.repo.peer_shares(members) == []
+    own = meeting(hosted)
+    assert client.put(url(own, hosted.ada.person), json={}, headers=ADMIN).status_code == 200
+    stray = meeting(hosted, "Stray")
+    hosted.repo._conn.execute("UPDATE sessions SET owner_id='' WHERE id=?", (stray,))
+    hosted.repo._conn.commit()
+    assert client.put(url(stray, hosted.ada.person), json={}, headers=ADMIN).status_code == 200
+    # Reading and stopping are not held to it.
+    assert client.get(url(members), headers=ADMIN).json() == []
+    assert client.delete(url(members, hosted.ada.person), headers=ADMIN).status_code == 404
+
+
+def test_a_member_cannot_reach_peer_shares_at_all(hosted, client):
+    code, _ = hosted.users.invite(hosted.sam.id)
+    _, token = hosted.users.redeem(code, "browser")
+    sid = meeting(hosted)
+    r = client.put(
+        url(sid, hosted.ada.person), json={}, headers={"Authorization": f"Bearer {token}"}
+    )
+    assert r.status_code == 403
+    assert hosted.repo.peer_shares(sid) == []
+
+
+def test_on_a_plain_computer_every_meeting_can_be_shared(hub, client):
+    sid = members_meeting(hub, "u-anyone")
+    assert client.put(url(sid, hub.ada.person), json={}, headers=ADMIN).status_code == 200
+
+
+def test_meetings_shared_with_the_owner_are_his_alone(hosted):
+    """A meeting a contact shared with the owner (owner '', shared_from) is read by the owner
+    and by nobody else on the computer, and it is not shared onward."""
+    from mnemosyne import access
+
+    sid = meeting(hosted, "From Ada")
+    hosted.repo._conn.execute(
+        "UPDATE sessions SET shared_from=?, owner_id='' WHERE id=?", (hosted.ada.person, sid)
+    )
+    hosted.repo._conn.commit()
+    seen = {}
+    for who in (
+        None,
+        access.Principal(hosted.owner.id, "Corey", access.ADMIN),
+        access.Principal(hosted.sam.id, "Sam", access.MEMBER),
+        access.Principal(hosted.rae.id, "Rae", access.REVIEWER),
+    ):
+        token = access.current.set(who)
+        try:
+            seen[who.name if who else "app"] = hosted.repo.get(sid) is not None
+        finally:
+            access.current.reset(token)
+    assert seen == {"app": True, "Corey": True, "Sam": False, "Rae": False}
+
+
+def test_a_dedicated_server_still_refuses_sharing_with_people(hub, client):
+    """I1: team mode with no owner is a dedicated server: the hub, the contacts' tokens and the
+    owner's share routes all stay closed."""
+    sid = meeting(hub)
+    hub.settings.team_mode = True
+    hub.settings.team_owner_id = ""
+    assert client.get("/api/share/hello", headers=ADMIN).status_code == 409
+    assert client.get("/api/share/hello", headers=hub.ada.headers).status_code == 401
+    assert client.put(url(sid, hub.ada.person), json={}, headers=ADMIN).status_code == 409
+    assert client.get("/api/contacts", headers=ADMIN).status_code == 409

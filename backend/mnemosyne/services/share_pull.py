@@ -36,6 +36,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, TypeVar
 
 from .. import access
+from ..config import personal_allowed
 from ..models.contact import ContactPullInfo
 from ..models.share_hub import SHARE_PROTOCOL, ShareChanges, ShareHello, ShareTombstone
 from ..models.shared_meeting import SharedMeeting
@@ -153,7 +154,7 @@ class SharePuller:
     # ---- lifetime ---------------------------------------------------------------------------
 
     def start(self) -> None:
-        if self.ctx.settings.team_mode:
+        if not personal_allowed(self.ctx.settings):
             return
         self._locks.clear()
         self._wake = asyncio.Event()
@@ -213,7 +214,7 @@ class SharePuller:
         return st.info() if st is not None else None
 
     def _available(self) -> bool:
-        return not self.ctx.settings.team_mode and not self.ctx.locked
+        return personal_allowed(self.ctx.settings) and not self.ctx.locked
 
     async def pull_now(self) -> None:
         """One round with every live contact, side by side."""

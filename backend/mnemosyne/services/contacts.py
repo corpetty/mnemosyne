@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from .. import access
+from ..config import personal_allowed
 from ..models.contact import Card, CardMachine, ContactInfo
 from .link import LinkError, endpoint_id_from_ticket
 from .pairing import CONTACT
@@ -45,7 +46,7 @@ class ContactsUnavailable(ContactsRefused):
 
 
 def _check(app: AppContext) -> None:
-    if app.settings.team_mode:
+    if not personal_allowed(app.settings):
         raise ContactsRefused("Contacts are for personal computers, not a team server")
 
 

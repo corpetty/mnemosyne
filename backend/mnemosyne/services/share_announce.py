@@ -17,6 +17,8 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from ..config import personal_allowed
+
 if TYPE_CHECKING:
     import httpx
 
@@ -47,7 +49,7 @@ class ShareAnnouncer:
     # ---- lifetime ---------------------------------------------------------------------------
 
     def start(self) -> None:
-        if self.ctx.settings.team_mode:
+        if not personal_allowed(self.ctx.settings):
             return
         self._seen = self.ctx.repo.current_sync_seq()
         self._looked_at = datetime.now().isoformat()
@@ -76,7 +78,7 @@ class ShareAnnouncer:
     async def tick(self) -> list[str]:
         """Look once; returns the contacts (person keys) poked. Never raises."""
         try:
-            if self.ctx.settings.team_mode or self.ctx.locked:
+            if not personal_allowed(self.ctx.settings) or self.ctx.locked:
                 return []
             return await self._tick()
         except Exception as e:  # noqa: BLE001 - the contact's next pull finds the changes

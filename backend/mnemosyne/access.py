@@ -188,6 +188,19 @@ def can_edit_notes(owner_id: str, shared_with: set[str]) -> bool:
     return p.user_id in shared_with or "*" in shared_with
 
 
+def is_host_owner(settings) -> bool:
+    """On a computer that hosts a team (config.hosts_team), whether the work now running is the
+    owner's: nobody signed in (the desktop, the API token, a paired computer) or the owner
+    himself. False for members, reviewers and contacts, and False everywhere else: a plain
+    computer and a dedicated team server have no owner whose rights differ."""
+    from .config import hosts_team
+
+    if not hosts_team(settings):
+        return False
+    p = current.get()
+    return p is None or p.user_id == settings.team_owner_id
+
+
 def is_admin() -> bool:
     p = current.get()
     return p is None or p.role == ADMIN
