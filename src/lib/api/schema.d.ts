@@ -1502,6 +1502,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/satellite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["status_api_satellite_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/satellite/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start
+         * @description Record with this computer's devices: streamed to the main computer, which records the
+         *     meeting, or (not reachable) kept here until it can be handed over.
+         */
+        post: operations["start_api_satellite_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/satellite/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop */
+        post: operations["stop_api_satellite_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/search": {
         parameters: {
             query?: never;
@@ -6482,6 +6537,26 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** OutboxEntry */
+        OutboxEntry: {
+            /** Id */
+            id: string;
+            /** Last Error */
+            last_error: string;
+            /** Parts */
+            parts: number;
+            /** Replaces */
+            replaces: string | null;
+            /** Started At */
+            started_at: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "recording" | "waiting" | "sending" | "failed";
+            /** Title */
+            title: string;
+        };
         /** PairedDeviceInfo */
         PairedDeviceInfo: {
             /**
@@ -7354,6 +7429,93 @@ export interface components {
              * @default true
              */
             reviewed: boolean;
+        };
+        /** SatelliteMain */
+        SatelliteMain: {
+            /** Name */
+            name: string;
+        };
+        /** SatelliteRecording */
+        SatelliteRecording: {
+            /** Local Id */
+            local_id: string;
+            /** Session Id */
+            session_id: string | null;
+            /** Sources */
+            sources: components["schemas"]["SatelliteSource"][];
+            /** Started At */
+            started_at: string;
+            /** Streaming */
+            streaming: boolean;
+            /** Title */
+            title: string;
+        };
+        /** SatelliteSource */
+        SatelliteSource: {
+            /** Captured */
+            captured: number;
+            /** Connected */
+            connected: boolean;
+            /** Gap */
+            gap: boolean;
+            /** Label */
+            label: string;
+            /** Sent */
+            sent: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "mic" | "system";
+        };
+        /** SatelliteStartRequest */
+        SatelliteStartRequest: {
+            /** Consent */
+            consent?: ("all_parties" | "in_person" | "one_party") | null;
+            /** Mic Device */
+            mic_device?: number | null;
+            /** System Device */
+            system_device?: number | null;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+        };
+        /** SatelliteStartResponse */
+        SatelliteStartResponse: {
+            /** Local Id */
+            local_id: string;
+            /** Session Id */
+            session_id: string | null;
+            /** Streaming */
+            streaming: boolean;
+        };
+        /** SatelliteStatus */
+        SatelliteStatus: {
+            main: components["schemas"]["SatelliteMain"] | null;
+            /** Outbox */
+            outbox: components["schemas"]["OutboxEntry"][];
+            /** Reachable */
+            reachable: boolean;
+            recording: components["schemas"]["SatelliteRecording"] | null;
+        };
+        /** SatelliteStopRequest */
+        SatelliteStopRequest: {
+            /** Notes */
+            notes?: string | null;
+        };
+        /** SatelliteStopResponse */
+        SatelliteStopResponse: {
+            /** Local Id */
+            local_id: string;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "streamed" | "handing_over" | "waiting";
+            /** Session Id */
+            session_id: string | null;
         };
         /** SaveClipRequest */
         SaveClipRequest: {
@@ -12705,6 +12867,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    status_api_satellite_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SatelliteStatus"];
+                };
+            };
+        };
+    };
+    start_api_satellite_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SatelliteStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SatelliteStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_api_satellite_stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SatelliteStopRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SatelliteStopResponse"];
                 };
             };
             /** @description Validation Error */

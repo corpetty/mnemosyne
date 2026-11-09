@@ -156,6 +156,9 @@ async def set_main_computer(body: MainComputerRequest, ctx: AppContext = Depends
         ctx.main_computer_store().set(body.url, body.token, body.name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    from ...services import satellite
+
+    satellite.service(ctx).kick()  # recordings waiting for it go now
     return _main_status(ctx)
 
 
