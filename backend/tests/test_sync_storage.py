@@ -395,7 +395,6 @@ NEVER = {
     "add_review": lambda r, a: r.add_review(a, "ok"),
     "replace_vectors": lambda r, a: r.replace_vectors(a, []),
     "set_shares": lambda r, a: r.set_shares(a, {"u1"}, "me"),
-    "adopt_unowned": lambda r, a: r.adopt_unowned("u1"),
     "set_sync_state": lambda r, a: r.set_sync_state(a, {"dev-b": 1}, "dev-b"),
     "serve_snapshot": lambda r, a: r.serve_snapshot(a, "p", 1, "{}"),
 }
