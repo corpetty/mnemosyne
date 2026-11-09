@@ -289,8 +289,8 @@ class Settings(BaseSettings):
     remote_relays: str = ""
     # Use Mnemosyne's servers (services/ours.py) for what is not configured: its relay for
     # remote access, sync, contacts and guest notes; its host for publishing and as a mirror of
-    # guest notes. None = automatic: on, except on a team server
-    # (resolve_use_our_servers). The API shows the effective value.
+    # guest notes. None = automatic: on, except on a dedicated team server
+    # (team_mode without team_owner_id; resolve_use_our_servers). The API shows the effective value.
     use_our_servers: bool | None = None
     # Publishing a meeting (services/publishing.py, docs/plans/2026-10-12-hashseq-collaboration.md
     # phase 7): a curated, encrypted copy readers open with a link. publish_host: the address of
@@ -524,12 +524,38 @@ class Settings(BaseSettings):
     @property
     def our_servers(self) -> bool:
         """`use_our_servers` as it takes effect."""
-        return resolve_use_our_servers(self.use_our_servers, team_mode=self.team_mode)
+        return resolve_use_our_servers(self.use_our_servers, team_mode=dedicated_team_server(self))
+
+
+def hosts_team(settings) -> bool:
+    """A main computer that hosts a team right now: team mode with an owner at this computer
+    (services/team_host.py sets both when the desktop shares itself). Derived, never stored.
+    Turning hosting off keeps `team_owner_id` but clears `team_mode`, so this is then False."""
+    return bool(getattr(settings, "team_mode", False)) and bool(
+        getattr(settings, "team_owner_id", "")
+    )
+
+
+def personal_allowed(settings) -> bool:
+    """Whether personal features (library sync, pairing, contacts, sharing with people) exist on
+    this computer at all: on a plain main computer and on one that hosts a team, not on a
+    dedicated team server. Derived, never stored."""
+    return not getattr(settings, "team_mode", False) or bool(getattr(settings, "team_owner_id", ""))
+
+
+def dedicated_team_server(settings) -> bool:
+    """A team server that is nobody's own computer (deploy/team/): team mode with no owner at
+    the machine. Everything team mode refuses today stays refused there. Derived, never stored."""
+    return bool(getattr(settings, "team_mode", False)) and not getattr(
+        settings, "team_owner_id", ""
+    )
 
 
 def resolve_use_our_servers(value: bool | None, *, team_mode: bool) -> bool:
     """Whether Mnemosyne's servers (services/ours.py) are used: what was set, else on, except on
-    a team server (meetings stay on it). `cloud_models` has no say: it is about LLM providers."""
+    a dedicated team server (meetings stay on it). Callers pass `team_mode=` the result of
+    `dedicated_team_server`: a main computer that hosts a team keeps its own remote access and
+    guest notes. `cloud_models` has no say: it is about LLM providers."""
     if value is not None:
         return value
     return not team_mode

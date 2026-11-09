@@ -27,11 +27,24 @@ def test_constants():
     assert ours.PRIVACY_URL == "https://notes.petty.services/privacy"
 
 
-def test_on_by_default_off_for_team_servers_only():
+def test_on_by_default_off_for_dedicated_team_servers_only():
     assert ours.enabled(make()) is True
-    assert ours.enabled(make(team_mode=True)) is False
+    assert ours.enabled(make(team_mode=True)) is False  # dedicated: no owner at the machine
     assert ours.enabled(make(cloud_models=False)) is True  # LLM providers are a different matter
     assert make(team_mode=True).our_servers is False
+
+
+def test_a_main_computer_that_hosts_a_team_keeps_ours_on():
+    hosted = make(team_mode=True, team_owner_id="u1")
+    assert ours.enabled(hosted) is True and hosted.our_servers is True
+    assert ours.relays(hosted) == ours.OUR_RELAYS
+    assert ours.publish_host(hosted) == ours.OUR_HOST
+    assert ours.guest_host(hosted) == ours.OUR_HOST
+    # hosting turned off keeps the owner and is a plain main computer again
+    assert ours.enabled(make(team_owner_id="u1")) is True
+    # a value the person set wins on either kind
+    assert ours.enabled(make(team_mode=True, team_owner_id="u1", use_our_servers=False)) is False
+    assert ours.enabled(make(team_mode=True, use_our_servers=True)) is True
 
 
 def test_a_value_the_person_set_wins():
@@ -46,6 +59,8 @@ def test_automatic_is_not_saved_and_stays_automatic(settings):
     assert loaded.use_our_servers is None and loaded.our_servers is True
     loaded.team_mode = True  # later becoming a team server turns it off with no migration
     assert loaded.our_servers is False
+    loaded.team_owner_id = "u1"  # ... unless it is a main computer hosting a team
+    assert loaded.our_servers is True
 
 
 def test_the_settings_api_shows_the_effective_value(client, ctx):

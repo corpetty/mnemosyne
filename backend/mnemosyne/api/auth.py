@@ -20,6 +20,12 @@ reach this process from 127.0.0.2 (TUNNEL_CLIENTS; link/src/lib.rs TUNNEL_SOURCE
 and neither LOCAL_PATHS nor the tokenless desktop owner apply. Open paths stay open (redeeming a
 pairing code). If the sidecar could not bind 127.0.0.2 it connects from 127.0.0.1 and this
 distinction is lost.
+
+The CHANNEL a request came in on is recorded in `scope["state"]["channel"]` (one of CHANNELS),
+with `on_team_port` and `loopback_main` beside it. On a main computer that also hosts a team
+(config.hosts_team) the owner's own requests and the team's share one backend, and
+`require_owner_channel` is how a personal route tells them apart
+(docs/plans/2026-11-09-team-hosting.md 2.2). Open paths and requests refused with 401 get none.
 """
 
 from __future__ import annotations
@@ -27,11 +33,13 @@ from __future__ import annotations
 import hmac
 from urllib.parse import parse_qs
 
+from fastapi import HTTPException, Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .. import access
+from ..config import hosts_team
 from ..services.pairing import CONTACT, DESKTOP
-from .context import AppContext
+from .context import AppContext, get_ctx
 
 OPEN_PATHS = {
     "/health",
@@ -59,6 +67,20 @@ TUNNEL_CLIENTS = {"127.0.0.2"}
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip")
 
+# How a request was let in (`scope["state"]["channel"]`):
+DESKTOP_WINDOW = (
+    "desktop"  # tokenless, from the desktop app on 127.0.0.1 (LOCAL_PATHS, `_desktop_owner`)
+)
+API_TOKEN = "api_token"  # the configured API token
+DEVICE = "device"  # a DESKTOP device token: a paired laptop or sync peer
+USER = "user"  # a users.json token (state.user_id)
+CONTACT_CHANNEL = "contact"  # another person's computer (state.device_id)
+PHONE = "phone"  # a paired phone, DEVICE_PATHS only
+LOCAL = "local"  # no sign-in needed at all: a plain main computer's own window
+CHANNELS = (DESKTOP_WINDOW, API_TOKEN, DEVICE, USER, CONTACT_CHANNEL, PHONE, LOCAL)
+# The owner of a computer that hosts a team (require_owner_channel); USER only with more checks.
+OWNER_CHANNELS = {DESKTOP_WINDOW, API_TOKEN, DEVICE, LOCAL}
+
 
 def is_open(path: str) -> bool:
     """Paths anyone may load: the list above, and everything outside the API and WebSockets
@@ -81,12 +103,19 @@ class TokenAuthMiddleware:
         path = scope.get("path", "")
         tunnel = (scope.get("client") or ("", 0))[0] in TUNNEL_CLIENTS
         required = bool(token) or self.ctx.settings.team_mode or tunnel
+        headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+        state = scope.setdefault("state", {})
+        server = scope.get("server") or ("", 0)
+        state["on_team_port"] = server[1] == self.ctx.settings.team_port
+        state["loopback_main"] = self._from_desktop_app(scope, headers)
+        if not required:
+            state["channel"] = LOCAL
         if not required or is_open(path) or scope.get("method") == "OPTIONS":
             return await self.app(scope, receive, send)
 
         presented = ""
-        headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
-        if path in LOCAL_PATHS and self._from_desktop_app(scope, headers):
+        if path in LOCAL_PATHS and state["loopback_main"]:
+            state["channel"] = DESKTOP_WINDOW
             return await self.app(scope, receive, send)
         auth = headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
@@ -96,10 +125,12 @@ class TokenAuthMiddleware:
             presented = (qs.get("token") or [""])[0]
 
         if token and hmac.compare_digest(presented.encode(), token.encode()):
+            state["channel"] = API_TOKEN
             return await self.app(scope, receive, send)
         user = self.ctx.users.verify(presented)
         if user is not None:
-            scope.setdefault("state", {})["user_id"] = user.id
+            state["user_id"] = user.id
+            state["channel"] = USER
             reset = access.current.set(access.Principal(user.id, user.name, user.role))
             try:
                 return await self.app(scope, receive, send)
@@ -109,17 +140,20 @@ class TokenAuthMiddleware:
         if device is not None and device.kind == CONTACT:
             principal = self._contact_principal(scope, device, path)
             if principal is not None:
-                scope.setdefault("state", {})["device_id"] = device.id
+                state["device_id"] = device.id
+                state["channel"] = CONTACT_CHANNEL
                 reset = access.current.set(principal)
                 try:
                     return await self.app(scope, receive, send)
                 finally:
                     access.current.reset(reset)
         elif device is not None and (device.kind == DESKTOP or path in DEVICE_PATHS):
-            scope.setdefault("state", {})["device_id"] = device.id
+            state["device_id"] = device.id
+            state["channel"] = DEVICE if device.kind == DESKTOP else PHONE
             return await self.app(scope, receive, send)
         owner = self._desktop_owner(scope, presented, headers)
         if owner is not None:
+            state["channel"] = DESKTOP_WINDOW
             reset = access.current.set(owner)
             try:
                 return await self.app(scope, receive, send)
@@ -198,6 +232,39 @@ def request_from_desktop_app(ctx: AppContext, request) -> bool:
     """`from_desktop_app` for a route (a Starlette Request), whatever token it carried."""
     headers = {k.decode().lower(): v.decode() for k, v in request.scope.get("headers", [])}
     return from_desktop_app(ctx, request.scope, headers)
+
+
+OWNER_ONLY = "Only the owner of this computer can do this"
+
+
+def is_owner_channel(ctx: AppContext, state) -> bool:
+    """Whether a request came in the way the owner of this computer does. On a computer that
+    hosts a team (config.hosts_team), only: the desktop window, the API token, a DESKTOP device
+    (a paired laptop or sync peer: only the owner can pair one), and the owner's own user token
+    from this machine's main port. Members, reviewers, contacts, phones, and the owner's user
+    token on the team listener or through a proxy are not. Anywhere else every caller that
+    reached the route is the owner already (a plain main computer), or the existing refusals
+    stand (a dedicated team server): True. `state` is `request.state` or the scope's state."""
+    if not hosts_team(ctx.settings):
+        return True
+    get = state.get if isinstance(state, dict) else lambda k, d=None: getattr(state, k, d)
+    channel = get("channel")
+    if channel in OWNER_CHANNELS:
+        return True
+    return (
+        channel == USER
+        and get("user_id") == ctx.settings.team_owner_id
+        and bool(get("loopback_main"))
+        and not get("on_team_port")
+    )
+
+
+def require_owner_channel(request: Request) -> None:
+    """FastAPI dependency for what only the owner of a computer that hosts a team may do (403
+    otherwise); it changes nothing on any other computer. Like `access.require_admin`, a router
+    or route lists it: `dependencies=[Depends(require_owner_channel)]`."""
+    if not is_owner_channel(get_ctx(request), request.state):
+        raise HTTPException(status_code=403, detail=OWNER_ONLY)
 
 
 LOCKED_OPEN = ("/api/encryption", "/api/system")
