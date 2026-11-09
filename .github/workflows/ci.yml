@@ -319,7 +319,9 @@ jobs:
             touch "src-tauri/binaries/$name-$triple"
           done
       - run: cargo check --manifest-path src-tauri/Cargo.toml
-      - run: cargo test --manifest-path link/Cargo.toml
+      # mDNS discovery needs multicast, which the hosted macOS VMs do not pass: that one test
+      # is skipped here (it runs on Linux). --no-fail-fast shows every other result.
+      - run: cargo test --no-fail-fast --manifest-path link/Cargo.toml -- --skip found_on_the_local_network
 
   link:
     name: Remote-access link (iroh tunnel)
