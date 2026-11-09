@@ -406,6 +406,93 @@ async def test_a_busy_main_computer_is_tried_again(monkeypatch, laptop, sat, fak
     assert item.state == "waiting"
 
 
+# ---- a way out for an item ---------------------------------------------------------------
+
+
+async def test_a_refused_replace_goes_as_a_new_meeting(
+    app, ctx, main_url, laptop, sat, fake, laptop_token
+):
+    """The stream had a gap, and the main computer transcribed its partial meeting before the
+    complete audio arrived: the replace is refused for good, the item can go as a new one."""
+    use_main(laptop, main_url, laptop_token)
+    first, second, third = pcm(0.25, 100), pcm(0.25, 200), pcm(0.25, 300)
+    async with client(laptop, "admin-laptop") as c:
+        r = await c.post("/api/satellite/start", json={"mic_device": 1, "title": "Gappy"})
+        sid, local_id = r.json()["session_id"], r.json()["local_id"]
+        paths = main_wavs(ctx, sid)
+        stream = sat.active.streams["mic"]
+        fake.write("mic", first)
+        await until(lambda: data_of(paths["mic"]) == first)
+        stream.ws.transport.abort()
+        fake.write("mic", second)  # may be lost with the connection
+        await until(lambda: stream.drops == 1 and stream.connected)
+        fake.write("mic", third)
+        await until(lambda: data_of(paths["mic"]).endswith(third))
+        # Stop pressed on the main computer, which transcribes what it has.
+        async with client(app, laptop_token) as main_ui:
+            r = await main_ui.post(f"/api/audio/stop/{sid}", json={"transcribe": True})
+            assert r.status_code == 200
+        fake.write("mic", pcm(0.1, 400))  # captured after that: the stream finds it closed
+        await until(lambda: sat.active is None)
+        item = sat.outbox.items[local_id]
+        await until(lambda: item.state == "failed")
+        assert "Transcription has started" in item.last_error and item.attempts == 0
+        (entry,) = (await c.get("/api/satellite")).json()["outbox"]
+        assert entry["state"] == "failed" and entry["replaces"] == sid
+
+        r = await c.post(f"/api/satellite/outbox/{local_id}/new-meeting")
+        assert r.status_code == 200, r.text
+        assert r.json()["replaces"] is None and r.json()["state"] in ("waiting", "sending")
+        await until(lambda: outbox_folders(laptop) == [])
+        r = await c.post(f"/api/satellite/outbox/{local_id}/new-meeting")
+        assert r.status_code == 404  # handed over: nothing left here
+
+    sessions = ctx.sessions.list_sessions()
+    assert len(sessions) == 2
+    new = next(s for s in sessions if s.id != sid)
+    handed = [e for e in ctx.repo.events(new.id) if e["kind"] == "handed_over"]
+    assert handed[0]["detail"]["handoff_id"] == f"{local_id}-new"
+    assert handed[0]["detail"]["replaced"] is False
+    for s in sessions:
+        await jobs_done(ctx, s.id)
+    # The new meeting has everything the laptop recorded; the streamed one is untouched.
+    folder = ctx.settings.recordings_dir / new.id
+    assert data_of(next(folder.glob("*_handoff_mic.wav"))) == first + second + third + pcm(0.1, 400)
+    assert not [e for e in ctx.repo.events(sid) if e["kind"] == "handed_over"]
+    nothing_here(laptop)
+
+
+async def test_a_waiting_or_refused_recording_can_be_discarded(
+    laptop, sat, fake, dead_url, laptop_token
+):
+    use_main(laptop, dead_url, laptop_token)
+    async with client(laptop, "admin-laptop") as c:
+        r = await c.post("/api/satellite/start", json={"mic_device": 1})
+        local_id = r.json()["local_id"]
+        # Never while it is being recorded.
+        assert (await c.delete(f"/api/satellite/outbox/{local_id}")).status_code == 409
+        r = await c.post(f"/api/satellite/outbox/{local_id}/new-meeting")
+        assert r.status_code == 409
+        fake.write("mic", pcm(0.1, 5))
+        await c.post("/api/satellite/stop")
+        item = sat.outbox.items[local_id]
+        await until(lambda: item.attempts == 1)
+        r = await c.delete(f"/api/satellite/outbox/{local_id}")
+        assert r.status_code == 200 and r.json() == {"id": local_id}
+        assert (await c.get("/api/satellite")).json()["outbox"] == []
+        assert (await c.delete(f"/api/satellite/outbox/{local_id}")).status_code == 404
+    assert outbox_folders(laptop) == []
+    # A refused one too.
+    await sat.start(1, None)
+    fake.write("mic", pcm(0.1, 5))
+    await sat.stop()
+    item = next(iter(sat.outbox.items.values()))
+    await until(lambda: item.attempts == 1)
+    item.state, item.last_error = "failed", "Missing or invalid API token"
+    sat.discard(item.id)
+    assert outbox_folders(laptop) == []
+
+
 # ---- only this computer ------------------------------------------------------------------
 
 

@@ -130,3 +130,26 @@ async def start(body: SatelliteStartRequest, ctx: AppContext = Depends(get_ctx))
 @router.post("/stop", response_model=SatelliteStopResponse, dependencies=HERE)
 async def stop(body: SatelliteStopRequest | None = None, ctx: AppContext = Depends(get_ctx)):
     return await satellite.service(ctx).stop(notes=body.notes if body else None)
+
+
+@router.post("/outbox/{item_id}/new-meeting", response_model=OutboxEntry, dependencies=HERE)
+async def as_new_meeting(item_id: str, ctx: AppContext = Depends(get_ctx)):
+    """A waiting or refused recording goes to the main computer as a NEW meeting, not as the
+    complete audio of the meeting it streamed into (refused once that one was transcribed)."""
+    sat = satellite.service(ctx)
+    await sat.ready()
+    return sat.entry(await sat.as_new_meeting(item_id))
+
+
+class OutboxDeleted(ApiModel):
+    id: str
+
+
+@router.delete("/outbox/{item_id}", response_model=OutboxDeleted, dependencies=HERE)
+async def discard(item_id: str, ctx: AppContext = Depends(get_ctx)):
+    """Delete a waiting or refused recording's audio from this computer, for good. Never while
+    it is being recorded or handed over (409)."""
+    sat = satellite.service(ctx)
+    await sat.ready()
+    sat.discard(item_id)
+    return OutboxDeleted(id=item_id)

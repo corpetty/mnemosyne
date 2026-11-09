@@ -232,6 +232,7 @@ class OutboxItem:
     session_id: str | None = None  # the main computer's meeting this streamed into
     recording_id: str | None = None
     stop_pending: bool = False  # that meeting's recording still needs stopping there
+    handoff_id: str = ""  # "" = the id; "<id>-new" once it goes as a new meeting instead
     sources: list[OutboxSource] = field(default_factory=list)
     attempts: int = 0
     next_at: float = 0.0
@@ -279,6 +280,7 @@ class Outbox:
         self.items[item.id] = item
 
     def delete(self, item: OutboxItem) -> None:
+        item.state = "deleted"  # a worker holding it in its list of due items skips it
         self.items.pop(item.id, None)
         shutil.rmtree(self.folder(item.id), ignore_errors=True)
 
@@ -852,7 +854,7 @@ class Satellite:
 
     async def _handoff(self, item: OutboxItem) -> None:
         main = self.app.main_computer
-        if main is None or item.state != "waiting":
+        if main is None or item.state != "waiting" or item.id not in self.outbox.items:
             return
         item.state = "sending"
         self.outbox.save(item)
@@ -901,7 +903,7 @@ class Satellite:
 
         folder = self.outbox.folder(item.id)
         meta = {
-            "handoff_id": item.id,
+            "handoff_id": item.handoff_id or item.id,
             "title": item.title,
             "started_at": item.started_at or None,
             "ended_at": item.ended_at or None,
@@ -937,6 +939,48 @@ class Satellite:
                 data={"meta": json.dumps(meta)},
                 files=files,
             )
+
+    # -- a way out for an item (the UI's buttons)
+
+    def _settled(self, item_id: str) -> OutboxItem:
+        from fastapi import HTTPException
+
+        item = self.outbox.items.get(item_id)
+        if item is None:
+            raise HTTPException(404, "No such recording waiting here")
+        if item.state not in ("failed", "waiting"):
+            raise HTTPException(409, f"The recording is {item.state}; try again when it is not")
+        return item
+
+    async def as_new_meeting(self, item_id: str) -> OutboxItem:
+        """Hand the item over as a NEW meeting instead of completing the streamed one (whose
+        audio can no longer be replaced: transcribed with gaps). Idempotent: one new meeting
+        per item, whatever the number of tries."""
+        item = self._settled(item_id)
+        old, main = item.session_id, self.app.main_computer
+        if old and item.stop_pending and main is not None:
+            with contextlib.suppress(MainError):  # the stream's recording, if it still runs
+                await self._stop_main(main, old, False, timeout=10.0)
+        item = self._settled(item_id)  # unchanged meanwhile
+        item.session_id, item.stop_pending = None, False
+        item.handoff_id = f"{item.id}-new"
+        item.state, item.attempts, item.next_at, item.last_error = "waiting", 0, 0.0, ""
+        self.outbox.save(item)
+        logger.info(
+            "Outbox %s: to be handed over as a new meeting%s",
+            item.id, f" (not completing meeting {old})" if old else "",
+        )  # fmt: skip
+        self.kick()
+        return item
+
+    def discard(self, item_id: str) -> None:
+        """Delete a recording waiting here (or refused there): its audio is gone for good."""
+        item = self._settled(item_id)
+        logger.info(
+            "Outbox %s: discarded (%s, %s, last error: %s)",
+            item.id, item.title or "untitled", item.state, item.last_error or "none",
+        )  # fmt: skip
+        self.outbox.delete(item)
 
     # -- what the UI shows
 
@@ -978,18 +1022,19 @@ class Satellite:
     def items(self) -> list[dict]:
         out = []
         for item in sorted(self.outbox.items.values(), key=lambda i: i.started_at):
-            out.append(
-                {
-                    "id": item.id,
-                    "title": item.title,
-                    "started_at": item.started_at,
-                    "parts": len({s.part for s in item.sources}),
-                    "state": item.state,
-                    "last_error": item.last_error,
-                    "replaces": item.session_id,
-                }
-            )
+            out.append(self.entry(item))
         return out
+
+    def entry(self, item: OutboxItem) -> dict:
+        return {
+            "id": item.id,
+            "title": item.title,
+            "started_at": item.started_at,
+            "parts": len({s.part for s in item.sources}),
+            "state": item.state,
+            "last_error": item.last_error,
+            "replaces": item.session_id,
+        }
 
 
 def service(app) -> Satellite:
