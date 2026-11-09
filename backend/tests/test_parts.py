@@ -1,5 +1,6 @@
 """Recording again into a meeting adds a part instead of replacing it (services/parts.py)."""
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -138,7 +139,7 @@ def test_recording_again_adds_a_part_and_transcribes_only_it(client, ctx, real_a
     session = client.get(f"/api/sessions/{sid}").json()
     parts = [(r["part"], round(r["offset"], 1)) for r in session["recordings"]]
     assert parts == [(0, 0.0), (1, 5.0)]  # part 1 starts where part 0's 5 s end
-    assert Path(session["audio_file"]).name == "meeting_1.ogg"
+    assert re.fullmatch(r"meeting_1_[0-9a-f]{8}\.ogg", Path(session["audio_file"]).name)
     from mnemosyne.services.parts import audio_seconds
 
     assert audio_seconds(session["audio_file"], None) == pytest.approx(7.0, abs=0.15)

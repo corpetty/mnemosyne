@@ -23,7 +23,16 @@ from ..models.session import Recording, Session, SessionStatus
 from ..models.transcript import TranscriptSegment
 from . import notes_media, notes_sections, shared_notes
 from .notes_chips import retarget_chips
-from .parts import audio_seconds, cut, join, match_speakers, offsets, part_of, shift
+from .parts import (
+    audio_seconds,
+    cut,
+    join,
+    joined_name,
+    match_speakers,
+    offsets,
+    part_of,
+    shift,
+)
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -252,7 +261,7 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
                 joined.unlink(missing_ok=True)
             joined = out
             update(None, 0.3 + 0.5 * i / len(all_pieces))
-        final = folder / f"meeting_{len(all_pieces) - 1}.ogg"
+        final = folder / joined_name(len(all_pieces) - 1)
 
     update("Saving", 0.85)
     old_audio = [Path(s.audio_file) for s in (target, other) if s.audio_file]
