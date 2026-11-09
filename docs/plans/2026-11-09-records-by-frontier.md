@@ -1,6 +1,6 @@
 # Records by frontier: seals over a manifest of the meeting's parts
 
-Status: plan, 2026-11-09. Nothing built. From the "Later" list of
+Status: built 2026-11-09 on branch records-v2 (see "Changed while building" at the end). Plan, 2026-11-09. From the "Later" list of
 docs/plans/2026-10-12-hashseq-collaboration.md (line 1041): "Records: a meeting's frontier is a hash of
 its exact state, a candidate for sealing record versions (services/records.py); clips as artifacts can
 be erased for retention while the rest still verifies." Corey asked for it to be built.
@@ -435,3 +435,16 @@ attestation of who wrote what, and sealing it would mean something a markdown di
   or erasure. Acceptable; the `.enc` tolerance covers the encryption case.
 - **Deleted meetings lose their seals** (cascade); D7 keeps the head in the deletion log only.
 - **Concurrent edits** (task 3, 4, 6 in one file; another session in the same checkout): stage by hunk.
+
+## 8. Changed while building
+
+- Verify compares with `compare_step`: an `erased` entry holds the measured sha (what the file hashed to
+  when it was erased) and `matched` says whether it equalled the sha sealed earlier.
+- `summary_data.json` was added to the export (the `summary_data` part is otherwise not in any file).
+- A file no seal listed gets a pre-seal (entered in the record) before its erasure is sealed, so
+  nothing is erased that the chain never knew.
+- "up to date" seals: when the app touched a meeting (`rev` ahead) without changing a part, the sealer
+  still seals, which closes a gap where a later outside edit would have hidden behind the stale `rev`
+  as pending.
+- `adopt_unowned` now `_touch`es each adopted meeting, so adoption is a version rather than a false alarm.
+- The notes frontier is still deferred (section 6).
