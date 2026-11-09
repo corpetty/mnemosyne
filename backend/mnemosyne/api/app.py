@@ -44,6 +44,7 @@ from .routes.people import router as people_router
 from .routes.publishing import router as publishing_router
 from .routes.record import router as record_router
 from .routes.records import router as records_router
+from .routes.satellite import router as satellite_router
 from .routes.search import router as search_router
 from .routes.segments import router as segments_router
 from .routes.sessions import router as sessions_router
@@ -133,6 +134,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(pairing_router)
     app.include_router(connections_router)
     app.include_router(handoff_router)
+    app.include_router(satellite_router)
     app.include_router(contacts_router)
     app.include_router(demo_router)
     app.include_router(sync_router)

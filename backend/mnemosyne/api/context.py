@@ -129,6 +129,9 @@ class AppContext:
     main_store: MainComputerStore | None = None
     # services/handoff.py: recordings other computers handed to this one, by hand-off id.
     handoffs: Any = None
+    # services/satellite.py: recordings this computer makes for its main computer (streamed
+    # there, or waiting in <data_dir>/outbox); made on first use.
+    satellite: Any = None
 
     def __post_init__(self) -> None:
         self.summarizer.name_source = self.known_names
@@ -605,6 +608,13 @@ class AppContext:
             return None
         return self.jobs.submit("backup", backup_runner(self, prune_after=True))
 
+    async def _start_satellite(self) -> None:
+        """Only when something waits (or a main computer is set): most computers never use it."""
+        from ..services import satellite
+
+        if self.main_computer is not None or (self.settings.data_dir / "outbox").is_dir():
+            await satellite.service(self).ready()
+
     async def _try(self, what: str, step) -> None:
         """One startup step: a failure is logged and reported (/api/system), never fatal. The
         app must come up (to record, to show what went wrong) even if a side service cannot."""
@@ -667,6 +677,7 @@ class AppContext:
         await self._try("Resetting unfinished transcriptions", reset_transcribing)
         # First, so retention and the index never see a half-finished recording.
         await self._try("Recovering interrupted recordings", lambda: recover_interrupted(self))
+        await self._try("Recordings waiting for the main computer", self._start_satellite)
         if self.settings.echo_cancel:
             await self._try("Echo cancellation", self._start_echo)
         self._retention_task = asyncio.create_task(self._retention_loop(retention_interval))
@@ -805,6 +816,8 @@ class AppContext:
             if task is not None:
                 task.cancel()
         await self.echo.stop()
+        if self.satellite is not None:  # a recording for the main computer waits in the outbox
+            await self.satellite.shutdown()
         await self.jobs.shutdown()
         await self.models.unload()
         from ..services import guest_notes, shared_notes
