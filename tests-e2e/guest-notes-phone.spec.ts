@@ -1,6 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 import { importMeeting, openApp } from './fixtures';
 
+async function openLiveNotes(page: Page) {
+  await page.getByRole('button', { name: 'Share', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^A link to the live notes/ }).click();
+}
+
 const BACKEND = 'http://127.0.0.1:8018';
 const NAME = 'guest-phone-demo';
 
@@ -55,7 +60,7 @@ test('a guest on a phone: tabs, touch bar, comment sheet, thread sheet', async (
     expect(agenda.ok()).toBeTruthy();
 
     const owner = await openNotesTab(page);
-    await page.getByRole('button', { name: 'Invite guests', exact: true }).click();
+    await openLiveNotes(page);
     const menu = page.getByRole('dialog', { name: 'Guest notes' });
     await menu.getByRole('button', { name: 'Create a guest link' }).click();
     const linkInput = menu.getByLabel('Guest link');

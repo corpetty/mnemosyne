@@ -18,10 +18,9 @@
 	import CalendarCard from './CalendarCard.svelte';
 	import CopilotPanel from './CopilotPanel.svelte';
 	import MeetingActions from './MeetingActions.svelte';
-	import ShareMenu from './ShareMenu.svelte';
+	import ShareButton from './ShareButton.svelte';
 	import GuestNotesMenu from './GuestNotesMenu.svelte';
-	import PeopleShareMenu from './PeopleShareMenu.svelte';
-	import { contactsState } from '$lib/stores/contacts.svelte.js';
+		import { contactsState } from '$lib/stores/contacts.svelte.js';
 	import PublishDialog from './PublishDialog.svelte';
 	import { publishingState } from '$lib/stores/publishing.svelte.js';
 	import { teamState } from '$lib/stores/team.svelte.js';
@@ -220,9 +219,7 @@
 					>Published · v{publication.version}{#if publication.behind}<span class="text-amber-300">{' · behind'}</span>{/if}</span>
 				{/if}
 			{/if}
-			<ShareMenu />
-			<PeopleShareMenu />
-			<GuestNotesMenu />
+			<ShareButton />
 			{#if mine}
 				<MeetingTypePicker />
 				<MeetingActions />

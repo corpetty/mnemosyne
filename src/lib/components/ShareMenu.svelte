@@ -8,8 +8,28 @@
 
 	// Who may read this meeting besides its owner, on a team server (backend services/sharing.py).
 	// The owner and admins change it; everyone else sees who it is shared with.
+	// `embedded`: the Share menu shows the panel (when `show`) and reports through `available` whether it applies.
+	let {
+		embedded = false,
+		show = false,
+		available = $bindable(false),
+		onclose
+	}: { embedded?: boolean; show?: boolean; available?: boolean; onclose?: () => void } = $props();
 	let shares = $state<Shares | null>(null);
 	let open = $state(false);
+	const isOpen = $derived(embedded ? show : open);
+	const visible = $derived(
+		!!connectionState.me?.team_mode && !!shares && (shares.can_change || shares.team || shares.people.length > 0)
+	);
+	$effect(() => {
+		available = visible;
+	});
+	$effect(() => {
+		if (show && embedded && shares) {
+			team = shares.team;
+			chosen = new Set(shares.people.map((p) => p.id));
+		}
+	});
 	let team = $state(false);
 	let chosen = $state<Set<string>>(new Set());
 	let saving = $state(false);
@@ -48,6 +68,7 @@
 		try {
 			shares = await setShares(session.id, team, [...chosen]);
 			open = false;
+			onclose?.();
 			toastState.success(shares.team ? 'Shared with everyone' : shares.people.length ? 'Sharing saved' : 'Not shared');
 		} catch (e) {
 			toastState.error(e instanceof Error ? e.message : 'Could not share');
@@ -63,23 +84,25 @@
 
 <svelte:window
 	onclick={(e) => {
-		if (open && root && !e.composedPath().includes(root)) open = false;
+		if (!embedded && open && root && !e.composedPath().includes(root)) open = false;
 	}}
 	onkeydown={(e) => {
-		if (open && e.key === 'Escape') open = false;
+		if (!embedded && open && e.key === 'Escape') open = false;
 	}}
 />
 
-{#if connectionState.me?.team_mode && shares && (shares.can_change || shares.team || shares.people.length)}
+{#if visible && shares}
 	<span class="relative" bind:this={root}>
+		{#if !embedded}
 		<button
 			onclick={toggleOpen}
 			aria-expanded={open}
 			title="Who can read this meeting"
 			class="px-2 py-0.5 rounded border border-gray-800 {shares.team || shares.people.length ? 'text-blue-300' : 'text-gray-400'} hover:text-gray-200"
 		>{label}</button>
-		{#if open}
-			<div class="absolute right-0 z-30 mt-1 w-64 rounded-lg border border-gray-700 bg-gray-900 p-3 text-sm shadow-xl space-y-2" role="dialog" aria-label="Share this meeting">
+		{/if}
+		{#if isOpen}
+			<div class={embedded ? 'text-sm space-y-2' : 'absolute right-0 z-30 mt-1 w-64 rounded-lg border border-gray-700 bg-gray-900 p-3 text-sm shadow-xl space-y-2'} role="dialog" aria-label="Share this meeting">
 				{#if shares.can_change}
 					<p class="text-xs text-gray-500">They can read it, listen to it and tick off its action items; only you change it.</p>
 					<label class="flex items-center gap-2">

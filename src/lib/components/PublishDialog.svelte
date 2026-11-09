@@ -298,8 +298,7 @@
 						</div>
 						{#if pub.target === 'local' && pub.defaults?.local_reach === 'this_device'}
 							<p class="mt-1.5 text-xs text-amber-300/80">
-								Only this computer can open this link. Turn on Share this computer with my team, publish a file, or set a publish host in
-								Settings.
+								This link only opens on this computer unless a phone address is set or this is a team server; see Settings → Devices and people.
 							</p>
 						{:else if pub.target === 'local' && pub.defaults?.local_url}
 							<p class="mt-1.5 text-xs text-gray-500">Opens for anyone who can reach {pub.defaults.local_url}.</p>
