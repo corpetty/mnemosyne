@@ -2,7 +2,7 @@
 	// Settings → Connection, desktop app only: reach a backend on another machine through remote
 	// access (src-tauri/src/remote.rs). Pairing turns an invite into this computer's own token and
 	// a local tunnel; the connection then points at that tunnel.
-	import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js';
+	import { connectionState } from '$lib/stores/connection.svelte.js';
 
 	interface Status {
 		configured: boolean;
@@ -54,7 +54,7 @@
 		try {
 			await invoke('remote_forget');
 		} finally {
-			connectionState.save(LOCAL_BACKEND, '');
+			connectionState.useLocal();
 			location.reload();
 		}
 	}

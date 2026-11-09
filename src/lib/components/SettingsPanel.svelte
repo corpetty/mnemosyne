@@ -94,14 +94,16 @@
 	let connUrl = $state(connectionState.url);
 	let connToken = $state(connectionState.token);
 
-	async function applyConnection(url: string, token: string) {
+	async function applyConnection(url: string, token: string | null) {
 		if (connectionState.remote) {
 			// Leaving remote access: stop this app's tunnel and forget the other machine.
 			await import('@tauri-apps/api/core')
 				.then(({ invoke }) => invoke('remote_forget'))
 				.catch(() => {});
 		}
-		connectionState.save(url, token);
+		// null: this computer's own backend, with the token it made for itself.
+		if (token === null) connectionState.useLocal();
+		else connectionState.save(url, token);
 		location.reload();
 	}
 	let secrets = $state<Record<SecretKey, string>>(emptySecrets());
@@ -487,7 +489,7 @@
 			<div class="flex items-center gap-3 mt-2">
 				<button onclick={() => applyConnection(connUrl, connToken)} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Connect</button>
 				{#if !connectionState.isLocal && !SAME_ORIGIN}
-					<button onclick={() => applyConnection(LOCAL_BACKEND, '')} class="text-sm text-gray-400 hover:text-gray-200">Use local backend</button>
+					<button onclick={() => applyConnection(LOCAL_BACKEND, null)} class="text-sm text-gray-400 hover:text-gray-200">Use local backend</button>
 				{/if}
 			</div>
 			{#if !SAME_ORIGIN}
