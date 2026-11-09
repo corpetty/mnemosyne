@@ -2,14 +2,14 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import create_model
 
 from ... import access
 from ...config import SECRET_FIELDS, Settings, config_file_path, save_settings
 from ...models.base import ApiModel
 from ...services.meeting_types import available_types
-from ..auth import require_owner_channel
+from ..auth import is_owner_channel, require_owner_channel
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -57,21 +57,72 @@ _UPDATABLE = {
 SettingsUpdate = create_model("SettingsUpdate", **_UPDATABLE)
 
 
-def _response(settings: Settings) -> SettingsResponse:
+# On a computer that hosts a team (config.hosts_team) the settings are its owner's own
+# configuration; GET /api/settings answers everyone else (members, reviewers, the owner's
+# browser on the team listener) without these: they read as their defaults ("" for data_dir),
+# their secrets as not set, and the config file and environment are not named. What the team's
+# web app reads stays (meeting types, the summary model, consent script, publishing and guest
+# notes switches, auto-record, copilot_to_notes, setup_complete). A new personal setting goes
+# here (docs/plans/2026-11-09-team-hosting.md 2.6, R4).
+PERSONAL_SETTINGS = frozenset(
+    {
+        "data_dir",  # a path in the owner's home
+        "local_speaker_name",  # the owner's name
+        "echo_cancel_mic",  # the owner's microphone
+        # remote access, the phone, library sync and contacts (People)
+        "phone_url",
+        "remote_access",
+        "remote_relays",
+        "shared_in_ask",
+        "shared_in_search",
+        "shared_in_digest",
+        "shared_in_obsidian",
+        # the owner's calendar
+        "calendar_source",
+        "calendar_ics_url",
+        "calendar_desktop_calendars",
+        # where the owner's backups go, the bundled web app
+        "backup_dir",
+        "web_dir",
+        # the owner's accounts in integrations
+        "jira_email",
+        "hubspot_owner_email",
+        # the owner's Obsidian vault
+        *(name for name in Settings.model_fields if name.startswith("obsidian_")),
+    }
+)
+
+
+def _team_view(values: dict, secrets_set: dict[str, bool]) -> None:
+    """Blank the personal settings (in place) for a caller who is not the owner."""
+    for name in PERSONAL_SETTINGS:
+        field = Settings.model_fields[name]
+        values[name] = "" if name == "data_dir" else field.get_default(call_default_factory=True)
+        if name in secrets_set:
+            secrets_set[name] = False
+
+
+def _response(settings: Settings, *, personal: bool = True) -> SettingsResponse:
+    """The settings as the UI reads them; `personal=False`: without PERSONAL_SETTINGS."""
     vault = settings.obsidian_vault_path
+    values, secrets_set = settings.public_dict(), settings.secrets_set()
+    if not personal:
+        _team_view(values, secrets_set)
     return SettingsResponse(
-        values=SettingsValues.model_validate(settings.public_dict()),
-        secrets_set=settings.secrets_set(),
-        env_overrides=settings.env_overrides(),
-        config_file=str(config_file_path()),
-        obsidian_vault_exists=bool(vault) and Path(vault).expanduser().is_dir(),
+        values=SettingsValues.model_validate(values),
+        secrets_set=secrets_set,
+        env_overrides=settings.env_overrides() if personal else [],
+        config_file=str(config_file_path()) if personal else "",
+        obsidian_vault_exists=personal and bool(vault) and Path(vault).expanduser().is_dir(),
         meeting_type_names=[t.name for t in available_types(settings)],
     )
 
 
 @router.get("", response_model=SettingsResponse)
-async def get_settings(ctx: AppContext = Depends(get_ctx)):
-    return _response(ctx.settings)
+async def get_settings(request: Request, ctx: AppContext = Depends(get_ctx)):
+    """Readable by everyone signed in; on a computer that hosts a team only the owner's channels
+    get the personal settings (api/auth.py `is_owner_channel`)."""
+    return _response(ctx.settings, personal=is_owner_channel(ctx, request.state))
 
 
 @router.put("", response_model=SettingsResponse, dependencies=ADMIN)
