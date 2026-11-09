@@ -761,6 +761,11 @@ class SessionRepository:
         # This machine's id in version vectors (services/sync sets it at startup). '' until
         # then: writes still bump the change counter and count under the key "" in sync_vv.
         self.device_id = ""
+        # Who a new meeting belongs to when its creator is unrestricted (the API token, a paired
+        # laptop, a phone, automation): the owner of a computer that hosts a team (api/context.py
+        # sets it with `config.hosts_team`), else "". A meeting that names its owner keeps it, and
+        # a contact's meeting (`shared_from`) is never made through `save`.
+        self.host_owner = ""
         self._open(db_path, key)
 
     def reopen(self, db_path: Path, key: bytes | None = None) -> None:
@@ -1344,7 +1349,11 @@ class SessionRepository:
         loaded before a fold must not put the old ones back."""
         self._check_write(session.id)
         owner = self._owner(session.id)
-        session.owner_id = owner if owner is not None else (session.owner_id or access.user_id())
+        session.owner_id = (
+            owner
+            if owner is not None
+            else (session.owner_id or access.user_id() or self.host_owner)
+        )
         session.updated_at = datetime.now()
         data_json = session.summary_data.model_dump_json() if session.summary_data else None
         with self._lock, self._conn:
@@ -3409,16 +3418,22 @@ class SessionRepository:
         return True
 
     def adopt_unowned(self, owner_id: str) -> int:
-        """Meetings that belong to nobody (made before team mode) become this person's. The owner
-        is part of the meeting's record (`meta`), so each meeting gets a new version (`_touch`,
-        without moving `updated_at`: nothing changed for a reader), or a seal made before would
-        show it as changed outside the app. Library sync is refused in team mode: no travel."""
+        """Meetings that belong to nobody (made before team mode, or arriving from an older
+        peer) become this person's, except a contact's (`shared_from`: it belongs to its sender
+        and stays unowned). The owner is part of the meeting's record (`meta`), so each meeting
+        gets a new version (`_touch`, without moving `updated_at`: nothing changed for a reader),
+        or a seal made before would show it as changed outside the app."""
         with self._lock, self._conn:
             ids = [
                 r["id"]
-                for r in self._conn.execute("SELECT id FROM sessions WHERE owner_id=''").fetchall()
+                for r in self._conn.execute(
+                    "SELECT id FROM sessions WHERE owner_id='' AND shared_from=''"
+                ).fetchall()
             ]
-            self._conn.execute("UPDATE sessions SET owner_id=? WHERE owner_id=''", (owner_id,))
+            self._conn.execute(
+                "UPDATE sessions SET owner_id=? WHERE owner_id='' AND shared_from=''",
+                (owner_id,),
+            )
             for sid in ids:
                 self._touch(sid, keep_updated=True)
             return len(ids)

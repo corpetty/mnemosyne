@@ -354,10 +354,21 @@ class TeamHost:
 
 async def turn_on(ctx: AppContext, app, name: str = "") -> str:
     """Share this computer: the owner (made admin the first time), their meetings, team mode
-    and the listener. Returns the owner's user id."""
+    and the listener. Returns the owner's user id. RuntimeError (the route answers 409) when this
+    computer uses another main computer, or when someone besides the owner is an admin: only the
+    owner is admin on a computer that hosts a team, and nobody is demoted silently."""
     from ..config import save_settings
 
+    if ctx.main_computer is not None:
+        raise RuntimeError("This computer uses another main computer; it cannot host a team")
     owner = ctx.users.get(ctx.settings.team_owner_id) if ctx.settings.team_owner_id else None
+    others = [
+        u.name
+        for u in ctx.users.list()
+        if u.role == access.ADMIN and not u.disabled and (owner is None or u.id != owner.id)
+    ]
+    if others:
+        raise RuntimeError("Make the other admins reviewers first: " + ", ".join(others))
     if owner is None:
         owner = ctx.users.add(name.strip() or owner_name(), "", access.ADMIN)
     adopted = ctx.repo.adopt_unowned(owner.id)
