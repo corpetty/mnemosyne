@@ -58,6 +58,9 @@ def app(settings, keystore):
     # Nor do publication bridges (rooms, one-shot VERSIONs): tests/test_live_publications.py
     # turns them on where it drives a room.
     app.state.ctx.live_bridges.enabled = False
+    # Nor does the record sealer (it would seal behind a test's seal counts);
+    # tests/test_record_sealer.py ticks it.
+    app.state.ctx.record_sealer.interval = 0
     return app
 
 

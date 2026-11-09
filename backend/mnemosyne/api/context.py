@@ -119,6 +119,9 @@ class AppContext:
     # services/live_publications.py Bridges: each live hosted publication's room on its host
     # (VERSION, THREADS, META). Inert while `live_bridges.enabled` is off (tests, conftest).
     live_bridges: Any = None
+    # services/record_sealer.py RecordSealer: seals a meeting the app changed after it was quiet
+    # for a minute. Its loop runs only while `record_sealer.interval` > 0 (tests set 0 and tick).
+    record_sealer: Any = None
     person: Any = None  # services/person.py PersonKeys: this person's signing key
 
     def __post_init__(self) -> None:
@@ -330,6 +333,9 @@ class AppContext:
 
         ctx.live_watcher = Watcher(ctx)
         ctx.live_bridges = Bridges(ctx)
+        from ..services.record_sealer import RecordSealer
+
+        ctx.record_sealer = RecordSealer(ctx)
 
         # The sidecar's listeners are new each start: dial the sync peers and the contacts'
         # machines again, then pull.
@@ -675,6 +681,8 @@ class AppContext:
         await self._try("Live publications", self.live_watcher.start)
         # Their rooms: a bridge for each live hosted publication recorded here.
         await self._try("Live publication rooms", self.live_bridges.resume)
+        # Records: a meeting the app changed is sealed once it has been quiet.
+        await self._try("Record sealer", self.record_sealer.start)
 
     async def _reconcile_tasks(self) -> None:
         from ..services import task_links, task_migration
@@ -761,6 +769,8 @@ class AppContext:
             await self.share_pull.stop()
         if self.live_watcher is not None:  # before the jobs: it submits publish jobs
             await self.live_watcher.stop()
+        if self.record_sealer is not None:
+            await self.record_sealer.stop()
         if self.live_bridges is not None:  # the rooms stay on their hosts
             await self.live_bridges.shutdown()
         await self.link.stop()
