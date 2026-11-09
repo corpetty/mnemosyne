@@ -569,11 +569,17 @@ def measure_audio(app: AppContext, paths: list[Path]) -> dict[str, dict]:
     return measured
 
 
-def _baseline(app: AppContext, session_id: str) -> tuple[dict, dict] | None:
+def _baseline(
+    app: AppContext, session_id: str, measured: Mapping[str, Mapping]
+) -> tuple[dict, dict] | None:
     """(audio, erased) of the meeting's last seal, sealing it in format 2 first when there is
     none or the last one is format 1 (the upgrade needs the old seal to still match). None when
     the meeting has nothing to keep and no seals (no record to put the erasure in). A last seal
-    that cannot be upgraded gives ({}, erased={}): every file then records `matched: false`."""
+    that cannot be upgraded gives ({}, erased={}): every file then records `matched: false`.
+    A file in `measured` that the last seal does not list at all was never sealed, so there is
+    nothing it could have been swapped against: it is entered in the record first, with its
+    digest (a seal that adds only those files; a sealed file that differs is left as sealed, so
+    it still records `matched: false`)."""
     seals = app.repo.seals(session_id)
     if not seals:
         session = app.repo.get(session_id)
@@ -588,6 +594,35 @@ def _baseline(app: AppContext, session_id: str) -> tuple[dict, dict] | None:
     manifest = last["manifest"] if last is not None and last["format"] == 2 else None
     if manifest is None or manifest_problems(manifest):
         return {}, {}
+    added = {
+        n: e
+        for n, e in measured.items()
+        if n not in manifest["audio"] and n not in manifest["erased"]
+    }
+    if added and manifest["audio_here"]:
+        # `rev` first, as in `seal`: a write landing meanwhile only makes a difference pending.
+        rev = app.repo.sync_seq_of(session_id)
+        session = app.repo.get(session_id)
+        if rev is None or session is None:
+            raise ErasureNotSealed(COULD_NOT_SEAL)
+        sealed = app.repo.add_seal(
+            session_id,
+            SEAL_BEFORE_ERASURE,
+            force=True,
+            manifest=manifest_for(
+                session,
+                app.repo.list_comments(session_id),
+                rev=rev,
+                audio={**manifest["audio"], **{n: dict(e) for n, e in added.items()}},
+                audio_here=True,
+                erased=dict(manifest["erased"]),
+            ),
+        )
+        if sealed is None:
+            raise ErasureNotSealed(COULD_NOT_SEAL)
+        return {**manifest["audio"], **{n: dict(e) for n, e in added.items()}}, dict(
+            manifest["erased"]
+        )
     return dict(manifest["audio"]), dict(manifest["erased"])
 
 
@@ -608,7 +643,7 @@ def _seal_erased(
     entry's id, or a function that writes it: called once the last seal is known to be in
     format 2 and only the seal itself is left to make. None when the meeting has no record to put
     it in (the deletion is logged all the same)."""
-    base = _baseline(app, session_id)
+    base = _baseline(app, session_id, measured)
     if base is None:
         if callable(deletion):
             deletion()

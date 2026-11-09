@@ -115,6 +115,67 @@ def test_a_file_swapped_before_erasure_is_recorded_as_not_matching(client, ctx, 
     ]
 
 
+def _add_part(ctx, sid, path, name="part2.ogg", body=b"OggS" + b"p2" * 700):
+    """A recording added to the meeting after its last seal (as recording into it again does)."""
+    from mnemosyne.models.session import Recording
+
+    extra = path.parent / name
+    extra.write_bytes(body)
+    session = ctx.repo.get(sid)
+    ctx.sessions.set_audio(
+        sid,
+        session.audio_file,
+        [
+            *session.recordings,
+            Recording(source="mic", device_id=1, device_name="Mic 2", path=str(extra)),
+        ],
+    )
+    return extra
+
+
+def test_a_part_added_after_the_last_seal_is_entered_then_erased_without_a_problem(
+    client, ctx, tmp_path
+):
+    sid, path = _here(ctx, tmp_path)
+    records.seal(ctx, sid, "transcribed")
+    extra = _add_part(ctx, sid, path)
+    digest = _sha(extra)
+    assert client.delete(f"/api/sessions/{sid}/audio").status_code == 200
+    assert not extra.exists() and not path.exists()
+    seals = ctx.repo.seals(sid)
+    assert [s["reason"] for s in seals] == [
+        "transcribed",
+        records.SEAL_BEFORE_ERASURE,
+        "audio deleted",
+    ]
+    assert extra.name in seals[1]["manifest"]["audio"]  # entered with its digest first
+    check = records.verify(ctx, sid)
+    assert check.ok, check.problems
+    assert {e.name: (e.sha256, e.matched) for e in check.erased} == {
+        extra.name: (digest, True),
+        path.name: (_sha_of_erased(check, path.name), True),
+    }
+
+
+def _sha_of_erased(check, name):
+    return next(e.sha256 for e in check.erased if e.name == name)
+
+
+def test_a_sealed_file_swapped_while_a_part_is_added_is_still_not_matched(client, ctx, tmp_path):
+    sid, path = _here(ctx, tmp_path)
+    records.seal(ctx, sid, "transcribed")
+    sealed = _sha(path)
+    path.write_bytes(b"OggS" + b"swapped" * 300)
+    extra = _add_part(ctx, sid, path)
+    assert client.delete(f"/api/sessions/{sid}/audio").status_code == 200
+    erased = ctx.repo.seals(sid)[-1]["manifest"]["erased"]
+    assert erased[path.name]["matched"] is False and erased[path.name]["sha256"] != sealed
+    assert erased[extra.name]["matched"] is True
+    assert records.verify(ctx, sid).problems == [
+        f"Audio file {path.name} no longer matched the record when it was deleted"
+    ]
+
+
 def test_erasing_encrypted_audio_keeps_the_plaintext_digest(client, ctx, tmp_path):
     from tests.test_records import _encrypt
 
@@ -294,3 +355,22 @@ def test_deleting_without_the_hook_still_logs(ctx, tmp_path):
     ctx.storage.delete_audio(sid, by="Ana", role="admin", detail="why")
     (row,) = ctx.repo.deletions()
     assert (row["by"], row["role"], row["reason"]) == ("Ana", "admin", "why")
+
+
+@needs_ffmpeg
+def test_combining_a_target_whose_joined_file_was_never_sealed_has_no_problem(client, ctx):
+    t0 = datetime(2026, 9, 28, 10, 0)
+    a = _meeting(ctx, "Planning", 2.0, t0 + timedelta(minutes=10), [("Ana", 0.5, "hello")], {})
+    b = _meeting(ctx, "Earlier", 2.0, t0, [("Bob", 0.5, "hi")], {})
+    # Sealed with only the per-source file: the joined mix was added since (never in any seal).
+    real = ctx.repo.get(a).audio_file
+    ctx.repo.clear_audio(a)
+    records.seal(ctx, a, "transcribed")
+    ctx.sessions.set_audio(a, real, [])
+    job = client.post(f"/api/sessions/{a}/combine", json={"other_id": b}).json()
+    done = _wait(client, job["id"])
+    assert done["status"] == "completed", done["error"]
+    assert records.SEAL_BEFORE_ERASURE in [x["reason"] for x in ctx.repo.seals(a)]
+    check = records.verify(ctx, a)
+    assert check.ok, check.problems
+    assert real.rsplit("/", 1)[-1] in [e.name for e in check.erased]
