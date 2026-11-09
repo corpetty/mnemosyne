@@ -426,3 +426,91 @@ def test_a_swapped_image_in_the_notes_is_a_problem(ctx, tmp_path):
     assert records.verify(ctx, sid).ok
     notes_media.path(ctx, sid, sha(data)).write_bytes(webp(pad=b"x" * 100))
     assert records.IMAGE_CHANGED in records.verify(ctx, sid).problems
+
+
+def _export(ctx, sid, tmp_path):
+    dest = tmp_path / "export.zip"
+    records.export_zip(ctx, records.ExportRequest(session_ids=[sid]), dest)
+    z = zipfile.ZipFile(dest)
+    folder = next(n for n in z.namelist() if n.endswith("/record.json")).removesuffix("record.json")
+    return z, folder
+
+
+def _recomputed(z, folder):
+    """What a checker does: every part's digest from the export's files alone."""
+    import json
+
+    from mnemosyne.storage import records as r
+
+    record = json.loads(z.read(folder + "record.json"))
+    files = {k: json.loads(z.read(folder + v)) if v.endswith(".json") else None
+             for k, v in record["parts"].items()}  # fmt: skip
+    files["summary"] = z.read(folder + record["parts"]["summary"]).decode()
+    files["notes"] = z.read(folder + record["parts"]["notes"]).decode()
+    meeting = files["meta"]
+    payloads = {
+        "transcript": r.transcript_payload(files["transcript"]),
+        "summary": r.summary_payload(files["summary"]),
+        "summary_data": r.summary_data_payload(files["summary_data"]),
+        "notes": r.notes_payload(files["notes"]),
+        "comments": r.comments_payload(files["comments"]),
+        "meta": r.meta_payload(meeting),
+        "external_notes": r.external_notes_payload(files["external_notes"]),
+    }
+    return record, r.part_digests(payloads)
+
+
+def test_an_export_recomputes_the_last_seals_parts_from_its_files(ctx, tmp_path):
+    import json
+
+    from mnemosyne.models.session import AgendaItem, ExternalNotes
+
+    sid, _ = _saved(
+        ctx, tmp_path, notes="# Notes\n\n- point ![x](mnemosyne:image/a.webp@1x1)\n",
+        summary="We ship Friday.", agenda=[AgendaItem(text="Release", covered=True)],
+        attendees=["Ana"], participants=["Ana"], owner_id="u1",
+    )  # fmt: skip
+    ctx.repo.add_external_notes(sid, ExternalNotes(source="Gemini", text="Ship Friday."))
+    cid = ctx.repo.add_comment(sid, text="agreed", target="notes")
+    gone = ctx.repo.add_comment(sid, text="oops")
+    ctx.repo.delete_comment(gone)
+    assert records.seal(ctx, sid, "transcribed")
+    z, folder = _export(ctx, sid, tmp_path)
+    names = z.namelist()
+    for f in ("notes.md", "comments.json", "external_notes.json", "record.json", "meeting.json"):
+        assert folder + f in names
+    assert z.read(folder + "notes.md").decode().startswith("# Notes")
+    assert cid in [c["id"] for c in json.loads(z.read(folder + "comments.json"))]
+    meeting = json.loads(z.read(folder + "meeting.json"))
+    assert meeting["owner_id"] == "u1" and meeting["agenda"] == [
+        {"text": "Release", "covered": True}
+    ]
+    seals = json.loads(z.read(folder + "seals.json"))["seals"]
+    assert seals[-1]["manifest"]["parts"]
+    record, digests = _recomputed(z, folder)
+    assert record["manifest"] == seals[-1]["manifest"]
+    assert record["chain_head"] == seals[-1]["chain"] and record["format"] == 2
+    assert digests == record["manifest"]["parts"]
+    assert record["erased"] == []
+    sums = z.read("SHA256SUMS").decode()
+    for f in ("notes.md", "comments.json", "external_notes.json", "record.json"):
+        assert f"  {folder}{f}\n" in sums
+    assert "records verify" in z.read("README.txt").decode()
+
+
+def test_an_export_after_an_erasure_lists_it(ctx, tmp_path):
+    import json
+
+    sid, path = _saved(ctx, tmp_path)
+    records.seal(ctx, sid, "transcribed")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    _erase(ctx, sid, path)
+    z, folder = _export(ctx, sid, tmp_path)
+    record = json.loads(z.read(folder + "record.json"))
+    assert [(e["name"], e["sha256"], e["by"], e["reason"]) for e in record["erased"]] == [
+        (path.name, digest, "Admin", "Retention")
+    ]
+    assert path.name in record["manifest"]["erased"]
+    assert record["verification"]["erased"] == record["erased"]
+    _, digests = _recomputed(z, folder)
+    assert digests == record["manifest"]["parts"]
