@@ -2,6 +2,7 @@
 config file, a FakeEngine in place of WhisperX, and no real LLM providers."""
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,22 @@ for _name in Settings.model_fields:
     os.environ.pop(_name.upper(), None)
 for _key in ("MNEMOSYNE_DATA_DIR", "MNEMOSYNE_CONFIG_FILE", "MNEMOSYNE_APP_PID"):
     os.environ.pop(_key, None)
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "linux_only(reason): needs PipeWire, /proc, systemd or libc; skipped elsewhere"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if sys.platform == "linux":
+        return
+    for item in items:
+        marker = item.get_closest_marker("linux_only")
+        if marker:
+            reason = marker.args[0] if marker.args else marker.kwargs.get("reason", "")
+            item.add_marker(pytest.mark.skip(reason=f"Linux only: {reason}"))
 
 
 @pytest.fixture
