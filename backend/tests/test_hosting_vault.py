@@ -312,7 +312,7 @@ def _prompts(provider: FakeProvider) -> str:
     return "\n".join(c["transcript"] for c in provider.calls)
 
 
-def test_only_the_owners_digest_is_written_to_the_vault_and_it_covers_his_view(vault_host):
+def test_only_the_owners_digest_is_written_to_the_vault_and_it_covers_only_his_own(vault_host):
     m = vault_host
     provider = _fake(m)
     _grant_team_to_owner(m)
@@ -320,10 +320,11 @@ def test_only_the_owners_digest_is_written_to_the_vault_and_it_covers_his_view(v
     job = _digest(m, "window")
     assert job["status"] == "completed", job.get("error")
     seen = _found(_prompts(provider))
-    assert seen == THE_OWNERS | SHARED_WITH_H | {"team"}  # the granted one, not teamgrant
+    assert seen == THE_OWNERS | SHARED_WITH_H  # a member's meeting granted to him is not in it
     assert job["result"]["path"]
     files = list((m.vault / "meetings" / "digests").glob("*.md"))
     assert len(files) == 1 and files[0].exists()
+    assert marker("team") not in files[0].read_text()
     assert marker("teamgrant") not in files[0].read_text()
 
 
@@ -365,9 +366,11 @@ def test_a_plain_computer_still_writes_its_digest(make_machine, tmp_path):  # no
     assert job["result"]["path"] and Path(job["result"]["path"]).exists()
 
 
-def test_the_owners_scheduled_digest_looks_at_his_view(vault_host, monkeypatch):
-    """Only members' meetings in the week: the owner has nothing to digest, a member does."""
+def test_the_owners_scheduled_digest_ignores_members_meetings(vault_host, monkeypatch):
+    """Only members' meetings in the week: the owner has nothing to digest, a member does.
+    The member's meeting is granted to the owner, and still not his digest's."""
     m = vault_host
+    _grant_team_to_owner(m)
     ctx = m.ctx
     ctx.settings.digest_weekday = 6
     ctx.settings.digest_hour = 17

@@ -8,8 +8,10 @@ anything and the callers behave as before.
 - The vault (Obsidian: auto-export, export-all, daily/people/topic/decision notes, Ask notes,
   the read-back of ticks and edits) gets the owner's meetings and those contacts shared with
   him (`access.PERSONAL`, then `shared_in_obsidian` as before), never a member's.
-- The owner's Ask and digest see what he would as a member plus his own (`access.VIEW`): a
-  member's meeting only when it was granted to him.
+- The owner's Ask sees what he would as a member plus his own (`access.VIEW`): a member's meeting
+  only when it was granted to him.
+- The owner's digest is written to his vault, so it covers what may reach the vault
+  (`access.PERSONAL`), not his view: derived text from a member's meeting never lands there.
 - Only the owner's digest is written to the vault. A dedicated server writes none (no one's
   vault is the server's), a member's digest on a host stays in the database.
 - MCP requests (a header, `CLIENT_HEADER`) are held to the same view: an assistant is usually a
@@ -81,6 +83,15 @@ def owner_view(app: AppContext) -> Iterator[None]:
     anyone else keeps their own scope (a member's Ask is over what a member reads)."""
     h = owner(app)
     with access.limited_to(view(app), only_for=h):
+        yield
+
+
+@contextmanager
+def owner_digest(app: AppContext) -> Iterator[None]:
+    """Everything read inside is what may reach the vault when the owner is asking for his digest
+    (it is written to his vault); anyone else keeps their own scope."""
+    h = owner(app)
+    with access.limited_to(vault(app), only_for=h):
         yield
 
 

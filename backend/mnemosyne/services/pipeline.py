@@ -736,8 +736,8 @@ def make_digest(app: AppContext, start, end, provider: str = "", model: str = ""
         mdl = model or st.default_model
         extra = glossary_instructions(parse_glossary(st.glossary))
         ctx.update("Gathering meetings...")
-        # The owner's digest covers what he would read as a member plus his own meetings.
-        with host_scope.owner_view(app):
+        # The owner's digest goes to his vault: his meetings and those shared with him only.
+        with host_scope.owner_digest(app):
             sessions = await asyncio.to_thread(app.repo.sessions_between, start, end)
         if is_cloud(prov):
             sessions = [s for s in sessions if not s.local_only]

@@ -532,7 +532,7 @@ class AppContext:
             return None
         from ..services import host_scope
 
-        with host_scope.owner_view(self):  # the owner's digest covers his view (host_scope.py)
+        with host_scope.owner_digest(self):  # his digest: vault scope
             due = any(s.summary.strip() for s in self.repo.sessions_between(*week))
         if not due:
             return None
