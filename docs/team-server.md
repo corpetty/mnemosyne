@@ -10,14 +10,27 @@ This page is for whoever sets the machine up. `scripts/team-server-check.sh` che
 
 ## From your desktop
 
-The quickest team needs no server: in the desktop app, Settings → General → **Share this computer
-with my team**. You become the first admin, the meetings you have stay yours, and the app shows the
-address others open (`https://<this computer>:8443`, with a QR code). Add people under **People**
-and send each their invite link. Browsers warn once about the certificate, which this computer made
-for itself: they continue past it (Advanced → Accept), and recording in a browser works over that
-HTTPS address. With Tailscale (HTTPS certificates turned on for your tailnet), **Use my Tailscale
-name** gives the tailnet address a real certificate instead: no warning, and teammates working from
-home can join too. Tailscale only gives certificates to root or its operator: run
+The quickest team needs no server: in the desktop app, Settings → Devices and people → This
+computer → **Team server** (the third card, next to "Main computer" and "Uses my main computer"),
+then **Make this a team server**. You become the first admin, the meetings you have stay yours, and
+the app shows the address others open (`https://<this computer>:8443`, with a QR code). The role is
+not stored: a computer is a team server exactly while team mode is on.
+
+Choosing the role says what changes: others sign in to this computer from a browser; **library sync
+and People with Mnemosyne stop** (both are refused on a team server, and neither is listed in the
+Settings tab); **publishing and live-notes links are off for members** until an admin allows them
+(**Allow members to publish**, **Allow guest notes**); a laptop cannot hand recordings over to it;
+and Mnemosyne's relay and notes server are not used unless you turn them on under Advanced (meetings
+stay on the server). Stopping returns the computer to a main computer; accounts and meetings stay.
+
+Once it is a team server the tab gains a **Team server** section: **People and access** (add people
+and send each their invite link), the two allow switches above, **Flagged phrases**, **Use my
+Tailscale name**, **Keep sharing when I quit Mnemosyne** and **Keep this computer awake while it is
+shared**. Browsers warn once about the certificate, which this computer made for itself: they
+continue past it (Advanced → Accept), and recording in a browser works over that HTTPS address. With
+Tailscale (HTTPS certificates turned on for your tailnet), **Use my Tailscale name** gives the
+tailnet address a real certificate instead: no warning, and teammates working from home can join
+too. Tailscale only gives certificates to root or its operator: run
 `sudo tailscale set --operator=$USER` once. The certificate publishes the name in public
 certificate logs. If the others cannot connect, open the port in the firewall; the app shows the
 command (`firewall-cmd` or `ufw`). A laptop that moves to another network keeps working: the
@@ -25,8 +38,8 @@ certificate follows its new address. The computer has to be on while they use it
 are transcribed on it: it does not go to sleep while anyone records, and **Keep this computer awake
 while it is shared** keeps it awake all day. **Keep sharing when I quit Mnemosyne** leaves the
 backend serving them after you quit (until you log out); Settings → General → Window can also make
-closing the window keep Mnemosyne in the tray. **Stop sharing** closes the address; accounts and
-meetings stay.
+closing the window keep Mnemosyne in the tray. **Stop being a team server** closes the address;
+accounts and meetings stay.
 
 The rest of this page is for a dedicated machine, which can run while nobody is at it, encrypts with
 a TPM-sealed key and has its own backups.
@@ -143,7 +156,7 @@ sudo -u mnemosyne MNEMOSYNE_DATA_DIR=/srv/mnemosyne/data \
 ```
 
 It prints an invite link. Opening it signs that browser in as that person; it works once and
-expires after a week. From then on the admin adds everyone else in Settings → General → People and
+expires after a week. From then on the admin adds everyone else in Settings → Devices and people → Team server → People and
 access, and sends each their own link (directly, not in a shared channel: whoever opens it first
 signs in as them). Someone on a second computer gets a second link.
 
@@ -151,7 +164,7 @@ signs in as them). Someone on a second computer gets a second link.
 - **Reviewer**: reads every meeting, changes only their own.
 - **Admin**: everything, including people and settings.
 
-A meeting's owner shares it from its header (Share): with everyone, or with chosen people, who
+A meeting's owner shares it from its header (Share → Team members…): with everyone, or with chosen people, who
 can then read it, listen to it and tick off its action items. A meeting named from someone's
 calendar is shared with the team members invited to it (by email), unless an admin turns that off.
 Everyone sets their own preferences at the top of Settings → General: the summary style and
@@ -233,7 +246,7 @@ For a team that keeps its meetings as records:
 ## Publishing
 
 Publishing a meeting (a curated, encrypted copy readers open with a link) is off on a team server
-until an admin turns on `allow_publishing`. Then a meeting's owner or an admin can publish it;
+until an admin turns on `allow_publishing` (Settings → Devices and people → Team server → Allow members to publish). Then a meeting's owner or an admin can publish it;
 everyone else who can read the meeting sees that it is published, not the link. Published
 meetings are served read-only by this server at `/p/<id>` (no sign-in: the key is in the link),
 or by a publish host (`publish_host`, with `publish_host_token` when the host is closed). Hosted
@@ -243,7 +256,7 @@ deletes the copy; copies readers already opened cannot be taken back.
 ## Guest notes
 
 A link that lets people outside the team type into a live meeting's notes (see
-[guest-notes.md](guest-notes.md)) is off until an admin turns on `allow_guest_notes`. Then a
+[guest-notes.md](guest-notes.md)) is off until an admin turns on `allow_guest_notes` (Team server → Allow guest notes). Then a
 meeting's owner or an admin can start, end and stop it. The room lives on the host in
 `guest_host` or `publish_host`, not on this server; guests' typing and comments become part of
 the meeting, and `require_consent` reminds the owner. Meetings shared from another person's

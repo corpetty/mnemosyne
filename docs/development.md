@@ -330,9 +330,11 @@ API_TOKEN=some-long-random-string uv run python main.py --host 0.0.0.0 --port 80
 ```
 
 (or set `api_token` in that machine's `~/.config/mnemosyne/config.toml`). In the app on any other
-machine: Settings → Connection → Backend URL `http://gpu-box:8008`, the token, Connect. Recording and
-echo cancellation happen on the backend's machine; the client works with sessions, imports files, and
-runs summaries. No TLS is provided: use a trusted LAN or Tailscale; [remote-access.md](remote-access.md)
+machine: Settings → Devices and people → Advanced → Connect to a backend by address, Backend URL
+`http://gpu-box:8008`, the token, Connect. Recording and echo cancellation happen on the backend's
+machine; the client works with sessions, imports files, and runs summaries. (A laptop that should
+record with its own microphone into a main computer is paired instead: see
+[remote-access.md](remote-access.md).) No TLS is provided: use a trusted LAN or Tailscale; [remote-access.md](remote-access.md)
 covers Tailscale and pairing phones.
 
 ## Continuous integration

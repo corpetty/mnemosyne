@@ -1,7 +1,7 @@
 # Devices and people: one place, two questions (design proposal)
 
 2026-11-09. Input: the inventory in [2026-11-09-connections-review.md](2026-11-09-connections-review.md).
-Status: proposal for Corey; nothing built.
+Status: built 2026-11-09 on branch `connections` (tasks 1-9); decisions D1-D7 answered below. See "Changed while building" at the end for where the build differs from this text.
 
 Today the app offers five ways to reach a computer, five pairing ceremonies, six meanings of
 "Share", and options whose effect hangs on settings in other tabs (the relay on an AI switch, team
@@ -233,3 +233,44 @@ else **main**. No migration.
 
 Order: 1 → 2 → 3 → (4, 5) and 6 → 7 → 8 → 9. Files shared: SettingsPanel.svelte (1, 3), SessionView.svelte (5,
 8), auth.py (6), routes/pairing.py (2), remote.rs (6, 8).
+
+---
+
+## 5. Changed while building
+
+What differs from sections 1-4 (the rest was built as written):
+
+- **Routes under `/api/connections`.** `/api/devices` is the audio-device list, so the connected devices are
+  `GET /api/connections/devices` and the hand-off is `POST /api/connections/handoff` (task 2 and 6 name them this way
+  already; `/api/devices` stays audio). `GET /api/system/role` answers `main` or `team` only: the "uses my main
+  computer" role is known to the desktop shell alone.
+- **`prepare_pairing` and the local token key.** The shared helper is `services/pairing_prep.py` `prepare_pairing(ctx)`
+  with `POST /api/pairing/prepare` so a window can take a freshly made API token before it asks for a code
+  (`preparePairing` in api/backend.ts). Because that token is made for the window's OWN backend while it may be
+  connected to a main computer, the window keeps it apart under `mnemosyne.connection.local`
+  (`connectionState.localToken`); `useLocal()` restores it.
+- **`/api/system` joined `LOCAL_PATHS`** (with `/api/system/attach` and the new `/api/system/main`), because the
+  shell's `gpu_install_wanted` check broke once pairing had made an API token the shell never has.
+- **The shell keeps the pairing token** (`remote.json`, 0600) to tell its backend `PUT /api/system/main`. A laptop paired
+  before this version has no token on disk: it must be **paired again once**; until then it browses the main computer
+  as before but cannot record into it.
+- **Failed outbox items.** A refused item (`failed`, `last_error`) is not retried; the status bar list offers **Send as a
+  new meeting** (`POST /api/satellite/outbox/{id}/new-meeting`) and **Discard** (`DELETE /api/satellite/outbox/{id}`).
+  A hand-off that would replace the audio of a meeting that was transcribed meanwhile is the usual cause.
+- **`app_watch` keeps a laptop recording alive** like a local one (the grace period after a crashed window), and saves it
+  through `satellite.stop()` when nobody comes back.
+- **Wizard and Share.** "No, I already have one" shows Welcome, the question, a "Main computer" step (paste the invite; Next
+  waits for the connection) and Done: no engine or model steps and no model downloads. The Share button says "live notes link
+  on" beside it rather than changing colour only.
+
+Known limits (accepted for this version):
+
+- A laptop recording always makes a **new meeting** on the main computer; it cannot add a part to an existing one.
+- **No level meters** during a laptop recording (the meters read a device the recorder holds).
+- **No consent hand-over for offline recordings**: the consent answer goes to the main computer only when the
+  recording is streamed.
+- **No acknowledgement of the last bytes in flight at Stop**: a stream that dropped is repaired by the complete local
+  audio; one that did not is trusted as it arrived.
+- Tests: the two-backend flow (laptop window with a real local backend and a real main computer) is not an e2e spec;
+  tests-e2e/devices.spec.ts uses a second demo backend (port 8058) for My devices and a stubbed local backend for the
+  laptop states. The backend suites run two apps over `httpx.ASGITransport` (test_handoff.py, test_satellite.py).
