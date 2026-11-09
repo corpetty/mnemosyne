@@ -107,7 +107,7 @@ publishing and guest notes are off for members until you allow them."
    the laptop does both pairings itself. Phones get the same invite as a QR code.
 4. **Laptop records, main computer works** (new): the satellite's backend streams captured PCM to
    the main computer's `/api/record` while connected; an outbox and a hand-off route
-   (`POST /api/devices/handoff`: audio parts + notes + times, the main computer is the origin) when
+   (`POST /api/connections/handoff`: audio parts + notes + times, the main computer is the origin) when
    not. The laptop's backend keeps running in the satellite role, as it does today, for capture and
    the outbox only.
 5. **Offline**: the satellite's UI shows a clear "not reachable" state with Record still available
@@ -175,13 +175,13 @@ else **main**. No migration.
    token and remote access (computer, sync, contact and phone codes) makes them itself: a shared
    `prepare_pairing(ctx)` generates and persists `api_token` when empty, turns `remote_access` on, starts the
    link and waits for it (bounded), and answers 409 with a plain reason when it cannot (no sidecar).
-   `GET /api/devices` (admin): one list of what is connected to this computer, each with a `kind` (`phone`,
+   `GET /api/connections/devices` (admin; `/api/devices` is the audio-device list): one list of what is connected to this computer, each with a `kind` (`phone`,
    `computer`, `sync`, `contact`), name, `last_seen_at`, and what it can do (one short phrase per kind).
    `GET /api/system/role` → `main` | `team`. Tests; `pnpm gen:api`.
 3. **The Devices and people tab** (careful; 2). The mockup in this doc: a new Settings tab "Devices and
    people" (SettingsPanel.svelte tabs) with sections This computer (the role picker: Main computer / Uses my
    main computer → the RemoteConnect paste flow / Team server → its consequence text, then today's "Share
-   this computer" controls), My devices (one list from `/api/devices`; Add a device → a computer invite or a
+   this computer" controls), My devices (one list from `/api/connections/devices`; Add a device → a computer invite or a
    phone QR; More: another main computer = SyncSettings), People (ContactsSettings + switches for
    `shared_in_ask`, `shared_in_search`, `shared_in_digest`, `shared_in_obsidian`), Links for people without
    Mnemosyne (where pages are kept, expiry, live-notes end hours), Advanced collapsed (Use Mnemosyne's relay
@@ -203,7 +203,7 @@ else **main**. No migration.
 6. **Main computer side of a device** (heavy; 2). (a) `PUT /api/system/main` on the laptop's backend, in
    auth.py `LOCAL_PATHS`: the shell tells its own backend the main computer's tunnel URL, token and name when
    remote access connects (and at launch), `DELETE` when it disconnects (src-tauri/src/remote.rs). (b) On the
-   main computer, `POST /api/devices/handoff` (DESKTOP devices only): a finished recording from a device
+   main computer, `POST /api/connections/handoff` (DESKTOP devices only): a finished recording from a device
    (audio per source and part, title, started_at, notes markdown) becomes a meeting here, origin this
    computer, with history lines on both sides and the usual finish/auto-transcribe; idempotent by a handoff id.
    Tests with two apps over httpx.ASGITransport as test_sync_*.py do.
