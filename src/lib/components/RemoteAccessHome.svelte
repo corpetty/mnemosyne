@@ -4,13 +4,13 @@
 	import { createPairingCode, getRemoteAccess } from '$lib/api/backend.js';
 	import type { PairingCode, RemoteAccess } from '$lib/types/index.js';
 
-	/** Saved settings this depends on: remote_access, remote_relays and whether an API token is set. */
+	/** Saved settings this depends on: remote_access and remote_relays. Pairing a computer turns
+	 * remote access on itself, with the API token it needs. */
 	let {
 		enabled = false,
 		relays = '',
-		tokenSet = false,
 		ourServers = true
-	}: { enabled?: boolean; relays?: string; tokenSet?: boolean; ourServers?: boolean } = $props();
+	}: { enabled?: boolean; relays?: string; ourServers?: boolean } = $props();
 
 	let status = $state<RemoteAccess | null>(null);
 	let code = $state<PairingCode | null>(null);
@@ -19,7 +19,7 @@
 
 	// The sidecar takes a few seconds to reach a relay after it is turned on: poll until it runs.
 	$effect(() => {
-		void [enabled, relays, tokenSet];
+		void [enabled, relays];
 		let stop = false;
 		const poll = async () => {
 			for (let i = 0; i < 30 && !stop; i++) {
@@ -71,35 +71,29 @@
 			Starting…
 		{/if}
 	</p>
-	{#if status?.running}
-		{#if !tokenSet}
-			<p class="text-xs text-yellow-500">Set an API token above to pair computers.</p>
-		{:else}
-			<div class="flex items-center gap-3">
-				<button
-					onclick={pairComputer}
-					class="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200"
-					>{code ? 'New invite' : 'Pair a computer'}</button
-				>
-				{#if error}<span class="text-xs text-red-400">{error}</span>{/if}
-			</div>
-			{#if code?.invite}
-				<div class="flex items-center gap-2 max-w-2xl">
-					<input
-						readonly
-						value={code.invite}
-						aria-label="Invite for the other computer"
-						class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-300 w-full font-mono"
-					/>
-					<button onclick={copy} class="text-xs text-gray-400 hover:text-gray-200 whitespace-nowrap"
-						>{copied ? 'Copied' : 'Copy'}</button
-					>
-				</div>
-				<p class="text-xs text-gray-600">
-					Paste it on the other computer in Settings → Connection → Remote access. Works once, until
-					{clock(code.expires_at)}. That computer gets its own key; remove it from the list below at any time.
-				</p>
-			{/if}
-		{/if}
+	<div class="flex items-center gap-3">
+		<button
+			onclick={pairComputer}
+			class="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200"
+			>{code ? 'New invite' : 'Pair a computer'}</button
+		>
+		{#if error}<span class="text-xs text-red-400">{error}</span>{/if}
+	</div>
+	{#if code?.invite}
+		<div class="flex items-center gap-2 max-w-2xl">
+			<input
+				readonly
+				value={code.invite}
+				aria-label="Invite for the other computer"
+				class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-300 w-full font-mono"
+			/>
+			<button onclick={copy} class="text-xs text-gray-400 hover:text-gray-200 whitespace-nowrap"
+				>{copied ? 'Copied' : 'Copy'}</button
+			>
+		</div>
+		<p class="text-xs text-gray-600">
+			Paste it on the other computer in Settings → Connection → Remote access. Works once, until
+			{clock(code.expires_at)}. That computer gets its own key; remove it from the list below at any time.
+		</p>
 	{/if}
 </div>

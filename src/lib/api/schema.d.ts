@@ -575,6 +575,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/connections/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Connected Devices */
+        get: operations["list_connected_devices_api_connections_devices_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/contacts": {
         parameters: {
             query?: never;
@@ -1288,6 +1305,27 @@ export interface paths {
         get: operations["me_api_pairing_me_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pairing/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prepare
+         * @description Make this computer ready for the pairing `kind` (what the code routes do themselves), so
+         *     the window can take the new API token before it asks for the code.
+         */
+        post: operations["prepare_api_pairing_prepare_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3646,6 +3684,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** System Role */
+        get: operations["system_role_api_system_role_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks": {
         parameters: {
             query?: never;
@@ -4923,6 +4978,29 @@ export interface components {
             destinations: ("slack" | "matrix")[];
             /** Trackers */
             trackers: ("github" | "linear" | "jira")[];
+        };
+        /** ConnectedDevice */
+        ConnectedDevice: {
+            /** Can */
+            can: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "phone" | "computer" | "sync" | "contact";
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Name */
+            name: string;
+            /** Remove */
+            remove: string;
         };
         /** ContactInfo */
         ContactInfo: {
@@ -6544,6 +6622,24 @@ export interface components {
             reachable: boolean;
             /** Urls */
             urls: string[];
+        };
+        /** PrepareRequest */
+        PrepareRequest: {
+            /**
+             * Kind
+             * @default phone
+             * @enum {string}
+             */
+            kind: "phone" | "desktop" | "sync" | "contact";
+        };
+        /** PrepareResponse */
+        PrepareResponse: {
+            /** Api Token Set */
+            api_token_set: boolean;
+            /** New Api Token */
+            new_api_token: string | null;
+            /** Remote Access */
+            remote_access: boolean;
         };
         /** ProviderModels */
         ProviderModels: {
@@ -9432,6 +9528,14 @@ export interface components {
             /** Transcriber In Use */
             transcriber_in_use: string;
         };
+        /** SystemRole */
+        SystemRole: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "main" | "team";
+        };
         /** TaskItem */
         TaskItem: {
             /**
@@ -10969,6 +11073,26 @@ export interface operations {
             };
         };
     };
+    list_connected_devices_api_connections_devices_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectedDevice"][];
+                };
+            };
+        };
+    };
     list_contacts_api_contacts_get: {
         parameters: {
             query?: never;
@@ -12237,6 +12361,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PairedDeviceInfo"];
+                };
+            };
+        };
+    };
+    prepare_api_pairing_prepare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PrepareRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrepareResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -16495,6 +16652,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+        };
+    };
+    system_role_api_system_role_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemRole"];
                 };
             };
         };

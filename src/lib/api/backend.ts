@@ -46,6 +46,9 @@ import type {
   PeerShareInfo,
   ShareStatus,
   PairedDevice,
+  PrepareResult,
+  ConnectedDevice,
+  SystemRole,
   RemoteAccess,
   SyncStatus,
   SystemInfo,
@@ -840,10 +843,42 @@ export async function getPhoneLink(): Promise<PhoneLink> {
   return request('/api/server/phone');
 }
 
+type PairingKind = 'phone' | 'desktop' | 'sync' | 'contact';
+
+/** Fired after `preparePairing`, with its answer: the Settings form takes the new state, or its
+ * next Save would turn remote access off again. */
+export const PAIRING_PREPARED = 'mnemosyne:pairing-prepared';
+
+/**
+ * Make this computer ready for a pairing: the backend makes the API token (and, for everything
+ * but a phone, turns remote access on and waits for it). When it made the token, this window is
+ * the one that sent none, and it must carry the new one from now on or its next request is
+ * refused. Call it before any pairing route; it throws the backend's reason when it cannot.
+ */
+export async function preparePairing(kind: PairingKind): Promise<void> {
+  const r = await request<PrepareResult>('/api/pairing/prepare', {
+    method: 'POST',
+    body: JSON.stringify({ kind })
+  });
+  if (r.new_api_token) connectionState.save(connectionState.url, r.new_api_token, connectionState.remote);
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(PAIRING_PREPARED, { detail: r }));
+}
+
 /** A one-time pairing code: for a phone, the phone page addresses carrying it; for a computer,
- * the invite to paste on it (needs remote access running). */
-export async function createPairingCode(kind: 'phone' | 'desktop' | 'sync' | 'contact' = 'phone'): Promise<PairingCode> {
+ * the invite to paste on it. The API token and remote access are made first. */
+export async function createPairingCode(kind: PairingKind = 'phone'): Promise<PairingCode> {
+  await preparePairing(kind);
   return request('/api/pairing/codes', { method: 'POST', body: JSON.stringify({ kind }) });
+}
+
+/** Everything connected to this computer in one list: phones, computers, sync peers, contacts. */
+export async function getConnectedDevices(): Promise<ConnectedDevice[]> {
+  return request('/api/connections/devices');
+}
+
+/** `main`, or `team` on a team server. */
+export async function getSystemRole(): Promise<SystemRole> {
+  return request('/api/system/role');
 }
 
 // ---- Sharing with people (contacts and per-meeting shares) -------------------------------------
@@ -854,10 +889,12 @@ export async function getContacts(): Promise<ContactsResponse> {
 
 /** A one-time contact code; `invite` is what the other person pastes in their app. */
 export async function createContactCode(): Promise<PairingCode> {
+  await preparePairing('contact');
   return request('/api/contacts/codes', { method: 'POST' });
 }
 
 export async function pairContact(invite: string): Promise<ContactInfo> {
+  await preparePairing('contact');
   return request('/api/contacts/pair', { method: 'POST', body: JSON.stringify({ invite }) });
 }
 
@@ -908,6 +945,7 @@ export async function getSyncStatus(): Promise<SyncStatus> {
 }
 
 export async function syncPair(invite: string, name = ''): Promise<void> {
+  await preparePairing('sync');
   await request('/api/sync/pair', { method: 'POST', body: JSON.stringify({ invite, name }) });
 }
 
