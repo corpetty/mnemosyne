@@ -538,8 +538,11 @@ the owner's machines as the hub. A person key (services/person.py, Ed25519, seal
 at rest, shared by one person's machines through library-sync pairing). Contacts
 (services/contacts.py): signed cards listing a person's machines, a `contact` invite, CONTACT devices
 whose token is derived from a per-pair secret and opens only `/api/share/*` as that contact's
-Principal. Tunnelled TCP reaches the backend from 127.0.0.2 (link sidecar), so it always needs a
-token and never counts as this machine. Owner: `peer_shares`, a signed `SharedMeeting` per share
+Principal. Tunnelled TCP reaches the backend on its own loopback port, the tunnel listener
+(services/tunnel_listener.py, OS-picked, passed as the sidecar's `--tunnel`; `scope["tunnel"]`,
+auth.py `is_tunnelled`), so it always needs a token and never counts as this machine. No fallback
+(it used to come from 127.0.0.2, which macOS cannot bind, and fell back to 127.0.0.1 = this
+machine): no listener, no sidecar. 127.0.0.2 is still tunnelled (an older sidecar). Owner: `peer_shares`, a signed `SharedMeeting` per share
 with only the chosen parts (services/shares.py), `/api/share/changes` and signed contributions
 (comments, done/follow, notes frames) checked before the normal write paths. Recipient:
 `sessions.shared_from`, SharePuller (pull + verify + `apply_shared`), the outbox

@@ -3,7 +3,9 @@
 
 The sidecar holds this machine's iroh key (<data_dir>/link.key), accepts end-to-end encrypted
 connections from computers paired as "desktop" devices (services/pairing.py, which it reads
-from paired_devices.json), and forwards them to this backend on 127.0.0.1. Devices elsewhere
+from paired_devices.json), and forwards them to this backend's tunnel listener on 127.0.0.1
+(services/tunnel_listener.py: `--tunnel` is that port, never the main one, so a tunnelled
+request is never taken for this machine's own; LinkService.port). Devices elsewhere
 reach it through relays when a direct connection is not possible: those in the `remote_relays`
 setting (iroh-relay servers the user runs), else Mnemosyne's own (services/ours.py), else none
 (`--no-relay`: direct connections only). n0's public relays are never used. Relays only see
@@ -102,6 +104,8 @@ class LinkService:
 
     def __init__(self, data_dir: Path, port: int, binary: str | None = None):
         self.data_dir = data_dir
+        # Where the sidecar forwards tunnelled connections: the tunnel listener's port (the
+        # context sets it before each start), 0 = none yet.
         self.port = port
         self.binary = binary
         self.relays: list[str] = []  # services/ours.py relays(); none: no relay at all
@@ -208,9 +212,11 @@ class LinkService:
 
     def _argv(self) -> list[str]:
         """The arguments after the binary."""
+        if not self.port:  # never the main port: fail closed
+            raise RuntimeError("no tunnel listener to forward to")
         return [
             "home",
-            "--backend",
+            "--tunnel",
             f"127.0.0.1:{self.port}",
             "--data-dir",
             str(self.data_dir),

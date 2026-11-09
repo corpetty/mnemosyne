@@ -10,10 +10,13 @@ cargo test                       # home + device on one machine: pairing, tunnel
 cargo run -- home --help
 ```
 
-Tunnelled connections (and the pairing redeem) reach the backend from `127.0.0.2`
-(`TUNNEL_SOURCE`), so it can tell them from this machine's own, which come from `127.0.0.1`. If
-`127.0.0.2` cannot be bound (not Linux, loopback /8 not routed) the sidecar falls back to
-`127.0.0.1` and logs a warning once; the backend then cannot tell the difference.
+Tunnelled connections (and the pairing redeem) go to the address given as `home --tunnel`: the
+backend's tunnel listener (`backend/mnemosyne/services/tunnel_listener.py`), a loopback port of
+its own on which every request counts as a remote peer's, never as this machine's own. The flag
+has no default (and the old `--backend`, the main port, is gone, so an older backend cannot start
+this binary), and nothing falls back: if that port cannot be reached, the stream fails. (They
+used to come from the source address `127.0.0.2` to the main port, with a fallback to `127.0.0.1`
+where it could not be bound, e.g. macOS, which made a remote peer look like this machine.)
 
 Every iroh stream starts with one byte: `T` tunnels one TCP connection to the backend on
 `127.0.0.1`, `P` carries a pairing request that the home side redeems with the backend on the

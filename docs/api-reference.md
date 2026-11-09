@@ -334,7 +334,8 @@ computer go now.
 desktop app on this machine even when an `api_token` is set: the shell does not know the token (pairing
 makes it, the person never sees it). "This machine" means a loopback client on a non-team port, with a
 loopback `Host` and none of `Forwarded` / `X-Forwarded-*` / `X-Real-IP`; a request that came through the
-link sidecar's tunnel (127.0.0.2) is never local. `/api/system` joined the list in this version so the
+link sidecar's tunnel (the backend's tunnel listener, its own loopback port; also an older sidecar's
+127.0.0.2) is never local. `/api/system` joined the list in this version so the
 shell's `gpu_install_wanted` check keeps working once pairing has made an API token (the shell never has
 it). Everything else needs the token as before.
 

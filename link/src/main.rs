@@ -29,8 +29,11 @@ enum Command {
     /// After the ready line, stdin takes control commands (JSON lines: dial, hangup, pair; see
     /// the README), each answered by one JSON line on stdout. Closing stdin keeps serving.
     Home {
-        /// The backend's address.
-        #[arg(long, default_value = "127.0.0.1:8008")]
+        /// The backend's tunnel listener (127.0.0.1:<port>), never its main port: everything
+        /// connected there counts as a remote peer's. No default, so it is never guessed; and
+        /// not the old `--backend` (the main port), so a backend from before the tunnel listener
+        /// cannot start this binary at all.
+        #[arg(long = "tunnel", value_name = "ADDR")]
         backend: SocketAddr,
         /// The backend's data directory: holds link.key and paired_devices.json.
         #[arg(long)]
@@ -517,8 +520,16 @@ mod tests {
 
     #[test]
     fn no_relay_does_not_imply_no_lan() {
-        let cli = Cli::try_parse_from(["mnemosyne-link", "home", "--data-dir", "/x", "--no-relay"])
-            .unwrap();
+        let cli = Cli::try_parse_from([
+            "mnemosyne-link",
+            "home",
+            "--tunnel",
+            "127.0.0.1:18009",
+            "--data-dir",
+            "/x",
+            "--no-relay",
+        ])
+        .unwrap();
         match cli.command {
             Command::Home {
                 no_relay, no_lan, ..
