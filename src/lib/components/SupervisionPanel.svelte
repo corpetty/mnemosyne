@@ -63,7 +63,7 @@
 	<div>
 		<h2 class="text-xl font-semibold text-gray-100">Review</h2>
 		<p class="text-sm text-gray-500 mt-1">
-			Meetings where someone used a flagged phrase (Settings → General → Flagged phrases). Read each flagged line in context,
+			Meetings where someone used a flagged phrase (Settings → Devices and people → Team server → Flagged phrases). Read each flagged line in context,
 			then mark the meeting reviewed with a note; the review goes into its history.
 		</p>
 	</div>

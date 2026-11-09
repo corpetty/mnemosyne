@@ -29,7 +29,7 @@
 		return `Synced with ${peer.name} ${ago(peer.last_sync_at, tick)}${waitingNote(peer)}`;
 	});
 	function openSync() {
-		uiState.settingsTab = 'general';
+		uiState.settingsTab = 'devices';
 		openView('settings');
 	}
 </script>

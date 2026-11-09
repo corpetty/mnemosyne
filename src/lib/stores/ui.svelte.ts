@@ -1,7 +1,7 @@
 /** App-level view state shared by the shell components. */
 export type Tab = 'recording' | 'transcript' | 'summary' | 'notes' | 'export';
 export type BackendStatus = 'checking' | 'connected' | 'unreachable';
-export type SettingsTab = 'general' | 'recording' | 'transcription' | 'ai' | 'notes';
+export type SettingsTab = 'general' | 'recording' | 'transcription' | 'ai' | 'notes' | 'devices';
 export type ShellStage = 'installing' | 'starting' | 'ready' | 'error' | null;
 
 /** What the main area shows when no meeting is open (an open meeting always wins). */

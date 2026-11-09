@@ -6,9 +6,13 @@
 	import { teamState } from '$lib/stores/team.svelte.js';
 	import type { TeamStatus } from '$lib/types/index.js';
 
-	// "Share this computer with my team" (backend services/team_host.py): this computer becomes the
-	// team's server. Only the desktop app on this computer may turn it on or off.
-	let status = $state<TeamStatus | null>(null);
+	// The team server role (backend services/team_host.py): this computer becomes the team's
+	// server. Only the desktop app on this computer may turn it on or off. Settings → Devices and
+	// people shows it in two places that share one status (`teamState.host`): `role` in "This
+	// computer" (start, addresses, stop) and `options` in "Team server" (Tailscale name, keep
+	// sharing when I quit, keep this computer awake).
+	let { part = 'role' }: { part?: 'role' | 'options' } = $props();
+	const status = $derived(teamState.host);
 	let name = $state('');
 	let busy = $state(false);
 	let error = $state('');
@@ -16,7 +20,7 @@
 	let qr = $state('');
 
 	function show(s: TeamStatus) {
-		status = s;
+		teamState.host = s;
 		teamState.address = s.running ? (s.addresses[0] ?? '') : '';
 		if (!name) name = s.owner;
 	}
@@ -24,7 +28,7 @@
 	onMount(() => {
 		getTeam()
 			.then(show)
-			.catch(() => (status = null)); // an older backend
+			.catch(() => (teamState.host = null)); // an older backend
 	});
 
 	let url = $derived(status?.addresses[chosen] ?? status?.addresses[0] ?? '');
@@ -55,7 +59,7 @@
 	}
 
 	async function toggle(enabled: boolean) {
-		if (!enabled && !confirm('Stop sharing? People on your team can no longer reach this computer. Their accounts and meetings stay.')) return;
+		if (!enabled && !confirm('Stop being a team server? People on your team can no longer reach this computer. Their accounts and meetings stay.')) return;
 		busy = true;
 		error = '';
 		try {
@@ -63,16 +67,39 @@
 			await refreshMe();
 			if (enabled) await teamState.load();
 		} catch (e) {
-			error = e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not change sharing';
+			error = e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not change the team server';
 		} finally {
 			busy = false;
 		}
 	}
 </script>
 
-{#if status?.can_change}
-	<section aria-label="Share this computer">
-		<h3 class="text-lg font-semibold text-gray-200 mb-1">Share this computer with my team</h3>
+{#snippet tailscale(status: TeamStatus)}
+	{#if status.tailscale_name}
+		<div class="text-xs text-gray-400 space-y-1">
+			{#if status.tailscale_cert}
+				<p>
+					Tailscale: <span class="font-mono">{status.tailscale_name}</span> uses its own certificate, renewed by itself.
+					<button onclick={() => setOption('tailscale_cert', false)} disabled={busy} class="text-gray-500 hover:text-gray-300 underline">Stop using it</button>
+				</p>
+			{:else}
+				<button
+					onclick={() => setOption('tailscale_cert', true)}
+					disabled={busy}
+					class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50"
+				>Use my Tailscale name (no browser warning)</button>
+				<p class="text-gray-500">
+					Teammates on your tailnet then open <span class="font-mono">{status.tailscale_name}</span>, from the office or
+					from home. Getting the certificate publishes that name in public certificate logs.
+				</p>
+			{/if}
+			{#if status.tailscale_error}<p class="text-amber-400">{status.tailscale_error}</p>{/if}
+		</div>
+	{/if}
+{/snippet}
+
+{#if status?.can_change && part === 'role'}
+	<div aria-label="Team server" class="mt-3">
 		<p class="text-xs text-gray-500 mb-3">
 			Makes this computer your team's server: people on your network open its address in a browser, sign in with an
 			invite link, and record, read and share meetings there. You become the first admin and the meetings you have are
@@ -92,13 +119,13 @@
 					onclick={() => toggle(true)}
 					disabled={busy || !name.trim()}
 					class="px-3 py-1.5 text-sm rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-50"
-				>{busy ? 'Starting…' : 'Share this computer'}</button>
+				>{busy ? 'Starting…' : 'Make this a team server'}</button>
 			</div>
 		{:else}
 			<div class="rounded border border-gray-800 bg-gray-900 p-3 text-sm space-y-2">
 				{#if status.running}
 					<p class="text-gray-300">
-						<span class="text-green-500">Shared</span> as {status.owner} (admin). Others open:
+						<span class="text-green-500">On</span>, with {status.owner} as admin. Others open:
 					</p>
 					<div class="flex flex-wrap gap-4">
 						<ul class="space-y-1">
@@ -122,29 +149,8 @@
 							The certificate is made by this computer, so browsers warn the first time: choose to continue (Advanced →
 							Accept).
 						{/if}
-						Recording in a browser needs an HTTPS address. Add people below and send each their invite link.
+						Recording in a browser needs an HTTPS address. Add people under Team server below and send each their invite link.
 					</p>
-					{#if status.tailscale_name}
-						<div class="text-xs text-gray-400 space-y-1">
-							{#if status.tailscale_cert}
-								<p>
-									Tailscale: <span class="font-mono">{status.tailscale_name}</span> uses its own certificate, renewed by itself.
-									<button onclick={() => setOption('tailscale_cert', false)} disabled={busy} class="text-gray-500 hover:text-gray-300 underline">Stop using it</button>
-								</p>
-							{:else}
-								<button
-									onclick={() => setOption('tailscale_cert', true)}
-									disabled={busy}
-									class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50"
-								>Use my Tailscale name (no browser warning)</button>
-								<p class="text-gray-500">
-									Teammates on your tailnet then open <span class="font-mono">{status.tailscale_name}</span>, from the office or
-									from home. Getting the certificate publishes that name in public certificate logs.
-								</p>
-							{/if}
-							{#if status.tailscale_error}<p class="text-amber-400">{status.tailscale_error}</p>{/if}
-						</div>
-					{/if}
 					{#if status.firewall_hint}
 						<p class="text-xs text-gray-500">
 							If others cannot connect, open the port in the firewall:
@@ -152,43 +158,48 @@
 						</p>
 					{/if}
 				{:else}
-					<p class="text-amber-400">Sharing is on but not listening{status.error ? `: ${status.error}` : ''}.</p>
+					<p class="text-amber-400">The team server is on but not listening{status.error ? `: ${status.error}` : ''}.</p>
 					<button onclick={() => toggle(true)} disabled={busy} class="text-sm text-blue-400 hover:text-blue-300">Try again</button>
 				{/if}
-				<label class="flex items-start gap-2 text-sm text-gray-300 pt-1">
-					<input
-						type="checkbox"
-						class="mt-1"
-						checked={status.keep_sharing_after_quit}
-						onchange={(e) => setOption('keep_sharing_after_quit', e.currentTarget.checked)}
-					/>
-					<span>
-						Keep sharing when I quit Mnemosyne
-						<span class="block text-xs text-gray-500">Your team can go on using this computer until you log out or open Mnemosyne and stop sharing.</span>
-					</span>
-				</label>
-				<label class="flex items-start gap-2 text-sm text-gray-300">
-					<input
-						type="checkbox"
-						class="mt-1"
-						checked={status.keep_awake_while_sharing}
-						disabled={!status.keep_awake_available}
-						onchange={(e) => setOption('keep_awake_while_sharing', e.currentTarget.checked)}
-					/>
-					<span>
-						Keep this computer awake while it is shared
-						<span class="block text-xs text-gray-500">
-							{#if status.keep_awake_available}
-								It never sleeps while someone records here, either way; this keeps it awake all the time it is shared.
-							{:else}
-								Not available here (no systemd-inhibit, as in the Flatpak).
-							{/if}
-						</span>
-					</span>
-				</label>
-				<button onclick={() => toggle(false)} disabled={busy} class="text-sm text-gray-400 hover:text-red-400">Stop sharing</button>
+				<button onclick={() => toggle(false)} disabled={busy} class="text-sm text-gray-400 hover:text-red-400">Stop being a team server</button>
 			</div>
 		{/if}
 		{#if error}<p class="text-sm text-red-400 mt-2">{error}</p>{/if}
-	</section>
+	</div>
+{:else if status?.can_change && part === 'options' && status.enabled}
+	<div aria-label="Team server options" class="space-y-2">
+		{#if status.running}{@render tailscale(status)}{/if}
+		<label class="flex items-start gap-2 text-sm text-gray-300 pt-1">
+			<input
+				type="checkbox"
+				class="mt-1"
+				checked={status.keep_sharing_after_quit}
+				onchange={(e) => setOption('keep_sharing_after_quit', e.currentTarget.checked)}
+			/>
+			<span>
+				Keep sharing when I quit Mnemosyne
+				<span class="block text-xs text-gray-500">Your team can go on using this computer until you log out or open Mnemosyne and stop being a team server.</span>
+			</span>
+		</label>
+		<label class="flex items-start gap-2 text-sm text-gray-300">
+			<input
+				type="checkbox"
+				class="mt-1"
+				checked={status.keep_awake_while_sharing}
+				disabled={!status.keep_awake_available}
+				onchange={(e) => setOption('keep_awake_while_sharing', e.currentTarget.checked)}
+			/>
+			<span>
+				Keep this computer awake while it is shared
+				<span class="block text-xs text-gray-500">
+					{#if status.keep_awake_available}
+						It never sleeps while someone records here, either way; this keeps it awake all the time it is shared.
+					{:else}
+						Not available here (no systemd-inhibit, as in the Flatpak).
+					{/if}
+				</span>
+			</span>
+		</label>
+		{#if error}<p class="text-sm text-red-400">{error}</p>{/if}
+	</div>
 {/if}

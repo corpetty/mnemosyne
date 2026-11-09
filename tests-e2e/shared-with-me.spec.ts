@@ -86,9 +86,9 @@ test('a comment on a shared meeting waits for the owner\'s computer', async ({ p
 test('Settings lists the people I share with', async ({ page }) => {
   await openApp(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'General', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'People you share with' })).toBeVisible();
-  const ada = page.locator('div[aria-label="People you share with"] li').filter({ hasText: 'Ada Lovelace' });
+  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Devices and people', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'People', exact: true })).toBeVisible();
+  const ada = page.locator('div[aria-label="People"] li').filter({ hasText: 'Ada Lovelace' });
   await expect(ada).toBeVisible();
   // The fingerprint: 8 groups of 4 base32 characters.
   await expect(ada).toContainText(/(?:[A-Z2-7]{4} ){7}[A-Z2-7]{4}/);

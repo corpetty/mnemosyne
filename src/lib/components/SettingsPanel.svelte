@@ -1,16 +1,14 @@
 <script lang="ts">
 	import { onExternalClick } from '$lib/app/externalLink.js';
-	import { PAIRING_PREPARED, deleteSpeakerProfile, getSettings, getSystemInfo, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
+	import { PAIRING_PREPARED, deleteSpeakerProfile, getSettings, getSystemInfo, getSystemRole, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
 	import { loadAutoRecordSettings, openSetup, refreshMe } from '$lib/app/controller.svelte.js';
 	import { updateState } from '$lib/stores/update.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import { connectionState, LOCAL_BACKEND, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
-	import PhoneLink from './PhoneLink.svelte';
-	import RemoteAccessHome from './RemoteAccessHome.svelte';
-	import SyncSettings from './SyncSettings.svelte';
 	import ContactsSettings from './ContactsSettings.svelte';
-	import RemoteConnect from './RemoteConnect.svelte';
+	import MyDevices from './MyDevices.svelte';
+	import ThisComputer, { type Role } from './ThisComputer.svelte';
 	import StorageSettings from './StorageSettings.svelte';
 	import BackupSettings from './BackupSettings.svelte';
 	import ObsidianExportAll from './ObsidianExportAll.svelte';
@@ -35,6 +33,17 @@
 	// a team server: settings belong to its admins (members and reviewers only read them).
 	const readOnly = $derived(!!connectionState.me?.id && connectionState.me.role !== 'admin');
 	const teamAdmin = $derived(!!connectionState.me?.team_mode && connectionState.me.role === 'admin');
+	// This computer's role is derived, not stored: a team server when team mode is on (the role
+	// endpoint), "uses my main computer" when this window is connected through remote access, else main.
+	let systemRole = $state<'main' | 'team' | null>(null);
+	$effect(() => {
+		void connectionState.me?.team_mode; // a team server was started or stopped
+		getSystemRole()
+			.then((r) => (systemRole = r.role))
+			.catch(() => (systemRole = null));
+	});
+	const teamMode = $derived(systemRole ? systemRole === 'team' : !!connectionState.me?.team_mode);
+	const role = $derived<Role>(teamMode ? 'team' : connectionState.remote ? 'satellite' : 'main');
 	let settings = $state<SettingsResponse | null>(null);
 	// What the engines set to Automatic resolve to on this machine (for the hint beside them).
 	let system = $state<SystemInfo | null>(null);
@@ -170,6 +179,10 @@
 				whisper_compute_type: v.whisper_compute_type,
 				publish_host: v.publish_host,
 				publish_default_expiry_days: v.publish_default_expiry_days,
+				shared_in_ask: v.shared_in_ask,
+				shared_in_search: v.shared_in_search,
+				shared_in_digest: v.shared_in_digest,
+				shared_in_obsidian: v.shared_in_obsidian,
 				allow_publishing: v.allow_publishing,
 				allow_guest_notes: v.allow_guest_notes,
 				guest_host: v.guest_host,
@@ -411,7 +424,8 @@
 		{ id: 'recording', label: 'Recording' },
 		{ id: 'transcription', label: 'Transcription' },
 		{ id: 'ai', label: 'AI' },
-		{ id: 'notes', label: 'Notes & sharing' }
+		{ id: 'notes', label: 'Notes' },
+		{ id: 'devices', label: 'Devices and people' }
 	] as const;
 	const tab = $derived(uiState.settingsTab);
 
@@ -440,11 +454,8 @@
 			Settings on this server are managed by your administrator.
 		</p>
 	{/if}
-	{#if tab === 'general'}
-		<TeamHostSettings />
-	{/if}
-	{#if tab === 'general' && teamAdmin}
-		<TeamPeopleSettings />
+	{#if role === 'satellite' && tab !== 'devices'}
+		<p class="text-sm text-gray-400">These are your main computer's settings.</p>
 	{/if}
 	{#if tab === 'general' && !readOnly}
 		<RecordsSettings />
@@ -452,51 +463,8 @@
 			<span class={labelClass}>Records period (years; 0 = off): deleting a meeting or its audio sooner needs an admin and a reason</span>
 			<input type="number" min="0" max="30" bind:value={form.records_retention_years} disabled={locked('records_retention_years')} class={inputClass} />
 		</label>
-		<section aria-label="Flagged phrases">
-			<h3 class="text-lg font-semibold text-gray-200 mb-1">Flagged phrases</h3>
-			<p class="text-xs text-gray-500 mb-3">
-				Lines of a meeting's transcript that use one of these phrases are flagged, and the meeting waits in the Review view
-				until a reviewer marks it reviewed. A flag is a line to read in context, not a finding. Empty: nothing is flagged.
-			</p>
-			<label class="block">
-				<span class={labelClass}>Phrases (comma-separated; changing them checks every meeting again)</span>
-				<textarea rows="3" bind:value={form.review_phrases} disabled={locked('review_phrases')} placeholder="guarantee, off the record, between you and me" class={inputClass}></textarea>
-			</label>
-		</section>
 	{/if}
 	{#if tab === 'general'}
-		<!-- Connection (stored in this app instance, not on the backend) -->
-		<section>
-			<h3 class="text-lg font-semibold text-gray-200 mb-1">Connection</h3>
-			<p class="text-xs text-gray-500 mb-3">
-				Which backend this window talks to. Recording happens where the backend runs; a remote backend is for
-				working with sessions on another machine (e.g. a GPU box). Currently:
-				<code class="text-gray-400">{connectionState.url}</code>{#if connectionState.host} on <span class="text-gray-300">{connectionState.host}</span>{/if}.
-			</p>
-			<div class="grid grid-cols-2 gap-3">
-				{#if !SAME_ORIGIN}
-					<!-- Loaded from a server (a team server): that server is the backend. -->
-					<label>
-						<span class={labelClass}>Backend URL</span>
-						<input type="text" bind:value={connUrl} placeholder={LOCAL_BACKEND} class={inputClass} />
-					</label>
-				{/if}
-				<label>
-					<span class={labelClass}>API token (if the backend requires one)</span>
-					<input type="password" bind:value={connToken} placeholder="optional" class={inputClass} />
-				</label>
-			</div>
-			<div class="flex items-center gap-3 mt-2">
-				<button onclick={() => applyConnection(connUrl, connToken)} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Connect</button>
-				{#if !connectionState.isLocal && !SAME_ORIGIN}
-					<button onclick={() => applyConnection(LOCAL_BACKEND, null)} class="text-sm text-gray-400 hover:text-gray-200">Use local backend</button>
-				{/if}
-			</div>
-			{#if !SAME_ORIGIN}
-				<RemoteConnect />
-			{/if}
-		</section>
-
 		<section>
 			<h3 class="text-lg font-semibold text-gray-200 mb-1">Troubleshooting</h3>
 			<p class="text-xs text-gray-500 mb-3">
@@ -1385,85 +1353,6 @@
 				</div>
 			</section>
 
-			<!-- Publishing a meeting (backend services/publishing.py) -->
-			<section aria-label="Publishing">
-				<h3 class="text-lg font-semibold text-gray-200 mb-1">Publishing</h3>
-				<p class="text-xs text-gray-500 mb-3">
-					A published meeting is a chosen part of it, encrypted, that others open with a link (from this computer or a publish
-					host) or as one file. The key is in the link: a host only ever stores encrypted data.
-				</p>
-				<div class="mb-3">
-					<label class="flex items-center gap-2 text-sm text-gray-300">
-						<input type="checkbox" bind:checked={useOurServers} onchange={() => (ourTouched = true)} disabled={locked('use_our_servers')} class="rounded border-gray-600 bg-gray-800" />
-						Use Mnemosyne's servers
-					</label>
-					<span class="mt-1 block text-xs text-gray-500">
-						Our relay (relay.petty.services) connects your devices and guests' browsers, and our host (notes.petty.services) keeps guest notes and published meetings, all end-to-end encrypted. Off: only the relays and host you set below.
-						<a href="https://notes.petty.services/privacy" onclick={onExternalClick} target="_blank" rel="noopener noreferrer" class="underline hover:text-gray-300">Privacy notice</a>
-					</span>
-				</div>
-				<div class="grid grid-cols-2 gap-3">
-					<label class="col-span-2">
-						<span class={labelClass}>Publish host ({useOurServers ? "blank: Mnemosyne's host" : 'blank: none, links are served by this computer'})</span>
-						<input type="url" bind:value={form.publish_host} disabled={locked('publish_host')} placeholder={blankHost} class={inputClass} />
-					</label>
-					<label class="col-span-2">
-						<span class={labelClass}>Upload token{#if settings.secrets_set.publish_host_token}<span class="text-green-500 ml-1">set</span>{/if}</span>
-						<div class="flex gap-2">
-							<input type="password" bind:value={secrets.publish_host_token} disabled={locked('publish_host_token')} placeholder={settings.secrets_set.publish_host_token ? '•••••••• (leave blank to keep)' : 'only if the host asks for one'} class={inputClass} />
-							{#if settings.secrets_set.publish_host_token && !locked('publish_host_token')}
-								<button onclick={() => clearSecret('publish_host_token')} class="text-xs text-gray-500 hover:text-red-400">Clear</button>
-							{/if}
-						</div>
-					</label>
-					<label>
-						<span class={labelClass}>New publications expire after</span>
-						<select bind:value={form.publish_default_expiry_days} disabled={locked('publish_default_expiry_days')} class={inputClass}>
-							{#each [...new Set([30, 90, 365, settings.values.publish_default_expiry_days])].sort((a, b) => a - b) as d (d)}
-								<option value={d}>{d === 365 ? '1 year' : `${d} days`}</option>
-							{/each}
-						</select>
-					</label>
-					<label class="col-span-2">
-						<span class={labelClass}>How guests reach the notes</span>
-						<select bind:value={form.guest_transport} disabled={locked('guest_transport')} class={inputClass}>
-							<option value="auto">Automatic (recommended)</option>
-							<option value="iroh">Straight to this computer (iroh)</option>
-							<option value="tunnel">A tunnel to this computer</option>
-							<option value="host">A publish host</option>
-						</select>
-						<span class="mt-1 block text-xs text-gray-500">Automatic connects guests straight to this computer, through a tunnel if that fails, or through the publish host.</span>
-					</label>
-					<label class="col-span-2">
-						<span class={labelClass}>Guest page address</span>
-						<input type="url" bind:value={form.guest_page_url} disabled={locked('guest_page_url')} placeholder="Blank: https://corpetty.github.io/mnemosyne/n/" class={inputClass} />
-						<span class="mt-1 block text-xs text-gray-500">Where the guest page is loaded from. It holds no notes: they arrive encrypted.</span>
-					</label>
-					<label class="col-span-2">
-						<span class={labelClass}>Guest notes host</span>
-						<input type="url" bind:value={form.guest_host} disabled={locked('guest_host')} placeholder={form.publish_host ? "Blank: the publish host above" : blankHost} class={inputClass} />
-						<span class="mt-1 block text-xs text-gray-500">Where guests' notes are relayed, encrypted. Blank uses the publish host.</span>
-					</label>
-					<label>
-						<span class={labelClass}>End guest notes after a recording stops (hours)</span>
-						<input type="number" min="1" step="1" bind:value={form.guest_notes_end_hours} disabled={locked('guest_notes_end_hours')} class={inputClass} />
-					</label>
-					{#if teamAdmin}
-						<label class="flex items-center gap-2 self-end pb-1.5">
-							<input type="checkbox" bind:checked={form.allow_guest_notes} disabled={locked('allow_guest_notes')} class="rounded border-gray-600 bg-gray-800" />
-							<span class="text-sm text-gray-300">Allow guest notes</span>
-						</label>
-					{/if}
-					{#if teamAdmin}
-						<label class="flex items-center gap-2 self-end pb-1.5">
-							<input type="checkbox" bind:checked={form.allow_publishing} disabled={locked('allow_publishing')} class="rounded border-gray-600 bg-gray-800" />
-							<span class="text-sm text-gray-300">Allow members to publish</span>
-						</label>
-					{/if}
-					<div class="col-span-2"><PublicationsList /></div>
-				</div>
-			</section>
-
 			<div class="flex items-center gap-3">
 				<button
 					onclick={save}
@@ -1478,50 +1367,6 @@
 		{/if}
 
 		{#if tab === 'general'}
-			<!-- Server mode -->
-			<section>
-				<h3 class="text-lg font-semibold text-gray-200 mb-1">Server mode</h3>
-				<p class="text-xs text-gray-500 mb-3">
-					{#if inDesktopApp}
-						This app's backend listens only on this computer. To record from a phone, set a phone address (for example a Tailscale HTTPS name, see docs/remote-access.md) and an API token here; to use it from another computer, turn on Remote access below.
-					{:else}
-						To let other machines use this backend, run it with <code class="text-gray-400">--host 0.0.0.0</code> and set a token here; every request must then carry it.
-					{/if}
-				</p>
-				<label class="block max-w-md">
-					<span class={labelClass}>
-						API token
-						{#if settings.secrets_set.api_token}<span class="text-green-500 ml-1">set</span>{/if}
-					</span>
-					<div class="flex gap-2">
-						<input type="password" bind:value={secrets.api_token} disabled={locked('api_token')} placeholder={settings.secrets_set.api_token ? '•••••••• (leave blank to keep)' : 'leave empty for local-only use'} class={inputClass} />
-						{#if settings.secrets_set.api_token && !locked('api_token')}
-							<button onclick={() => clearSecret('api_token')} class="text-xs text-gray-500 hover:text-red-400">Clear</button>
-						{/if}
-					</div>
-				</label>
-				<label class="flex items-center gap-2 mt-3 text-sm text-gray-300">
-					<input type="checkbox" bind:checked={form.remote_access} disabled={locked('remote_access')} />
-					Remote access: let computers you pair reach this backend from anywhere
-				</label>
-				{#if form.remote_access}
-					<label class="block max-w-md mt-2 ml-6">
-						<span class={labelClass}>Relays (comma-separated)</span>
-						<input type="text" bind:value={form.remote_relays} disabled={locked('remote_relays')} placeholder={blankRelay} class={inputClass} />
-						<span class="text-xs text-gray-600">iroh-relay servers you run, e.g. <code>https://relay.example.org</code> (docs/remote-access.md). Paired computers follow this; after changing it, pair them again.</span>
-					</label>
-				{/if}
-				{#if !readOnly}<RemoteAccessHome enabled={settings.values.remote_access} relays={settings.values.remote_relays} ourServers={settings.values.use_our_servers !== false} />{/if}
-				{#if !readOnly}<SyncSettings />{/if}
-				{#if !readOnly && !connectionState.me?.team_mode}<ContactsSettings />{/if}
-				<label class="block max-w-md mt-3">
-					<span class={labelClass}>Phone address</span>
-					<input type="text" bind:value={form.phone_url} disabled={locked('phone_url')} placeholder="blank: this computer's network address" class={inputClass} />
-					<span class="text-xs text-gray-600">An HTTPS name phones can reach from anywhere, such as <code>https://desk.tail1234.ts.net</code> from <code>tailscale serve</code>. See docs/remote-access.md.</span>
-				</label>
-				<PhoneLink phoneUrl={settings.values.phone_url} />
-			</section>
-
 			<WindowSettings />
 
 			{#if updateState.supported}
@@ -1555,6 +1400,237 @@
 				<!-- An admin's: their data comes from admin-only routes. -->
 				<StorageSettings locked={locked('audio_retention_days')} />
 				<BackupSettings />
+			{/if}
+
+			<div class="flex items-center gap-3">
+				<button
+					onclick={save}
+					disabled={saving || readOnly}
+					class="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white font-medium transition-colors"
+				>
+					{saving ? 'Saving...' : 'Save settings'}
+				</button>
+				<button onclick={load} disabled={loading} class="text-sm text-gray-400 hover:text-gray-200">Reload</button>
+				{#if error}<span class="text-sm text-red-400">{error}</span>{/if}
+			</div>
+		{/if}
+
+		{#if tab === 'devices'}
+			<!-- Devices and people: this computer, my devices, people, links, advanced, team server -->
+			<ThisComputer {role} {readOnly} />
+			{#if role === 'satellite'}
+				<p class="text-sm text-gray-400">These are your main computer's settings.</p>
+			{/if}
+
+			{#if role === 'main' && !readOnly}
+				<MyDevices
+					remoteAccess={settings.values.remote_access}
+					relays={settings.values.remote_relays}
+					ourServers={settings.values.use_our_servers !== false}
+					phoneUrl={settings.values.phone_url}
+				>
+					{#snippet phoneAddress()}
+						<label class="block max-w-md">
+							<span class={labelClass}>Phone address</span>
+							<input type="text" bind:value={form.phone_url} disabled={locked('phone_url')} placeholder="blank: this computer's network address" class={inputClass} />
+							<span class="text-xs text-gray-600">An HTTPS name phones can reach from anywhere, such as <code>https://desk.tail1234.ts.net</code> from <code>tailscale serve</code>. Save settings before pairing. See docs/remote-access.md.</span>
+						</label>
+					{/snippet}
+				</MyDevices>
+			{/if}
+
+			{#if role !== 'team' && !readOnly}
+				<section aria-label="People">
+					<h3 class="text-lg font-semibold text-gray-200 mb-1">People</h3>
+					<ContactsSettings />
+					<div class="mt-3 space-y-1.5">
+						{#each [['shared_in_ask', 'Meetings people share with you appear in Ask'], ['shared_in_search', 'Meetings people share with you appear in search'], ['shared_in_digest', 'Meetings people share with you appear in the weekly digest'], ['shared_in_obsidian', 'Meetings people share with you appear in Obsidian']] as const as [key, label] (key)}
+							<label class="flex items-center gap-2 text-sm text-gray-300">
+								<input type="checkbox" bind:checked={form[key]} disabled={locked(key)} class="rounded border-gray-600 bg-gray-800" />
+								{label}
+							</label>
+						{/each}
+					</div>
+				</section>
+			{/if}
+
+			<section aria-label="Links for people without Mnemosyne">
+				<h3 class="text-lg font-semibold text-gray-200 mb-1">Links for people without Mnemosyne</h3>
+				<p class="text-xs text-gray-500 mb-3">
+					A published meeting is a chosen part of it, encrypted, that others open with a link or as one file. A live-notes
+					link lets the people in a meeting type into the notes. The key is in the link: a host only ever stores encrypted data.
+				</p>
+				<div class="space-y-3">
+					<label class="block max-w-xs">
+						<span class={labelClass}>New pages expire after</span>
+						<select bind:value={form.publish_default_expiry_days} disabled={locked('publish_default_expiry_days')} class={inputClass}>
+							{#each [...new Set([30, 90, 365, settings.values.publish_default_expiry_days])].sort((a, b) => a - b) as d (d)}
+								<option value={d}>{d === 365 ? '1 year' : `${d} days`}</option>
+							{/each}
+						</select>
+					</label>
+					<label class="flex flex-wrap items-center gap-2 text-sm text-gray-300">
+						<span>Live-notes links end</span>
+						<input type="number" min="1" step="1" bind:value={form.guest_notes_end_hours} disabled={locked('guest_notes_end_hours')} aria-label="Hours after a recording stops" class="{inputClass} !w-20" />
+						<span>hours after a recording stops</span>
+					</label>
+					<p class="text-xs text-gray-500">
+						{#if form.publish_host?.trim()}
+							Pages are kept on your publish host {form.publish_host.trim()}.
+						{:else if useOurServers}
+							Pages are kept on Mnemosyne's server.
+						{:else}
+							Pages are kept on this computer.
+						{/if}
+						Change this under Advanced.
+					</p>
+					<PublicationsList />
+				</div>
+			</section>
+
+			<details class="rounded border border-gray-800 px-3 py-2" aria-label="Advanced">
+				<summary class="cursor-pointer text-lg font-semibold text-gray-200">Advanced</summary>
+				<div class="mt-3 space-y-5">
+					<div>
+						<label class="flex items-center gap-2 text-sm text-gray-300">
+							<input type="checkbox" bind:checked={useOurServers} onchange={() => (ourTouched = true)} disabled={locked('use_our_servers')} class="rounded border-gray-600 bg-gray-800" />
+							Use Mnemosyne's relay and notes server
+						</label>
+						<span class="mt-1 block text-xs text-gray-500">
+							Our relay (relay.petty.services) connects your devices and guests' browsers, and our host (notes.petty.services) keeps guest notes and published meetings, all end-to-end encrypted. Off: only the relays and host you set below.
+							<a href="https://notes.petty.services/privacy" onclick={onExternalClick} target="_blank" rel="noopener noreferrer" class="underline hover:text-gray-300">Privacy notice</a>
+						</span>
+					</div>
+
+					<div class="grid grid-cols-2 gap-3">
+						<label class="col-span-2">
+							<span class={labelClass}>Relays (comma-separated)</span>
+							<input type="text" bind:value={form.remote_relays} disabled={locked('remote_relays')} placeholder={blankRelay} class={inputClass} />
+							<span class="mt-1 block text-xs text-gray-500">iroh-relay servers you run, e.g. <code>https://relay.example.org</code> (docs/remote-access.md). Paired computers follow this; after changing it, pair them again. Also used by live-notes links.</span>
+						</label>
+						<label class="col-span-2">
+							<span class={labelClass}>Publish host ({useOurServers ? "blank: Mnemosyne's host" : 'blank: none, links are served by this computer'})</span>
+							<input type="url" bind:value={form.publish_host} disabled={locked('publish_host')} placeholder={blankHost} class={inputClass} />
+						</label>
+						<label class="col-span-2">
+							<span class={labelClass}>Upload token{#if settings.secrets_set.publish_host_token}<span class="text-green-500 ml-1">set</span>{/if}</span>
+							<div class="flex gap-2">
+								<input type="password" bind:value={secrets.publish_host_token} disabled={locked('publish_host_token')} placeholder={settings.secrets_set.publish_host_token ? '•••••••• (leave blank to keep)' : 'only if the host asks for one'} class={inputClass} />
+								{#if settings.secrets_set.publish_host_token && !locked('publish_host_token')}
+									<button onclick={() => clearSecret('publish_host_token')} class="text-xs text-gray-500 hover:text-red-400">Clear</button>
+								{/if}
+							</div>
+						</label>
+						<label class="col-span-2">
+							<span class={labelClass}>How guests reach the notes</span>
+							<select bind:value={form.guest_transport} disabled={locked('guest_transport')} class={inputClass}>
+								<option value="auto">Automatic (recommended)</option>
+								<option value="iroh">Straight to this computer (iroh)</option>
+								<option value="tunnel">A tunnel to this computer</option>
+								<option value="host">A publish host</option>
+							</select>
+							<span class="mt-1 block text-xs text-gray-500">Automatic connects guests straight to this computer, through a tunnel if that fails, or through the publish host.</span>
+						</label>
+						<label class="col-span-2">
+							<span class={labelClass}>Guest page address</span>
+							<input type="url" bind:value={form.guest_page_url} disabled={locked('guest_page_url')} placeholder="Blank: https://corpetty.github.io/mnemosyne/n/" class={inputClass} />
+							<span class="mt-1 block text-xs text-gray-500">Where the guest page is loaded from. It holds no notes: they arrive encrypted.</span>
+						</label>
+						<label class="col-span-2">
+							<span class={labelClass}>Guest notes host</span>
+							<input type="url" bind:value={form.guest_host} disabled={locked('guest_host')} placeholder={form.publish_host ? "Blank: the publish host above" : blankHost} class={inputClass} />
+							<span class="mt-1 block text-xs text-gray-500">Where guests' notes are relayed, encrypted. Blank uses the publish host.</span>
+						</label>
+					</div>
+
+					<!-- Connection (stored in this app instance, not on the backend) -->
+					<div>
+						<h4 class="text-sm font-medium text-gray-300 mb-1">Connect to a backend by address</h4>
+						<p class="text-xs text-gray-500 mb-3">
+							Which backend this window talks to. Recording happens where the backend runs; a remote backend is for
+							working with sessions on another machine (e.g. a GPU box). Currently:
+							<code class="text-gray-400">{connectionState.url}</code>{#if connectionState.host}{' on '}<span class="text-gray-300">{connectionState.host}</span>{/if}.
+						</p>
+						<div class="grid grid-cols-2 gap-3">
+							{#if !SAME_ORIGIN}
+								<!-- Loaded from a server (a team server): that server is the backend. -->
+								<label>
+									<span class={labelClass}>Backend URL</span>
+									<input type="text" bind:value={connUrl} placeholder={LOCAL_BACKEND} class={inputClass} />
+								</label>
+							{/if}
+							<label>
+								<span class={labelClass}>API token (if the backend requires one)</span>
+								<input type="password" bind:value={connToken} placeholder="optional" class={inputClass} />
+							</label>
+						</div>
+						<div class="flex items-center gap-3 mt-2">
+							<button onclick={() => applyConnection(connUrl, connToken)} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Connect</button>
+							{#if !connectionState.isLocal && !SAME_ORIGIN}
+								<button onclick={() => applyConnection(LOCAL_BACKEND, null)} class="text-sm text-gray-400 hover:text-gray-200">Use local backend</button>
+							{/if}
+						</div>
+					</div>
+
+					<!-- This computer's own token and remote access (pairing makes both when they are needed) -->
+					<div>
+						<h4 class="text-sm font-medium text-gray-300 mb-1">This computer's API token</h4>
+						{#if !inDesktopApp}
+							<p class="text-xs text-gray-500 mb-3">
+								To let other machines use this backend, run it with <code class="text-gray-400">--host 0.0.0.0</code> and set a token here; every request must then carry it.
+							</p>
+						{/if}
+						<label class="block max-w-md">
+							<span class={labelClass}>
+								API token (made for you when you add a device or a person)
+								{#if settings.secrets_set.api_token}<span class="text-green-500 ml-1">set</span>{/if}
+							</span>
+							<div class="flex gap-2">
+								<input type="password" bind:value={secrets.api_token} disabled={locked('api_token')} placeholder={settings.secrets_set.api_token ? '•••••••• (leave blank to keep)' : 'leave empty for local-only use'} class={inputClass} />
+								{#if settings.secrets_set.api_token && !locked('api_token')}
+									<button onclick={() => clearSecret('api_token')} class="text-xs text-gray-500 hover:text-red-400">Clear</button>
+								{/if}
+							</div>
+						</label>
+						<label class="flex items-center gap-2 mt-3 text-sm text-gray-300">
+							<input type="checkbox" bind:checked={form.remote_access} disabled={locked('remote_access')} />
+							Let paired computers reach this computer from anywhere
+						</label>
+					</div>
+				</div>
+			</details>
+
+			{#if role === 'team' && !readOnly}
+				<section aria-label="Team server settings">
+					<h3 class="text-lg font-semibold text-gray-200 mb-3">Team server</h3>
+					<div class="space-y-5">
+						{#if teamAdmin}<TeamPeopleSettings />{/if}
+						{#if teamAdmin}
+							<div class="space-y-2">
+								<label class="flex items-center gap-2 text-sm text-gray-300">
+									<input type="checkbox" bind:checked={form.allow_publishing} disabled={locked('allow_publishing')} class="rounded border-gray-600 bg-gray-800" />
+									Allow members to publish
+								</label>
+								<label class="flex items-center gap-2 text-sm text-gray-300">
+									<input type="checkbox" bind:checked={form.allow_guest_notes} disabled={locked('allow_guest_notes')} class="rounded border-gray-600 bg-gray-800" />
+									Allow guest notes
+								</label>
+							</div>
+						{/if}
+						<section aria-label="Flagged phrases">
+							<h3 class="text-lg font-semibold text-gray-200 mb-1">Flagged phrases</h3>
+							<p class="text-xs text-gray-500 mb-3">
+								Lines of a meeting's transcript that use one of these phrases are flagged, and the meeting waits in the Review view
+								until a reviewer marks it reviewed. A flag is a line to read in context, not a finding. Empty: nothing is flagged.
+							</p>
+							<label class="block">
+								<span class={labelClass}>Phrases (comma-separated; changing them checks every meeting again)</span>
+								<textarea rows="3" bind:value={form.review_phrases} disabled={locked('review_phrases')} placeholder="guarantee, off the record, between you and me" class={inputClass}></textarea>
+							</label>
+						</section>
+						<TeamHostSettings part="options" />
+					</div>
+				</section>
 			{/if}
 
 			<div class="flex items-center gap-3">
