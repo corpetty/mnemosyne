@@ -66,30 +66,38 @@
 	const tint = (key: string) => (highlight === key ? 'bg-sky-950/40' : '');
 	const item = (target: ItemTarget, x: { id: string; text: string }): Draft => ({ anchor: itemAnchor(target, x.id), line: x.text });
 
-	// ---- a passage of the summary, selected -------------------------------------------------------
+	// ---- a passage of the summary or the notes, selected -----------------------------------------
 	let summarySection = $state<HTMLElement | null>(null);
 	let summaryBox = $state<HTMLElement | null>(null);
-	/** Where the floating "Comment" goes (px in the summary section) and what it anchors. */
-	let pick = $state<{ x: number; y: number; anchor: OpAnchor } | null>(null);
+	let notesSection = $state<HTMLElement | null>(null);
+	/** Where the floating "Comment" goes (px in its section), which part it is on, and what it anchors. */
+	let pick = $state<{ in: 'body' | 'notes'; x: number; y: number; anchor: OpAnchor } | null>(null);
+	/** The notes take comments only when the owner's META says so (an older owner, no sidecar: no). */
+	const notesOpen = $derived(!!comments && comments.notes === true);
 
 	function readSelection() {
-		const section = summarySection;
-		const body = summaryBox;
 		const sel = typeof document.getSelection === 'function' ? document.getSelection() : null;
-		if (!comments || !section || !body || !sel || sel.isCollapsed || sel.rangeCount === 0) {
+		if (!comments || !sel || sel.isCollapsed || sel.rangeCount === 0) {
 			pick = null;
 			return;
 		}
 		const range = sel.getRangeAt(0);
-		if (!body.contains(range.startContainer) || !body.contains(range.endContainer)) {
+		const parts = [
+			{ in: 'body' as const, section: summarySection, body: summaryBox },
+			{ in: 'notes' as const, section: notesSection, body: notesOpen ? notesBox : null }
+		];
+		// Both ends of the selection inside the same box.
+		const hit = parts.find((p) => p.section && p.body && p.body.contains(range.startContainer) && p.body.contains(range.endContainer));
+		if (!hit || !hit.section || !hit.body) {
 			pick = null;
 			return;
 		}
+		const { section, body } = hit;
 		const before = document.createRange();
 		before.selectNodeContents(body);
 		before.setEnd(range.startContainer, range.startOffset);
 		const start = before.toString().length;
-		const anchor = passageAnchor(body.textContent ?? '', start, start + range.toString().length);
+		const anchor = passageAnchor(body.textContent ?? '', start, start + range.toString().length, hit.in);
 		if (!anchor) {
 			pick = null;
 			return;
@@ -98,7 +106,7 @@
 		const end = rects && rects.length ? rects[rects.length - 1] : null;
 		const box = section.getBoundingClientRect();
 		const x = end ? end.right - box.left : box.width / 2;
-		pick = { x: Math.max(0, Math.min(box.width, x)), y: end ? end.top - box.top : 0, anchor };
+		pick = { in: hit.in, x: Math.max(0, Math.min(box.width, x)), y: end ? end.top - box.top : 0, anchor };
 	}
 
 	function commentOnPassage() {
@@ -111,6 +119,19 @@
 </script>
 
 <svelte:document onselectionchange={readSelection} />
+
+{#snippet passageButton(part: 'body' | 'notes')}
+	{#if pick && pick.in === part && comments}
+		<button
+			type="button"
+			class="absolute z-10 -translate-x-1/2 -translate-y-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs"
+			style="left: {pick.x}px; top: {pick.y - 4}px"
+			onmousedown={(e) => e.preventDefault()}
+			onclick={commentOnPassage}
+			data-testid="comment-passage">Comment</button
+		>
+	{/if}
+{/snippet}
 
 {#snippet affordance(key: string, draft: Draft)}
 	{#if comments}
@@ -146,16 +167,7 @@
 	{#if m.summary?.trim()}
 		<section bind:this={summarySection} class="relative rounded transition-colors {tint('body')}" data-anchor="body">
 			<div bind:this={summaryBox}><Markdown text={m.summary} /></div>
-			{#if pick && comments}
-				<button
-					type="button"
-					class="absolute z-10 -translate-x-1/2 -translate-y-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs"
-					style="left: {pick.x}px; top: {pick.y - 4}px"
-					onmousedown={(e) => e.preventDefault()}
-					onclick={commentOnPassage}
-					data-testid="comment-passage">Comment</button
-				>
-			{/if}
+			{@render passageButton('body')}
 		</section>
 	{/if}
 
@@ -222,9 +234,17 @@
 	{/if}
 
 	{#if m.notes?.trim()}
-		<section>
-			<h2 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Notes</h2>
+		<section bind:this={notesSection} class="relative rounded transition-colors {tint('notes')}" data-anchor="notes">
+			<div class="mb-2 flex items-baseline gap-2">
+				<h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Notes</h2>
+				{#if comments && notesOpen && (comments.counts.notes ?? 0) > 0}
+					<button type="button" class="ml-auto shrink-0 text-xs text-sky-400" onclick={() => comments?.onShow('notes')} data-testid="comment-count"
+						>{commentCount(comments.counts.notes)}</button
+					>
+				{/if}
+			</div>
 			<div bind:this={notesBox}><Markdown text={notes.markdown} /></div>
+			{@render passageButton('notes')}
 		</section>
 	{/if}
 

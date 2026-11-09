@@ -42,6 +42,8 @@ export type Gone = { kind: 'not_found' } | { kind: 'unpublished' } | { kind: 'ex
 export interface Meta {
 	comments: boolean;
 	follow: boolean;
+	/** Readers may comment on the published notes (older owners send nothing: false). */
+	notes: boolean;
 	at: string;
 }
 
@@ -415,7 +417,7 @@ export class Follower {
 		if (at === null || typeof o.follow !== 'boolean' || typeof o.comments !== 'boolean') return false;
 		if (this.metaAt !== null && at <= this.metaAt) return true;
 		this.metaAt = at;
-		this.meta = { follow: o.follow, comments: o.comments, at: o.at as string };
+		this.meta = { follow: o.follow, comments: o.comments, notes: o.notes === true, at: o.at as string };
 		this.h.onChange?.();
 		return true;
 	}
