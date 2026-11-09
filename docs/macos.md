@@ -11,7 +11,7 @@ maintainer, about the signing certificate. The plan and its reasons are in
 - A Mac with Apple silicon (M1 or later). Intel Macs are not built.
 - macOS 15.4 or later. Mnemosyne plays meeting audio as Ogg, which the system web view only reads
   from 15.4.
-- About 10 GB of free disk for the engine and models, and an internet connection on first launch.
+- About 3 GB of free disk (the engine and the speech models), and an internet connection on first launch.
 
 ### Where builds come from
 
@@ -41,7 +41,7 @@ go through the setup.
 |---|---|---|
 | Microphone | when recording starts | your voice |
 | System Audio Recording | when recording starts | the other people on a call |
-| Local Network | on first launch | finding your other computers |
+| Local Network | when Mnemosyne first looks for your other computers | finding your other computers |
 
 Change any of them in System Settings → Privacy & Security (Microphone; Screen & System Audio
 Recording, the "System Audio Recording Only" list; Local Network). If the system audio level stays
@@ -56,7 +56,7 @@ Be aware this is a test build.
 - Transcription runs on the CPU with Parakeet, and speaker labels with the onnx diarizer. It is
   slower than on a PC with a GPU.
 - Not on the Mac yet: Phonon-2 and the built-in summary model. Use Ollama, vLLM, OpenAI or
-  Anthropic for summaries, or a remote main computer.
+  Anthropic for summaries.
 - Linux only: echo cancellation and noise suppression. Use headphones for calls when you can.
 
 ### Checklist
