@@ -185,8 +185,12 @@ def combine_runner(app: AppContext, target_id: str, other_id: str):
 
 
 def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
+    from . import records
     from .encryption import seal_session_audio
 
+    # A record sealed in the old format is sealed in the new one before anything changes, so the
+    # audio the join replaces can be set down as erased (by its plaintext digest).
+    records.upgrade_if_v1(app, target.id)
     # The notes first, before anything else changes: a failure here leaves both meetings as
     # they were (a later one leaves the other meeting's notes in this one twice at worst, never
     # a half-combined meeting). Live shared notes (services/shared_notes.py): both folded
@@ -289,8 +293,14 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
                     f.rename(dest)
 
     referenced = {r.path for r in recordings} | {str(final)}
+    replaced: dict[str, dict] = {}  # the target's own recording that the join replaces
     for audio in old_audio:
         if str(audio) not in referenced:
+            if target.audio_file and audio == Path(target.audio_file) and audio.is_file():
+                try:
+                    replaced.update(records.measure_audio(app, [audio]))
+                except Exception:  # the seal then shows it as gone; combining carries on
+                    logger.warning("Could not hash %s before the join replaced it", audio)
             audio.unlink(missing_ok=True)
 
     app.sessions.set_audio(target.id, str(final), recordings)
@@ -346,5 +356,9 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
         f"combined into “{target.name}” ({target.id})",
     )  # fmt: skip
     app.sessions.delete_session(other.id)
+    records.seal_combined(
+        app, target.id, replaced,
+        by=who.name if who else "", reason=f"combined with “{other.name}” ({other.id})",
+    )  # fmt: skip
     logger.info("Meeting %s combined into %s (%d parts)", other.id, target.id, len(all_pieces))
     return {"parts": len(all_pieces), "seconds": round(offset, 1), "removed": other.id}

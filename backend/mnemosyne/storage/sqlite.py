@@ -3095,16 +3095,17 @@ class SessionRepository:
                 "UPDATE sessions SET legal_hold=? WHERE id=?", (reason.strip(), session_id)
             )
 
-    def log_deletion(self, session: Session, what: str, by: str, role: str, reason: str) -> None:
+    def log_deletion(self, session: Session, what: str, by: str, role: str, reason: str) -> int:
         """Log a deletion, naming the meeting's last seal (`chain_head`, and `manifest_hash` when
-        that seal is format 2) so the record stays named after its seals cascade away."""
+        that seal is format 2) so the record stays named after its seals cascade away. Returns
+        the log entry's id (an erasure seal names it)."""
         with self._lock, self._conn:
             head = self._conn.execute(
                 "SELECT chain, content_hash, format FROM session_seals WHERE session_id=?"
                 " ORDER BY id DESC",
                 (session.id,),
             ).fetchone()
-            self._conn.execute(
+            cur = self._conn.execute(
                 "INSERT INTO deletions (at, session_id, name, created_at, what, by, role, reason,"
                 " chain_head, manifest_hash) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
@@ -3120,6 +3121,15 @@ class SessionRepository:
                     head["content_hash"] if head is not None and head["format"] == 2 else "",
                 ),
             )
+            return int(cur.lastrowid)
+
+    def deletion_ids(self, session_id: str) -> set[int]:
+        """The ids of the deletion log's entries about this meeting (an erasure names one)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM deletions WHERE session_id=?", (session_id,)
+            ).fetchall()
+        return {r["id"] for r in rows}
 
     def deletions(self, start: str = "", end: str = "") -> list[dict]:
         """Deleted meetings and audio (at within [start, end), ISO dates; blank = open)."""

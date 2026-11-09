@@ -140,6 +140,15 @@ def seal_session_audio(app: AppContext, session_id: str) -> None:
             logger.error("Audio left unencrypted: %s", e)
 
 
+def _upgrade_record(app: AppContext, session_id: str) -> None:
+    """Before a meeting's audio is converted: a record whose last seal is in the old format hashed
+    the files as stored, which converting changes. Sealed in the new format first, it holds their
+    plaintext digests, which converting does not change (services/records.py)."""
+    from .records import upgrade_if_v1
+
+    upgrade_if_v1(app, session_id)  # never raises
+
+
 def _all_session_ids(app: AppContext) -> list[str]:
     return [s.id for s in app.sessions.list_sessions()]
 
@@ -194,6 +203,7 @@ def enable(app: AppContext) -> EncryptionEnabled:
         logger.warning("Could not encrypt the person key", exc_info=True)
         errors.append(f"person key: {e}")
     for sid in _all_session_ids(app):
+        _upgrade_record(app, sid)
         n, errs = _convert_audio(app, sid, app.file_key)
         files, errors = files + n, errors + errs
     n, errs = convert_media(app, app.file_key)
@@ -213,6 +223,7 @@ def disable(app: AppContext) -> int:
         raise ValueError("Meetings are not encrypted")
     files = 0
     for sid in _all_session_ids(app):
+        _upgrade_record(app, sid)
         n, errors = _convert_audio(app, sid, None)
         if errors:
             raise RuntimeError("Could not decrypt: " + "; ".join(errors))
