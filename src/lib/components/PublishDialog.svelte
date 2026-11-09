@@ -36,6 +36,7 @@
 	const working = $derived(!!pub.busy);
 
 	let confirmUnpublish = $state(false);
+	let confirmReplace = $state(false);
 	async function unblockReader(rid: string) {
 		if (!pub.dialogFor) return;
 		try {
@@ -72,6 +73,7 @@
 	function close() {
 		if (working) return;
 		confirmUnpublish = false;
+		confirmReplace = false;
 		pub.close();
 	}
 
@@ -103,6 +105,7 @@
 
 	async function primary() {
 		confirmUnpublish = false;
+		confirmReplace = false;
 		if (pub.target === 'file') {
 			if (passwordIssue) return;
 			if (await pub.saveFile()) toastState.success('Saved the meeting as a file');
@@ -111,6 +114,11 @@
 		const updating = !!current;
 		const done = await pub.publish();
 		if (done && updating) toastState.success(`Updated: version ${done.version}`);
+	}
+
+	async function replaceLink() {
+		confirmReplace = false;
+		if (await pub.replace()) toastState.success('The link is replaced. The old one no longer works.');
 	}
 
 	async function unpublish() {
@@ -416,13 +424,20 @@
 				<p class="mr-auto text-xs text-gray-500">The link carries the key: the host sees only encrypted data.</p>
 				{#if pub.stage && working}<span class="text-xs text-gray-400">{pub.stage}</span>{/if}
 				{#if current && pub.target !== 'file'}
-					{#if confirmUnpublish}
+					{#if confirmReplace}
+						<span class="text-xs text-gray-300">Everyone with the old link loses it; send the new one to the people who should keep reading.</span>
+						<button onclick={replaceLink} disabled={working} class="text-sm text-red-400 hover:text-red-300 disabled:opacity-50"
+							>{pub.busy === 'replace' ? 'Replacing…' : 'Yes'}</button
+						>
+						<button onclick={() => (confirmReplace = false)} disabled={working} class="text-sm text-gray-400 hover:text-gray-200">No</button>
+					{:else if confirmUnpublish}
 						<span class="text-xs text-gray-300">Unpublish? The link stops working; copies already opened stay.</span>
 						<button onclick={unpublish} disabled={working} class="text-sm text-red-400 hover:text-red-300 disabled:opacity-50"
 							>{pub.busy === 'unpublish' ? 'Unpublishing…' : 'Yes'}</button
 						>
 						<button onclick={() => (confirmUnpublish = false)} disabled={working} class="text-sm text-gray-400 hover:text-gray-200">No</button>
 					{:else}
+						<button onclick={() => (confirmReplace = true)} disabled={working} class="text-sm text-gray-400 hover:text-gray-200 disabled:opacity-50">Replace the link</button>
 						<button onclick={() => (confirmUnpublish = true)} disabled={working} class="text-sm text-red-400 hover:text-red-300 disabled:opacity-50">Unpublish</button>
 					{/if}
 				{/if}

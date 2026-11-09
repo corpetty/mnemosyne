@@ -673,6 +673,7 @@ class FakeHost:
             self.blobs.clear()
             self.manifest = None
             self.room = None
+            self.token, self.version = None, 0  # the id is free again: a new publication's token
             return httpx.Response(204)
         return httpx.Response(404)
 
@@ -1246,3 +1247,83 @@ def test_a_database_from_before_the_block_list_gets_the_column(tmp_path):
     repo = SessionRepository(path)
     assert repo.live_publication(s.id)["blocked_readers"][RID]["on"] is True
     repo.close()
+
+
+def _replace(client, sid, headers=None):
+    r = client.post(f"/api/sessions/{sid}/publication/replace", headers=headers)
+    assert r.status_code == 200, r.text
+    job = _wait(client, r.json()["id"], headers=headers)
+    assert job["status"] == "completed", job
+    return job["result"]["publication"]
+
+
+def test_replacing_the_link_of_a_hosted_publication(client, ctx, host, seals):
+    s = _meeting(ctx)
+    base = f"/api/sessions/{s.id}/publication"
+    assert client.post(f"{base}/replace").status_code == 404  # not published
+    old = _publish(
+        client, s.id, where="host", follow=True, comments=True, moderate=True, title="Notes"
+    )
+    old_row = ctx.repo.live_publication(s.id)
+    _reader_comment(ctx, s.id, "a" * 12)
+    assert client.post(f"{base}/readers/{RID}/block").status_code == 200
+    assert ctx.repo.live_publication(s.id)["blocked_readers"]
+    new = _replace(client, s.id)
+    assert new["id"] != old["id"] and new["url"] != old["url"] and new["version"] == 1
+    assert _key_and_id(new["url"])[1] != _key_and_id(old["url"])[1]
+    # The same choices, the same switches; nothing of the old readers.
+    for field in ("follow", "comments", "moderate", "title", "where", "quotes"):
+        assert new["selection"][field] == old["selection"][field], field
+    assert new["blocked_readers"] == []
+    row = ctx.repo.live_publication(s.id)
+    assert row["id"] == new["id"] and row["blocked_readers"] == {}
+    assert row["sign_key"] != old_row["sign_key"] and row["box_key"] != old_row["box_key"]
+    assert row["token"] != old_row["token"]
+    # The old one is gone from the host and from here; the new one is up.
+    assert ("DELETE", f"/pub/{old['id']}") in [(m, p) for m, p, _ in host.calls]
+    assert client.get(f"/pub/{old['id']}").status_code == 410
+    assert host.manifest is not None and host.version == 1
+    assert _manifest(host, new).version == 1
+    assert client.get(f"{base}").json()["id"] == new["id"]
+    # One history line, with both ids and no key; the seals of the two steps.
+    events = ctx.repo.events(s.id)
+    (line,) = [e for e in events if e["kind"] == "publication_replaced"]
+    assert line["detail"]["publication"] == new["id"] and line["detail"]["replaces"] == old["id"]
+    assert pf.encode_key(row["key"]) not in json.dumps(events, default=str)
+    assert [e["kind"] for e in events].count("unpublished") == 0
+    assert seals == [
+        (s.id, "published"),
+        (s.id, "unpublished"),
+        (s.id, "published"),
+    ]
+
+
+def test_replacing_the_link_of_a_publication_on_this_computer(client, ctx, fake_cut, seals):
+    s = _meeting(ctx, audio="/nowhere/mixed.ogg")
+    old = _publish(client, s.id, quotes=[{"start": 0, "end": 6, "with_clip": True}])
+    new = _replace(client, s.id)
+    assert new["id"] != old["id"] and new["where"] == "local" and new["version"] == 1
+    assert client.get(f"/pub/{old['id']}").status_code == 410
+    assert client.get(f"/pub/{new['id']}").status_code == 200
+    assert new["selection"]["quotes"] == old["selection"]["quotes"]
+    kinds = [e["kind"] for e in ctx.repo.events(s.id)]
+    assert "publication_replaced" in kinds and "unpublished" not in kinds
+
+
+def test_only_the_owner_or_an_admin_replaces_the_link(team, seals):
+    client, ctx, people = team
+    ctx.http_transport = httpx.MockTransport(FakeHost().handler)
+    ctx.settings.publish_host = "https://pub.example.org"
+    ann, ann_auth = people["Ann"]
+    reset = access.current.set(access.Principal(ann.id, ann.name, ann.role))
+    try:
+        s = _meeting(ctx)
+    finally:
+        access.current.reset(reset)
+    ctx.settings.allow_publishing = True
+    old = _publish(client, s.id, ann_auth, where="host", comments=True)
+    url = f"/api/sessions/{s.id}/publication/replace"
+    assert client.post(url, headers=people["Rex"][1]).status_code == 403
+    assert ctx.repo.live_publication(s.id)["id"] == old["id"]
+    new = _replace(client, s.id, people["Admin"][1])
+    assert new["id"] != old["id"] and new["published_by"] == "Admin"

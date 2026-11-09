@@ -16,6 +16,7 @@ from mnemosyne.services import publishing, records, sharing
 from tests.test_publishing import (  # noqa: F401
     _meeting,
     _publish,
+    _replace,
     fake_cut,
     team,
 )
@@ -238,3 +239,17 @@ def test_the_block_list_is_in_no_record_and_no_export(client, ctx):  # noqa: F81
         record, default=str
     )
     assert not any("blocked_readers" in p for p in record)
+
+
+def test_replacing_the_link_is_in_the_chain_and_the_history_and_never_the_key(client, ctx):  # noqa: F811
+    s = _meeting(ctx)
+    old = _publish(client, s.id)
+    _wait_for_seals(ctx, s.id, 1)
+    new = _replace(client, s.id)
+    seals = _wait_for_seals(ctx, s.id, 3)
+    assert [x["reason"] for x in seals] == ["published", "unpublished", "published"]
+    assert records.verify(ctx, s.id).ok
+    (line,) = [e for e in ctx.repo.events(s.id) if e["kind"] == "publication_replaced"]
+    assert line["detail"]["replaces"] == old["id"] and line["detail"]["publication"] == new["id"]
+    row = ctx.repo.live_publication(s.id)
+    assert pf.encode_key(row["key"]) not in json.dumps(ctx.repo.events(s.id), default=str)

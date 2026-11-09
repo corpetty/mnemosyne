@@ -75,6 +75,7 @@ function fakeApi(over: Partial<PublishingApi> = {}) {
 		previewPublication: vi.fn(async (_id: string, sel: PublicationSelection): Promise<unknown> => ({ title: sel.title, quotes: [] })),
 		publishSession: vi.fn(async () => job('running', null, 'Encrypting')),
 		unpublishSession: vi.fn(async () => ({}) as Publication),
+		replacePublication: vi.fn(async (_id: string) => job('running', null, 'Taking down the old link')),
 		blockReader: vi.fn(async (_id: string, _rid: string, _hide: boolean) => ({ id: 'p1', blocked_readers: [{ rid: 'r1', name: 'Ann', at: '2026-11-09T10:00:00Z' }] }) as Publication),
 		unblockReader: vi.fn(async (_id: string, _rid: string) => ({ id: 'p1', blocked_readers: [] }) as unknown as Publication),
 		listPublications: vi.fn(async () => []),
@@ -381,6 +382,38 @@ describe('publishing helpers', () => {
 		expect(expiryChoices('file', 14)).toEqual([14, 30, 90, 365, null]);
 		expect(fitExpiry('host', null, 90)).toBe(90);
 		expect(fitExpiry('file', null, 90)).toBeNull();
+	});
+
+	it('replaces the link: follows the job, stores the new publication and shows its link', async () => {
+		const api = fakeApi({
+			getPublication: vi.fn(async () => ({ id: 'old', version: 3 }) as unknown as Publication),
+			getJob: vi.fn(async () => job('completed', { publication: { id: 'new', version: 1 } }))
+		});
+		const st = new PublishingState(api, 400, 10);
+		await st.open(session);
+		expect(st.justPublished).toBe(false);
+		const run = st.replace();
+		expect(st.busy).toBe('replace');
+		const pub = await run;
+		expect(api.replacePublication).toHaveBeenCalledWith('s1');
+		expect(pub?.id).toBe('new');
+		expect(st.publications['s1']?.id).toBe('new');
+		expect(st.justPublished).toBe(true);
+		expect(st.busy).toBeNull();
+	});
+
+	it('says why a replace failed and keeps the old publication in the store', async () => {
+		const api = fakeApi({
+			getPublication: vi.fn(async () => ({ id: 'old', version: 3 }) as unknown as Publication),
+			replacePublication: vi.fn(async () => {
+				throw new Error('409: The audio is on another computer');
+			})
+		});
+		const st = new PublishingState(api, 400, 10);
+		await st.open(session);
+		expect(await st.replace()).toBeNull();
+		expect(st.error).toBe('The audio is on another computer');
+		expect(st.publications['s1']?.id).toBe('old');
 	});
 
 	it('block and unblock replace the stored publication', async () => {
