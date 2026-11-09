@@ -32,6 +32,7 @@ async def add(session_id: str, request: BookmarkCreate, ctx: AppContext = Depend
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    ctx.repo._check_write(session_id)  # reading the meeting is not enough to mark it
     recording = ctx.active_recordings.get(session_id)
     if request.at is None:
         if recording is None or not recording.is_recording:
@@ -54,6 +55,7 @@ async def add(session_id: str, request: BookmarkCreate, ctx: AppContext = Depend
 async def update(
     session_id: str, bookmark_id: str, request: BookmarkUpdate, ctx: AppContext = Depends(get_ctx)
 ):
+    ctx.repo._check_write(session_id)
     if not ctx.repo.update_bookmark(session_id, bookmark_id, request.note.strip()):
         raise HTTPException(status_code=404, detail="Bookmark not found")
     _publish(ctx, session_id)
@@ -62,6 +64,7 @@ async def update(
 
 @router.delete("/{bookmark_id}")
 async def delete(session_id: str, bookmark_id: str, ctx: AppContext = Depends(get_ctx)):
+    ctx.repo._check_write(session_id)
     if not ctx.repo.delete_bookmark(session_id, bookmark_id):
         raise HTTPException(status_code=404, detail="Bookmark not found")
     _publish(ctx, session_id)

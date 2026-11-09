@@ -600,3 +600,15 @@ def test_every_module_using_the_read_rule_is_known():
     assert users == KNOWN_READERS
     # The old single-owner rule is gone: every caller went to the scope.
     assert not any("read_owner" in p.read_text() for p in root.rglob("*.py"))
+
+
+def test_a_reviewer_reading_a_meeting_cannot_add_edit_or_delete_bookmarks(host):
+    sid = host.ids["team"]  # a member's meeting, which a reviewer reads
+    mine = host.ctx.repo.add_bookmark(sid, 0, 3.0, "kept")
+    client, headers, _ = host.client("reviewer")
+    base = f"/api/sessions/{sid}/bookmarks"
+    assert client.post(base, headers=headers, json={"at": 1}).status_code == 403
+    assert client.post(base, headers=headers, json={}).status_code == 403  # not 409 "Not recording"
+    assert client.patch(f"{base}/{mine}", headers=headers, json={"note": "x"}).status_code == 403
+    assert client.delete(f"{base}/{mine}", headers=headers).status_code == 403
+    assert [b.note for b in host.ctx.sessions.get_session(sid).bookmarks] == ["kept"]
