@@ -233,6 +233,8 @@
 					(d.transcript === 'theirs' ? `; transcript from ${d.source}` : '')
 				);
 			}
+			case 'kept_despite_peer_delete':
+				return `Kept when ${(d.source as string) || 'another computer'} deleted it: records keep it${d.reason ? ` (${d.reason})` : ''}`;
 			case 'note_merged':
 				return d.both
 					? `Your edits in Obsidian were kept in the note (${d.both} line${d.both === 1 ? '' : 's'} changed on both sides: worth a look)`
