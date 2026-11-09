@@ -285,6 +285,7 @@ jobs:
   macos:
     name: "macOS: backend tests and shell check"
     runs-on: macos-15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       # Tests only need ffmpeg on PATH; the app bundles its own pinned build.
@@ -300,7 +301,7 @@ jobs:
       # Tests that name PipeWire, /proc, systemd or libc carry the linux_only marker (conftest).
       - name: Test
         working-directory: backend
-        run: uv run --frozen pytest -q -o faulthandler_timeout=60
+        run: uv run --frozen pytest -q -rfE -o faulthandler_timeout=60
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
