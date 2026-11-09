@@ -644,7 +644,7 @@ sync, share, bridge, viewer, guest); `img.src` is set only from the provider's o
 address; a blob nothing has shown for 7 days is swept (after one more fold of the meeting); caps 2,000,000 bytes an image,
 50,000,000 a meeting, 25,000,000 a room (2 MiB + 128 KiB sealed a blob), 20 MiB per publication with clips.
 
-Live publications (released as 0.30.0, M4 unreleased, docs/plans/2026-11-05-live-publications.md, use in docs/publishing.md, bytes in the plan's "Data
+Live publications (released as 0.30.0, M4 in 0.31.0, docs/plans/2026-11-05-live-publications.md, use in docs/publishing.md, bytes in the plan's "Data
 and formats"): a hosted publication can be kept up to date (`PublicationSelection.follow`) and take reader comments
 (`comments`, `moderate`, `moderated_since`); "this computer" and the file never go live. services/live_publications.py has the
 watcher (polls the change log every 5 s; quiet 10 s, `MAX_WAIT` 60 s, `GAP` 30 s; submits the ordinary `publish` job with the
@@ -661,7 +661,7 @@ comments. Comments apply as actor `reader:<rid>`; `comments.approve`/`hide` (`ap
 THREADS. Viewer: viewer/src/live.ts, ReaderComments.svelte; owner side: PublishDialog.svelte, CommentThread.svelte. Unpublish
 deletes the publication, then the room (the plan says room first; the code's order lets a reader who hears 4410 find 410). An older
 host (no pointer route) gives `live = "unsupported"`: versions still upload, viewers poll each minute.
-M4 (unreleased, docs/plans/2026-11-09-live-publications-m4.md; "this computer" live was dropped): services/room_connection.py
+M4 (released as 0.31.0, docs/plans/2026-11-09-live-publications-m4.md; "this computer" live was dropped): services/room_connection.py
 `RoomConnection` is the one connect loop of guest_notes.Bridge and PubBridge. Readers comment on the published notes
 (target `notes`, META `notes`): services/notes_anchor.py aligns the quoted passage with the document's `plain` and verifies it
 by re-redacting; shared_notes `mark_comment_located` seeds the document, folds and marks through the sidecar op
@@ -682,7 +682,7 @@ shared_notes.edit_blocking + `AFTER_FOLD` hooks, services/copilot_notes.py (`Cop
 summary action items in the notes are never notes items; ticks from the notes run outside the notes lock; the
 editor keeps a ref on the line holding the original text and never gives one to a new line.
 
-Records v2 (unreleased, docs/plans/2026-11-09-records-by-frontier.md): seals over a manifest instead of two hashes. A format 2
+Records v2 (released as 0.31.0, docs/plans/2026-11-09-records-by-frontier.md): seals over a manifest instead of two hashes. A format 2
 seal (storage/records.py) holds a digest of each part (transcript, summary, summary_data, notes raw markdown, comments, meta,
 external_notes), the plaintext SHA-256 of each audio file, the `erased` list and the meeting's `rev`, chained with
 `chain_hash_v2`; v1 seals verify as before and are upgraded lazily when a record is opened. Verify (services/records.py) reports
@@ -695,7 +695,7 @@ verifiable. Export adds notes.md, comments.json, external_notes.json, summary_da
 verify <zip>` (services/records_check.py; exit 0/1/2, `--json`) checks one offline. RecordsCard shows the pending line and erased
 lines; `adopt_unowned` touches each adopted meeting. The notes' hashseq frontier is deferred (plan section 6).
 
-Devices and people (unreleased, docs/plans/2026-11-09-connections-design.md, built 2026-11-09 on branch connections): one Settings tab
+Devices and people (released as 0.31.0, docs/plans/2026-11-09-connections-design.md): one Settings tab
 "Devices and people" replaces "Server mode", the Remote access box and the pairing steps that named them ("Notes & sharing" became
 "Notes"): This computer (role cards: main / uses my main computer / team server; components/ThisComputer.svelte), My devices (MyDevices.svelte:
 one list from `GET /api/connections/devices`, routes/connections.py; Add a device = a computer invite or a phone QR; "More" = another main
@@ -714,7 +714,7 @@ recordings always make a new meeting, no level meters during one, no consent han
 bytes in flight at Stop. A laptop paired before this version is paired again once (the token was not kept). e2e: tests-e2e/devices.spec.ts
 (a second demo backend on 8058 for the pairing specs; the laptop window is a stubbed local backend).
 
-Team hosting (unreleased, docs/plans/2026-11-09-team-hosting.md): a main computer also hosts a team. Roles are derived, never stored:
+Team hosting (released as 0.31.0, docs/plans/2026-11-09-team-hosting.md): a main computer also hosts a team. Roles are derived, never stored:
 `config.hosts_team` (team mode + `team_owner_id`), `personal_allowed` (not a dedicated server), `dedicated_team_server` (team mode, no
 owner); `/api/system/role` and `/api/users/me` say `hosts_team`/`personal`/`owner`, and role `team` is only a dedicated server. The owner
 is a channel, not a user: `scope["state"]["channel"]` + `auth.is_owner_channel`; personal routes (sync, pairing, contacts, connections,
