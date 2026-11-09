@@ -140,7 +140,7 @@ strict content-security policy that lists the relays it may talk to.
 - `guest_transport`: `auto` (default), `iroh`, `tunnel` or `host`.
 - `guest_page_url`: where the guest page is loaded from. Blank is the copy on GitHub Pages.
 - `guest_host`: a publish host just for guest notes; else `publish_host`, else Mnemosyne's host.
-- `use_our_servers`: Settings, "Use Mnemosyne's servers" (Publishing). Automatic is on, except on team servers and with cloud models off; a value you set wins. Off removes the relay and host defaults: guest notes then use a tunnel, or your own relay and host.
+- `use_our_servers`: Settings, "Use Mnemosyne's servers" (Publishing). Automatic is on, except on team servers; a value you set wins. Off removes the relay and host defaults: guest notes then use a tunnel, or your own relay and host.
 - `remote_relays`: the relays for iroh, shared with remote access. Blank means Mnemosyne's relay (or none, with `use_our_servers` off).
 - `guest_notes_end_hours`: see below.
 

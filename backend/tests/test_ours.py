@@ -27,10 +27,10 @@ def test_constants():
     assert ours.PRIVACY_URL == "https://notes.petty.services/privacy"
 
 
-def test_on_by_default_off_for_team_servers_and_local_only():
+def test_on_by_default_off_for_team_servers_only():
     assert ours.enabled(make()) is True
     assert ours.enabled(make(team_mode=True)) is False
-    assert ours.enabled(make(cloud_models=False)) is False
+    assert ours.enabled(make(cloud_models=False)) is True  # LLM providers are a different matter
     assert make(team_mode=True).our_servers is False
 
 
@@ -54,7 +54,7 @@ def test_the_settings_api_shows_the_effective_value(client, ctx):
     values = client.put("/api/settings", json={"use_our_servers": None}).json()["values"]
     assert values["use_our_servers"] is True  # automatic: on
     values = client.put("/api/settings", json={"cloud_models": False}).json()["values"]
-    assert values["use_our_servers"] is False  # automatic: local-only turns it off
+    assert values["use_our_servers"] is True  # automatic: cloud_models does not matter
     assert ctx.settings.use_our_servers is None
     values = client.put("/api/settings", json={"use_our_servers": True}).json()["values"]
     assert values["use_our_servers"] is True and ctx.settings.use_our_servers is True

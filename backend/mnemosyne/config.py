@@ -289,7 +289,7 @@ class Settings(BaseSettings):
     remote_relays: str = ""
     # Use Mnemosyne's servers (services/ours.py) for what is not configured: its relay for
     # remote access, sync, contacts and guest notes; its host for publishing and as a mirror of
-    # guest notes. None = automatic: on, except on a team server and with cloud_models off
+    # guest notes. None = automatic: on, except on a team server
     # (resolve_use_our_servers). The API shows the effective value.
     use_our_servers: bool | None = None
     # Publishing a meeting (services/publishing.py, docs/plans/2026-10-12-hashseq-collaboration.md
@@ -524,17 +524,15 @@ class Settings(BaseSettings):
     @property
     def our_servers(self) -> bool:
         """`use_our_servers` as it takes effect."""
-        return resolve_use_our_servers(
-            self.use_our_servers, team_mode=self.team_mode, cloud_models=self.cloud_models
-        )
+        return resolve_use_our_servers(self.use_our_servers, team_mode=self.team_mode)
 
 
-def resolve_use_our_servers(value: bool | None, *, team_mode: bool, cloud_models: bool) -> bool:
+def resolve_use_our_servers(value: bool | None, *, team_mode: bool) -> bool:
     """Whether Mnemosyne's servers (services/ours.py) are used: what was set, else on, except on
-    a team server (meetings stay on it) and with cloud models off (the local-only posture)."""
+    a team server (meetings stay on it). `cloud_models` has no say: it is about LLM providers."""
     if value is not None:
         return value
-    return not team_mode and cloud_models
+    return not team_mode
 
 
 CONFIG_VERSION = 1

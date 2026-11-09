@@ -88,7 +88,7 @@ until the two machines find a direct path. By default Mnemosyne uses its own rel
 addresses, timing and sizes, and the IP address of whoever connects, never what is sent; the
 [privacy notice](https://notes.petty.services/privacy) says what is kept (counts only, no client addresses in logs).
 Whether it is used follows **Use Mnemosyne's servers** in Settings (`use_our_servers`): automatic means on,
-except on team servers and with cloud models off. With it off and `remote_relays` blank there is no relay at
+except on team servers. With it off and `remote_relays` blank there is no relay at
 all: paired computers connect directly or on the same network (mDNS), and remote access works only when
 they can reach each other that way. A relay you set in `remote_relays` always wins. To use your own, run the open-source iroh-relay server (a ready config and compose file are
 in [deploy/relay/](../deploy/relay/README.md)), put its address in **Relays** under Remote access on

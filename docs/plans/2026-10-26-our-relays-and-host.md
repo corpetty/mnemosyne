@@ -81,8 +81,8 @@ plan runs both on one machine of Corey's and makes the app use them by default.
 - **One module for our servers** (services/ours.py): `OUR_RELAYS = ["https://relay.petty.services"]`,
   `OUR_HOST = "https://notes.petty.services"`, read by services/link.py, guest_notes.py, publishing and the CSP
   builders (publishing.py `guest_csp`, pages.yml, publish-host defaults). A setting **Use Mnemosyne's
-  servers** (`use_our_servers`): on by default; off on team servers and when `cloud_models` is off (the
-  local-only posture); off means only what you configured yourself, and what needs a server says so.
+  servers** (`use_our_servers`): on by default; off on team servers (Corey, 2026-11-09: not when `cloud_models` is off, that is about
+  LLM providers); off means only what you configured yourself, and what needs a server says so.
 - **Remote access, sync and contacts**: blank `remote_relays` means ours (`parse_relays`, the link
   sidecar's `Relays`, `Relays::for_ticket` treats ours like any custom relay). No migration (Corey,
   2026-10-26): after updating, pair your computers again, as docs/remote-access.md already says for a

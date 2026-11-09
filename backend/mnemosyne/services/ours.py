@@ -9,8 +9,8 @@ the user configured) is read in one spot:
   published from this computer);
 - `guest_host(settings)`: `guest_host`, else the publish host, so the same chain with ours last.
 
-`use_our_servers` is on unless the settings say otherwise: a team server and the local-only
-posture (`cloud_models` off) start with it off, and a value the person set always wins.
+`use_our_servers` is on unless the settings say otherwise: a team server starts with it off
+(`cloud_models` does not matter: it is about LLM providers), and a value the person set always wins.
 """
 
 from __future__ import annotations
@@ -32,11 +32,10 @@ def parse_relays(text: str) -> list[str]:
 
 def enabled(settings: Any) -> bool:
     """Whether Mnemosyne's servers are used for what is not configured: the setting, or its
-    default (on, except on team servers and with cloud models off)."""
+    default (on, except on team servers)."""
     return resolve_use_our_servers(
         getattr(settings, "use_our_servers", None),
         team_mode=bool(getattr(settings, "team_mode", False)),
-        cloud_models=bool(getattr(settings, "cloud_models", True)),
     )
 
 
