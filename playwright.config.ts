@@ -53,6 +53,14 @@ export default defineConfig({
       timeout: 120_000
     },
     {
+      // A second demo backend, standing in for a main computer in devices.spec.ts (it asks for an API
+      // token once a device is paired, which the shared backend on 8018 must never do).
+      command: 'E2E_BACKEND_PORT=8058 bash tests-e2e/start-backend.sh',
+      url: 'http://127.0.0.1:8058/health',
+      reuseExistingServer: false,
+      timeout: 120_000
+    },
+    {
       command: 'bash tests-e2e/start-publish-host.sh',
       url: 'http://127.0.0.1:8028/health',
       reuseExistingServer: false,

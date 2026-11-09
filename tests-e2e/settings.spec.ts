@@ -54,7 +54,11 @@ test('Devices and people: this computer, my devices, people and links, with the 
   await expect(roles.getByRole('radio', { name: /^Main computer/ })).toBeChecked();
   await expect(page.getByText('Your devices reach this computer while Mnemosyne runs.')).toBeVisible();
   await roles.getByText('Team server', { exact: true }).click();
-  await expect(page.getByText('Others sign in to this computer from a browser.')).toBeVisible();
+  await expect(
+    page.getByText(
+      'Others sign in to this computer from a browser. Library sync and sharing with people who use Mnemosyne stop, and members cannot publish or open live-notes links until you allow it.'
+    )
+  ).toBeVisible();
   await roles.getByText('Main computer', { exact: true }).click();
 
   // My devices: Add a device offers a computer or a phone.
