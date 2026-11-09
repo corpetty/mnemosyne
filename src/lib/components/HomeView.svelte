@@ -12,7 +12,7 @@
 	<div class="text-center space-y-4">
 		<h2 class="text-2xl font-light text-gray-400">Mnemosyne</h2>
 		<p class="text-sm text-gray-500">Real-time transcription, diarization, and summarization</p>
-		{#if satelliteState.mainDown || (connectionState.usesMain && satelliteState.localUp && uiState.backendStatus !== 'connected')}
+		{#if satelliteState.mainDown || (connectionState.usesMain && satelliteState.localUp && uiState.backendStatus === 'unreachable')}
 			<!-- This computer uses a main computer and cannot reach it: it still records, into its outbox. -->
 			<div class="space-y-3" role="status">
 				<div class="flex items-center justify-center gap-2 text-amber-300">
