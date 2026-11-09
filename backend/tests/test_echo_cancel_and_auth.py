@@ -1,6 +1,7 @@
 """Echo-cancel manager (with a fake pw-cli) and bearer-token server mode."""
 
 import stat
+import sys
 
 import pytest
 
@@ -373,3 +374,11 @@ def test_tunnel_is_not_the_desktop_app(app, tunnel_client, ctx):
     ctx.settings.api_token = "s3cret"
     assert tunnel_client.get("/api/system/attach").status_code == 401
     assert desktop.get("/api/system/attach").status_code != 401  # LOCAL_PATHS
+
+
+def test_echo_cancel_unsupported_in_mac_words_on_a_mac(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert EchoCancelManager(pw_cli="pw-cli").supported() == (
+        False,
+        "Not available on a Mac yet",
+    )

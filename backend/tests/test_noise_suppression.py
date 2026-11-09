@@ -1,6 +1,7 @@
 """DeepFilterNet behind the echo canceller (audio/noise_suppression.py), with a fake pw-cli."""
 
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -267,3 +268,8 @@ async def test_start_recording_records_the_target_in_place_of_the_device(tmp_pat
     assert [p.device_id for p in rec.processes] == [146, 2]
     assert commands[0][commands[0].index("--target") + 1] == "mnemosyne_aec_raw"
     assert commands[1][commands[1].index("--target") + 1] == "alsa_input.mic"
+
+
+def test_noise_suppression_unsupported_in_mac_words_on_a_mac(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert ns.supported() == (False, "Not available on a Mac yet")

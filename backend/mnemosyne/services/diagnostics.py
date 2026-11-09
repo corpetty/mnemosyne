@@ -76,6 +76,9 @@ def _run(cmd: list[str], timeout: float = 2.0) -> str:
 
 
 def _os_name() -> str:
+    if sys.platform == "darwin":
+        version = platform.mac_ver()[0]
+        return f"macOS {version} ({platform.machine()})" if version else platform.platform()
     try:
         for line in Path("/etc/os-release").read_text().splitlines():
             if line.startswith("PRETTY_NAME="):
@@ -85,7 +88,26 @@ def _os_name() -> str:
     return platform.platform()
 
 
+def _ffmpeg() -> str:
+    path = shutil.which("ffmpeg")
+    if not path:
+        return "ffmpeg: not found"
+    try:
+        out = subprocess.run([path, "-version"], capture_output=True, text=True, timeout=2)
+        first = (out.stdout or out.stderr).strip().splitlines()
+        version = first[0] if first else f"exit {out.returncode}"
+    except (OSError, subprocess.SubprocessError) as e:
+        version = f"failed ({e.__class__.__name__})"
+    return f"ffmpeg: {path}, {version}"
+
+
 def _install_kind() -> str:
+    if sys.platform == "darwin":
+        here = Path(__file__).resolve()
+        if "/AppTranslocation/" in str(here):
+            return "macOS app (translocated: move it to Applications)"
+        if any(p.suffix == ".app" for p in here.parents):
+            return "macOS app"
     if Path("/.flatpak-info").exists():
         return "Flatpak"
     if os.environ.get("APPIMAGE"):
@@ -163,8 +185,12 @@ def build_report(app: AppContext, log_lines: int = 200) -> str:
         *_gpu(),
         f"whisperx {_version('whisperx')}, onnx-asr {_version('onnx-asr')}, "
         f"pyannote.audio {_version('pyannote.audio')}, nemo-toolkit {_version('nemo-toolkit')}",
-        f"pw-record: {'found' if shutil.which('pw-record') else 'not found'}, "
-        f"ffmpeg: {_run(['ffmpeg', '-hide_banner', '-version'])}",
+        *(
+            []
+            if sys.platform == "darwin"
+            else [f"pw-record: {'found' if shutil.which('pw-record') else 'not found'}"]
+        ),
+        _ffmpeg(),
         "",
         "### Engines",
         f"transcriber {settings.transcriber}, diarizer {settings.diarizer}, "

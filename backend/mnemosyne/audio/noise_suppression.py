@@ -19,6 +19,7 @@ The plugin is downloaded on first use (pinned, SHA-256 checked) into `models_dir
 from __future__ import annotations
 
 import platform
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -60,6 +61,8 @@ class Denoise:
 
 
 def supported() -> tuple[bool, str | None]:
+    if sys.platform == "darwin":
+        return False, "Not available on a Mac yet"
     if platform.machine() not in ("x86_64", "AMD64"):
         return False, "DeepFilterNet is only set up for x86-64 computers"
     if not any(Path(p).is_file() for p in FILTER_CHAIN_PATHS):

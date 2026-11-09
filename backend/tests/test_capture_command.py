@@ -1,5 +1,6 @@
 """pw-record command construction (regression: sinks must not fall back to the mic)."""
 
+import sys
 from pathlib import Path
 
 from mnemosyne.audio.capture import AudioDevice, build_record_command
@@ -25,3 +26,14 @@ def test_source_targeted_by_node_name():
     cmd = build_record_command(MIC, Path("/m.wav"), 48000, 1, "s16")
     assert cmd[cmd.index("-P") + 1] == "{ application.name=Mnemosyne }"  # no capture.sink
     assert cmd[cmd.index("--target") + 1] == "alsa_input.usb.rode"
+
+
+def test_list_devices_on_a_mac_runs_nothing(monkeypatch):
+    from mnemosyne.audio import capture
+
+    def no_pw_dump(*args, **kwargs):
+        raise AssertionError("pw-dump must not run on a Mac")
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(capture.subprocess, "run", no_pw_dump)
+    assert capture.list_devices() == []

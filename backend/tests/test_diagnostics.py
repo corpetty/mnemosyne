@@ -1,6 +1,7 @@
 """Backend log file and the diagnostics report (Settings → Copy diagnostics)."""
 
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -67,3 +68,68 @@ def test_diagnostics_replace_the_home_directory(client, ctx, monkeypatch, tmp_pa
     text = client.get("/api/system/diagnostics").json()["text"]
     assert str(tmp_path) not in text
     assert "data_dir = '~/data'" in text
+
+
+def test_mac_os_line_and_chip(monkeypatch):
+
+    from mnemosyne.services import diagnostics
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(diagnostics.platform, "mac_ver", lambda: ("15.4", ("", "", ""), "arm64"))
+    monkeypatch.setattr(diagnostics.platform, "machine", lambda: "arm64")
+    assert diagnostics._os_name() == "macOS 15.4 (arm64)"
+
+
+def test_mac_install_kind_translocated_and_app_bundle(monkeypatch):
+
+    from mnemosyne.services import diagnostics
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(
+        diagnostics,
+        "__file__",
+        "/private/var/folders/x/AppTranslocation/ABC/d/Mnemosyne.app/Contents/Resources/"
+        "backend/mnemosyne/services/diagnostics.py",
+    )
+    assert diagnostics._install_kind() == "macOS app (translocated: move it to Applications)"
+    monkeypatch.setattr(
+        diagnostics,
+        "__file__",
+        "/Applications/Mnemosyne.app/Contents/Resources/backend/mnemosyne/services/diagnostics.py",
+    )
+    assert diagnostics._install_kind() == "macOS app"
+
+
+def test_ffmpeg_line_reports_path_and_first_version_line(monkeypatch):
+    import subprocess
+
+    from mnemosyne.services import diagnostics
+
+    monkeypatch.setattr(diagnostics.shutil, "which", lambda name: "/opt/bin/ffmpeg")
+    done = subprocess.CompletedProcess(
+        ["/opt/bin/ffmpeg"], 0, stdout="ffmpeg version 7.1\nbuilt with clang\n", stderr=""
+    )
+    monkeypatch.setattr(diagnostics.subprocess, "run", lambda *a, **k: done)
+    assert diagnostics._ffmpeg() == "ffmpeg: /opt/bin/ffmpeg, ffmpeg version 7.1"
+
+
+def test_ffmpeg_line_never_raises(monkeypatch):
+    from mnemosyne.services import diagnostics
+
+    monkeypatch.setattr(diagnostics.shutil, "which", lambda name: None)
+    assert diagnostics._ffmpeg() == "ffmpeg: not found"
+    monkeypatch.setattr(diagnostics.shutil, "which", lambda name: "/opt/bin/ffmpeg")
+
+    def broken(*a, **k):
+        raise OSError("exec format error")
+
+    monkeypatch.setattr(diagnostics.subprocess, "run", broken)
+    assert diagnostics._ffmpeg() == "ffmpeg: /opt/bin/ffmpeg, failed (OSError)"
+
+
+def test_no_pw_record_line_on_a_mac(client, ctx, monkeypatch):
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    text = client.get("/api/system/diagnostics").json()["text"]
+    assert "pw-record" not in text
+    assert "ffmpeg:" in text
