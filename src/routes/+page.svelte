@@ -17,6 +17,7 @@
 	import HomeView from '$lib/components/HomeView.svelte';
 	import PeoplePanel from '$lib/components/PeoplePanel.svelte';
 	import QuitDialog from '$lib/components/QuitDialog.svelte';
+	import SatelliteBanner from '$lib/components/SatelliteBanner.svelte';
 	import SessionList from '$lib/components/SessionList.svelte';
 	import SessionView from '$lib/components/SessionView.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
@@ -30,7 +31,9 @@
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 	import UnlockScreen from '$lib/components/UnlockScreen.svelte';
 	import { audioState } from '$lib/stores/audio.svelte.js';
+	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
+	import { satelliteState } from '$lib/stores/satellite.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { uiState, type View } from '$lib/stores/ui.svelte.js';
@@ -53,6 +56,12 @@
 	$effect(() => listenForRemoteActions());
 	$effect(() => runLaunchActionOnce());
 	$effect(() => checkForUpdateOnce());
+	// A computer that uses a main computer asks its own backend what it is recording and what waits.
+	$effect(() => {
+		const uses = connectionState.usesMain;
+		untrack(() => satelliteState.follow(uses));
+		return () => satelliteState.stop();
+	});
 
 	// Mirror recording state into the tray label and tooltip.
 	$effect(() => {
@@ -112,6 +121,7 @@
 	<UpdateBanner />
 	<AutoRecordBanner />
 	<CalendarBanner />
+	<SatelliteBanner />
 
 	{#if uiState.locked}
 		<UnlockScreen />

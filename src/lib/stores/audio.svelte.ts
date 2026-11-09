@@ -1,5 +1,14 @@
-import type { ActiveRecording, AudioDevice, BackendEvent, Level } from "$lib/types/index.js";
+import type {
+  ActiveRecording,
+  AudioDevice,
+  BackendEvent,
+  Level,
+  SatelliteRecording,
+  SatelliteStartResponse,
+  SatelliteStopResponse
+} from "$lib/types/index.js";
 import * as api from "$lib/api/backend.js";
+import { startSatellite as startSatelliteApi, stopSatellite as stopSatelliteApi } from "$lib/api/local.js";
 import { wsState } from "./websocket.svelte.js";
 import { SAME_ORIGIN } from "./connection.svelte.js";
 import { browserCapture, type Acquired } from "$lib/app/browser-capture.js";
@@ -55,6 +64,14 @@ class AudioState {
   /** A click on Record / Stop waiting for the backend: shown at once, so the click registers. */
   pending = $state<'starting' | 'stopping' | null>(null);
   activeSessionId = $state<string | null>(null);
+  /** The recording in progress goes through THIS computer's backend for its main computer
+   * (api/local.ts, backend services/satellite.py): this window is connected to that main computer. */
+  satellite = $state(false);
+  /** A satellite recording the main computer is not receiving: kept on this computer, handed
+   * over when it can be reached. It has no meeting (`activeSessionId` is null) until then. */
+  localOnly = $state(false);
+  /** The outbox id (this computer's) of the satellite recording in progress. */
+  satelliteId = $state<string | null>(null);
   /** The part clock of the recording in progress; null when none or the backend sent none. A
    * capture restart is a new part, so restartCapture() takes the new one. */
   clock = $state<PartClock | null>(null);
@@ -104,6 +121,9 @@ class AudioState {
     this.isRecording = false;
     this.stopClock();
     this.activeSessionId = null;
+    this.satellite = false;
+    this.localOnly = false;
+    this.satelliteId = null;
     this.clock = null;
     this.levels = {};
     this.problems = {};
@@ -251,6 +271,75 @@ class AudioState {
     } finally {
       this.pending = null;
     }
+  }
+
+  /** Record with this computer's microphone and call audio for the main computer it uses: the
+   * local backend streams to it, or keeps the recording until it is reachable. The selection is
+   * the devices ticked in the picker (this computer's own, see getDevices): the first microphone
+   * and the first output or monitor. */
+  async startSatellite(consent?: string | null): Promise<SatelliteStartResponse | undefined> {
+    const picked = this.devices.filter((d) => this.selectedDeviceIds.has(d.id));
+    const mic = picked.find((d) => d.is_input && !d.is_monitor) ?? null;
+    const call = picked.find((d) => d.is_output || d.is_monitor) ?? null;
+    if (!mic && !call) {
+      this.error = "Select a microphone and/or call audio";
+      return;
+    }
+    this.error = null;
+    this.pending = 'starting';
+    try {
+      const res = await startSatelliteApi({
+        mic_device: mic?.id ?? null,
+        system_device: call?.id ?? null,
+        consent: (consent ?? null) as 'all_parties' | 'in_person' | 'one_party' | null
+      });
+      this.satellite = true;
+      this.satelliteId = res.local_id;
+      this.localOnly = !res.streaming;
+      this.activeSessionId = res.session_id;
+      this.clock = null;
+      this.isRecording = true;
+      this.problems = {};
+      this.marks = 0;
+      this.startClock(Date.now());
+      return res;
+    } catch (e) {
+      this.error = e instanceof Error ? e.message.replace(/^\d+: /, '') : "Failed to start recording";
+    } finally {
+      this.pending = null;
+    }
+  }
+
+  /** Stop a satellite recording: the local backend ends capture and finishes with the main
+   * computer (or keeps the audio for it). */
+  async stopSatellite(notes?: string | null): Promise<SatelliteStopResponse | undefined> {
+    this.error = null;
+    this.pending = 'stopping';
+    try {
+      const res = await stopSatelliteApi(notes);
+      this.ended();
+      return res;
+    } catch (e) {
+      // Not recording there any more (it stopped meanwhile, or the main computer stopped it).
+      if (e instanceof Error && e.message.startsWith('404')) this.ended();
+      this.error = e instanceof Error ? e.message.replace(/^\d+: /, '') : "Failed to stop recording";
+    } finally {
+      this.pending = null;
+    }
+  }
+
+  /** Show the satellite recording the local backend is making (the window was reopened). */
+  resumeSatellite(rec: SatelliteRecording) {
+    this.satellite = true;
+    this.satelliteId = rec.local_id;
+    this.localOnly = !rec.streaming;
+    this.activeSessionId = rec.streaming ? rec.session_id : null;
+    this.clock = null;
+    this.isRecording = true;
+    this.problems = {};
+    const started = Date.parse(rec.started_at);
+    this.startClock(Number.isNaN(started) ? Date.now() : started);
+    if (!this.devices.length) void this.loadDevices();
   }
 
   /** Show a recording that was already running when the page connected: the app was

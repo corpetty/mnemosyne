@@ -15,6 +15,7 @@ import {
   getSystemInfo,
   listSessions
 } from '$lib/api/backend.js';
+import { untrack } from 'svelte';
 import { browserCapture } from '$lib/app/browser-capture.js';
 import { askState } from '$lib/stores/ask.svelte.js';
 import { digestState } from '$lib/stores/digest.svelte.js';
@@ -25,6 +26,7 @@ import { calendarState } from '$lib/stores/calendar.svelte.js';
 import { connectionState, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
 import { guestNotesState } from '$lib/stores/guestNotes.svelte.js';
 import { jobsState } from '$lib/stores/jobs.svelte.js';
+import { satelliteState } from '$lib/stores/satellite.svelte.js';
 import { sessionState } from '$lib/stores/session.svelte.js';
 import { toastState } from '$lib/stores/toast.svelte.js';
 import { teamState } from '$lib/stores/team.svelte.js';
@@ -34,7 +36,7 @@ import { contactsState } from '$lib/stores/contacts.svelte.js';
 import { syncState } from '$lib/stores/sync.svelte.js';
 import { updateState } from '$lib/stores/update.svelte.js';
 import { wsState } from '$lib/stores/websocket.svelte.js';
-import type { BackendEvent, RecoveredRecording } from '$lib/types/index.js';
+import type { BackendEvent, RecoveredRecording, SatelliteRecording } from '$lib/types/index.js';
 
 // ---- navigation ----------------------------------------------------------------
 
@@ -62,6 +64,8 @@ export async function startRecording(fresh = false, consent?: Consent) {
     uiState.consentAsk = { fresh }; // ConsentDialog asks, then comes back here
     return;
   }
+  // A computer that uses a main computer records through its own backend, never the main one's.
+  if (connectionState.usesMain) return startSatelliteRecording(consent);
   // In the browser the microphone and share dialogs come first, straight from the click.
   if (audioState.inBrowser && !(await audioState.acquireBrowser())) {
     toastState.error(audioState.error ?? 'Could not start recording');
@@ -86,8 +90,67 @@ export async function startRecording(fresh = false, consent?: Consent) {
   }
 }
 
+/** Uses-my-main-computer role (docs/plans/2026-11-09-connections-design.md, task 8): this laptop's
+ * backend captures and streams to the main computer's meeting, or, when it cannot be reached, keeps
+ * the recording until it can. The meeting is made by the main computer (always a new one), so
+ * there is no session to create here. */
+async function startSatelliteRecording(consent?: Consent) {
+  if (!(await audioState.ensureDevices())) {
+    toastState.error('Choose a microphone and/or call audio on this computer first');
+    uiState.view = 'home';
+    return;
+  }
+  const res = await audioState.startSatellite(consent);
+  if (!res) {
+    toastState.error(audioState.error ?? 'Could not start recording');
+    return;
+  }
+  void satelliteState.refresh();
+  uiState.activeTab = 'recording';
+  if (res.streaming && res.session_id) {
+    transcriptState.startLive(res.session_id);
+    await sessionState.selectSession(res.session_id);
+    sessionState.loadSessions();
+    toastState.info(`Recording started, going to ${satelliteState.mainName}`);
+  } else {
+    // Nothing on the main computer yet: the recording screen shows it on this computer.
+    sessionState.show(null);
+    uiState.view = 'home';
+    toastState.info(`Recording on this computer. It goes to ${satelliteState.mainName} when it can be reached.`);
+  }
+}
+
+/** Stop a satellite recording and say where it stands. */
+async function stopSatelliteRecording() {
+  const res = await audioState.stopSatellite();
+  if (res) stoppedLocal.add(res.local_id);
+  void satelliteState.refresh();
+  if (!res) {
+    if (audioState.error) toastState.error(audioState.error);
+    return;
+  }
+  const main = satelliteState.mainName;
+  if (res.outcome === 'waiting') {
+    toastState.show(`Recording kept on this computer. It goes to ${main} when it can be reached.`, 'info', 15_000);
+    return;
+  }
+  if (res.session_id) {
+    if (sessionState.activeSession?.id === res.session_id) {
+      sessionState.refreshActive();
+      uiState.activeTab = 'transcript';
+    }
+    sessionState.loadSessions();
+  }
+  toastState.info(
+    res.outcome === 'handing_over'
+      ? `Recording stopped. The complete audio is being sent to ${main}.`
+      : `Recording stopped; ${main} is saving it`
+  );
+}
+
 export async function stopAndTranscribe() {
   if (audioState.pending) return;
+  if (audioState.satellite) return stopSatelliteRecording();
   const sessionId = audioState.activeSessionId;
   const result = await audioState.stopRecording();
   if (!result || !sessionId) return;
@@ -105,6 +168,7 @@ export async function stopAndTranscribe() {
  *  to come back; backend/mnemosyne/api/app_watch.py): show that recording, Stop and all. */
 async function resumeActiveRecording() {
   if (audioState.isRecording || audioState.pending) return;
+  if (connectionState.usesMain) return; // this computer's own recording: followSatelliteRecording
   const [active] = await getActiveRecordings().catch(() => []);
   if (!active || audioState.isRecording) return;
   audioState.resume(active.session_id, active.started_at, active.device_ids, active.problems);
@@ -125,7 +189,7 @@ async function resumeActiveRecording() {
  *  and recovers what was recorded) is shown as stopped, not as recording on forever. */
 async function checkRecordingStillRunning() {
   const sessionId = audioState.activeSessionId;
-  if (!audioState.isRecording || !sessionId || audioState.pending) return;
+  if (!audioState.isRecording || !sessionId || audioState.pending || audioState.satellite) return;
   const active = await getActiveRecordings().catch(() => null);
   if (!active || active.some((a) => a.session_id === sessionId)) return;
   if (audioState.activeSessionId !== sessionId || audioState.pending) return;
@@ -158,6 +222,10 @@ function watchBackend(): () => void {
     }
     if (++failures < 2 || uiState.backendStatus === 'unreachable') return;
     uiState.backendStatus = 'unreachable';
+    if (audioState.satellite) {
+      // The main computer went away; this computer keeps recording (the banner says so).
+      return;
+    }
     if (audioState.isRecording && !audioState.pending) {
       audioState.ended();
       toastState.show(
@@ -171,6 +239,69 @@ function watchBackend(): () => void {
   }, 5000);
   return () => clearInterval(timer);
 }
+
+/** Local ids of satellite recordings this window stopped: a poll that was already on its way
+ * must not bring one back. */
+const stoppedLocal = new Set<string>();
+/** The local id of the recording the last poll showed, so a poll from before Start (no recording
+ * yet) is not taken for "it ended". */
+let satelliteSeen: string | null = null;
+
+/** Keep what the window shows in step with what THIS computer's backend is recording for its main
+ * computer: pick up a recording after the window was reopened (or started elsewhere, e.g. the
+ * tray), and show one that ended (the main computer stopped it, the backend restarted). Runs on
+ * every poll of the local backend (stores/satellite). */
+function followSatelliteRecording() {
+  const status = satelliteState.status;
+  if (!status || audioState.pending) return;
+  const rec = status.recording;
+  if (rec) {
+    satelliteSeen = rec.local_id;
+    if (!audioState.isRecording && !stoppedLocal.has(rec.local_id) && connectionState.usesMain) {
+      void resumeSatelliteRecording(rec);
+    }
+    return;
+  }
+  if (audioState.satellite && audioState.isRecording && satelliteSeen === audioState.satelliteId) {
+    satelliteSeen = null;
+    const wasStreaming = !audioState.localOnly;
+    audioState.ended();
+    toastState.show(
+      wasStreaming
+        ? `The recording stopped. What was recorded is kept and goes to ${satelliteState.mainName}.`
+        : `The recording stopped. It goes to ${satelliteState.mainName} when it can be reached.`,
+      'info',
+      15_000
+    );
+    sessionState.loadSessions();
+  }
+}
+
+async function resumeSatelliteRecording(rec: SatelliteRecording) {
+  audioState.resumeSatellite(rec);
+  uiState.view = 'home';
+  uiState.activeTab = 'recording';
+  const sid = rec.streaming ? rec.session_id : null;
+  if (sid && uiState.backendStatus === 'connected') {
+    const [active] = (await getActiveRecordings().catch(() => [])).filter((a) => a.session_id === sid);
+    transcriptState.resumeLive(
+      sid,
+      (active?.live_segments ?? []).map((s) => ({ ...s.segment, source: s.source })),
+      active?.live ?? true
+    );
+    await sessionState.selectSession(sid);
+  } else {
+    sessionState.show(null);
+  }
+  toastState.info('Still recording: picked up the recording in progress');
+}
+
+$effect.root(() => {
+  $effect(() => {
+    void satelliteState.status;
+    untrack(followSatelliteRecording);
+  });
+});
 
 /** A source stopped being captured: save what was recorded and carry on recording into the
  *  same meeting (its next part). The live transcript so far stays. */
@@ -419,6 +550,17 @@ export async function restartBackendForRestore(): Promise<boolean> {
 export async function stopSaveAndQuit() {
   uiState.quitSaving = true;
   try {
+    if (audioState.satellite) {
+      // This computer's backend finishes with the main computer (or keeps the audio) after the app
+      // is gone, like a local recording.
+      const done = await audioState.stopSatellite();
+      if (!done) {
+        toastState.error(audioState.error ?? 'Could not stop the recording');
+        return;
+      }
+      await invokeShell('quit_app');
+      return;
+    }
     const res = await audioState.stopRecording(false);
     if (!res) {
       if (!(await getHealth().then(() => true).catch(() => false))) {
@@ -468,11 +610,12 @@ export async function handleRemoteAction(action: string) {
   if (wantStop && audioState.isRecording) {
     await stopAndTranscribe();
   } else if (wantStart && !audioState.isRecording) {
-    if (uiState.backendStatus !== 'connected') return;
+    // A computer that uses a main computer can record while the main computer is away.
+    if (uiState.backendStatus !== 'connected' && !(connectionState.usesMain && satelliteState.localUp)) return;
     if (!(await audioState.ensureDevices())) {
       await invokeShell('show_window');
       uiState.closePanels();
-      await sessionState.createSession();
+      if (!connectionState.usesMain) await sessionState.createSession();
       uiState.activeTab = 'recording';
       toastState.error('Choose a microphone and/or system audio first, then start again');
       return;

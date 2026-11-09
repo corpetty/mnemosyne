@@ -104,6 +104,13 @@ import type {
 } from '$lib/types/index.js';
 
 import { connectionState } from '$lib/stores/connection.svelte.js';
+import {
+  getLocalDeviceLevel,
+  getLocalDevices,
+  getLocalEchoCancel,
+  runLocalSelfTest,
+  setLocalEchoCancel
+} from '$lib/api/local.js';
 
 function base(): string {
   return connectionState.url;
@@ -140,7 +147,10 @@ export async function getHealth(): Promise<{
 }
 
 // Devices
+// A computer that uses a main computer records with ITS OWN devices (api/local.ts), never the main
+// computer's: the device list, level checks, self-test and echo cancellation go to the local backend.
 export async function getDevices(): Promise<AudioDevice[]> {
+  if (connectionState.usesMain) return getLocalDevices();
   return request('/api/devices');
 }
 
@@ -720,6 +730,7 @@ export async function importAudio(
 export type { EchoCancelStatus };
 
 export async function getEchoCancel(): Promise<EchoCancelStatus> {
+  if (connectionState.usesMain) return getLocalEchoCancel();
   return request('/api/audio/echo-cancel');
 }
 
@@ -731,6 +742,7 @@ export async function setEchoCancel(
   mic?: string,
   noise?: { noise_suppression?: boolean; noise_suppression_db?: number; noise_suppression_record?: boolean },
 ): Promise<EchoCancelStatus> {
+  if (connectionState.usesMain) return setLocalEchoCancel(enabled, mic, noise);
   return request('/api/audio/echo-cancel', {
     method: 'POST',
     body: JSON.stringify({ enabled, mic, ...noise }),
@@ -1212,10 +1224,12 @@ export async function setAttendees(sessionId: string, attendees: string[]): Prom
 
 // Levels and the system-audio self-test
 export async function getDeviceLevel(deviceId: number, seconds = 1): Promise<Level> {
+  if (connectionState.usesMain) return getLocalDeviceLevel(deviceId, seconds);
   return request(`/api/audio/level/${deviceId}?seconds=${seconds}`);
 }
 
 export async function runSelfTest(deviceId: number): Promise<SelfTestResult> {
+  if (connectionState.usesMain) return runLocalSelfTest(deviceId);
   return request('/api/audio/self-test', { method: 'POST', body: JSON.stringify({ device_id: deviceId }) });
 }
 

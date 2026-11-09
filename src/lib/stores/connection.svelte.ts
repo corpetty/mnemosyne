@@ -113,6 +113,26 @@ class ConnectionState {
     }
   }
 
+  /** This computer uses a main computer: the window is connected to it through remote access.
+   * Recording then goes through this computer's own backend (api/local.ts, stores/satellite). */
+  get usesMain(): boolean {
+    return this.remote;
+  }
+
+  /** The local backend made a token for itself while the window is connected elsewhere
+   * (pairing prepare): keep it, the next request to it needs it. */
+  setLocalToken(token: string) {
+    this.localToken = token.trim();
+    const onLocal = !this.remote && !SAME_ORIGIN && LOCAL_URL.test(this.url);
+    if (onLocal) this.token = this.localToken;
+    try {
+      localStorage.setItem(LOCAL_KEY, JSON.stringify({ token: this.localToken }));
+      if (onLocal) localStorage.setItem(KEY, JSON.stringify({ url: this.url, token: this.token, remote: false }));
+    } catch {
+      /* ignore */
+    }
+  }
+
   /** Back to this computer's own backend, with the token it has. */
   useLocal() {
     this.save(defaultUrl(), SAME_ORIGIN ? '' : this.localToken);
