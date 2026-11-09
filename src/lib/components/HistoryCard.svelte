@@ -2,6 +2,7 @@
 	import { getHistory, recoverSession } from '$lib/api/backend.js';
 	import { audioReason } from '$lib/app/access.js';
 	import { groupHistory } from '$lib/app/historyGroups.js';
+	import { devicesState } from '$lib/stores/devices.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { toastState } from '$lib/stores/toast.svelte.js';
@@ -117,6 +118,15 @@
 		'': 'the transcript'
 	};
 
+	// A recording a paired computer made or handed over names its device (backend api/routes/audio.py
+	// `by_device`, handoff.py `device_id`): the name comes from the list of connected devices.
+	const deviceName = (id: unknown): string =>
+		(typeof id === 'string' && devicesState.list?.find((x) => x.id === id)?.name) || 'another computer';
+	$effect(() => {
+		const needsNames = history?.events.some((e) => (e.detail as Record<string, unknown>).by_device);
+		if (needsNames && devicesState.list === null) void devicesState.load();
+	});
+
 	function describe(e: HistoryEvent): string {
 		const d = e.detail as Record<string, unknown>;
 		const p = partName(e.part);
@@ -126,7 +136,14 @@
 				return 'Meeting created';
 			case 'recording_started': {
 				const devices = (d.devices as string[] | undefined)?.join(', ');
-				return `Recording ${p} started${d.restart ? ' again after a capture problem' : ''}${devices ? ` from ${devices}` : ''}`;
+				const via = d.by_device ? `, sent by ${deviceName(d.by_device)}` : '';
+				return `Recording ${p} started${d.restart ? ' again after a capture problem' : ''}${devices ? ` from ${devices}` : ''}${via}`;
+			}
+			case 'handed_over': {
+				// The recording was made on a paired computer and sent here whole.
+				const who = (d.by as string) || deviceName(d.device_id);
+				const n = (d.parts as number) ?? 1;
+				return `Handed over by ${who} (${n} part${n === 1 ? '' : 's'})${d.replaced ? ', replacing the audio it had streamed' : ''}`;
 			}
 			case 'recording_stopped':
 				return `Recording ${p} ${STOP[d.reason as string] ?? 'stopped'}${len}`;

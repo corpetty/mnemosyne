@@ -6,6 +6,7 @@
 	// Settings → Devices and people → This computer: what this computer is to the others.
 	// The selected card is the current role (derived, not stored): a team server when team mode is
 	// on, "uses my main computer" when this window is connected through remote access, else main.
+	import LibraryCopy from './LibraryCopy.svelte';
 	import RemoteConnect from './RemoteConnect.svelte';
 	import TeamHostSettings from './TeamHostSettings.svelte';
 
@@ -70,6 +71,7 @@
 		{/if}
 	{:else if pick === 'satellite'}
 		<RemoteConnect />
+		{#if role === 'satellite'}<LibraryCopy />{/if}
 	{:else}
 		{#if role !== 'team'}
 			<p class="text-xs text-gray-500">
