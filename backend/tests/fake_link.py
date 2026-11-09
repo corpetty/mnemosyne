@@ -51,7 +51,9 @@ the old text and the new markdown, and the ops when `refs` were asked for; 16 he
 (keys = lines of the request's markdown; a blank line or one past the end is ignored).
 mark_comment takes `first`/`last` as decimal character positions (the toy's "element ids"; a
 position past the end of the text, or not a number, is "no such character") and emits one
-`["comment", id, first, last + 1]` frame (id `mark-<comment>`).
+`["comment", id, first, last + 1]` frame (id `mark-<comment>`). mark_comment_at takes `start`/`end`
+(`[start, end)` in characters of the text, which is `plain`) and emits `["comment", id, start,
+end]` the same way; `end <= start` or past the text is an error.
 Every answer has `tasks` from the markdown's `- [ ] ` / `- [x] ` lines, as notes-core's: `line` is
 the line's index (0-based, among all the text's lines) as 64 hex characters, `text` the line
 after the box with `[label](url)` links reduced to their label, `links` those as `[start, end,
@@ -370,6 +372,28 @@ if sys.argv[1:] == ["notes", "doc"]:
         frame = {
             "id": f"mark-{request['comment']}",
             "ops": [["comment", request["comment"], found["first"], found["last"] + 1]],
+        }
+        if frame["id"] in {f["id"] for f in state["frames"]}:
+            answer(state, frames=[])
+        state["frames"].append(frame)
+        raw = b"\xde" + json.dumps(frame).encode()
+        answer(state, frames=[base64.b64encode(raw).decode()])
+    elif op == "mark_comment_at":
+        state = load(request.get("snapshot"))
+        add(state, request.get("frames", []))
+        text, _, _ = replay(state)
+        start, end = request.get("start"), request.get("end")
+        if not all(isinstance(x, int) and not isinstance(x, bool) and x >= 0 for x in (start, end)):
+            fail("start/end: expected numbers")
+        if end <= start:
+            fail("end is not after start")
+        if end > len(text):
+            fail("end: past the end of the text")
+        if not request.get("comment"):
+            fail("comment: empty")
+        frame = {
+            "id": f"mark-{request['comment']}",
+            "ops": [["comment", request["comment"], start, end]],
         }
         if frame["id"] in {f["id"] for f in state["frames"]}:
             answer(state, frames=[])
