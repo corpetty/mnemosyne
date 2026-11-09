@@ -24,7 +24,17 @@ trap 'rm -rf "$TMP"' EXIT
 echo "Downloading uv $UV_VERSION for $TRIPLE..."
 curl -fsSL -o "$TMP/$ASSET" "$BASE/$ASSET"
 curl -fsSL -o "$TMP/$ASSET.sha256" "$BASE/$ASSET.sha256"
-(cd "$TMP" && sha256sum -c "$ASSET.sha256" --quiet)
+# sha256sum is GNU; macOS ships shasum.
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL="$(sha256sum "$TMP/$ASSET" | cut -d' ' -f1)"
+else
+  ACTUAL="$(shasum -a 256 "$TMP/$ASSET" | cut -d' ' -f1)"
+fi
+EXPECTED="$(cut -d' ' -f1 "$TMP/$ASSET.sha256")"
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+  echo "uv checksum mismatch for $ASSET: expected $EXPECTED, got $ACTUAL" >&2
+  exit 1
+fi
 tar -xzf "$TMP/$ASSET" -C "$TMP"
 
 mkdir -p "$OUT_DIR"
