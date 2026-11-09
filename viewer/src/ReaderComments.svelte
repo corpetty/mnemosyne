@@ -62,6 +62,12 @@
 		void rev;
 		return model.name !== '';
 	});
+	/** The owner blocked this reader's rid: no composer, no Reply/Edit/Delete, one line instead. */
+	const blocked = $derived.by(() => {
+		void rev;
+		return model.blockedHere;
+	});
+	const actionsOpen = $derived(canAct && !blocked);
 
 	// Redraw when the next pending op turns "Not sent".
 	$effect(() => {
@@ -132,7 +138,7 @@
 		editing = confirming = null;
 	}
 	function sendReply(t: ViewThread) {
-		if (!canAct || !sendable(replyText)) return;
+		if (!actionsOpen || !sendable(replyText)) return;
 		if (model.reply(t.root.id, replyText)) {
 			replyingTo = null;
 			replyText = '';
@@ -144,13 +150,13 @@
 		replyingTo = confirming = null;
 	}
 	function saveEdit(c: ViewComment) {
-		if (!canAct || !sendable(editText)) return;
+		if (!actionsOpen || !sendable(editText)) return;
 		model.edit(c, editText);
 		editing = null;
 	}
 	function remove(c: ViewComment) {
 		confirming = null;
-		if (canAct) model.remove(c);
+		if (actionsOpen) model.remove(c);
 	}
 
 	// ---- threads on a part, brought into view ----------------------------------------------------
@@ -310,7 +316,9 @@
 <section bind:this={sectionEl} aria-labelledby="reader-comments-heading" data-testid="reader-comments">
 	<h2 id="reader-comments-heading" class="text-sm font-semibold text-gray-300">Comments</h2>
 
-	{#if canAct}
+	{#if blocked}
+		<p class="mt-2 text-xs text-gray-500" data-testid="reader-blocked">{'The owner has stopped taking comments from you on this page.'}</p>
+	{:else if canAct}
 		<div bind:this={composeEl} class="mt-2 space-y-2 rounded-md border border-gray-600 bg-gray-900 p-2" data-testid="reader-compose">
 			{#if !named}
 				<NameCard onname={setName} />
@@ -345,7 +353,7 @@
 
 	<div class="mt-2 space-y-2">
 		{#each shown.open as t (t.root.id)}
-			{@render card(t, canAct)}
+			{@render card(t, actionsOpen)}
 		{/each}
 		{#each shown.resolved as t (t.root.id)}
 			{#if expanded[t.root.id]}

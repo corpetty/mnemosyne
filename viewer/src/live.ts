@@ -53,10 +53,19 @@ export interface Threads {
 	/** Per reader (rid), the ids of that reader's own comments waiting for the owner's approval:
 	 *  ids only, never their text (every reader gets this frame). Empty from an older owner. */
 	pending: Record<string, string[]>;
+	/** The rids the owner has blocked from commenting (sorted). Empty from an older owner. */
+	blocked: string[];
 	at: string;
 }
 
 const RID = /^[0-9a-f]{16}$/;
+
+/** THREADS' `blocked`: a list of rids; anything malformed is left out. */
+export function parseBlocked(raw: unknown): string[] {
+	if (!Array.isArray(raw)) return [];
+	const rids = raw.filter((r): r is string => typeof r === 'string' && RID.test(r));
+	return [...new Set(rids)].sort();
+}
 
 /** THREADS' `pending`: {rid: [comment id, ...]}; anything malformed is left out. */
 export function parsePending(raw: unknown): Record<string, string[]> {
@@ -427,7 +436,7 @@ export class Follower {
 		if (at === null || !Array.isArray(o.threads)) return false;
 		if (this.threadsAt !== null && at <= this.threadsAt) return true;
 		this.threadsAt = at;
-		this.threads = { threads: o.threads, pending: parsePending(o.pending), at: o.at as string };
+		this.threads = { threads: o.threads, pending: parsePending(o.pending), blocked: parseBlocked(o.blocked), at: o.at as string };
 		this.h.onChange?.();
 		return true;
 	}
