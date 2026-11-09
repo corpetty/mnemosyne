@@ -7,8 +7,6 @@
 	import { toastState } from '$lib/stores/toast.svelte.js';
 	import type { ContactInfo, PairingCode } from '$lib/types/index.js';
 
-	let { enabled = false, tokenSet = false }: { enabled?: boolean; tokenSet?: boolean } = $props();
-
 	let code = $state<PairingCode | null>(null);
 	let copied = $state(false);
 	let invite = $state('');
@@ -18,10 +16,8 @@
 	let draft = $state('');
 	let now = $state(Date.now());
 
-	const ready = $derived(enabled && tokenSet);
-
 	$effect(() => {
-		if (ready) void contactsState.load();
+		void contactsState.load();
 	});
 	$effect(() => {
 		const t = setInterval(() => (now = Date.now()), 30_000);
@@ -131,9 +127,6 @@
 		<p class="text-xs text-gray-500">
 			Pair with someone else's computer to share chosen meetings with them. They can comment, tick action items and type in the notes you share; the rest stays yours.
 		</p>
-		{#if !ready}
-			<p class="text-xs text-amber-300">Needs remote access and an API token (above).</p>
-		{/if}
 
 		{#if contactsState.me}
 			<div class="max-w-2xl space-y-1">
@@ -146,7 +139,6 @@
 		<div class="flex items-center gap-3">
 			<button
 				onclick={makeInvite}
-				disabled={!ready}
 				class="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50"
 				>Show my invite</button
 			>
@@ -170,13 +162,12 @@
 				bind:value={invite}
 				placeholder="Paste their invite"
 				aria-label="Their invite"
-				disabled={!ready}
 				onkeydown={(e) => e.key === 'Enter' && join()}
 				class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-300 w-full font-mono disabled:opacity-50"
 			/>
 			<button
 				onclick={join}
-				disabled={!ready || !invite.trim() || joining}
+				disabled={!invite.trim() || joining}
 				class="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50"
 				>{joining ? 'Pairing…' : 'Pair'}</button
 			>
@@ -196,7 +187,7 @@
 		{#if contactsState.contacts.length}
 			<ul class="max-w-2xl divide-y divide-gray-800 rounded border border-gray-800">
 				{#each contactsState.contacts as c (c.person)}
-					{@const line = ready ? pullLine(c) : null}
+					{@const line = pullLine(c)}
 					<li class="px-2 py-1.5 text-xs space-y-0.5">
 						<div class="flex items-center gap-2">
 							{#if editing === c.person}

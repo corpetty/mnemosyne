@@ -2,8 +2,8 @@
 	import { createPairingCode, getPhoneLink, listPairedDevices, removePairedDevice } from '$lib/api/backend.js';
 	import type { PairedDevice, PairingCode, PhoneLink } from '$lib/types/index.js';
 
-	/** Saved settings this depends on: the phone address and whether an API token is set. */
-	let { phoneUrl = '', tokenSet = false }: { phoneUrl?: string; tokenSet?: boolean } = $props();
+	/** The saved phone address. Pairing a phone makes the API token it needs. */
+	let { phoneUrl = '' }: { phoneUrl?: string } = $props();
 
 	let link = $state<PhoneLink | null>(null);
 	let devices = $state<PairedDevice[]>([]);
@@ -25,7 +25,7 @@
 	}
 
 	$effect(() => {
-		void [phoneUrl, tokenSet];
+		void phoneUrl;
 		getPhoneLink()
 			.then((l) => {
 				link = l;

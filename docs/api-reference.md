@@ -29,7 +29,7 @@ code from the address. `/m?token=<api token>` from older links still works.
 
 `GET /api/server/phone` → `{reachable, pairing, host, port, urls, note}`: whether a phone can reach
 the page (the backend listens on a non-loopback address, from `mnemosyne-backend --host`, or the
-`phone_url` setting is set), whether phones pair (an API token is set), and candidate addresses of the
+`phone_url` setting is set), whether phones pair (always: the first code makes the API token), and candidate addresses of the
 page, `phone_url` first. The addresses never carry a token. Settings → Server mode shows them with a
 QR code.
 
@@ -40,8 +40,24 @@ outside the database, so they are checked even while encrypted meetings are lock
 - `POST /api/pairing/codes` `{kind: "phone" | "desktop"}` (body optional, default phone) →
   `{code, kind, expires_at, urls, invite}`: a one-time code, valid for 10 minutes. For a phone, `urls`
   are the phone page addresses carrying it (`…/m?pair=<code>`); for a computer, `invite` is
-  `<iroh ticket>#<code>`, to paste on the other machine (`409` unless remote access is running).
-  `409` when no API token is set.
+  `<iroh ticket>#<code>`, to paste on the other machine. Making a code makes what it needs
+  (services/pairing_prep.py `prepare_pairing`): the API token when none is set, and for a computer,
+  sync or contact code remote access on, with its sidecar started and waited for (about 10 s). A
+  phone code needs the token only. `409` with the reason when that cannot be done (no
+  `mnemosyne-link`, the sidecar does not start; the settings are put back) and on a team server for
+  `sync` and `contact`. `/api/sync/pair` and `/api/contacts/pair` do the same first.
+- `POST /api/pairing/prepare` `{kind: "phone" | "desktop" | "sync" | "contact"}` (admin) → `{new_api_token,
+  remote_access, api_token_set}`: the same preparation without a code. `new_api_token` is the token made
+  by this call, once (null when one was set, and on a team server). The window that sent no token must
+  carry it from then on or its next request is `401`: the desktop app does this before every pairing
+  call (src/lib/api/backend.ts `preparePairing`).
+- `GET /api/connections/devices` (admin) → `[{id, kind: "phone" | "computer" | "sync" | "contact", name,
+  created_at, last_seen_at, can, remove}]`, oldest first: everything connected to this computer. A sync peer
+  is also a paired computer and shows once, as `sync`; a contact is one row for all its machines (`id` =
+  the person key). `can` is a short phrase for what it may do; `remove` is the path to `DELETE`. Sync peers
+  and contacts are not listed on a team server.
+- `GET /api/system/role` → `{role: "main" | "team"}` (`team` when `team_mode`). Whether this computer
+  uses another one is known to the desktop shell only.
 - `POST /api/pairing/redeem` `{code, name, endpoint_id?}` → `{device, token}`. No token needed; the
   code works once. A desktop code needs `endpoint_id`, which the link sidecar sets from the
   connection's verified iroh key; a phone code must not have one. `403` when the code is unknown,
@@ -1648,7 +1664,7 @@ under pairing above.
 | Method | Path | What, and who |
 |--------|------|---------------|
 | GET | `/api/contacts` | `{me, contacts: [ContactInfo]}`, each with `pull` state. Admin / the desktop |
-| POST | `/api/contacts/codes` | A one-time contact invite `{code, kind: "contact", expires_at, urls, invite}`. Admin; needs an API token and remote access |
+| POST | `/api/contacts/codes` | A one-time contact invite `{code, kind: "contact", expires_at, urls, invite}`. Admin; makes the API token and remote access itself |
 | POST | `/api/contacts/pair` | `{invite}` → `ContactInfo`: redeem the other person's invite. Admin |
 | PATCH | `/api/contacts/{person}` | `{name}`: rename locally (empty = the card's name). Admin |
 | DELETE | `/api/contacts/{person}` | Remove: their CONTACT devices are revoked, their shares end. Admin |
@@ -1688,7 +1704,7 @@ A person's computers keep one library (docs/plans/2026-10-12-hashseq-collaborati
 design"; services/sync_peers.py, services/sync_service.py). Pairing is mutual, from a `sync`
 pairing code: each side records the other as a DESKTOP device and as a sync peer in
 `<data_dir>/sync_peers.json` (0600; it holds the token for the other machine and is not backed
-up). Needs remote access and an API token; every route below answers `409` on a team server.
+up). Pairing makes the API token and remote access itself; every route below answers `409` on a team server.
 
 Each backend PULLS from its peers through the link sidecar's loopback listener for that peer,
 with the token the peer gave it. The routes a peer calls know which peer asks from that token

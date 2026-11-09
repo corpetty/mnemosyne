@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onExternalClick } from '$lib/app/externalLink.js';
-	import { deleteSpeakerProfile, getSettings, getSystemInfo, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
+	import { PAIRING_PREPARED, deleteSpeakerProfile, getSettings, getSystemInfo, listModels, listSpeakers, renameSpeakerProfile, updateSettings } from '$lib/api/backend.js';
 	import { loadAutoRecordSettings, openSetup, refreshMe } from '$lib/app/controller.svelte.js';
 	import { updateState } from '$lib/stores/update.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
@@ -259,6 +259,21 @@
 		refreshIndexStatus();
 		const t = setInterval(refreshIndexStatus, 5000);
 		return () => clearInterval(t);
+	});
+
+	// Pairing something made the API token and turned remote access on (backend
+	// services/pairing_prep.py): take that into the form, or the next Save would undo it.
+	$effect(() => {
+		const onPrepared = (e: Event) => {
+			const r = (e as CustomEvent<{ remote_access: boolean; api_token_set: boolean }>).detail;
+			if (!settings) return;
+			settings.values.remote_access = r.remote_access;
+			settings.secrets_set.api_token = r.api_token_set;
+			if (r.remote_access) form.remote_access = true;
+			connToken = connectionState.token;
+		};
+		window.addEventListener(PAIRING_PREPARED, onPrepared);
+		return () => window.removeEventListener(PAIRING_PREPARED, onPrepared);
 	});
 
 	async function save() {
@@ -1494,15 +1509,15 @@
 						<span class="text-xs text-gray-600">iroh-relay servers you run, e.g. <code>https://relay.example.org</code> (docs/remote-access.md). Paired computers follow this; after changing it, pair them again.</span>
 					</label>
 				{/if}
-				{#if !readOnly}<RemoteAccessHome enabled={settings.values.remote_access} relays={settings.values.remote_relays} ourServers={settings.values.use_our_servers !== false} tokenSet={settings.secrets_set.api_token} />{/if}
-				{#if !readOnly}<SyncSettings enabled={settings.values.remote_access} tokenSet={settings.secrets_set.api_token} />{/if}
-				{#if !readOnly && !connectionState.me?.team_mode}<ContactsSettings enabled={settings.values.remote_access} tokenSet={settings.secrets_set.api_token} />{/if}
+				{#if !readOnly}<RemoteAccessHome enabled={settings.values.remote_access} relays={settings.values.remote_relays} ourServers={settings.values.use_our_servers !== false} />{/if}
+				{#if !readOnly}<SyncSettings />{/if}
+				{#if !readOnly && !connectionState.me?.team_mode}<ContactsSettings />{/if}
 				<label class="block max-w-md mt-3">
 					<span class={labelClass}>Phone address</span>
 					<input type="text" bind:value={form.phone_url} disabled={locked('phone_url')} placeholder="blank: this computer's network address" class={inputClass} />
 					<span class="text-xs text-gray-600">An HTTPS name phones can reach from anywhere, such as <code>https://desk.tail1234.ts.net</code> from <code>tailscale serve</code>. See docs/remote-access.md.</span>
 				</label>
-				<PhoneLink phoneUrl={settings.values.phone_url} tokenSet={settings.secrets_set.api_token} />
+				<PhoneLink phoneUrl={settings.values.phone_url} />
 			</section>
 
 			<WindowSettings />
