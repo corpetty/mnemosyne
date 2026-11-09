@@ -4,6 +4,10 @@
 	// invite into this computer's own token and a local tunnel; the connection then points at it.
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 
+	// Called once the invite is accepted, before this window starts talking to the main computer
+	// (the setup wizard marks setup complete on this computer then).
+	let { beforeConnect }: { beforeConnect?: () => Promise<void> | void } = $props();
+
 	interface Status {
 		configured: boolean;
 		running: boolean;
@@ -41,6 +45,7 @@
 				invite: invite.trim(),
 				name: name.trim()
 			});
+			await beforeConnect?.();
 			connectionState.save(paired.url, paired.token, true);
 			location.reload();
 		} catch (e) {
