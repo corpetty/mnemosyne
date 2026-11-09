@@ -1120,3 +1120,129 @@ def test_a_database_from_before_the_owner_keys_gets_the_columns(tmp_path):
     repo = SessionRepository(path)  # opening again changes nothing
     assert repo.live_publication(s.id)["version"] == 2
     repo.close()
+
+
+# ---- blocking a reader (live publications M4, task 3) ---------------------------------------
+
+
+RID = "ab" * 8
+
+
+def _reader_comment(ctx, sid, cid, rid=RID, name="Ana"):
+    from mnemosyne.models.comment import CommentCreate
+    from mnemosyne.services import comments
+    from mnemosyne.services.shared_notes import unrestricted
+
+    with unrestricted():
+        comments.create(
+            ctx,
+            sid,
+            CommentCreate(text=f"Secret words of {cid}"),
+            comment_id=cid,
+            actor=(f"reader:{rid}", f"{name} (reader)"),
+        )
+
+
+def test_blocking_a_reader_through_the_api(client, ctx, host, seals):
+    s = _meeting(ctx)
+    base = f"/api/sessions/{s.id}/publication/readers"
+    assert client.post(f"{base}/{RID}/block").status_code == 404  # not published
+    pub = _publish(client, s.id, where="host", comments=True)
+    assert pub["blocked_readers"] == []
+    _reader_comment(ctx, s.id, "a" * 12)
+    _reader_comment(ctx, s.id, "b" * 12, rid="cd" * 8, name="Bo")
+    assert client.post(f"{base}/not-a-rid/block").status_code == 400
+
+    r = client.post(f"{base}/{RID}/block")  # block alone
+    assert r.status_code == 200
+    (blocked,) = r.json()["blocked_readers"]
+    assert blocked["rid"] == RID and blocked["name"] == "Ana" and blocked["at"]
+    assert ctx.repo.get_comment("a" * 12).hidden_at is None
+    again = client.get(f"/api/sessions/{s.id}/publication").json()
+    assert again["blocked_readers"] == [blocked]
+    assert [
+        i["publication"]["blocked_readers"] for i in client.get("/api/publications").json()
+    ] == [[blocked]]
+    assert pub["selection"] == again["selection"]  # the block is not in the selection
+
+    client.post(f"{base}/{RID}/block?hide=1")  # saying it again, now with hide
+    assert ctx.repo.get_comment("a" * 12).hidden_at is not None
+    assert ctx.repo.get_comment("b" * 12).hidden_at is None
+    assert [e["kind"] for e in ctx.repo.events(s.id)].count("reader_blocked") == 1
+
+    r = client.post(f"{base}/{RID}/unblock")
+    assert r.status_code == 200 and r.json()["blocked_readers"] == []
+    assert ctx.repo.get_comment("a" * 12).hidden_at is not None  # unblock does not unhide
+    assert [e["kind"] for e in ctx.repo.events(s.id)].count("reader_unblocked") == 1
+    assert client.post(f"{base}/{RID}/unblock").status_code == 200  # no second line
+    assert [e["kind"] for e in ctx.repo.events(s.id)].count("reader_unblocked") == 1
+    # The row keeps the unblock (it travels), and an update from the dialog keeps the list.
+    assert ctx.repo.live_publication(s.id)["blocked_readers"][RID]["on"] is False
+    client.post(f"{base}/{RID}/block")
+    _publish(client, s.id, where="host", comments=True, follow=True)
+    assert [
+        b["rid"] for b in client.get(f"/api/sessions/{s.id}/publication").json()["blocked_readers"]
+    ] == [RID]
+
+
+def test_only_the_owner_or_an_admin_blocks_readers(team, seals):
+    client, ctx, people = team
+    ctx.http_transport = httpx.MockTransport(FakeHost().handler)
+    ctx.settings.publish_host = "https://pub.example.org"
+    ann, ann_auth = people["Ann"]
+    reset = access.current.set(access.Principal(ann.id, ann.name, ann.role))
+    try:
+        s = _meeting(ctx)
+    finally:
+        access.current.reset(reset)
+    ctx.settings.allow_publishing = True
+    _publish(client, s.id, ann_auth, where="host", comments=True)
+    base = f"/api/sessions/{s.id}/publication/readers/{RID}"
+    rex_auth = people["Rex"][1]
+    assert client.post(f"{base}/block", headers=rex_auth).status_code == 403
+    assert client.post(f"{base}/unblock", headers=rex_auth).status_code == 403
+    assert client.post(f"{base}/block", headers=ann_auth).status_code == 200
+    seen = client.get(f"/api/sessions/{s.id}/publication", headers=rex_auth).json()
+    assert seen["blocked_readers"] == []  # a reviewer sees that it is published, not who
+    admin = client.get(f"/api/sessions/{s.id}/publication", headers=people["Admin"][1]).json()
+    assert [b["rid"] for b in admin["blocked_readers"]] == [RID]
+    assert client.post(f"{base}/unblock", headers=people["Admin"][1]).status_code == 200
+
+
+def test_a_database_from_before_the_block_list_gets_the_column(tmp_path):
+    import sqlite3
+
+    from mnemosyne.storage.sqlite import SessionRepository
+
+    path = tmp_path / "old.sqlite"
+    SessionRepository(path).close()
+    raw = sqlite3.connect(path)
+    raw.execute("ALTER TABLE publications DROP COLUMN blocked_readers")
+    raw.commit()
+    raw.close()
+    repo = SessionRepository(path)  # migrates
+    s = repo.save(Session(name="x", created_at=datetime(2026, 11, 9, 9, 0)))
+    repo.put_publication(
+        {
+            "id": "a" * 16,
+            "session_id": s.id,
+            "key": b"k" * 32,
+            "token": "t",
+            "place": "host",
+            "version": 1,
+            "selection": {},
+            "created_at": "2026-11-09T09:00:00+00:00",
+            "updated_at": "2026-11-09T09:00:00+00:00",
+        }
+    )
+    assert repo.live_publication(s.id)["blocked_readers"] == {}
+    assert repo.set_blocked_reader("nope", RID, True, "2026-11-09T10:00:00+00:00") is None
+    row = repo.set_blocked_reader("a" * 16, RID, True, "2026-11-09T10:00:00+00:00", "Ana")
+    assert row["blocked_readers"] == {
+        RID: {"at": "2026-11-09T10:00:00+00:00", "on": True, "name": "Ana"}
+    }
+    assert row["updated_at"] == "2026-11-09T09:00:00+00:00"  # the selection must not lose a merge
+    repo.close()
+    repo = SessionRepository(path)
+    assert repo.live_publication(s.id)["blocked_readers"][RID]["on"] is True
+    repo.close()

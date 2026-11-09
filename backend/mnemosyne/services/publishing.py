@@ -35,6 +35,7 @@ from fastapi import HTTPException
 
 from .. import access
 from ..models.publication import (
+    BlockedReader,
     NotesImage,
     Publication,
     PublicationDefaults,
@@ -861,8 +862,20 @@ def to_model(app: AppContext, row: dict, session: Session, local_base: str = "")
         published_by=row.get("published_by", ""),
         local_reach=local_reach(app)[0],
         served_by=elsewhere,
+        blocked_readers=blocked_list(row) if may_see_link else [],
         **_live_fields(app, row),
     )
+
+
+def blocked_list(row: dict) -> list[BlockedReader]:
+    """The readers blocked right now (an unblock leaves its entry in the row so it can travel,
+    but is not listed), newest block first."""
+    out = [
+        BlockedReader(rid=rid, name=str(e.get("name") or ""), at=_dt(str(e.get("at") or "")))
+        for rid, e in (row.get("blocked_readers") or {}).items()
+        if e.get("on") and e.get("at")
+    ]
+    return sorted(out, key=lambda b: b.at, reverse=True)
 
 
 def _live_fields(app: AppContext, row: dict) -> dict[str, Any]:
@@ -1359,6 +1372,99 @@ async def unpublish(app: AppContext, session_id: str) -> dict | None:
 
     seal_later(app, session_id, SEAL_UNPUBLISHED)
     return row
+
+
+# ---- blocking readers (live publications, M4) ----------------------------------------------
+
+_RID = re.compile(r"^[0-9a-f]{16}$")
+_READER_SUFFIX = " (reader)"
+
+
+def _blocked_target(app: AppContext, session_id: str, rid: str) -> tuple[Session, dict]:
+    """The meeting and its live publication for a block or unblock of `rid`; the rights are
+    the publication's (owner or admin)."""
+    session = app.repo.get(session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found")
+    check_may_publish(app, session)
+    if not _RID.match(rid):
+        raise HTTPException(400, "Not a reader id")
+    row = app.repo.live_publication(session_id)
+    if row is None:
+        raise HTTPException(404, "This meeting is not published")
+    return session, row
+
+
+def _reader_name(app: AppContext, session_id: str, rid: str) -> str:
+    """The name on this reader's newest comment (without the " (reader)" the author line adds),
+    "" when they wrote none."""
+    mine = [
+        c
+        for c in app.repo.list_comments(session_id)
+        if c.author_id == live_publications.READER_PREFIX + rid
+    ]
+    if not mine:
+        return ""
+    name = max(mine, key=lambda c: c.updated_at).author
+    return name.removesuffix(_READER_SUFFIX).strip()
+
+
+def block_reader(
+    app: AppContext, session_id: str, rid: str, *, hide: bool = False
+) -> tuple[Session, dict]:
+    """Turn comments off for one reader (`rid`) of the meeting's live publication: from now
+    on the bridge drops their ops. With `hide`, every comment of theirs is hidden from the other
+    readers too (`comments.hide`, one history line each); without, what they wrote stays as it
+    is. Saying it again changes nothing (but `hide` still hides what is not hidden). Returns the
+    meeting and the row. The `rid` is a browser profile's, not a person's: this is moderation,
+    not access control (docs/publishing.md)."""
+    from . import comments
+    from .shared_notes import unrestricted
+
+    session, row = _blocked_target(app, session_id, rid)
+    entry = (row.get("blocked_readers") or {}).get(rid)
+    if not (entry and entry.get("on")):
+        name = _reader_name(app, session_id, rid) or (entry or {}).get("name", "")
+        row = app.repo.set_blocked_reader(row["id"], rid, True, _now().isoformat(), name) or row
+        who = access.principal()
+        history.log(
+            app,
+            session_id,
+            "reader_blocked",
+            publication=row["id"],
+            rid=rid,
+            name=name,
+            by=who.name if who else "",
+        )
+        live_publications.row_changed(app, row)
+    if hide:
+        with unrestricted():
+            for c in app.repo.list_comments(session_id):
+                if c.author_id == live_publications.READER_PREFIX + rid and not c.deleted:
+                    comments.hide(app, session_id, c.id)
+    return session, row
+
+
+def unblock_reader(app: AppContext, session_id: str, rid: str) -> tuple[Session, dict]:
+    """Turn comments on again for a reader. Comments hidden when they were blocked stay
+    hidden: the owner shows them again one by one."""
+    session, row = _blocked_target(app, session_id, rid)
+    entry = (row.get("blocked_readers") or {}).get(rid)
+    if entry and entry.get("on"):
+        name = str(entry.get("name") or "")
+        row = app.repo.set_blocked_reader(row["id"], rid, False, _now().isoformat(), name) or row
+        who = access.principal()
+        history.log(
+            app,
+            session_id,
+            "reader_unblocked",
+            publication=row["id"],
+            rid=rid,
+            name=name,
+            by=who.name if who else "",
+        )
+        live_publications.row_changed(app, row)
+    return session, row
 
 
 def sweep_expired(app: AppContext) -> int:

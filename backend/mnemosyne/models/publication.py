@@ -94,6 +94,16 @@ class PublicationDefaults(PublicationSelection):
     notes_images: list[NotesImage] = Field(default_factory=list)
 
 
+class BlockedReader(ApiModel):
+    """A reader of a live publication the owner turned comments off for (M4). `rid` is the id the
+    reader's browser made for itself, so this blocks a browser profile, not a person. `name` is
+    the name last seen on one of their comments ("" if none)."""
+
+    rid: str
+    name: str = ""
+    at: datetime
+
+
 class Publication(ApiModel):
     id: str  # 16 hex, never the meeting's id
     session_id: str
@@ -119,6 +129,9 @@ class Publication(ApiModel):
     live: LiveState = "off"
     live_reason: str = ""
     readers: int = 0
+    # Readers whose comments are turned off right now (newest block first); only for the
+    # meeting's owner or an admin, else empty.
+    blocked_readers: list[BlockedReader] = Field(default_factory=list)
 
 
 class PublicationListItem(ApiModel):

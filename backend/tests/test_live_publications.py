@@ -642,7 +642,10 @@ async def test_a_publish_sends_version_with_the_manifest_sha(ctx, live, seals):
     # The room's snapshot is a signed THREADS (empty until task 11), posted before the join.
     (snapshot,) = [b for _, p, _, b in live.rooms.calls if p == f"/live/{room}/snapshot"]
     kind, body = plf.open_signed(row["key"], room, snapshot, _sign_pub(row))
-    assert (kind, body) == (plf.Kind.THREADS, {"threads": [], "pending": {}, "at": body["at"]})
+    assert (kind, body) == (
+        plf.Kind.THREADS,
+        {"threads": [], "pending": {}, "blocked": [], "at": body["at"]},
+    )
     # The reader joined late: from the log, the join's META, then version 1 (queued before the
     # bridge was in the room; readers ignore a version they show already).
     frames = await _until(
@@ -1678,6 +1681,110 @@ async def test_turning_moderation_off_sends_the_waiting_threads(ctx, live, seals
     assert frame["pending"] == {ana.rid: ["b" * 12]}
     assert [t["root"]["id"] for t in frame["threads"]] == ["a" * 12]
     await ana.client.close()
+
+
+# ---- blocking a reader (M4, task 3) ----
+
+
+async def test_a_blocked_reader_is_told_and_nothing_of_theirs_is_written(ctx, live, seals, quick):
+    from mnemosyne.services import publishing
+
+    s, bridge, row, ana = await _room_with_comments(ctx, live)
+    bo = Reader(await _reader(live, ctx, s.id), row, bridge.room)
+    await ana.send(_create("a" * 12, "Ana, before"))
+    await _taken(bridge, 1)
+    publishing.block_reader(ctx, s.id, ana.rid)  # block alone: what she wrote stays
+    for reader in (ana, bo):  # everyone hears the rid, and only her page acts on it
+        frame = await _until(
+            lambda r=reader: (f := r.threads_frame()) and f["blocked"] and f, "THREADS blocked"
+        )
+        assert frame["blocked"] == [ana.rid]
+        assert [t["root"]["id"] for t in frame["threads"]] == ["a" * 12]
+    # Her create, edit and delete are all dropped; nothing changes.
+    await ana.send(_create("b" * 12, "Ana, after", 1))
+    await ana.send(_edit("a" * 12, "Ana, rewritten", 2))
+    await ana.send(_delete("a" * 12, 3))
+    await ana.send(_reply("c" * 12, "a" * 12, "Ana, replying", 4))
+    assert (await _taken(bridge, 5)) == {"applied": 1, "blocked": 4}
+    (c,) = _comments(ctx, s.id)
+    assert c.id == "a" * 12 and c.text == "Ana, before" and not c.deleted
+    # Bo is not affected.
+    await bo.send(_create("d" * 12, "Bo", 5, name="Bo"))
+    await _taken(bridge, 6)
+    assert {c.id for c in _comments(ctx, s.id)} == {"a" * 12, "d" * 12}
+    # A repeated block changes nothing; the row carries it, newest first.
+    publishing.block_reader(ctx, s.id, ana.rid)
+    assert list(ctx.repo.live_publication(s.id)["blocked_readers"]) == [ana.rid]
+    for c in (ana.client, bo.client):
+        await c.close()
+
+
+async def test_block_and_hide_hides_each_comment_and_unblock_keeps_them_hidden(
+    ctx, live, seals, quick
+):
+    from mnemosyne.services import comments, publishing
+    from mnemosyne.services.shared_notes import unrestricted
+
+    s, bridge, row, ana = await _room_with_comments(ctx, live)
+    bo = Reader(await _reader(live, ctx, s.id), row, bridge.room)
+    await ana.send(_create("a" * 12, "Ana one"))
+    await ana.send(_create("b" * 12, "Ana two", 1))
+    await bo.send(_create("c" * 12, "Bo one", 2, name="Bo"))
+    await _taken(bridge, 3)
+    with unrestricted():
+        comments.hide(ctx, s.id, "b" * 12)  # hidden already: untouched by the block
+    hidden_before = ctx.repo.get_comment("b" * 12).hidden_at
+    publishing.block_reader(ctx, s.id, ana.rid, hide=True)
+    by_id = {c.id: c for c in _comments(ctx, s.id)}
+    assert by_id["a" * 12].hidden_at is not None and by_id["b" * 12].hidden_at == hidden_before
+    assert by_id["c" * 12].hidden_at is None  # Bo's stays
+    frame = await _until(
+        lambda: (f := bo.threads_frame()) and f["blocked"] and f, "THREADS after the block"
+    )
+    assert [t["root"]["id"] for t in frame["threads"]] == ["c" * 12]
+    assert frame["blocked"] == [ana.rid]
+    events = ctx.repo.events(s.id)
+    blocked = [e["detail"] for e in events if e["kind"] == "reader_blocked"]
+    assert len(blocked) == 1 and blocked[0]["rid"] == ana.rid and blocked[0]["name"] == "Ana"
+    assert "Ana one" not in json.dumps(blocked)  # the block line never carries a comment's text
+    assert sum(e["kind"] == "comment_hidden" for e in events) == 2  # b was hidden before
+    # Unblock: her ops land again, what was hidden stays hidden, THREADS stops naming her.
+    publishing.unblock_reader(ctx, s.id, ana.rid)
+    frame = await _until(
+        lambda: (f := bo.threads_frame()) and not f["blocked"] and f, "THREADS after the unblock"
+    )
+    assert [t["root"]["id"] for t in frame["threads"]] == ["c" * 12]
+    await ana.send(_create("d" * 12, "Ana, back", 3))
+    await _taken(bridge, 4)
+    assert bridge.outcomes == {"applied": 4}
+    assert ctx.repo.get_comment("a" * 12).hidden_at is not None
+    assert ctx.repo.get_comment("d" * 12).hidden_at is None
+    for c in (ana.client, bo.client):
+        await c.close()
+
+
+async def test_the_61st_op_in_ten_minutes_across_readers_is_dropped(ctx, live, seals, quick):
+    s, bridge, row, ana = await _room_with_comments(ctx, live)
+    clock = Clock()
+    bridge.clock = clock
+    readers = [ana] + [Reader(await _reader(live, ctx, s.id), row, bridge.room) for _ in range(3)]
+    n = 0
+    for reader in readers[:3]:  # 3 readers x RATE_OPS = RATE_TOTAL, each inside its own cap
+        for _ in range(lp.RATE_OPS):
+            await reader.send(_create(f"{n:012x}", f"Comment {n}", n))
+            n += 1
+    await _taken(bridge, lp.RATE_TOTAL)
+    assert bridge.outcomes == {"applied": lp.RATE_TOTAL}
+    await readers[3].send(_create(f"{n:012x}", "One too many", n))  # a fourth reader's first
+    await _taken(bridge, lp.RATE_TOTAL + 1)
+    assert bridge.outcomes == {"applied": lp.RATE_TOTAL, "rate": 1}
+    assert len(_comments(ctx, s.id)) == lp.RATE_TOTAL
+    clock.t += lp.RATE_WINDOW  # ten minutes on: again
+    await readers[3].send(_create(f"{n + 1:012x}", "Later", n + 1))
+    await _taken(bridge, lp.RATE_TOTAL + 2)
+    assert bridge.outcomes["applied"] == lp.RATE_TOTAL + 1
+    for r in readers:
+        await r.client.close()
 
 
 # ---- readers' comments on the published notes (M4, task 2d) ----

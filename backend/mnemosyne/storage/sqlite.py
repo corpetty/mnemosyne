@@ -472,7 +472,9 @@ CREATE TABLE IF NOT EXISTS deletions (
 -- (the row travels in SyncSession.publications); `origin` is the computer whose files serve a
 -- "local" publication ('' = this one, else its sync id). sign_key and box_key are the raw private
 -- owner keys of a live publication (NULL until `follow` or `comments` is first on): they travel
--- with the row in library sync like key and token, and nowhere else.
+-- with the row in library sync like key and token, and nowhere else. blocked_readers is JSON,
+-- {rid: {"at": iso, "on": bool, "name": text}}: readers the owner turned comments off for
+-- (live publications, M4). Newest "at" wins per rid, so a block and an unblock both travel.
 CREATE TABLE IF NOT EXISTS publications (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -491,7 +493,8 @@ CREATE TABLE IF NOT EXISTS publications (
     published_by TEXT NOT NULL DEFAULT '',
     origin TEXT NOT NULL DEFAULT '',
     sign_key BLOB,
-    box_key BLOB
+    box_key BLOB,
+    blocked_readers TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS publications_session ON publications(session_id);
 CREATE UNIQUE INDEX IF NOT EXISTS publications_live ON publications(session_id)
@@ -917,6 +920,10 @@ class SessionRepository:
         for col in ("sign_key", "box_key"):
             if col not in pub_cols:
                 self._conn.execute(f"ALTER TABLE publications ADD COLUMN {col} BLOB")
+        if "blocked_readers" not in pub_cols:
+            self._conn.execute(
+                "ALTER TABLE publications ADD COLUMN blocked_readers TEXT NOT NULL DEFAULT '{}'"
+            )
         # Moderation of readers' comments on a live publication (task 13b).
         comment_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(comments)")}
         for col in ("approved_at", "hidden_at"):
@@ -2125,7 +2132,7 @@ class SessionRepository:
     _PUB_COLS = (
         "id, session_id, key, token, place, host_url, version, selection, created_at,"
         " updated_at, expires_at, unpublished_at, clip_blobs, published_digest, published_by,"
-        " origin, sign_key, box_key"
+        " origin, sign_key, box_key, blocked_readers"
     )
 
     @staticmethod
@@ -2136,6 +2143,7 @@ class SessionRepository:
             row[col] = bytes(row[col]) if row[col] else None
         row["selection"] = json.loads(row["selection"])
         row["clip_blobs"] = json.loads(row["clip_blobs"] or "{}")
+        row["blocked_readers"] = json.loads(row["blocked_readers"] or "{}")
         return row
 
     def live_publication(self, session_id: str) -> dict | None:
@@ -2193,10 +2201,11 @@ class SessionRepository:
             row.get("origin", ""),
             row.get("sign_key"),
             row.get("box_key"),
+            json.dumps(row.get("blocked_readers") or {}),
         )
 
     _PUB_UPSERT = (
-        f"INSERT INTO publications ({_PUB_COLS}) VALUES ({','.join('?' * 18)})"
+        f"INSERT INTO publications ({_PUB_COLS}) VALUES ({','.join('?' * 19)})"
         " ON CONFLICT(id) DO UPDATE SET "
         + ", ".join(
             f"{c.strip()}=excluded.{c.strip()}"
@@ -2211,6 +2220,29 @@ class SessionRepository:
         with self._lock, self._conn:
             self._conn.execute(self._PUB_UPSERT, self._publication_values(row))
             self._touch(row["session_id"])
+
+    def set_blocked_reader(
+        self, pub_id: str, rid: str, on: bool, at: str, name: str = ""
+    ) -> dict | None:
+        """Block (`on`) or unblock a reader of a publication: `rid` is set to {at, on, name} in
+        its `blocked_readers`, whatever it was (the caller decides; `at` is what library sync
+        compares). `updated_at` stays: the row's selection must not lose a merge to this. A new
+        version of the meeting for library sync. The row as `get_publication` gives it, or None
+        for an unknown publication."""
+        with self._lock, self._conn:
+            r = self._conn.execute(
+                "SELECT session_id, blocked_readers FROM publications WHERE id=?", (pub_id,)
+            ).fetchone()
+            if r is None:
+                return None
+            blocked = json.loads(r["blocked_readers"] or "{}")
+            blocked[rid] = {"at": at, "on": bool(on), "name": name}
+            self._conn.execute(
+                "UPDATE publications SET blocked_readers=? WHERE id=?",
+                (json.dumps(blocked), pub_id),
+            )
+            self._touch(r["session_id"])
+        return self.get_publication(pub_id)
 
     # ---- guest notes rooms (services/guest_notes.py; no access checks, no `_touch`) -----
 
@@ -2323,6 +2355,7 @@ class SessionRepository:
                 "origin": "" if p.origin == self.device_id else p.origin,
                 "sign_key": base64.b64decode(p.sign_key) if p.sign_key else None,
                 "box_key": base64.b64decode(p.box_key) if p.box_key else None,
+                "blocked_readers": p.blocked_readers,
             }
             self._conn.execute(self._PUB_UPSERT, self._publication_values(row))
 

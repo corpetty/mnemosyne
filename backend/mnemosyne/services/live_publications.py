@@ -407,11 +407,16 @@ class ThreadsFrame(_Frame):
 
     `pending` (approval on, task 13b): per reader (rid), the ids of that reader's own comments
     still waiting for the owner's approval, roots and replies. Ids only, never a word of what
-    they say: every reader receives THREADS, and the writer's page keeps its own text."""
+    they say: every reader receives THREADS, and the writer's page keeps its own text.
+
+    `blocked` (M4): the rids the owner turned comments off for, sorted. Ids only, like
+    `pending`: every rid is already in every comment of THREADS. A blocked reader's page says
+    so; the others' pages ignore it. An older owner sends none."""
 
     KIND: ClassVar[plf.Kind] = plf.Kind.THREADS
     threads: list[dict[str, Any]]
     pending: dict[str, list[str]] = {}
+    blocked: list[str] = []
     at: str
 
 
@@ -444,6 +449,10 @@ MAX_NAME = 80  # characters of a reader's name (guest_notes.MAX_NAME)
 MAX_CONTEXT = 200  # characters of a body anchor's prefix or suffix (the viewer sends 32)
 RATE_OPS = 20  # comment operations a reader may make ...
 RATE_WINDOW = 600.0  # ... in this many seconds; more are dropped
+# ... and this many across all readers of the publication in the same window: a reader who
+# clears their storage is a new rid with a new budget (C7), so the per-reader cap alone is none.
+RATE_TOTAL = 60
+MAX_BLOCKED = 200  # rids THREADS names (the newest blocks); a few in practice
 THREADS_DEBOUNCE = 2.0  # seconds: comments that change together make one THREADS
 META_NUDGE = 30.0  # seconds: at most one META in this time for ops sent while comments are off
 ON_QUOTE = 280  # characters of the quote in a thread kept on the meeting as a whole ("On: …")
@@ -832,10 +841,11 @@ def _removed(stub: dict) -> dict:
     }
 
 
-def _trim(threads: list[dict]) -> list[dict]:
-    """Oldest threads left out while the THREADS would be larger than MAX_THREADS_BYTES."""
+def _trim(threads: list[dict], reserve: int = 0) -> list[dict]:
+    """Oldest threads left out while the THREADS would be larger than MAX_THREADS_BYTES.
+    `reserve`: bytes the rest of the frame takes (`blocked` stays whole, a few ids)."""
     sizes = [len(json.dumps(t, ensure_ascii=False).encode()) for t in threads]
-    total, start = sum(sizes), 0
+    total, start = sum(sizes) + reserve, 0
     while total > MAX_THREADS_BYTES and start < len(threads):
         total -= sizes[start]
         start += 1
@@ -843,6 +853,14 @@ def _trim(threads: list[dict]) -> list[dict]:
 
 
 # -- rows, rooms, time --
+
+
+def _blocked_ids(row: dict | None) -> list[str]:
+    """The rids blocked on the row (`blocked_readers` entries that are `on`), sorted; the newest
+    MAX_BLOCKED when there are more."""
+    entries = (row or {}).get("blocked_readers") or {}
+    on = [(str(e.get("at") or ""), rid) for rid, e in entries.items() if e.get("on")]
+    return sorted(rid for _, rid in sorted(on)[-MAX_BLOCKED:])
 
 
 def _switches(row: dict) -> tuple[bool, bool]:
@@ -1151,6 +1169,15 @@ async def retire(app: AppContext, row: dict, *, clear_pointer: bool = False) -> 
         await bridges.retire(row, clear_pointer=clear_pointer)
 
 
+def row_changed(app: AppContext, row: dict) -> None:
+    """A write to the row that is not a publish (the block list): the running bridge looks at
+    it now, so a change readers must hear (THREADS `blocked`) does not wait for the tick."""
+    bridges = _bridges(app)
+    bridge = bridges.get(row["id"]) if bridges is not None else None
+    if bridge is not None:
+        bridge.update_row(row)
+
+
 def retire_later(app: AppContext, row: dict) -> None:
     """`retire` in the background, from code that is not async (the expiry sweep)."""
     bridges = _bridges(app)
@@ -1265,8 +1292,10 @@ class PubBridge:
         # last sent, the pending THREADS, the bus subscription.
         self._ops, self._sent = _read_readers(self.app, self.pub_id)
         self._rates: dict[str, deque[float]] = {}
+        self._rates_all: deque[float] = deque()  # every reader's, for RATE_TOTAL
         self._last_threads: list[dict] | None = None
         self._last_pending: dict[str, list[str]] | None = None
+        self._last_blocked: list[str] | None = None
         self._threads_task: asyncio.Task | None = None
         self._sub: asyncio.Queue | None = None
         self.clock: Callable[[], float] = time.monotonic  # the rate window's (tests swap it)
@@ -1339,7 +1368,9 @@ class PubBridge:
         readers other threads (a part unticked takes its threads away): THREADS soon."""
         if row.get("expires_at") != self.row.get("expires_at"):
             self._extended_at = float("-inf")
-        selection_changed = row.get("selection") != self.row.get("selection")
+        selection_changed = row.get("selection") != self.row.get("selection") or (
+            _blocked_ids(row) != _blocked_ids(self.row)
+        )
         self.row = dict(row)
         if self._last_meta is not None and self._meta_state() != self._last_meta:
             self.send_meta()
@@ -1537,7 +1568,9 @@ class PubBridge:
         cap), "replay" (applied before: a create or reply with a known id, an edit or delete
         not newer than the last op applied on that comment), "not_yours" (an edit or delete of
         a comment that is not this reader's), "rate" (more than RATE_OPS in RATE_WINDOW),
-        "refused" (comments.py or the anchor rules said no)."""
+        "refused" (comments.py or the anchor rules said no), "blocked" (the owner turned comments
+        off for this reader: nothing is written, whatever the op is); "rate" also covers
+        RATE_TOTAL ops across all readers."""
         from . import comments
         from .shared_notes import unrestricted
 
@@ -1546,6 +1579,8 @@ class PubBridge:
         current = self.app.repo.get_publication(self.pub_id)
         if current is not None and current != self.row:
             self.update_row(current)
+        if ro.rid in _blocked_ids(current or self.row):
+            return "blocked"  # before anything is read of it or written for it
         if not wanted(current) or not _switches(current)[1]:
             self._nudge_meta()
             return "off"
@@ -1686,11 +1721,13 @@ class PubBridge:
     def _rate_ok(self, rid: str) -> bool:
         now = self.clock()
         recent = self._rates.setdefault(rid, deque())
-        while recent and recent[0] <= now - RATE_WINDOW:
-            recent.popleft()
-        if len(recent) >= RATE_OPS:
+        for window in (recent, self._rates_all):
+            while window and window[0] <= now - RATE_WINDOW:
+                window.popleft()
+        if len(recent) >= RATE_OPS or len(self._rates_all) >= RATE_TOTAL:
             return False
         recent.append(now)
+        self._rates_all.append(now)
         return True
 
     def _nudge_meta(self) -> None:
@@ -1795,12 +1832,14 @@ class PubBridge:
                 thread["replies"].sort(key=lambda c: c["created_at"])
         out.sort(key=lambda t: t["root"]["created_at"])
         _write_readers(self.app, self.pub_id, self._ops, self._sent)
-        return _trim(out), waiting
+        blocked = _blocked_ids(self.row)
+        return _trim(out, len(json.dumps(blocked).encode())), waiting
 
     async def _threads_frame(self) -> ThreadsFrame:
         threads, waiting = await self._threads()
-        self._last_threads, self._last_pending = threads, waiting
-        return ThreadsFrame(threads=threads, pending=waiting, at=self._stamp())
+        blocked = _blocked_ids(self.row)
+        self._last_threads, self._last_pending, self._last_blocked = threads, waiting, blocked
+        return ThreadsFrame(threads=threads, pending=waiting, blocked=blocked, at=self._stamp())
 
     def threads_soon(self) -> None:
         """THREADS in THREADS_DEBOUNCE seconds (whatever else changes meanwhile goes with it)."""
@@ -1842,10 +1881,16 @@ class PubBridge:
         THREADS frame to the readers in the room, and the same as the room's snapshot for the
         ones who join later."""
         threads, waiting = await self._threads()
-        if not force and threads == self._last_threads and waiting == self._last_pending:
+        blocked = _blocked_ids(self.row)
+        if (
+            not force
+            and threads == self._last_threads
+            and waiting == self._last_pending
+            and blocked == self._last_blocked
+        ):
             return  # (a change to the owner's own threads, say: nothing readers see)
-        self._last_threads, self._last_pending = threads, waiting
-        frame = ThreadsFrame(threads=threads, pending=waiting, at=self._stamp())
+        self._last_threads, self._last_pending, self._last_blocked = threads, waiting, blocked
+        frame = ThreadsFrame(threads=threads, pending=waiting, blocked=blocked, at=self._stamp())
         if self.connected.is_set():
             self.outq.put_nowait(frame)
         await self.snapshot(frame)

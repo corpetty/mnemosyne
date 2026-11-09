@@ -218,3 +218,23 @@ def test_the_record_lists_automatic_versions_and_never_the_owner_keys(client, ct
         assert base64.b64encode(raw).decode() not in seen_in_the_record
     assert pf.encode_key(row["key"]) not in seen_in_the_record
     assert row["token"] not in seen_in_the_record
+
+
+def test_the_block_list_is_in_no_record_and_no_export(client, ctx):  # noqa: F811
+    import httpx
+
+    from tests.test_publishing import FakeHost
+
+    ctx.http_transport = httpx.MockTransport(FakeHost().handler)
+    ctx.settings.publish_host = "https://pub.example.org"
+    s = _meeting(ctx)
+    pub = _publish(client, s.id, where="host", comments=True)
+    rid = "ab" * 8
+    r = client.post(f"/api/sessions/{s.id}/publication/readers/{rid}/block")
+    assert r.status_code == 200 and r.json()["blocked_readers"][0]["rid"] == rid
+    record = records.publications_record(ctx, ctx.repo.get(s.id))
+    assert [p["id"] for p in record] == [pub["id"]]
+    assert "blocked" not in json.dumps(record, default=str) and rid not in json.dumps(
+        record, default=str
+    )
+    assert not any("blocked_readers" in p for p in record)
