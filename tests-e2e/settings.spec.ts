@@ -40,7 +40,7 @@ test('settings are grouped in tabs', async ({ page }) => {
     ['Devices and people', 'This computer']
   ]) {
     await tabs.getByRole('button', { name: tab, exact: true }).click();
-    await expect(page.getByRole('heading', { name: heading })).toBeVisible();
+    await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
   }
 });
 
