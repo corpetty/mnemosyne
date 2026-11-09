@@ -1,0 +1,262 @@
+{
+  "session": {
+    "id": "0123456789ab",
+    "name": "Roadmap sync 🚀 – Café Zürich",
+    "participants": [
+      "Zoë Müller",
+      "Corey"
+    ],
+    "attendees": [
+      "李雷",
+      "Corey"
+    ],
+    "meeting_type": "planning",
+    "owner_id": "u-1",
+    "agenda": [
+      {
+        "text": "Launch date",
+        "covered": true
+      },
+      {
+        "text": "Budget",
+        "covered": false
+      }
+    ],
+    "transcript": [
+      {
+        "speaker": "Zoë Müller",
+        "start": 0.0,
+        "end": 4.25,
+        "text": "Let's fix the launch date. ✅",
+        "words": [
+          {
+            "word": "Let's",
+            "start": 0.0,
+            "end": 0.3
+          }
+        ]
+      },
+      {
+        "speaker": "Corey",
+        "start": 4.5,
+        "end": 9,
+        "text": "Friday works — 1e-07 is not a plan."
+      }
+    ],
+    "summary": "## Summary\n\nShip on Friday 📦\n",
+    "summary_data": {
+      "title": "Roadmap sync",
+      "style": "meeting",
+      "decisions": [
+        "Ship on Friday"
+      ],
+      "decision_ids": [
+        "d1"
+      ],
+      "decision_at": [
+        4.5
+      ],
+      "action_items": [
+        {
+          "id": "a1",
+          "text": "Book the venue",
+          "owner": "Zoë",
+          "due": "2026-11-20",
+          "at": 7.5
+        }
+      ],
+      "edited_at": "2026-11-09T10:30:00",
+      "edited_by": "Corey"
+    },
+    "notes": "# Notes\n\n- [ ] [Zoë](mnemosyne:person/Zo%C3%AB) book it\n![diagram](mnemosyne:image/abababababababababababababababababababababababababababababababab.webp@640x480)\n",
+    "external_notes": [
+      {
+        "id": "z9",
+        "source": "Zoom",
+        "text": "Zoom AI says hi",
+        "added_at": "2026-11-09T09:00:00"
+      },
+      {
+        "id": "g1",
+        "source": "Gemini",
+        "text": "Géminï notes",
+        "added_at": "2026-11-09T09:05:00"
+      }
+    ]
+  },
+  "comments": [
+    {
+      "id": "c2",
+      "session_id": "0123456789ab",
+      "parent_id": "c1",
+      "target": "segment",
+      "text": "Reply 👍",
+      "author_id": "u-2",
+      "author": "Zoë",
+      "mentions": [
+        "u-1"
+      ],
+      "created_at": "2026-11-09T11:05:00",
+      "updated_at": "2026-11-09T11:05:00"
+    },
+    {
+      "id": "c1",
+      "session_id": "0123456789ab",
+      "target": "segment",
+      "anchor": {
+        "part": 0,
+        "start": 4.5,
+        "end": 9.0
+      },
+      "quote": "Friday works",
+      "text": "Is Friday realistic?",
+      "author_id": "u-1",
+      "author": "Corey",
+      "created_at": "2026-11-09T11:00:00+00:00",
+      "updated_at": "2026-11-09T11:00:00+00:00",
+      "resolved_at": "2026-11-09T12:00:00+00:00",
+      "resolved_by": "u-1",
+      "approved_at": "2026-11-09T11:30:00"
+    }
+  ],
+  "content_v1": "96703006dc9559e938313f9a66db2947234239ae5829e8b85bd0737b786f5779",
+  "payloads_json": {
+    "transcript": "[{\"speaker\": \"Zoë Müller\", \"start\": 0.0, \"end\": 4.25, \"text\": \"Let's fix the launch date. ✅\"}, {\"speaker\": \"Corey\", \"start\": 4.5, \"end\": 9.0, \"text\": \"Friday works — 1e-07 is not a plan.\"}]",
+    "summary": "\"## Summary\\n\\nShip on Friday 📦\\n\"",
+    "summary_data": "{\"title\": \"Roadmap sync\", \"decisions\": [\"Ship on Friday\"], \"action_items\": [{\"id\": \"a1\", \"text\": \"Book the venue\", \"owner\": \"Zoë\", \"at\": 7.5, \"due\": \"2026-11-20\"}], \"decision_at\": [4.5], \"decision_ids\": [\"d1\"], \"edited_at\": \"2026-11-09T10:30:00\", \"edited_by\": \"Corey\"}",
+    "notes": "\"# Notes\\n\\n- [ ] [Zoë](mnemosyne:person/Zo%C3%AB) book it\\n![diagram](mnemosyne:image/abababababababababababababababababababababababababababababababab.webp@640x480)\\n\"",
+    "comments": "[{\"id\": \"c1\", \"parent_id\": \"\", \"target\": \"segment\", \"target_id\": \"\", \"anchor\": {\"part\": 0, \"start\": 4.5, \"end\": 9.0}, \"quote\": \"Friday works\", \"text\": \"Is Friday realistic?\", \"author_id\": \"u-1\", \"author\": \"Corey\", \"mentions\": [], \"created_at\": \"2026-11-09T11:00:00+00:00\", \"updated_at\": \"2026-11-09T11:00:00+00:00\", \"resolved_at\": \"2026-11-09T12:00:00+00:00\", \"resolved_by\": \"u-1\", \"deleted\": false, \"approved_at\": \"2026-11-09T11:30:00\", \"hidden_at\": null}, {\"id\": \"c2\", \"parent_id\": \"c1\", \"target\": \"segment\", \"target_id\": \"\", \"anchor\": {}, \"quote\": \"\", \"text\": \"Reply 👍\", \"author_id\": \"u-2\", \"author\": \"Zoë\", \"mentions\": [\"u-1\"], \"created_at\": \"2026-11-09T11:05:00\", \"updated_at\": \"2026-11-09T11:05:00\", \"resolved_at\": null, \"resolved_by\": \"\", \"deleted\": false, \"approved_at\": null, \"hidden_at\": null}]",
+    "meta": "{\"name\": \"Roadmap sync 🚀 – Café Zürich\", \"participants\": [\"Zoë Müller\", \"Corey\"], \"attendees\": [\"李雷\", \"Corey\"], \"meeting_type\": \"planning\", \"owner_id\": \"u-1\", \"agenda\": [{\"text\": \"Launch date\", \"covered\": true}, {\"text\": \"Budget\", \"covered\": false}]}",
+    "external_notes": "[{\"id\": \"g1\", \"source\": \"Gemini\", \"text\": \"Géminï notes\", \"added_at\": \"2026-11-09T09:05:00\"}, {\"id\": \"z9\", \"source\": \"Zoom\", \"text\": \"Zoom AI says hi\", \"added_at\": \"2026-11-09T09:00:00\"}]"
+  },
+  "payloads_canonical": {
+    "transcript": "{\"data\":[{\"end\":4.25,\"speaker\":\"Zoë Müller\",\"start\":0.0,\"text\":\"Let's fix the launch date. ✅\"},{\"end\":9.0,\"speaker\":\"Corey\",\"start\":4.5,\"text\":\"Friday works — 1e-07 is not a plan.\"}],\"part\":\"transcript\",\"v\":1}",
+    "summary": "{\"data\":\"## Summary\\n\\nShip on Friday 📦\\n\",\"part\":\"summary\",\"v\":1}",
+    "summary_data": "{\"data\":{\"action_items\":[{\"at\":7.5,\"due\":\"2026-11-20\",\"id\":\"a1\",\"owner\":\"Zoë\",\"text\":\"Book the venue\"}],\"decision_at\":[4.5],\"decision_ids\":[\"d1\"],\"decisions\":[\"Ship on Friday\"],\"edited_at\":\"2026-11-09T10:30:00\",\"edited_by\":\"Corey\",\"title\":\"Roadmap sync\"},\"part\":\"summary_data\",\"v\":1}",
+    "notes": "{\"data\":\"# Notes\\n\\n- [ ] [Zoë](mnemosyne:person/Zo%C3%AB) book it\\n![diagram](mnemosyne:image/abababababababababababababababababababababababababababababababab.webp@640x480)\\n\",\"part\":\"notes\",\"v\":1}",
+    "comments": "{\"data\":[{\"anchor\":{\"end\":9.0,\"part\":0,\"start\":4.5},\"approved_at\":\"2026-11-09T11:30:00\",\"author\":\"Corey\",\"author_id\":\"u-1\",\"created_at\":\"2026-11-09T11:00:00+00:00\",\"deleted\":false,\"hidden_at\":null,\"id\":\"c1\",\"mentions\":[],\"parent_id\":\"\",\"quote\":\"Friday works\",\"resolved_at\":\"2026-11-09T12:00:00+00:00\",\"resolved_by\":\"u-1\",\"target\":\"segment\",\"target_id\":\"\",\"text\":\"Is Friday realistic?\",\"updated_at\":\"2026-11-09T11:00:00+00:00\"},{\"anchor\":{},\"approved_at\":null,\"author\":\"Zoë\",\"author_id\":\"u-2\",\"created_at\":\"2026-11-09T11:05:00\",\"deleted\":false,\"hidden_at\":null,\"id\":\"c2\",\"mentions\":[\"u-1\"],\"parent_id\":\"c1\",\"quote\":\"\",\"resolved_at\":null,\"resolved_by\":\"\",\"target\":\"segment\",\"target_id\":\"\",\"text\":\"Reply 👍\",\"updated_at\":\"2026-11-09T11:05:00\"}],\"part\":\"comments\",\"v\":1}",
+    "meta": "{\"data\":{\"agenda\":[{\"covered\":true,\"text\":\"Launch date\"},{\"covered\":false,\"text\":\"Budget\"}],\"attendees\":[\"李雷\",\"Corey\"],\"meeting_type\":\"planning\",\"name\":\"Roadmap sync 🚀 – Café Zürich\",\"owner_id\":\"u-1\",\"participants\":[\"Zoë Müller\",\"Corey\"]},\"part\":\"meta\",\"v\":1}",
+    "external_notes": "{\"data\":[{\"added_at\":\"2026-11-09T09:05:00\",\"id\":\"g1\",\"source\":\"Gemini\",\"text\":\"Géminï notes\"},{\"added_at\":\"2026-11-09T09:00:00\",\"id\":\"z9\",\"source\":\"Zoom\",\"text\":\"Zoom AI says hi\"}],\"part\":\"external_notes\",\"v\":1}"
+  },
+  "part_digests": {
+    "transcript": "fb0d2b2e38ee7160ec8285ab85e7fdb82c8ca1f25df468e5a1f13cc36acfe3c8",
+    "summary": "733b6f96dd79132abf22a9855a702906b20327e7e83e92306d28e81082ed4c1e",
+    "summary_data": "baea4965959b0858aac7a26317430436cf4374b01dde5aadc4d19f62beeb528b",
+    "notes": "78040d2021096cfb07d8d66f07d4ac16dd4180e3063aaf958782454db4c178a3",
+    "comments": "469510c30eb4772576edde51e5028f9062725c1eab9c765baf376ab865ba7298",
+    "meta": "b7891d54120c874bc6c2a81b89d09fe74ef0777a3137be1b8ba5452f14ca7c51",
+    "external_notes": "a7fc4e450fcfb5e9ed999a63bfda67faac006c2426eadf0f767a2a8624f95aba"
+  },
+  "manifest_v1": {
+    "manifest": {
+      "format": 2,
+      "session": "0123456789ab",
+      "rev": 1234,
+      "content_v1": "96703006dc9559e938313f9a66db2947234239ae5829e8b85bd0737b786f5779",
+      "parts": {
+        "transcript": "fb0d2b2e38ee7160ec8285ab85e7fdb82c8ca1f25df468e5a1f13cc36acfe3c8",
+        "summary": "733b6f96dd79132abf22a9855a702906b20327e7e83e92306d28e81082ed4c1e",
+        "summary_data": "baea4965959b0858aac7a26317430436cf4374b01dde5aadc4d19f62beeb528b",
+        "notes": "78040d2021096cfb07d8d66f07d4ac16dd4180e3063aaf958782454db4c178a3",
+        "comments": "469510c30eb4772576edde51e5028f9062725c1eab9c765baf376ab865ba7298",
+        "meta": "b7891d54120c874bc6c2a81b89d09fe74ef0777a3137be1b8ba5452f14ca7c51",
+        "external_notes": "a7fc4e450fcfb5e9ed999a63bfda67faac006c2426eadf0f767a2a8624f95aba"
+      },
+      "audio": {
+        "mixed.ogg": {
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bytes": 4004
+        },
+        "mic.ogg": {
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "bytes": 2002
+        }
+      },
+      "audio_here": true,
+      "erased": {}
+    },
+    "canonical": "{\"audio\":{\"mic.ogg\":{\"bytes\":2002,\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"mixed.ogg\":{\"bytes\":4004,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}},\"audio_here\":true,\"content_v1\":\"96703006dc9559e938313f9a66db2947234239ae5829e8b85bd0737b786f5779\",\"erased\":{},\"format\":2,\"parts\":{\"comments\":\"469510c30eb4772576edde51e5028f9062725c1eab9c765baf376ab865ba7298\",\"external_notes\":\"a7fc4e450fcfb5e9ed999a63bfda67faac006c2426eadf0f767a2a8624f95aba\",\"meta\":\"b7891d54120c874bc6c2a81b89d09fe74ef0777a3137be1b8ba5452f14ca7c51\",\"notes\":\"78040d2021096cfb07d8d66f07d4ac16dd4180e3063aaf958782454db4c178a3\",\"summary\":\"733b6f96dd79132abf22a9855a702906b20327e7e83e92306d28e81082ed4c1e\",\"summary_data\":\"baea4965959b0858aac7a26317430436cf4374b01dde5aadc4d19f62beeb528b\",\"transcript\":\"fb0d2b2e38ee7160ec8285ab85e7fdb82c8ca1f25df468e5a1f13cc36acfe3c8\"},\"rev\":1234,\"session\":\"0123456789ab\"}",
+    "hash": "192cb9a3ace46d71df9fb3a0a1e20a5056606472339f4a313326b006448cafd6"
+  },
+  "chain": {
+    "v1_seal": {
+      "prev": "",
+      "content": "96703006dc9559e938313f9a66db2947234239ae5829e8b85bd0737b786f5779",
+      "audio": {
+        "mixed.ogg.enc": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "at": "2026-11-08T09:00:00",
+      "reason": "x",
+      "chain": "e0499a23146cd1cfe2393064007fd87e5de1a3b9250068105461a0d6ef6f460d"
+    },
+    "seal_1": {
+      "at": "2026-11-09T12:30:00",
+      "reason": "changed: comments",
+      "chain": "a8031673e3638bc1afda9e3b84248dc188c60db21a0691edab93564a283eba27"
+    },
+    "seal_2": {
+      "at": "2026-12-01T08:00:01",
+      "reason": "audio deleted",
+      "chain": "1c667ea61c59a8749e338b193ea3cdac79b044efbac9adee81f962ca0fcdea36"
+    }
+  },
+  "manifest_erasure": {
+    "manifest": {
+      "format": 2,
+      "session": "0123456789ab",
+      "rev": 1240,
+      "content_v1": "96703006dc9559e938313f9a66db2947234239ae5829e8b85bd0737b786f5779",
+      "parts": {
+        "transcript": "fb0d2b2e38ee7160ec8285ab85e7fdb82c8ca1f25df468e5a1f13cc36acfe3c8",
+        "summary": "733b6f96dd79132abf22a9855a702906b20327e7e83e92306d28e81082ed4c1e",
+        "summary_data": "baea4965959b0858aac7a26317430436cf4374b01dde5aadc4d19f62beeb528b",
+        "notes": "78040d2021096cfb07d8d66f07d4ac16dd4180e3063aaf958782454db4c178a3",
+        "comments": "469510c30eb4772576edde51e5028f9062725c1eab9c765baf376ab865ba7298",
+        "meta": "b7891d54120c874bc6c2a81b89d09fe74ef0777a3137be1b8ba5452f14ca7c51",
+        "external_notes": "a7fc4e450fcfb5e9ed999a63bfda67faac006c2426eadf0f767a2a8624f95aba"
+      },
+      "audio": {
+        "mixed.ogg": {
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bytes": 4004
+        }
+      },
+      "audio_here": true,
+      "erased": {
+        "mic.ogg": {
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "bytes": 2002,
+          "at": "2026-12-01T08:00:00",
+          "by": "admin",
+          "reason": "older than 365 days",
+          "deletion": 17,
+          "matched": false
+        }
+      }
+    },
+    "canonical": "{\"audio\":{\"mixed.ogg\":{\"bytes\":4004,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}},\"audio_here\":true,\"content_v1\":\"96703006dc9559e938313f9a66db2947234239ae5829e8b85bd0737b786f5779\",\"erased\":{\"mic.ogg\":{\"at\":\"2026-12-01T08:00:00\",\"by\":\"admin\",\"bytes\":2002,\"deletion\":17,\"matched\":false,\"reason\":\"older than 365 days\",\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}},\"format\":2,\"parts\":{\"comments\":\"469510c30eb4772576edde51e5028f9062725c1eab9c765baf376ab865ba7298\",\"external_notes\":\"a7fc4e450fcfb5e9ed999a63bfda67faac006c2426eadf0f767a2a8624f95aba\",\"meta\":\"b7891d54120c874bc6c2a81b89d09fe74ef0777a3137be1b8ba5452f14ca7c51\",\"notes\":\"78040d2021096cfb07d8d66f07d4ac16dd4180e3063aaf958782454db4c178a3\",\"summary\":\"733b6f96dd79132abf22a9855a702906b20327e7e83e92306d28e81082ed4c1e\",\"summary_data\":\"baea4965959b0858aac7a26317430436cf4374b01dde5aadc4d19f62beeb528b\",\"transcript\":\"fb0d2b2e38ee7160ec8285ab85e7fdb82c8ca1f25df468e5a1f13cc36acfe3c8\"},\"rev\":1240,\"session\":\"0123456789ab\"}",
+    "hash": "ff3c3cd3cc017c3479493f15416dfcca9569384a51a375426cff368d851f42ea"
+  },
+  "manifest_origin": {
+    "manifest": {
+      "format": 2,
+      "session": "0123456789ab",
+      "rev": 3,
+      "content_v1": "96703006dc9559e938313f9a66db2947234239ae5829e8b85bd0737b786f5779",
+      "parts": {
+        "transcript": "fb0d2b2e38ee7160ec8285ab85e7fdb82c8ca1f25df468e5a1f13cc36acfe3c8",
+        "summary": "733b6f96dd79132abf22a9855a702906b20327e7e83e92306d28e81082ed4c1e",
+        "summary_data": "baea4965959b0858aac7a26317430436cf4374b01dde5aadc4d19f62beeb528b",
+        "notes": "78040d2021096cfb07d8d66f07d4ac16dd4180e3063aaf958782454db4c178a3",
+        "comments": "469510c30eb4772576edde51e5028f9062725c1eab9c765baf376ab865ba7298",
+        "meta": "b7891d54120c874bc6c2a81b89d09fe74ef0777a3137be1b8ba5452f14ca7c51",
+        "external_notes": "a7fc4e450fcfb5e9ed999a63bfda67faac006c2426eadf0f767a2a8624f95aba"
+      },
+      "audio": {},
+      "audio_here": false,
+      "erased": {}
+    },
+    "canonical": "{\"audio\":{},\"audio_here\":false,\"content_v1\":\"96703006dc9559e938313f9a66db2947234239ae5829e8b85bd0737b786f5779\",\"erased\":{},\"format\":2,\"parts\":{\"comments\":\"469510c30eb4772576edde51e5028f9062725c1eab9c765baf376ab865ba7298\",\"external_notes\":\"a7fc4e450fcfb5e9ed999a63bfda67faac006c2426eadf0f767a2a8624f95aba\",\"meta\":\"b7891d54120c874bc6c2a81b89d09fe74ef0777a3137be1b8ba5452f14ca7c51\",\"notes\":\"78040d2021096cfb07d8d66f07d4ac16dd4180e3063aaf958782454db4c178a3\",\"summary\":\"733b6f96dd79132abf22a9855a702906b20327e7e83e92306d28e81082ed4c1e\",\"summary_data\":\"baea4965959b0858aac7a26317430436cf4374b01dde5aadc4d19f62beeb528b\",\"transcript\":\"fb0d2b2e38ee7160ec8285ab85e7fdb82c8ca1f25df468e5a1f13cc36acfe3c8\"},\"rev\":3,\"session\":\"0123456789ab\"}",
+    "hash": "7c2f2b998d164254f07d9a197fa14b00848412803683ec222c058e8faca91ce6"
+  }
+}
