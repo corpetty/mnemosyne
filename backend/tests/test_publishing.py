@@ -76,6 +76,8 @@ def seals(monkeypatch):
 
     calls = []
     monkeypatch.setattr(records, "seal_later", lambda app, sid, reason: calls.append((sid, reason)))
+    # replace seals its unpublish step directly, in order (publishing.replace).
+    monkeypatch.setattr(records, "seal", lambda app, sid, reason: calls.append((sid, reason)))
     return calls
 
 
