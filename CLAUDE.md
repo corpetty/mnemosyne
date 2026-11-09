@@ -250,6 +250,10 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - Audio is deleted only through `StorageService.delete_audio`: its hook (`seal_erasure`) seals the erasure first. Deleting a file
   by hand makes the record report it missing.
 
+- Team hosting: every new reader of meetings (route, job, export, index) must go through `repo.read_scope()` / `_sees`;
+  `test_hosting_visibility.py` lists the known readers and fails on an unknown one. A new session-less WebSocket event type is
+  denied to non-owners on a host until it is added to `TEAM_EVENTS` (api/websocket.py). Personal routes take `require_owner_channel`.
+
 ## Roadmap (agreed 2026-09-22)
 
 0. Done: lockfile, GPU extra, ruff, pytest with fakes, this file.
@@ -706,6 +710,18 @@ for a refused one), LibraryCopy ("Keep a copy of the library on this laptop" = l
 recordings always make a new meeting, no level meters during one, no consent hand-over for offline recordings, no acknowledgement of the last
 bytes in flight at Stop. A laptop paired before this version is paired again once (the token was not kept). e2e: tests-e2e/devices.spec.ts
 (a second demo backend on 8058 for the pairing specs; the laptop window is a stubbed local backend).
+
+Team hosting (unreleased, docs/plans/2026-11-09-team-hosting.md): a main computer also hosts a team. Roles are derived, never stored:
+`config.hosts_team` (team mode + `team_owner_id`), `personal_allowed` (not a dedicated server), `dedicated_team_server` (team mode, no
+owner); `/api/system/role` and `/api/users/me` say `hosts_team`/`personal`/`owner`, and role `team` is only a dedicated server. The owner
+is a channel, not a user: `scope["state"]["channel"]` + `auth.is_owner_channel`; personal routes (sync, pairing, contacts, connections,
+hand-off, satellite, peer shares, settings writes, `PUT /api/team`) take `require_owner_channel` (403 `OWNER_ONLY`); only the owner can
+be an admin (`services/users.admin_refusal`, 409; CLI `users set-role --for-hosting`). Rows get the owner stamped by `repo.host_owner`.
+Reads go through `access.ReadScope` (member / team_wide / contact / OWN / PERSONAL / VIEW; `access.limited_to` holds a job to one on
+top of the caller, an intersection; services/host_scope.py asks for OWN/PERSONAL/VIEW for vault, digest, Ask, MCP, which sends
+`X-Mnemosyne-Client: mcp`); `repo._sees` is the one SQL condition. Library sync carries OWN meetings only and tombstones keep the
+deleted meeting's owner. Records period and flagged phrases cover team meetings only while hosting (a legal hold holds any meeting).
+Non-owners get `PERSONAL_SETTINGS` at defaults from `GET /api/settings`. Tests: `tests/test_hosting_*.py`, `test_sync_hosting.py`.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
