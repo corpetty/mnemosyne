@@ -413,6 +413,7 @@ async def stop(
     recording = ctx.active_recordings.get(session_id)
     if recording is None or not recording.is_recording or not _sees(ctx, session_id):
         raise HTTPException(status_code=404, detail="No active recording for this session")
+    ctx.repo._check_write(session_id)  # reading the meeting is not enough to control its recording
     transcribe = request.transcribe if request is not None else None
     job, want_transcribe = await stop_active(ctx, session_id, transcribe)
     return StopRecordingResponse(
@@ -541,6 +542,7 @@ async def restart(session_id: str, ctx: AppContext = Depends(get_ctx)):
     recording = ctx.active_recordings.get(session_id)
     if recording is None or not recording.is_recording or not _sees(ctx, session_id):
         raise HTTPException(status_code=404, detail="No active recording for this session")
+    ctx.repo._check_write(session_id)  # reading the meeting is not enough to control its recording
     if is_browser(recording):
         raise HTTPException(
             status_code=400, detail="A browser recording reconnects from the browser"

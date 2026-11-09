@@ -296,6 +296,26 @@ def test_active_recordings_follow_the_read_rule(host, monkeypatch):
         host.ctx.active_recordings.clear()
 
 
+def test_a_reviewer_reading_a_recording_cannot_stop_or_restart_it(host):
+    class Rec:
+        is_recording = True
+        started_at = 0.0
+        processes = []
+        part = 1
+        problems = {}
+
+    sid = host.ids["team"]  # a member's meeting, which a reviewer reads
+    host.ctx.active_recordings[sid] = Rec()
+    try:
+        client, headers, _ = host.client("reviewer")
+        assert client.get(f"/api/audio/status/{sid}", headers=headers).json()["exists"] is True
+        for path in (f"/api/audio/stop/{sid}", f"/api/audio/restart/{sid}"):
+            assert client.post(path, headers=headers, json={}).status_code == 403, path
+        assert host.ctx.active_recordings[sid].is_recording
+    finally:
+        host.ctx.active_recordings.clear()
+
+
 # ---- contacts: I8 -----------------------------------------------------------------------------
 
 
