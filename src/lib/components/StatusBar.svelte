@@ -7,6 +7,7 @@
 	import { ago, waitingNote } from '$lib/app/syncText.js';
 	import { syncState } from '$lib/stores/sync.svelte.js';
 	import LevelMeter from './LevelMeter.svelte';
+	import OutboxList from './OutboxList.svelte';
 
 	let tick = $state(Date.now());
 	$effect(() => {
@@ -67,6 +68,7 @@
 		{/if}
 	</div>
 	<div class="flex items-center gap-3">
+		<OutboxList />
 		{#if peer}
 			<button onclick={openSync} title="Sync settings" class="hover:text-gray-300 {peer.state === 'error' || peer.state === 'skew' ? 'text-amber-400' : ''}">{syncText}</button>
 		{/if}

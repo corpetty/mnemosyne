@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { startRecording } from '$lib/app/controller.svelte.js';
+	import DeviceSelector from './DeviceSelector.svelte';
+	import { audioState } from '$lib/stores/audio.svelte.js';
+	import { satelliteState } from '$lib/stores/satellite.svelte.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
@@ -8,7 +12,27 @@
 	<div class="text-center space-y-4">
 		<h2 class="text-2xl font-light text-gray-400">Mnemosyne</h2>
 		<p class="text-sm text-gray-500">Real-time transcription, diarization, and summarization</p>
-		{#if uiState.backendStatus === 'checking'}
+		{#if satelliteState.mainDown || (connectionState.usesMain && satelliteState.localUp && uiState.backendStatus !== 'connected')}
+			<!-- This computer uses a main computer and cannot reach it: it still records, into its outbox. -->
+			<div class="space-y-3" role="status">
+				<div class="flex items-center justify-center gap-2 text-amber-300">
+					<span class="w-2 h-2 rounded-full bg-amber-400"></span>
+					<span class="text-sm">Main computer not reachable. Recordings are kept here and go to it when it is.</span>
+				</div>
+				{#if audioState.isRecording}
+					<p class="text-xs text-gray-500">Recording on this laptop. Stop it from the header.</p>
+				{:else}
+					<button
+						onclick={() => startRecording(true)}
+						disabled={!!audioState.pending}
+						class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors disabled:opacity-60"
+					>{audioState.pending === 'starting' ? 'Starting…' : 'Record'}</button>
+					<div class="mx-auto max-w-md text-left">
+						<DeviceSelector />
+					</div>
+				{/if}
+			</div>
+		{:else if uiState.backendStatus === 'checking'}
 			<div class="space-y-2">
 				<div class="flex items-center justify-center gap-2 text-yellow-500">
 					<span class="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></span>
