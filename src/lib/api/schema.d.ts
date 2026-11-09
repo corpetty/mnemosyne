@@ -3196,7 +3196,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Settings */
+        /**
+         * Get Settings
+         * @description Readable by everyone signed in; on a computer that hosts a team only the owner's channels
+         *     get the personal settings (api/auth.py `is_owner_channel`).
+         */
         get: operations["get_settings_api_settings_get"];
         /** Update Settings */
         put: operations["update_settings_api_settings_put"];
@@ -3547,7 +3551,7 @@ export interface paths {
          * Get Media
          * @description The bytes of an image of a meeting's notes (the document only carries its row), for the
          *     computer that synced the meeting. Decrypted here; the caller seals them when it encrypts.
-         *     404 when the bytes are not here.
+         *     404 when the bytes are not here, and for a meeting sync does not carry (a team member's).
          */
         get: operations["get_media_api_sync_media__session_id___sha256__get"];
         put?: never;
