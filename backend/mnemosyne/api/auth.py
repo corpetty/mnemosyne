@@ -97,6 +97,21 @@ class TokenAuthMiddleware:
         self.ctx = ctx
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            return await self._serve(scope, receive, send)
+        # The MCP server says who it is (mcp_server.py): its requests are held to the owner's
+        # view of a computer with a team owner. A privacy default for an assistant that reads
+        # for the owner, not a security boundary: any local process may leave the header out.
+        # Whoever else signs in keeps their own scope (`only_for`).
+        from ..services import host_scope
+
+        headers = dict(scope.get("headers", []))
+        client = headers.get(host_scope.CLIENT_HEADER.encode(), b"").decode().strip().lower()
+        view = host_scope.view(self.ctx) if client == host_scope.CLIENT_MCP else None
+        with access.limited_to(view, only_for=host_scope.owner(self.ctx)):
+            return await self._serve(scope, receive, send)
+
+    async def _serve(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
             return await self.app(scope, receive, send)
         token = self.ctx.settings.api_token

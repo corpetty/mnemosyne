@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 MEMBER, REVIEWER, ADMIN = "member", "reviewer", "admin"
 ROLES = (MEMBER, REVIEWER, ADMIN)
@@ -80,6 +80,12 @@ ALL = "all"  # everything: unrestricted, an admin, a reviewer off a hosting comp
 OWN_AND_GRANTED = "member"  # a member: own meetings + team grants to them or to everyone ("*")
 TEAM_WIDE = "team_wide"  # a reviewer on a hosting computer: team meetings + grants to them
 PERSONAL_SHARES = "contact"  # a contact: only their own live peer shares
+# Limits for the work that copies or processes data on a computer with a team owner H
+# (`team_owner_id`; docs/plans/2026-11-09-team-hosting.md 2.4). They are asked for by
+# services/host_scope.py, never by who the caller is:
+OWN = "own"  # the owner's own meetings: owner '' or H, not shared with H by a contact
+PERSONAL = "personal"  # OWN plus the meetings contacts shared with H: what may reach the vault
+VIEW = "view"  # OWN, team meetings granted to H, shared_from: what H would see as a member
 
 
 @dataclass(frozen=True)
@@ -90,20 +96,69 @@ class ReadScope:
     kind: str
     user_id: str = ""
     host: str = ""
+    # Further scopes the caller must be inside of too (`within`): a limit on top of who they are.
+    also: tuple[ReadScope, ...] = ()
 
     @property
     def everything(self) -> bool:
-        return self.kind == ALL
+        return self.kind == ALL and not self.also
+
+    def within(self, limit: ReadScope) -> ReadScope:
+        """This scope cut down to what `limit` allows as well (the intersection)."""
+        if limit.everything or limit == self or limit in self.also:
+            return self
+        if self.everything:
+            return limit
+        return replace(self, also=(*self.also, limit))
 
 
 EVERYTHING = ReadScope(ALL)
 
 
+@dataclass(frozen=True)
+class Limit:
+    """A scope the current block of work is held to, on top of who the caller is. `only_for`:
+    None for everyone, else only for the owner (a caller with that user id, or nobody signed in:
+    the desktop, the API token), so a member's own meetings are never cut by the owner's limit."""
+
+    scope: ReadScope
+    only_for: str | None = None
+
+
+limits: ContextVar[tuple[Limit, ...]] = ContextVar("mnemosyne_limits", default=())
+
+
+@contextmanager
+def limited_to(scope: ReadScope | None, only_for: str | None = None) -> Iterator[None]:
+    """Hold the block (and the threads and jobs it starts) to `scope` as well as to the caller's
+    own: a vault write sees no team member's meeting, an owner's Ask only what he could read as
+    a member. `scope` None changes nothing (a computer without a team owner)."""
+    if scope is None:
+        yield
+        return
+    token = limits.set((*limits.get(), Limit(scope, only_for)))
+    try:
+        yield
+    finally:
+        limits.reset(token)
+
+
 def read_scope(host_owner: str = "") -> ReadScope:
-    """The current caller's read scope. `host_owner`: the owner of this computer while it hosts
+    """The current caller's read scope, held to the limits in force (`limited_to`).
+
+    `host_owner`: the owner of this computer while it hosts
     a team (`SessionRepository.host_owner`), else "". On a host, every non-member who is not the
     owner (a reviewer; an admin other than the owner, which rule I2 forbids anyway) reads
     team-wide: team meetings and the owner's personal ones granted to them, never a contact's."""
+    scope = _callers_scope(host_owner)
+    p = current.get()
+    for limit in limits.get():
+        if limit.only_for is None or p is None or p.user_id == limit.only_for:
+            scope = scope.within(limit.scope)
+    return scope
+
+
+def _callers_scope(host_owner: str) -> ReadScope:
     p = current.get()
     if p is None:
         return EVERYTHING

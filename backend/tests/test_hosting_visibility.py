@@ -557,12 +557,14 @@ KNOWN_READERS = {
     "access.py",
     "storage/sqlite.py",
     "api/websocket.py",
+    "api/routes/ask.py",  # the Ask note: the vault scope's ids
     "api/routes/audio.py",
     "api/routes/export.py",
     "api/routes/integrations.py",
     "api/routes/publishing.py",
     "api/routes/sharing.py",  # its own `_readable` helper: `repo.exists`
     "api/routes/tasks.py",
+    "search/index.py",  # filters its shared vectors by the caller's scope at query time
     "services/comments.py",
     "services/decision_links.py",
     "services/item_flags.py",

@@ -457,6 +457,10 @@ def write_tick(
     when the note exists and is ours. Everything else in the note stays as it is. True when
     the note was written. Never raises."""
     try:
+        from . import host_scope
+
+        if not host_scope.vault_allows(ctx, session):
+            return False  # a team member's meeting has no note here
         vault = vault_path or ctx.settings.obsidian_vault_path
         items = session.summary_data.action_items if session.summary_data else []
         if not vault or not 0 <= idx < len(items):
@@ -810,7 +814,15 @@ def _take_edits(ctx: AppContext, session: Session, path: Path) -> bool:
 def sync_vault(ctx: AppContext) -> int:
     """One pass: apply the ticks and summary edits of every summarized meeting's note that
     changed since the last pass (by mtime, remembered in ctx.vault_seen); notes are never
-    written here. Returns the meetings changed."""
+    written here. A team member's meeting is never looked at on a computer with a team owner
+    (services/host_scope.py). Returns the meetings changed."""
+    from . import host_scope
+
+    with host_scope.vault_only(ctx):
+        return _sync_vault(ctx)
+
+
+def _sync_vault(ctx: AppContext) -> int:
     from ..export.obsidian import note_stem
     from .meeting_types import available_types
 

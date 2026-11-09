@@ -4481,12 +4481,12 @@ class SessionRepository:
         return r["updated_at"] if r else None
 
     def all_vectors(self) -> list:
-        visible = self.visible_ids()
+        """Every chunk's vector, whoever asks: the index keeps one copy for all callers and
+        filters by the caller's scope at query time (search/index.py `query`)."""
         with self._lock:
-            rows = self._conn.execute(
+            return self._conn.execute(
                 "SELECT session_id, kind, first_idx, last_idx, vec FROM chunk_vectors"
             ).fetchall()
-        return rows if visible is None else [r for r in rows if r["session_id"] in visible]
 
     def indexed_session_count(self) -> int:
         with self._lock:

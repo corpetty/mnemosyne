@@ -530,7 +530,11 @@ class AppContext:
         me = access.user_id()
         if any(j.kind == "digest" and j.owner_id == me for j in self.jobs.list(active_only=True)):
             return None
-        if not any(s.summary.strip() for s in self.repo.sessions_between(*week)):
+        from ..services import host_scope
+
+        with host_scope.owner_view(self):  # the owner's digest covers his view (host_scope.py)
+            due = any(s.summary.strip() for s in self.repo.sessions_between(*week))
+        if not due:
             return None
         logger.info("Scheduled digest for %s %s", range_label(*week), me)
         return self.jobs.submit("digest", make_digest(self, *week))

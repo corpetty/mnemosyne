@@ -227,6 +227,9 @@ class VectorIndex:
             return []
         q = emb.embed([text])[0]
         scores = matrix @ q
+        visible = self.repo.visible_ids()  # the caller's scope, not the one that loaded the matrix
+        if visible is not None:
+            scores = np.where(np.fromiter((key[0] in visible for key in keys), bool), scores, -1.0)
         order = np.argsort(-scores)[:k]
         return [VecHit(*keys[i], score=float(scores[i])) for i in order if scores[i] >= min_score]
 
