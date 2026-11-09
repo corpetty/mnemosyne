@@ -89,6 +89,20 @@
 	let editing = $state<string | null>(null);
 	let draft = $state('');
 	let confirming = $state<string | null>(null);
+	// Blocking a reader of the published page (the publication's blocked_readers, by rid).
+	let blocking = $state<string | null>(null);
+	let alsoHide = $state(true);
+	const ridOf = (c: Comment) => c.author_id.slice('reader:'.length);
+	const isBlocked = (c: Comment) => fromReader(c) && !!publication?.blocked_readers?.some((b) => b.rid === ridOf(c));
+	const readerName = (c: Comment) => c.author || 'this reader';
+	async function block(c: Comment) {
+		const hide = alsoHide;
+		blocking = null;
+		await run(() => publishingState.blockReader(sessionId, ridOf(c), hide).then(() => (onchange ? onchange() : commentsState.load(sessionId))), 'Could not block the reader');
+	}
+	async function unblock(c: Comment) {
+		await run(() => publishingState.unblockReader(sessionId, ridOf(c)), 'Could not unblock the reader');
+	}
 
 	const collapsed = $derived(!!root.resolved_at && !root.deleted && !expanded);
 
@@ -166,7 +180,7 @@
 	{#if fromReader(c) && (isRoot || mod)}
 		<!-- A reader of the published link wrote it (services/live_publications.py): they see the replies. -->
 		<p class="text-[11px] text-gray-500">
-			From the published link{#if isRoot}{' · replies are shown to its readers'}{/if}{#if mod === 'pending'}<span class="text-amber-300">{' · waiting for your approval'}</span>{:else if mod === 'hidden'}{' · hidden from readers'}{/if}
+			From the published link{#if isRoot}{' · replies are shown to its readers'}{/if}{#if mod === 'pending'}<span class="text-amber-300">{' · waiting for your approval'}</span>{:else if mod === 'hidden'}{' · hidden from readers'}{/if}{#if isBlocked(c)}{' · blocked'}{/if}
 		</p>
 	{/if}
 	{#if c.deleted}
@@ -234,6 +248,13 @@
 					{/if}
 				{/if}
 			{/if}
+			{#if c.can_moderate && fromReader(c)}
+				{#if isBlocked(c)}
+					<button class="hover:text-gray-200" onclick={() => unblock(c)}>Unblock</button>
+				{:else if blocking !== c.id}
+					<button class="hover:text-gray-200" onclick={() => { blocking = c.id; alsoHide = true; }}>Block</button>
+				{/if}
+			{/if}
 			{#if isRoot && c.can_resolve}
 				{#if c.resolved_at}
 					<button class="hover:text-gray-200" onclick={() => run(() => api.reopen(c.id), 'Could not reopen')}>Reopen</button>
@@ -241,6 +262,20 @@
 					<button class="hover:text-gray-200" onclick={() => run(() => api.resolve(c.id), 'Could not resolve')}>Resolve</button>
 				{/if}
 			{/if}
+		</div>
+	{/if}
+	{#if blocking === c.id}
+		<div class="rounded border border-gray-700 bg-gray-800/60 p-2 space-y-1.5 text-[11px] text-gray-300">
+			<p>Block {readerName(c)} from commenting on the published page?</p>
+			<label class="flex items-center gap-1.5">
+				<input type="checkbox" bind:checked={alsoHide} />
+				Also hide their comments from readers
+			</label>
+			<p class="text-gray-500">They can still read the page. Replace the link to stop that.</p>
+			<div class="flex items-center gap-2">
+				<button onclick={() => block(c)} class="px-2 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white">Block</button>
+				<button onclick={() => (blocking = null)} class="text-gray-400 hover:text-gray-200">Cancel</button>
+			</div>
 		</div>
 	{/if}
 {/snippet}

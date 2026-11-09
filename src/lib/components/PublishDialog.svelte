@@ -36,6 +36,14 @@
 	const working = $derived(!!pub.busy);
 
 	let confirmUnpublish = $state(false);
+	async function unblockReader(rid: string) {
+		if (!pub.dialogFor) return;
+		try {
+			await pub.unblockReader(pub.dialogFor, rid);
+		} catch (e) {
+			toastState.error(e instanceof Error ? e.message : 'Could not unblock the reader');
+		}
+	}
 	/** The quote whose clip is being listened to (its key). */
 	let listening = $state<string | null>(null);
 
@@ -380,6 +388,20 @@
 						{/if}
 					</p>
 					{#if current.live_reason}<p class="text-xs text-amber-300">{current.live_reason}</p>{/if}
+					{#if current.blocked_readers?.length}
+						<div class="text-xs text-gray-400 space-y-1">
+							<p>{current.blocked_readers.length === 1 ? '1 reader blocked' : `${current.blocked_readers.length} readers blocked`} from commenting. They can still read the page; replace the link to stop that.</p>
+							<ul class="space-y-0.5">
+								{#each current.blocked_readers as b (b.rid)}
+									<li class="flex items-center gap-2">
+										<span class="text-gray-300">{b.name || 'A reader'}</span>
+										<span class="text-gray-600">{shortDate(b.at)}</span>
+										<button onclick={() => unblockReader(b.rid)} class="text-gray-400 hover:text-gray-200">Unblock</button>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{/if}
 					<div class="flex gap-2">
 						<input readonly value={current.url} aria-label="Link" onfocus={(e) => e.currentTarget.select()} class="{inputClass} font-mono text-xs" />
 						<button onclick={() => copyText(current.url ?? '', 'Link copied')} class="shrink-0 rounded border border-gray-700 bg-gray-800 px-3 text-xs text-gray-200 hover:bg-gray-700">Copy</button>

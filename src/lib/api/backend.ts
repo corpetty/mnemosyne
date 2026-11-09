@@ -1322,6 +1322,20 @@ export async function unpublishSession(sessionId: string): Promise<Publication> 
   return request(`/api/sessions/${sessionId}/publication`, { method: 'DELETE' });
 }
 
+/** Stop one reader (by `rid`) commenting on the published page; `hide` also hides their comments. */
+export async function blockReader(sessionId: string, rid: string, hide: boolean): Promise<Publication> {
+  return request(`/api/sessions/${sessionId}/publication/readers/${encodeURIComponent(rid)}/block?hide=${hide}`, {
+    method: 'POST'
+  });
+}
+
+/** Let a blocked reader comment again (their hidden comments stay hidden). */
+export async function unblockReader(sessionId: string, rid: string): Promise<Publication> {
+  return request(`/api/sessions/${sessionId}/publication/readers/${encodeURIComponent(rid)}/unblock`, {
+    method: 'POST'
+  });
+}
+
 export async function listPublications(): Promise<PublicationListItem[]> {
   return request('/api/publications');
 }
