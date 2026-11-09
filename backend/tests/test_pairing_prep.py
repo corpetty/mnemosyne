@@ -236,11 +236,15 @@ async def test_a_team_servers_desktop_owner_needs_no_token_and_is_not_handed_one
 
 
 def test_the_role(client, ctx):
-    assert client.get("/api/system/role").json() == {"role": "main"}
+    assert client.get("/api/system/role").json() == {
+        "role": "main",
+        "hosts_team": False,
+        "personal": True,
+    }
     ctx.settings.team_mode = True
     ctx.settings.api_token = "s3cret"
     r = client.get("/api/system/role", headers={"Authorization": "Bearer s3cret"})
-    assert r.json() == {"role": "team"}
+    assert r.json() == {"role": "team", "hosts_team": False, "personal": False}
 
 
 def test_connected_devices_lists_each_kind_and_a_sync_peer_once(client, ctx, tmp_path):
