@@ -75,6 +75,8 @@ function fakeApi(over: Partial<PublishingApi> = {}) {
 		previewPublication: vi.fn(async (_id: string, sel: PublicationSelection): Promise<unknown> => ({ title: sel.title, quotes: [] })),
 		publishSession: vi.fn(async () => job('running', null, 'Encrypting')),
 		unpublishSession: vi.fn(async () => ({}) as Publication),
+		blockReader: vi.fn(async (_id: string, _rid: string, _hide: boolean) => ({ id: 'p1', blocked_readers: [{ rid: 'r1', name: 'Ann', at: '2026-11-09T10:00:00Z' }] }) as Publication),
+		unblockReader: vi.fn(async (_id: string, _rid: string) => ({ id: 'p1', blocked_readers: [] }) as unknown as Publication),
 		listPublications: vi.fn(async () => []),
 		startPublicationFile: vi.fn(async (_id: string, _sel: PublicationSelection, _password: string | null) => job('running')),
 		getJob: vi.fn(async () => job('completed', { publication: { id: 'p1', version: 1 } })),
@@ -379,6 +381,17 @@ describe('publishing helpers', () => {
 		expect(expiryChoices('file', 14)).toEqual([14, 30, 90, 365, null]);
 		expect(fitExpiry('host', null, 90)).toBe(90);
 		expect(fitExpiry('file', null, 90)).toBeNull();
+	});
+
+	it('block and unblock replace the stored publication', async () => {
+		const api = fakeApi();
+		const st = new PublishingState(api, 400, 10);
+		await st.blockReader('s1', 'r1', true);
+		expect(api.blockReader).toHaveBeenCalledWith('s1', 'r1', true);
+		expect(st.publications['s1']?.blocked_readers.map((b) => b.rid)).toEqual(['r1']);
+		await st.unblockReader('s1', 'r1');
+		expect(api.unblockReader).toHaveBeenCalledWith('s1', 'r1');
+		expect(st.publications['s1']?.blocked_readers).toEqual([]);
 	});
 
 	it('writes short dates in the viewer style', () => {

@@ -268,6 +268,9 @@
 			}
 			case 'unpublished':
 				return `Unpublished${d.by ? ` by ${d.by}` : ''}`;
+			case 'reader_blocked':
+			case 'reader_unblocked':
+				return `${e.kind === 'reader_blocked' ? 'Blocked' : 'Unblocked'} a reader of the published page${d.name ? `: ${d.name}` : ''}${d.by ? ` by ${d.by}` : ''}`;
 			case 'publication_expired':
 				return 'The publication expired';
 			case 'exported_publication':

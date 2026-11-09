@@ -22,6 +22,8 @@ export interface PublishingApi {
 	previewPublication(sessionId: string, selection: PublicationSelection): Promise<unknown>;
 	publishSession(sessionId: string, selection: PublicationSelection): Promise<Job>;
 	unpublishSession(sessionId: string): Promise<Publication>;
+	blockReader(sessionId: string, rid: string, hide: boolean): Promise<Publication>;
+	unblockReader(sessionId: string, rid: string): Promise<Publication>;
 	listPublications(): Promise<PublicationListItem[]>;
 	startPublicationFile(sessionId: string, selection: PublicationSelection, password: string | null): Promise<Job>;
 	getJob(jobId: string): Promise<Job>;
@@ -80,6 +82,8 @@ const defaultApi: PublishingApi = {
 	previewPublication: backend.previewPublication,
 	publishSession: backend.publishSession,
 	unpublishSession: backend.unpublishSession,
+	blockReader: backend.blockReader,
+	unblockReader: backend.unblockReader,
 	listPublications: backend.listPublications,
 	startPublicationFile: backend.startPublicationFile,
 	getJob: backend.getJob,
@@ -453,6 +457,15 @@ export class PublishingState {
 		} finally {
 			this.busy = null;
 		}
+	}
+
+	/** Block a reader of the meeting's published page; the stored publication takes the answer. */
+	async blockReader(sessionId: string, rid: string, hide: boolean): Promise<void> {
+		this.publications[sessionId] = await this.#api.blockReader(sessionId, rid, hide);
+	}
+
+	async unblockReader(sessionId: string, rid: string): Promise<void> {
+		this.publications[sessionId] = await this.#api.unblockReader(sessionId, rid);
 	}
 
 	/** Make the one-file copy and save it. */
