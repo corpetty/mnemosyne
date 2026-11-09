@@ -592,6 +592,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/connections/handoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Handoff
+         * @description A finished recording from a paired computer becomes a meeting here (multipart: `meta`
+         *     JSON {handoff_id, title, started_at, ended_at, notes, sources: [{source, part, offset,
+         *     sample_rate, file, label}], session_id?} plus one WAV or Ogg file per source and part, in
+         *     the field each source names). Idempotent by handoff_id. 413 over 4 GB.
+         */
+        post: operations["handoff_api_connections_handoff_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/contacts": {
         parameters: {
             query?: never;
@@ -3639,6 +3662,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/main": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Main Computer
+         * @description The main computer this one uses, as the desktop shell last said.
+         */
+        get: operations["get_main_computer_api_system_main_get"];
+        /**
+         * Set Main Computer
+         * @description The desktop shell connected to the main computer through remote access (and at each
+         *     launch): where its tunnel is, the token and the name (services/main_computer.py).
+         */
+        put: operations["set_main_computer_api_system_main_put"];
+        post?: never;
+        /**
+         * Clear Main Computer
+         * @description The desktop shell disconnected from the main computer (forgot it).
+         */
+        delete: operations["clear_main_computer_api_system_main_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system/phonon": {
         parameters: {
             query?: never;
@@ -5614,6 +5666,13 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HandoffResult */
+        HandoffResult: {
+            /** Replaced */
+            replaced: boolean;
+            /** Session Id */
+            session_id: string;
+        };
         /** HistoryEvent */
         HistoryEvent: {
             /**
@@ -5980,6 +6039,27 @@ export interface components {
         LocalOnlyRequest: {
             /** Local Only */
             local_only: boolean;
+        };
+        /** MainComputerRequest */
+        MainComputerRequest: {
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Token */
+            token: string;
+            /** Url */
+            url: string;
+        };
+        /** MainComputerStatus */
+        MainComputerStatus: {
+            /** Connected */
+            connected: boolean;
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
         };
         /** Me */
         Me: {
@@ -11089,6 +11169,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectedDevice"][];
+                };
+            };
+        };
+    };
+    handoff_api_connections_handoff_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandoffResult"];
                 };
             };
         };
@@ -16592,6 +16692,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Diagnostics"];
+                };
+            };
+        };
+    };
+    get_main_computer_api_system_main_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MainComputerStatus"];
+                };
+            };
+        };
+    };
+    set_main_computer_api_system_main_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MainComputerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MainComputerStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_main_computer_api_system_main_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MainComputerStatus"];
                 };
             };
         };

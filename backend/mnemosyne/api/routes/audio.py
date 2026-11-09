@@ -221,7 +221,13 @@ async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ct
 
 
 @router.post("/start-browser", response_model=StartRecordingResponse)
-async def start_browser(request: StartBrowserRecordingRequest, ctx: AppContext = Depends(get_ctx)):
+async def start_browser(
+    request: StartBrowserRecordingRequest, http: Request, ctx: AppContext = Depends(get_ctx)
+):
+    # A paired computer streaming its recording here (the next "uses my main computer" task):
+    # its device id goes into the history, so only it may hand the complete audio over later
+    # (api/routes/handoff.py).
+    by_device = (http.scope.get("state") or {}).get("device_id")
     if not request.sources:
         raise HTTPException(
             status_code=400, detail="Nothing to record: no microphone or call audio"
@@ -231,7 +237,7 @@ async def start_browser(request: StartBrowserRecordingRequest, ctx: AppContext =
     return await _start(
         ctx,
         request.session_id,
-        lambda session: begin_recording(ctx, session, [], browser=request),
+        lambda session: begin_recording(ctx, session, [], browser=request, by_device=by_device),
         request.consent,
     )
 
@@ -312,6 +318,7 @@ async def begin_recording(
     device_ids: list[int],
     keep_notes: bool = False,
     browser: StartBrowserRecordingRequest | None = None,
+    by_device: str | None = None,
 ) -> StartRecordingResponse:
     output_dir = ctx.settings.recordings_dir / session.id
     if browser is not None:
@@ -362,6 +369,7 @@ async def begin_recording(
         recording.part,
         devices=[recording.labels.get(p.device_id, str(p.device_id)) for p in recording.processes],
         restart=keep_notes,
+        **({"by_device": by_device} if by_device else {}),
     )
     guest_notes.recording_started(ctx, session.id)  # a pending automatic end of a live room is off
     ctx.level_tasks[session.id] = asyncio.create_task(_stream_levels(ctx, session.id, recording))

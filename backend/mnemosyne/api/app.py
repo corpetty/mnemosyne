@@ -28,6 +28,7 @@ from .routes.export import router as export_router
 from .routes.external_notes import router as external_notes_router
 from .routes.glossary import router as glossary_router
 from .routes.guest_notes import router as guest_notes_router
+from .routes.handoff import router as handoff_router
 from .routes.history import router as history_router
 from .routes.integrations import router as integrations_router
 from .routes.jobs import router as jobs_router
@@ -131,6 +132,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(mobile_router)
     app.include_router(pairing_router)
     app.include_router(connections_router)
+    app.include_router(handoff_router)
     app.include_router(contacts_router)
     app.include_router(demo_router)
     app.include_router(sync_router)

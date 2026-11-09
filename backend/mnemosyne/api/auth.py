@@ -45,7 +45,16 @@ OPEN_PATHS = {
 }
 DEVICE_PATHS = {"/api/audio/import", "/api/pairing/me"}
 SHARE_PREFIX = "/api/share/"
-LOCAL_PATHS = {"/api/system/attach"}
+# What the desktop shell asks its own backend for. It never has the API token, so these are open
+# to it (`from_desktop_app`), never to the network or the tunnel. Each is read-only or concerns
+# only this machine, and none carries meeting data:
+# - attach: a relaunched app takes over its crashed predecessor's backend (api/app_watch.py);
+# - /api/system (GET only: the path has no other method): whether to install the GPU extra
+#   (`setup_complete`, `gpu_support`; src-tauri lib.rs `gpu_install_wanted`);
+# - /api/system/main: the main computer this one uses (services/main_computer.py), set when the
+#   shell's remote access connects and cleared when it disconnects. The route itself also refuses
+#   anything not from the desktop app, whatever token it carries.
+LOCAL_PATHS = {"/api/system/attach", "/api/system", "/api/system/main"}
 TUNNEL_CLIENTS = {"127.0.0.2"}
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip")
@@ -169,15 +178,26 @@ class TokenAuthMiddleware:
         return access.Principal(user.id, user.name, user.role)
 
     def _from_desktop_app(self, scope: Scope, headers: dict[str, str]) -> bool:
-        """On 127.0.0.1, not on the network listener's port, and not passed on by a proxy."""
-        server, client = scope.get("server") or ("", 0), scope.get("client") or ("", 0)
-        if client[0] in TUNNEL_CLIENTS:
-            return False
-        if server[1] == self.ctx.settings.team_port or client[0] not in ("127.0.0.1", "::1"):
-            return False
-        host = headers.get("host", "")
-        host = host[: host.find("]") + 1] if host.startswith("[") else host.rsplit(":", 1)[0]
-        return host in LOOPBACK_HOSTS and not any(h in headers for h in PROXY_HEADERS)
+        return from_desktop_app(self.ctx, scope, headers)
+
+
+def from_desktop_app(ctx: AppContext, scope: Scope, headers: dict[str, str]) -> bool:
+    """On 127.0.0.1, not on the network listener's port, not through the link sidecar's tunnel
+    and not passed on by a proxy."""
+    server, client = scope.get("server") or ("", 0), scope.get("client") or ("", 0)
+    if client[0] in TUNNEL_CLIENTS:
+        return False
+    if server[1] == ctx.settings.team_port or client[0] not in ("127.0.0.1", "::1"):
+        return False
+    host = headers.get("host", "")
+    host = host[: host.find("]") + 1] if host.startswith("[") else host.rsplit(":", 1)[0]
+    return host in LOOPBACK_HOSTS and not any(h in headers for h in PROXY_HEADERS)
+
+
+def request_from_desktop_app(ctx: AppContext, request) -> bool:
+    """`from_desktop_app` for a route (a Starlette Request), whatever token it carried."""
+    headers = {k.decode().lower(): v.decode() for k, v in request.scope.get("headers", [])}
+    return from_desktop_app(ctx, request.scope, headers)
 
 
 LOCKED_OPEN = ("/api/encryption", "/api/system")

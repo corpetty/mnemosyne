@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from ..events import EventBus
@@ -68,8 +69,12 @@ class SessionService:
             fields["local_only"] = True
         return self.repo.update_fields(session.id, **fields)
 
-    def create_session(self, name: str = DEFAULT_SESSION_NAME) -> Session:
-        session = self._typed(self.repo.save(Session(name=name, own_notes="")))
+    def create_session(
+        self, name: str = DEFAULT_SESSION_NAME, created_at: datetime | None = None
+    ) -> Session:
+        """`created_at`: when the meeting happened, if not now (a recording handed over later)."""
+        when = {"created_at": created_at} if created_at is not None else {}
+        session = self._typed(self.repo.save(Session(name=name, own_notes="", **when)))
         logger.info("Created session %s: %s", session.id, session.name)
         return self._notify(session)
 

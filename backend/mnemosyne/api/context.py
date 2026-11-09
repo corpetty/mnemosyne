@@ -23,6 +23,7 @@ from ..services import ours
 from ..services.awake import KeepAwake
 from ..services.calendar_service import CalendarService, calendar_source
 from ..services.link import LinkService, RoomsLink
+from ..services.main_computer import MainComputer, MainComputerStore
 from ..services.meeting_types import available_types
 from ..services.model_service import ModelService
 from ..services.pairing import PairingService
@@ -123,6 +124,11 @@ class AppContext:
     # for a minute. Its loop runs only while `record_sealer.interval` > 0 (tests set 0 and tick).
     record_sealer: Any = None
     person: Any = None  # services/person.py PersonKeys: this person's signing key
+    # The main computer this one uses, as the desktop shell said (services/main_computer.py);
+    # made on first use when not given.
+    main_store: MainComputerStore | None = None
+    # services/handoff.py: recordings other computers handed to this one, by hand-off id.
+    handoffs: Any = None
 
     def __post_init__(self) -> None:
         self.summarizer.name_source = self.known_names
@@ -229,6 +235,16 @@ class AppContext:
         return [
             p.name for p in list_people(self.repo, (st.local_speaker_name, st.remote_speaker_name))
         ]
+
+    @property
+    def main_computer(self) -> MainComputer | None:
+        """The main computer this one uses (url, token, name), or None: this is one."""
+        return self.main_computer_store().get()
+
+    def main_computer_store(self) -> MainComputerStore:
+        if self.main_store is None:
+            self.main_store = MainComputerStore(self.settings.data_dir / "main_computer.json")
+        return self.main_store
 
     @property
     def file_key(self) -> bytes | None:
