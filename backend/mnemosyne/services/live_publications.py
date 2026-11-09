@@ -61,6 +61,22 @@ from pydantic import BaseModel, ConfigDict
 
 from .. import access
 from . import pub_live_format as plf
+from .room_connection import (
+    CLOSE_BAD_TOKEN,
+    CLOSE_DELETED,
+    CLOSE_ENDED,
+    CLOSE_FULL,
+    CLOSE_LAGGED,
+    CLOSE_TOO_LARGE,
+    RETRY_BACKOFF,
+    T_NOTES,
+    CloseAction,
+    Decision,
+    ReadAction,
+    RoomConnection,
+    RoomHooks,
+    WelcomeAction,
+)
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -356,9 +372,7 @@ ONE_SHOT_TIMEOUT = 15.0  # seconds a one-shot VERSION may take, all in all
 MAX_MESSAGE = 16 * 1024 * 1024  # a room snapshot can be 8 MiB
 NO_REPLAY = 2**53 - 1  # a one-shot's `since`: none of the log, no snapshot
 
-T_FRAME, T_PRESENCE, T_SNAPSHOT = 0x01, 0x02, 0x03
-CLOSE_BAD_TOKEN, CLOSE_ENDED, CLOSE_DELETED, CLOSE_TOO_LARGE = 4401, 4403, 4410, 4413
-CLOSE_LAGGED, CLOSE_FULL = 4409, 4429
+T_FRAME = T_NOTES  # the wire's tags and close codes are room_connection.py's
 
 UNSUPPORTED = "This host cannot push updates: readers check every minute"
 NOT_ON_HOST = "The publish host no longer has this publication"
@@ -1174,20 +1188,23 @@ class PubBridge:
         self.state = "offline"  # or "unsupported" (status() adds "live" while connected)
         self.reason = ""  # the last error, for `live_reason` while offline
         self.present = 0  # the room's count, this bridge included
-        self.connected = asyncio.Event()
         self.outq: asyncio.Queue[_Frame] = asyncio.Queue()
-        self.unacked: deque[_Frame] = deque()
+        # The socket: `conn.unacked` holds the frames sent and not acknowledged yet.
+        self.conn = RoomConnection(
+            _PubHooks(self),
+            outq=self.outq,
+            max_message=MAX_MESSAGE,
+            backoff=lambda: ROOM_BACKOFF,  # (tests patch the module's)
+            join_timeout=JOIN_TIMEOUT,
+            label=f"Live publication {row['id']}",
+        )
         self.version: VersionFrame | None = None  # the newest, until the room acknowledges it
-        self.ws: Any = None
         self.task: asyncio.Task | None = None
         self.running = False
         self.closing = False  # retiring: the host's word that the room went is no news
-        self.joins = 0  # successful joins (tests)
         self.dropped = 0  # frames from the room that are not readers' comments, or do not open
         self._refused: set[str] = set()  # rooms whose token the host refused: never again
         self._lookup = True  # look the room up on the host before the next join
-        self._ended = False
-        self._last_error = ""  # the host's last `error` code on this connection
         self._last_at: datetime | None = None
         self._last_meta: tuple[bool, bool] | None = None
         self._meta_at = float("-inf")
@@ -1211,6 +1228,26 @@ class PubBridge:
     @property
     def readers(self) -> int:
         return max(0, self.present - 1)
+
+    @property
+    def connected(self) -> asyncio.Event:
+        return self.conn.connected
+
+    @property
+    def unacked(self) -> deque[_Frame]:
+        return self.conn.unacked
+
+    @property
+    def joins(self) -> int:
+        return self.conn.joins  # successful joins (tests)
+
+    @property
+    def ws(self) -> Any:
+        return self.conn.ws
+
+    @ws.setter
+    def ws(self, value: Any) -> None:
+        self.conn.ws = value
 
     # -- life --
 
@@ -1370,97 +1407,21 @@ class PubBridge:
     # -- the socket --
 
     async def _connect_loop(self) -> None:
-        from websockets.asyncio.client import connect
-        from websockets.exceptions import (
-            ConnectionClosed,
-            InvalidHandshake,
-            InvalidStatus,
-            InvalidURI,
-        )
+        await self.conn.run()
 
-        from .guest_notes import _is_loopback, ws_url
-
-        attempt = 0
-        while True:
-            if self._lookup or not self.room:
-                outcome = await self._ensure_room()
-                if outcome in ("unsupported", "gone"):
-                    await asyncio.sleep(RETRY_LATER)
-                    continue
-                if outcome != "ok":
-                    await asyncio.sleep(ROOM_BACKOFF[min(attempt, len(ROOM_BACKOFF) - 1)])
-                    attempt += 1
-                    continue
-                self._lookup = False
-                await self.snapshot()  # a failure is logged; the room still works without
-            code: int | None = None
-            status: int | None = None
-            self._last_error = ""
-            self._ended = False
-            try:
-                url = ws_url(self.row["host_url"], self.room)
-                loopback = _is_loopback(urlsplit(url).hostname or "")
-                async with connect(
-                    url,
-                    max_size=MAX_MESSAGE,
-                    compression=None,
-                    open_timeout=JOIN_TIMEOUT,
-                    proxy=None if loopback else True,
-                ) as ws:
-                    self.ws = ws
-                    hello = {"type": "join", "token": self.room_token, "since": self.seq}
-                    await ws.send(json.dumps(hello))
-                    welcome = json.loads(await asyncio.wait_for(ws.recv(), JOIN_TIMEOUT))
-                    if not isinstance(welcome, dict) or welcome.get("type") != "welcome":
-                        raise ValueError("the room did not welcome the bridge")
-                    if welcome.get("ended"):
-                        code = CLOSE_ENDED  # ours are never ended: someone else's, or broken
-                    else:
-                        attempt = 0
-                        self.joins += 1
-                        self.present = int(welcome.get("present") or 0)
-                        self.reason = ""
-                        self.connected.set()
-                        self._joined()
-                        pump = asyncio.create_task(self._pump(ws))
-                        try:
-                            await self._read(ws)
-                        finally:
-                            self.connected.clear()
-                            pump.cancel()
-                            await asyncio.gather(pump, return_exceptions=True)
-                        code = CLOSE_ENDED if self._ended else ws.close_code
-            except ConnectionClosed as e:
-                code = e.rcvd.code if e.rcvd is not None else None
-            except InvalidStatus as e:
-                status = e.response.status_code
-                self.reason = f"The publish host refused the live room ({status})"
-            except (OSError, InvalidHandshake, InvalidURI, TimeoutError, ValueError) as e:
-                self.reason = "Could not reach the publish host's live room"
-                logger.info("Live publication %s: cannot reach its room: %s", self.pub_id, e)
-            finally:
-                self.ws = None
-                self.connected.clear()
-                self._disconnected()
-            if self.closing:
-                return
-            if code in (CLOSE_DELETED, CLOSE_ENDED, CLOSE_BAD_TOKEN) or status in (404, 410):
-                logger.info("Live publication %s: its room is gone (%s)", self.pub_id, code)
-                if code == CLOSE_BAD_TOKEN:
-                    self._refused.add(self.room)
-                self._lose_room()
-                if attempt == 0:  # at once, the first time
-                    attempt = 1
-                    continue
-            elif code == CLOSE_TOO_LARGE and self._last_error == "log_full":
-                await self.snapshot()  # prunes the log (X-Room-Since), then rejoin
-            elif code == CLOSE_LAGGED:
-                attempt = 0
-                continue
-            elif code == CLOSE_FULL:
-                self.reason = "The live room on the publish host is full"
-            await asyncio.sleep(ROOM_BACKOFF[min(attempt, len(ROOM_BACKOFF) - 1)])
-            attempt += 1
+    async def _before_connect(self, attempt: int) -> int | None:
+        """The room lookup before a dial. None: dial; an int: waited, loop with that attempt."""
+        if self._lookup or not self.room:
+            outcome = await self._ensure_room()
+            if outcome in ("unsupported", "gone"):
+                await asyncio.sleep(RETRY_LATER)
+                return attempt
+            if outcome != "ok":
+                await asyncio.sleep(ROOM_BACKOFF[min(attempt, len(ROOM_BACKOFF) - 1)])
+                return attempt + 1
+            self._lookup = False
+            await self.snapshot()  # a failure is logged; the room still works without
+        return None
 
     def _joined(self) -> None:
         """In the room: META, and the newest VERSION the room has not acknowledged."""
@@ -1475,61 +1436,12 @@ class PubBridge:
         while not self.outq.empty():
             self.outq.get_nowait()
 
-    async def _pump(self, ws) -> None:
-        while True:
-            frame = await self.outq.get()
-            env = self._seal(frame)
-            self.unacked.append(frame)
-            if frame is not self._after_snapshot:
-                self._since_snapshot = True  # (the META that follows a snapshot is no news)
-            await ws.send(bytes([T_FRAME]) + env)
-
     def _seal(self, frame: _Frame) -> bytes:
         return plf.sign_frame(
             self.key, self.room, frame.KIND, frame.model_dump(mode="json"), self.row["sign_key"]
         )
 
-    async def _read(self, ws) -> None:
-        async for msg in ws:
-            if isinstance(msg, str):
-                if await self._on_text(ws, msg):
-                    return
-            else:
-                await self._on_binary(bytes(msg))
-
-    async def _on_text(self, ws, text: str) -> bool:
-        """True when the bridge should leave the room."""
-        if text == "ping":
-            await ws.send("pong")
-            return False
-        try:
-            msg = json.loads(text)
-        except ValueError:
-            return False
-        if not isinstance(msg, dict):
-            return False
-        kind = msg.get("type")
-        if kind == "ack":
-            if self.unacked:
-                done = self.unacked.popleft()
-                if done is self.version:
-                    self.version = None
-            self._advance(msg.get("seq"))
-        elif kind == "count":
-            self.present = int(msg.get("present") or 0)
-        elif kind == "ended":
-            self._ended = True
-            return True
-        elif kind == "error":
-            self._last_error = str(msg.get("code") or "")
-            logger.warning("Live publication %s: the host says %s", self.pub_id, self._last_error)
-        return False
-
-    async def _on_binary(self, data: bytes) -> None:
-        if not data or data[0] != T_FRAME or len(data) < 9:
-            return  # the snapshot (0x03) is ours; presence (0x02) is not used here
-        seq = int.from_bytes(data[1:9], "big")
-        env = data[9:]
+    async def _on_frame(self, seq: int, env: bytes) -> None:
         try:
             kind, _ = plf.unseal(self.key, self.room, env)
         except plf.PubLiveFormatError:
@@ -1886,3 +1798,98 @@ class PubBridge:
         ):
             if await self.snapshot():
                 self._snapshot_at = now
+
+
+class _PubHooks(RoomHooks):
+    """What differs from the guest bridge's connection (room_connection.py): the room is looked
+    up on the host before a dial and may be replaced when the host says it is gone; frames are
+    signed when sent and everything queued or unacknowledged is said again at the next join
+    (META anew, the newest VERSION); the sequence is kept in `room.json`."""
+
+    def __init__(self, bridge: PubBridge) -> None:
+        self.b = bridge
+
+    async def before_connect(self, attempt: int) -> int | None:
+        return await self.b._before_connect(attempt)
+
+    def url(self) -> str:
+        from .guest_notes import ws_url
+
+        b = self.b
+        return ws_url(b.row["host_url"], b.room)
+
+    def join_message(self) -> dict:
+        b = self.b
+        return {"type": "join", "token": b.room_token, "since": b.seq}
+
+    async def on_welcome(self, welcome: dict) -> WelcomeAction:
+        if welcome.get("ended"):
+            return WelcomeAction.LEAVE_ROOM  # ours are never ended: someone else's, or broken
+        b = self.b
+        b.present = int(welcome.get("present") or 0)
+        b.reason = ""
+        return WelcomeAction.CONTINUE
+
+    def on_connected(self) -> None:
+        self.b._joined()
+
+    def prepare(self, item: _Frame) -> bytes:
+        b = self.b
+        env = b._seal(item)
+        b.unacked.append(item)
+        if item is not b._after_snapshot:
+            b._since_snapshot = True  # (the META that follows a snapshot is no news)
+        return bytes([T_FRAME]) + env
+
+    def on_ack(self, done: _Frame) -> None:
+        if done is self.b.version:
+            self.b.version = None
+
+    def advance(self, seq: Any) -> None:
+        self.b._advance(seq)
+
+    def on_count(self, present: int) -> None:
+        self.b.present = present
+
+    async def on_text(self, msg: dict) -> ReadAction | None:
+        return ReadAction.LEAVE_ROOM if msg.get("type") == "ended" else None
+
+    async def on_frame(self, seq: int, envelope: bytes) -> None:
+        await self.b._on_frame(seq, envelope)
+
+    def on_unreachable(self, error: BaseException) -> None:
+        self.b.reason = "Could not reach the publish host's live room"
+        logger.info("Live publication %s: cannot reach its room: %s", self.b.pub_id, error)
+
+    def on_refused(self, status: int) -> None:
+        self.b.reason = f"The publish host refused the live room ({status})"
+
+    def on_disconnected(self) -> None:
+        self.b._disconnected()
+
+    def stop_requested(self) -> bool:
+        return self.b.closing
+
+    async def on_closed(
+        self,
+        code: int | None,
+        status: int | None,
+        last_error: str,
+        attempt: int,
+        unacked: deque,
+    ) -> Decision:
+        b = self.b
+        if code in (CLOSE_DELETED, CLOSE_ENDED, CLOSE_BAD_TOKEN) or status in (404, 410):
+            logger.info("Live publication %s: its room is gone (%s)", b.pub_id, code)
+            if code == CLOSE_BAD_TOKEN:
+                b._refused.add(b.room)
+            b._lose_room()
+            if attempt == 0:  # at once, the first time
+                return Decision(CloseAction.RETRY_NOW, 1)
+        elif code == CLOSE_TOO_LARGE and last_error == "log_full":
+            await b.snapshot()  # prunes the log (X-Room-Since), then rejoin
+        elif code == CLOSE_LAGGED:
+            return Decision(CloseAction.RETRY_NOW, 0)
+        elif code == CLOSE_FULL:
+            b.reason = "The live room on the publish host is full"
+        return RETRY_BACKOFF

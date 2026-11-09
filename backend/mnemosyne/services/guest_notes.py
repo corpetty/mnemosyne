@@ -65,7 +65,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
-import ipaddress
 import json
 import logging
 import re
@@ -82,6 +81,25 @@ from . import comments, history, notes_media, ours, shared_notes
 from . import guest_format as gf
 from . import publication_format as pf
 from . import tunnel as tunnels
+from .room_connection import (
+    CLOSE_BAD_TOKEN,
+    CLOSE_DELETED,
+    CLOSE_ENDED,
+    CLOSE_FULL,
+    CLOSE_LAGGED,
+    CLOSE_TOO_LARGE,
+    RETRY_BACKOFF,
+    STOP,
+    T_NOTES,
+    T_PRESENCE,
+    CloseAction,
+    Decision,
+    ReadAction,
+    RoomConnection,
+    RoomHooks,
+    WelcomeAction,
+    is_loopback,
+)
 
 if TYPE_CHECKING:
     from ..api.context import AppContext
@@ -120,10 +138,8 @@ MEDIA_RETRY = 30.0  # seconds before a fold asks the rooms again for an image th
 # An image mark's value inside a frame's bytes (an 0xAF artifact carries it as text).
 _IMAGE_IN_FRAME = re.compile(rb"(?<![0-9a-f])([0-9a-f]{64})\.(?:webp|jpeg)@[1-9][0-9]{0,4}x[1-9]")
 
-T_NOTES, T_PRESENCE, T_SNAPSHOT = 0x01, 0x02, 0x03
-CLOSE_BAD_TOKEN, CLOSE_ENDED, CLOSE_DELETED, CLOSE_TOO_LARGE = 4401, 4403, 4410, 4413
-CLOSE_FULL = 4429  # the room is at its connection cap: try again later (never "gone")
-CLOSE_LAGGED = 4409  # the relay dropped us for falling behind: rejoin at once with `since`
+# T_*, CLOSE_*: the wire's tags and close codes, defined in room_connection.py and re-exported here
+# (tests import them from this module).
 
 # Why a record version is sealed (services/records.py EVENT_SEALS), as the records list shows it.
 SEAL_STARTED = "guest notes started"
@@ -794,18 +810,22 @@ class Bridge:
         )
         self.owners: dict[str, _Owner] = {}  # owner-side members by key
         self.outq: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue()
-        self.unacked: deque[bytes] = deque()  # 0x01 envelopes sent, not acknowledged yet
         self.guests: dict[str, _Guest] = {}
         self.present_count = 0
         self.dirty = False
-        self.connected = asyncio.Event()
-        self.ws: Any = None
+        # The socket: `conn.unacked` holds the 0x01 envelopes sent and not acknowledged yet.
+        self.conn = RoomConnection(
+            _GuestHooks(self),
+            outq=self.outq,
+            max_message=MAX_MESSAGE,
+            backoff=lambda: BACKOFF,  # (tests patch the module's)
+            join_timeout=JOIN_TIMEOUT,
+            label=f"Guest notes of {session_id}",
+        )
         self.task: asyncio.Task | None = None
         self.running = False
         # The owner is ending or deleting the room: the host's notice of it is no news.
         self.closing = False
-        self.joins = 0  # successful joins (tests)
-        self._last_error = ""  # the host's last `error` code on this connection
         self._owner = self._owner_name()
         self._last_meta: dict | None = None
         self._last_snapshot = -1e18
@@ -898,121 +918,28 @@ class Bridge:
 
     # -- the socket --
 
+    @property
+    def connected(self) -> asyncio.Event:
+        return self.conn.connected
+
+    @property
+    def unacked(self) -> deque:
+        return self.conn.unacked
+
+    @property
+    def joins(self) -> int:
+        return self.conn.joins  # successful joins (tests)
+
+    @property
+    def ws(self) -> Any:
+        return self.conn.ws
+
+    @ws.setter
+    def ws(self, value: Any) -> None:
+        self.conn.ws = value
+
     async def _connect_loop(self) -> None:
-        from websockets.asyncio.client import connect
-        from websockets.exceptions import (
-            ConnectionClosed,
-            InvalidHandshake,
-            InvalidStatus,
-            InvalidURI,
-        )
-
-        attempt = 0
-        while True:
-            code: int | None = None
-            status: int | None = None  # refused before the upgrade
-            self._last_error = ""
-            try:
-                # Again each time: the rooms sidecar's port changes when it restarts.
-                url = ws_url(self.target.host(self.app), self.room)
-                host = urlsplit(url).hostname or ""
-                async with connect(
-                    url,
-                    max_size=MAX_MESSAGE,
-                    compression=None,
-                    open_timeout=JOIN_TIMEOUT,
-                    proxy=None if _is_loopback(host) else True,
-                ) as ws:
-                    self.ws = ws
-                    await ws.send(
-                        json.dumps(
-                            {"type": "join", "token": self.row["room_token"], "since": self.seq}
-                        )
-                    )
-                    welcome = json.loads(await asyncio.wait_for(ws.recv(), JOIN_TIMEOUT))
-                    if not isinstance(welcome, dict) or welcome.get("type") != "welcome":
-                        raise ValueError(f"expected welcome, got {str(welcome)[:80]!r}")
-                    if welcome.get("ended"):
-                        await self._host_ended(welcome.get("expires"), welcome.get("ended_at"))
-                        return
-                    attempt = 0
-                    self.joins += 1
-                    self.present_count = int(welcome.get("present") or 0)
-                    if int(welcome.get("snapshot_seq") or 0) > self.seq:
-                        logger.warning(
-                            "Guest notes of %s: the room's snapshot is newer than this computer",
-                            self.session_id,
-                        )
-                    self.connected.set()
-                    pump = asyncio.create_task(self._pump(ws))
-                    try:
-                        if await self._read(ws):
-                            return
-                    finally:
-                        self.connected.clear()
-                        pump.cancel()
-                        await asyncio.gather(pump, return_exceptions=True)
-                    code = ws.close_code
-            except ConnectionClosed as e:
-                code = e.rcvd.code if e.rcvd is not None else None
-            except InvalidStatus as e:
-                status = e.response.status_code
-                logger.info("Guest notes of %s: the host answered %s", self.session_id, status)
-            except (
-                OSError,
-                InvalidHandshake,
-                InvalidURI,
-                TimeoutError,
-                ValueError,
-                GuestNotesError,
-            ) as e:
-                logger.info("Guest notes of %s: cannot reach the room: %s", self.session_id, e)
-            finally:
-                self.ws = None
-                self.connected.clear()
-                self._drop_queued_presence()
-            expired = (_parse(self.row.get("expires_at", "")) or _now()) < _now()
-            if code == CLOSE_DELETED or status == 410 or (status == 404 and expired):
-                await self._host_deleted()
-                return
-            if code == CLOSE_ENDED:
-                await self._host_ended(None)
-                return
-            if code == CLOSE_TOO_LARGE and self._last_error == "log_full":
-                # The room's log is full: a snapshot prunes it (X-Room-Since), then rejoin.
-                self.dirty = True
-                await self.snapshot()
-            elif code == CLOSE_TOO_LARGE and self.unacked:
-                # Refused for its size: sent again it would be refused again, forever. Ours
-                # are kept under the host's cap, so this is a host with a smaller one: drop
-                # the largest frame not acknowledged.
-                largest = max(self.unacked, key=len)
-                self.unacked.remove(largest)
-                logger.warning(
-                    "Guest notes of %s: the host refused a frame as too large", self.session_id
-                )
-            if code == CLOSE_LAGGED:
-                attempt = 0
-                continue
-            if code == CLOSE_FULL:
-                logger.info("Guest notes of %s: the room is full, trying again", self.session_id)
-            if code == CLOSE_BAD_TOKEN:
-                logger.warning(
-                    "Guest notes of %s: the host refused the room token", self.session_id
-                )
-            delay = BACKOFF[min(attempt, len(BACKOFF) - 1)]
-            attempt += 1
-            await asyncio.sleep(delay)
-
-    async def _pump(self, ws) -> None:
-        """Sends: what was not acknowledged on the last connection first, then the queue."""
-        for env in list(self.unacked):
-            await ws.send(bytes([T_NOTES]) + env)
-        while True:
-            tag, env = await self.outq.get()
-            if tag == T_NOTES:
-                self.unacked.append(env)
-            await ws.send(bytes([tag]) + env)
+        await self.conn.run()
 
     def _drop_queued_presence(self) -> None:
         """Disconnected: presence still in the queue is stale by the next connection (the
@@ -1025,61 +952,7 @@ class Bridge:
         for item in keep:
             self.outq.put_nowait(item)
 
-    async def _read(self, ws) -> bool:
-        """Until the connection closes. True when the bridge should stop."""
-        async for msg in ws:
-            if isinstance(msg, str):
-                if await self._on_text(ws, msg):
-                    return True
-            else:
-                await self._on_binary(bytes(msg))
-        return False
-
-    async def _on_text(self, ws, text: str) -> bool:
-        if text == "ping":
-            await ws.send("pong")
-            return False
-        if text == "pong":
-            return False
-        try:
-            msg = json.loads(text)
-        except ValueError:
-            return False
-        if not isinstance(msg, dict):
-            return False
-        kind = msg.get("type")
-        if kind == "ack":
-            if self.unacked:
-                self.unacked.popleft()
-            self._advance(msg.get("seq"))
-        elif kind == "count":
-            self.present_count = int(msg.get("present") or 0)
-        elif kind == "media":
-            self._media_landed(str(msg.get("name") or ""))
-        elif kind == "ended":
-            await self._host_ended(msg.get("expires"), msg.get("ended_at"))
-            return True
-        elif kind == "error":
-            # frame_too_large / log_full come before a 4413 close; bad_frame keeps the socket
-            # (our frames are never empty or unknown, so that would be a host disagreement).
-            self._last_error = str(msg.get("code") or "")
-            logger.warning("Guest notes of %s: the host says %s", self.session_id, self._last_error)
-        return False
-
-    async def _on_binary(self, data: bytes) -> None:
-        if not data:
-            return
-        tag = data[0]
-        if tag == T_PRESENCE:
-            if self._on_presence(data[1:]):
-                self._forward_presence(data[1:])
-            return
-        if tag == T_SNAPSHOT:
-            return  # ours: posted by this bridge
-        if tag != T_NOTES or len(data) < 9:
-            return
-        seq = int.from_bytes(data[1:9], "big")
-        env = data[9:]
+    async def _on_frame(self, seq: int, env: bytes) -> None:
         try:
             await self._on_envelope(env)
         except Exception:
@@ -1633,13 +1506,115 @@ def _guest_name(name: str) -> str:
     return f"{clean or 'Guest'} (guest)"
 
 
-def _is_loopback(host: str) -> bool:
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+class _GuestHooks(RoomHooks):
+    """What differs from the publication bridge's connection (room_connection.py): a room the host
+    ended or deleted stops the bridge; the sequence is kept in the row; envelopes are sealed
+    when queued; presence is dropped at a disconnect."""
+
+    unreachable_errors = (GuestNotesError,)
+
+    def __init__(self, bridge: Bridge) -> None:
+        self.b = bridge
+
+    def url(self) -> str:
+        b = self.b
+        return ws_url(b.target.host(b.app), b.room)
+
+    def join_message(self) -> dict:
+        b = self.b
+        return {"type": "join", "token": b.row["room_token"], "since": b.seq}
+
+    async def on_welcome(self, welcome: dict) -> WelcomeAction:
+        b = self.b
+        if welcome.get("ended"):
+            await b._host_ended(welcome.get("expires"), welcome.get("ended_at"))
+            return WelcomeAction.STOP
+        b.present_count = int(welcome.get("present") or 0)
+        if int(welcome.get("snapshot_seq") or 0) > b.seq:
+            logger.warning(
+                "Guest notes of %s: the room's snapshot is newer than this computer",
+                b.session_id,
+            )
+        return WelcomeAction.CONTINUE
+
+    def resend(self, unacked: list) -> list[bytes]:
+        return [bytes([T_NOTES]) + env for env in unacked]
+
+    def prepare(self, item: tuple[int, bytes]) -> bytes:
+        tag, env = item
+        if tag == T_NOTES:
+            self.b.unacked.append(env)
+        return bytes([tag]) + env
+
+    def advance(self, seq: Any) -> None:
+        self.b._advance(seq)
+
+    def on_count(self, present: int) -> None:
+        self.b.present_count = present
+
+    async def on_text(self, msg: dict) -> ReadAction | None:
+        kind = msg.get("type")
+        if kind == "media":
+            self.b._media_landed(str(msg.get("name") or ""))
+        elif kind == "ended":
+            await self.b._host_ended(msg.get("expires"), msg.get("ended_at"))
+            return ReadAction.STOP
+        return None
+
+    async def on_presence(self, payload: bytes) -> None:
+        b = self.b
+        if b._on_presence(payload):
+            b._forward_presence(payload)
+
+    async def on_frame(self, seq: int, envelope: bytes) -> None:
+        await self.b._on_frame(seq, envelope)
+
+    def on_unreachable(self, error: BaseException) -> None:
+        logger.info("Guest notes of %s: cannot reach the room: %s", self.b.session_id, error)
+
+    def on_refused(self, status: int) -> None:
+        logger.info("Guest notes of %s: the host answered %s", self.b.session_id, status)
+
+    def on_disconnected(self) -> None:
+        self.b._drop_queued_presence()
+
+    async def on_closed(
+        self,
+        code: int | None,
+        status: int | None,
+        last_error: str,
+        attempt: int,
+        unacked: deque,
+    ) -> Decision:
+        b = self.b
+        expired = (_parse(b.row.get("expires_at", "")) or _now()) < _now()
+        if code == CLOSE_DELETED or status == 410 or (status == 404 and expired):
+            await b._host_deleted()
+            return STOP
+        if code == CLOSE_ENDED:
+            await b._host_ended(None)
+            return STOP
+        if code == CLOSE_TOO_LARGE and last_error == "log_full":
+            # The room's log is full: a snapshot prunes it (X-Room-Since), then rejoin.
+            b.dirty = True
+            await b.snapshot()
+        elif code == CLOSE_TOO_LARGE and unacked:
+            # Refused for its size: sent again it would be refused again, forever. Ours
+            # are kept under the host's cap, so this is a host with a smaller one: drop
+            # the largest frame not acknowledged.
+            largest = max(unacked, key=len)
+            unacked.remove(largest)
+            logger.warning("Guest notes of %s: the host refused a frame as too large", b.session_id)
+        if code == CLOSE_LAGGED:
+            return Decision(CloseAction.RETRY_NOW, 0)
+        if code == CLOSE_FULL:
+            logger.info("Guest notes of %s: the room is full, trying again", b.session_id)
+        if code == CLOSE_BAD_TOKEN:
+            logger.warning("Guest notes of %s: the host refused the room token", b.session_id)
+        return RETRY_BACKOFF
+
+
+_is_loopback = is_loopback
 
 
 def _seal(app: AppContext, session_id: str, reason: str) -> None:
