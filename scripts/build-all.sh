@@ -21,6 +21,8 @@ bash "$SCRIPT_DIR/fetch-uv.sh"
 if [ "$(uname -s)" = "Darwin" ]; then
   echo "--- ffmpeg and ffprobe sidecars ---"
   bash "$SCRIPT_DIR/fetch-ffmpeg.sh"
+  echo "--- audio capture sidecar ---"
+  bash "$SCRIPT_DIR/build-capture.sh"
 fi
 
 echo "--- remote-access sidecar ---"

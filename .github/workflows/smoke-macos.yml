@@ -34,6 +34,7 @@ jobs:
           workspaces: |
             src-tauri
             link
+            capture
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
@@ -53,7 +54,7 @@ jobs:
           IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
         run: bash scripts/macos-signing-keychain.sh
       # beforeBuildCommand (scripts/build-all.sh) builds the web app, stages the backend, fetches
-      # uv and ffmpeg and builds the link sidecar. Tauri signs with APPLE_SIGNING_IDENTITY
+      # uv and ffmpeg and builds the link and capture sidecars. Tauri signs with APPLE_SIGNING_IDENTITY
       # from the keychain made above.
       - name: Build the app
         run: pnpm tauri build --bundles app

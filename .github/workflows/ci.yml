@@ -26,6 +26,14 @@ jobs:
         run: |
           uv run --frozen ruff check .
           uv run --frozen ruff format --check .
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: capture
+      # tests/test_capture_sidecar.py drives this debug build (capture/target/debug), with fake
+      # sources: the backend's repair_wav on a recording killed with SIGKILL.
+      - name: Build the capture sidecar
+        run: cargo build --locked --manifest-path ../capture/Cargo.toml
       - name: Test
         run: uv run --frozen pytest -q -o faulthandler_timeout=60
 
@@ -298,16 +306,20 @@ jobs:
       - name: Sync (no GPU or ONNX extras; ML is faked in tests)
         working-directory: backend
         run: uv sync --frozen --group dev
-      # Tests that name PipeWire, /proc, systemd or libc carry the linux_only marker (conftest).
-      - name: Test
-        working-directory: backend
-        run: uv run --frozen pytest -q -rfE -o faulthandler_timeout=60
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             src-tauri
             link
+            capture
+      # Backend tests that drive the capture sidecar find this debug build (capture/target/debug).
+      - name: Build the capture sidecar
+        run: cargo build --locked --manifest-path capture/Cargo.toml
+      # Tests that name PipeWire, /proc, systemd or libc carry the linux_only marker (conftest).
+      - name: Test
+        working-directory: backend
+        run: uv run --frozen pytest -q -rfE -o faulthandler_timeout=60
       - name: Stage bundle inputs (tauri-build verifies sidecar and resource paths)
         run: |
           bash scripts/stage-backend.sh
@@ -315,13 +327,16 @@ jobs:
           mkdir -p src-tauri/resources/web
           triple="$(rustc -vV | sed -n 's/^host: //p')"
           test "$triple" = aarch64-apple-darwin
-          for name in mnemosyne-link ffmpeg ffprobe; do
+          for name in mnemosyne-link mnemosyne-capture ffmpeg ffprobe; do
             touch "src-tauri/binaries/$name-$triple"
           done
       - run: cargo check --manifest-path src-tauri/Cargo.toml
       # mDNS discovery needs multicast, which the hosted macOS VMs do not pass: that one test
       # is skipped here (it runs on Linux). --no-fail-fast shows every other result.
       - run: cargo test --no-fail-fast --manifest-path link/Cargo.toml -- --skip found_on_the_local_network
+      # The WAV writer, resampler and fake sources (the real Core Audio sources need grants a
+      # hosted runner does not have).
+      - run: cargo test --locked --manifest-path capture/Cargo.toml
 
   link:
     name: Remote-access link (iroh tunnel)
@@ -338,6 +353,22 @@ jobs:
       - run: cargo clippy --all-targets --manifest-path link/Cargo.toml -- -D warnings
       # Home and a device on one machine with relays off: pairing, tunnelling, removal.
       - run: cargo test --manifest-path link/Cargo.toml
+
+  capture:
+    name: Audio capture sidecar (WAV writer, resampler)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: capture
+      - run: cargo fmt --check --manifest-path capture/Cargo.toml
+      - run: cargo clippy --locked --all-targets --manifest-path capture/Cargo.toml -- -D warnings
+      # Fake sources only: the binary is spawned, signalled and killed, and its WAV read back.
+      - run: cargo test --locked --manifest-path capture/Cargo.toml
 
   publish-host:
     name: Publish host (encrypted publications)
