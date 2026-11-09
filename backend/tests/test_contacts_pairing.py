@@ -45,6 +45,7 @@ class Node:
         self.app = create_app(settings, keystore=MemoryKeyStore())
         self.ctx = self.app.state.ctx
         self.ctx.sync_peers.set_name(f"{name} desk")
+        self.ctx.settings.remote_access = True  # as the sidecar stand-in below implies
         self.ctx.link.status.running = True
         self.ctx.link.status.endpoint_id = self.endpoint
         self.ctx.link.status.ticket = ticket(self.endpoint)
@@ -368,11 +369,13 @@ async def test_remote_access_must_be_on(nodes):
     invite = await a.code()
     b.ctx.link.status.running = False
     r = await pair(b, invite)
-    assert r.status_code == 409 and "Turn on remote access first" in r.json()["detail"]
+    # Its sidecar is gone and this test has none to start: pairing says why instead of asking
+    # the person to turn anything on.
+    assert r.status_code == 409 and "mnemosyne-link" in r.json()["detail"]
     a.ctx.link.status.running = False
     async with a.client() as c:
         r = await c.post("/api/contacts/codes")
-    assert r.status_code == 409 and "Turn on remote access first" in r.json()["detail"]
+    assert r.status_code == 409 and "mnemosyne-link" in r.json()["detail"]
     nothing_recorded(a, b)
     # A code redeemed while A's remote access is off is refused, not recorded.
     b.ctx.link.status.running = True
@@ -381,7 +384,7 @@ async def test_remote_access_must_be_on(nodes):
     nothing_recorded(a, b)
 
 
-async def test_codes_need_an_api_token_and_the_routes_need_the_admin(nodes):
+async def test_the_routes_need_the_admin_and_a_code_makes_the_api_token(nodes):
     a, _ = nodes
     async with a.client(None) as c:
         for r in (
@@ -393,21 +396,22 @@ async def test_codes_need_an_api_token_and_the_routes_need_the_admin(nodes):
     a.ctx.settings.api_token = ""
     async with a.client(None) as c:
         r = await c.post("/api/contacts/codes")
-    assert r.status_code == 409 and "API token" in r.json()["detail"]
+    assert r.status_code == 200 and a.ctx.settings.api_token  # made, not asked for
 
 
-async def test_pairing_needs_an_api_token_on_both_sides(nodes):
+async def test_pairing_makes_the_api_token_on_both_sides(nodes):
     a, b = nodes
     invite = await a.code()
-    # B has none: it does not even ask.
     b.ctx.settings.api_token = ""
     async with b.client(None) as c:
         r = await c.post("/api/contacts/pair", json={"invite": invite})
-    assert r.status_code == 409 and "API token" in r.json()["detail"]
-    with pytest.raises(contacts.ContactsRefused, match="API token"):
-        await contacts.pair_with_invite(b.ctx, invite)
-    assert [o for o, _ in b.ops if o == "pair"] == []
-    # A lost its token after showing the code: redeeming is refused and the code survives.
+    assert r.status_code == 200, r.text
+    assert b.ctx.settings.api_token  # made here, as A's was when it showed the code
+
+
+async def test_a_side_that_lost_its_token_after_showing_the_code_refuses_to_redeem(nodes):
+    a, b = nodes
+    invite = await a.code()
     b.ctx.settings.api_token = "admin-B"
     a.ctx.settings.api_token = ""
     r = await pair(b, invite)

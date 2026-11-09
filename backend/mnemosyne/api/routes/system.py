@@ -5,6 +5,7 @@ import ctypes
 import importlib.util
 import platform
 import shutil
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -96,6 +97,18 @@ async def system_info(ctx: AppContext = Depends(get_ctx)):
         phonon_installable=phonon_install.uv_binary() is not None,
         summary_merge=link.find_binary() is not None,
     )
+
+
+class SystemRole(ApiModel):
+    # "main": this computer holds the library and does the work. "team": several people sign in
+    # to it (team_mode). "Uses my main computer" is a role of the desktop shell, which alone
+    # knows it is connected to another backend; it is never answered here.
+    role: Literal["main", "team"]
+
+
+@router.get("/system/role", response_model=SystemRole)
+async def system_role(ctx: AppContext = Depends(get_ctx)):
+    return SystemRole(role="team" if ctx.settings.team_mode else "main")
 
 
 @router.post("/system/phonon", response_model=Job, dependencies=ADMIN)

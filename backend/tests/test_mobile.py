@@ -26,11 +26,13 @@ def test_phone_link_server_mode(client, ctx, monkeypatch):
     monkeypatch.setattr("mnemosyne.api.routes.mobile.lan_addresses", lambda: ["192.168.1.20"])
     body = client.get("/api/server/phone").json()
     assert body["reachable"] is True and body["urls"] == ["http://192.168.1.20:8008/m"]
-    assert body["pairing"] is False and "API token" in body["note"]
+    # Pairing a phone makes the API token, so it is always on offer; the note warns until then.
+    assert body["pairing"] is True and "until you pair a phone" in body["note"]
     ctx.settings.api_token = "s3cret"
     body = client.get("/api/server/phone", headers={"Authorization": "Bearer s3cret"}).json()
     # The token never goes into the address: phones pair with a one-time code instead.
     assert body["urls"] == ["http://192.168.1.20:8008/m"] and body["pairing"] is True
+    assert "until you pair" not in body["note"]
     assert client.get("/m").status_code == 200
 
 

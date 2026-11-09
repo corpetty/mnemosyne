@@ -308,7 +308,11 @@ async def pair_with_invite(
     there is reported as `outcome["person_error"]`, not raised."""
     from . import contacts
     from .link import endpoint_id_from_ticket
+    from .pairing_prep import prepare_pairing
 
+    if ctx.settings.team_mode:
+        raise SyncPairingError("Library sync is for personal computers, not a team server")
+    await prepare_pairing(ctx)  # the API token and remote access; PairingUnavailable (409)
     check_can_pair(ctx)
     ticket, _ = split_invite(invite)
     try:

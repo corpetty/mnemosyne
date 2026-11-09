@@ -69,7 +69,7 @@ async def list_contacts(ctx: AppContext = Depends(get_ctx)):
 @router.post("/codes", response_model=PairingCode)
 async def create_code(ctx: AppContext = Depends(get_ctx)):
     """A one-time contact code: the other person pastes the invite in their own app."""
-    return make_code(ctx, CONTACT_CODE)
+    return await make_code(ctx, CONTACT_CODE)
 
 
 @router.post("/pair", response_model=ContactInfo)

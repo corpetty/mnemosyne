@@ -24,6 +24,7 @@ from .. import access
 from ..models.contact import Card, CardMachine, ContactInfo
 from .link import LinkError, endpoint_id_from_ticket
 from .pairing import CONTACT
+from .pairing_prep import PairingUnavailable, prepare_pairing
 from .person import PersonKeys
 
 if TYPE_CHECKING:
@@ -323,6 +324,11 @@ async def pair_with_invite(app: AppContext, invite: str) -> dict:
     present to A. Both sides then hold a contact row and a CONTACT device per endpoint of the
     other's card, and each dials the other's machines. Nothing is stored here unless the whole
     reply checks out; a failure after that removes the contact again. Returns the contact row."""
+    _check(app)
+    try:
+        await prepare_pairing(app)  # the API token and remote access
+    except PairingUnavailable as e:
+        raise ContactsUnavailable(str(e)) from e
     check_can_pair(app)
     ticket, _ = split_invite(invite)
     try:

@@ -31,9 +31,13 @@ def pair(client, name="iPhone") -> tuple[dict, str]:
     return body["device"], body["token"]
 
 
-def test_codes_need_an_api_token(client):
+def test_a_phone_code_makes_the_api_token_itself(client, ctx):
+    assert ctx.settings.api_token == ""
     r = client.post("/api/pairing/codes")
-    assert r.status_code == 409 and "API token" in r.json()["detail"]
+    assert r.status_code == 200
+    assert ctx.settings.api_token and not ctx.settings.remote_access  # phones do not use iroh
+    # From now on the API is closed to a caller without the token (tests/test_pairing_prep.py).
+    assert client.post("/api/pairing/codes").status_code == 401
 
 
 def test_code_links_to_the_phone_page(server):
@@ -110,12 +114,15 @@ def test_devices_persist_as_hashes(tmp_path):
     assert again.verify("not-a-token") is None and again.verify("") is None
 
 
-def test_computer_codes_need_remote_access(server):
+def test_computer_codes_say_why_remote_access_cannot_be_turned_on(server, ctx):
+    # No mnemosyne-link here (conftest): a plain reason, and nothing left changed.
     r = server.post("/api/pairing/codes", json={"kind": "desktop"}, headers=ADMIN)
-    assert r.status_code == 409 and "remote access" in r.json()["detail"]
+    assert r.status_code == 409 and "mnemosyne-link" in r.json()["detail"]
+    assert not ctx.settings.remote_access and ctx.settings.api_token == "s3cret"
 
 
 def test_computer_pairs_through_the_link(server, ctx):
+    ctx.settings.remote_access = True
     ctx.link.status.running, ctx.link.status.ticket = True, "endpointabc"
     body = server.post("/api/pairing/codes", json={"kind": "desktop"}, headers=ADMIN).json()
     assert body["invite"] == f"endpointabc#{body['code']}" and body["urls"] == []

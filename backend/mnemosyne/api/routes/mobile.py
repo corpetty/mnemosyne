@@ -25,7 +25,7 @@ async def mobile_page():
 
 class PhoneLink(ApiModel):
     reachable: bool  # a phone can connect: LAN server mode, or a phone_url is set
-    pairing: bool  # phones pair with a one-time code (an API token is set)
+    pairing: bool  # phones pair with a one-time code (the first code turns the API token on)
     host: str
     port: int
     urls: list[str]  # candidate addresses of the phone page
@@ -71,7 +71,7 @@ async def phone_link(ctx: AppContext = Depends(get_ctx)):
     host, port = bind_address()
     urls = phone_page_urls(ctx.settings)
     reachable = bool(urls)
-    pairing = bool(ctx.settings.api_token)
+    pairing = True  # making the first code makes the API token (services/pairing_prep.py)
     if not reachable and os.environ.get("MNEMOSYNE_APP_PID"):
         # Started by the desktop app, which binds 127.0.0.1: --host is not an option there.
         note = (
@@ -84,10 +84,10 @@ async def phone_link(ctx: AppContext = Depends(get_ctx)):
             "(--host 0.0.0.0, with an API token), or set a phone address such as a "
             "Tailscale HTTPS name, to record from a phone."
         )
-    elif not pairing:
+    elif not ctx.settings.api_token:
         note = (
-            "Anyone who can reach this address can use Mnemosyne. Set an API token, "
-            "then pair each phone with a one-time code."
+            "Anyone who can reach this address can use Mnemosyne until you pair a phone: "
+            "the first one-time code turns on the API token."
         )
     else:
         note = (

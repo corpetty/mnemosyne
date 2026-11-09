@@ -24,6 +24,7 @@ from ...services.pairing import (
     InvalidPairingCode,
     PairedDevice,
 )
+from ...services.pairing_prep import PairingUnavailable, prepare_pairing
 from ..context import AppContext, get_ctx
 from .mobile import phone_page_urls
 
@@ -82,15 +83,7 @@ def _info(d: PairedDevice) -> PairedDeviceInfo:
     )
 
 
-def make_code(ctx: AppContext, kind: str) -> PairingCode:
-    """A one-time pairing code of `kind` and what the other side needs to redeem it (shared by
-    this route and POST /api/contacts/codes)."""
-    if not ctx.settings.api_token:
-        raise HTTPException(
-            status_code=409,
-            detail="Set an API token first: without one, anyone who reaches the backend can use it",
-        )
-    ticket = ctx.link.status.ticket
+def _refuse_team(ctx: AppContext, kind: str) -> None:
     if kind == SYNC and ctx.settings.team_mode:
         raise HTTPException(
             status_code=409, detail="Library sync is for personal computers, not a team server"
@@ -99,8 +92,23 @@ def make_code(ctx: AppContext, kind: str) -> PairingCode:
         raise HTTPException(
             status_code=409, detail="Contacts are for personal computers, not a team server"
         )
-    if kind in (DESKTOP, SYNC, CONTACT_CODE) and not (ctx.link.status.running and ticket):
-        raise HTTPException(status_code=409, detail="Turn on remote access first")
+
+
+async def _prepare(ctx: AppContext, kind: str):
+    """The API token, and for a computer, sync or contact remote access running (a phone needs
+    only the token). 409 with the reason when that cannot be done."""
+    _refuse_team(ctx, kind)
+    try:
+        return await prepare_pairing(ctx, link=kind != PHONE)
+    except PairingUnavailable as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+async def make_code(ctx: AppContext, kind: str) -> PairingCode:
+    """A one-time pairing code of `kind` and what the other side needs to redeem it (shared by
+    this route and POST /api/contacts/codes). Makes the API token and remote access first."""
+    await _prepare(ctx, kind)
+    ticket = ctx.link.status.ticket
     code, expires = ctx.pairing.new_code(kind)
     return PairingCode(
         code=code,
@@ -113,7 +121,33 @@ def make_code(ctx: AppContext, kind: str) -> PairingCode:
 
 @router.post("/codes", response_model=PairingCode, dependencies=ADMIN)
 async def create_code(body: CodeRequest | None = None, ctx: AppContext = Depends(get_ctx)):
-    return make_code(ctx, body.kind if body else PHONE)
+    return await make_code(ctx, body.kind if body else PHONE)
+
+
+class PrepareRequest(BaseModel):
+    kind: Literal["phone", "desktop", "sync", "contact"] = PHONE
+
+
+class PrepareResponse(ApiModel):
+    # The API token made by this call, once; None when one was already set (or on a team server,
+    # whose desktop owner needs none). The caller carries it, or its next request is refused.
+    new_api_token: str | None
+    remote_access: bool  # the setting, now
+    api_token_set: bool
+
+
+@router.post("/prepare", response_model=PrepareResponse, dependencies=ADMIN)
+async def prepare(body: PrepareRequest | None = None, ctx: AppContext = Depends(get_ctx)):
+    """Make this computer ready for the pairing `kind` (what the code routes do themselves), so
+    the window can take the new API token before it asks for the code."""
+    prepared = await _prepare(ctx, body.kind if body else PHONE)
+    return PrepareResponse(
+        # A team server's desktop owner is tokenless (api/auth.py `_desktop_owner`): a token
+        # sent would make it the API token's caller instead.
+        new_api_token=None if ctx.settings.team_mode else prepared.new_api_token,
+        remote_access=ctx.settings.remote_access,
+        api_token_set=bool(ctx.settings.api_token),
+    )
 
 
 async def _redeem_contact(body: RedeemRequest, ctx: AppContext) -> RedeemResponse:
