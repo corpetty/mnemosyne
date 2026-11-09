@@ -10,7 +10,15 @@
 
 	// Share this meeting with people from the contacts, desktop only (backend services/share_hub.py).
 	// The team-server counterpart is ShareMenu.
+	// `embedded`: the Share menu shows the panel (when `show`) and reports through `available` whether it applies.
+	let {
+		embedded = false,
+		show = false,
+		available = $bindable(false),
+		onclose
+	}: { embedded?: boolean; show?: boolean; available?: boolean; onclose?: () => void } = $props();
 	let open = $state(false);
+	const isOpen = $derived(embedded ? show : open);
 	let root = $state<HTMLElement | null>(null);
 	let dialog = $state<{ person: string; existing: PeerShareInfo | null } | null>(null);
 	let confirming = $state<string | null>(null);
@@ -24,6 +32,9 @@
 	const shares = $derived(contactsState.peerShares[sid] ?? []);
 	const label = $derived(shares.length ? `Shared · ${shares.length}` : 'Share');
 
+	$effect(() => {
+		available = visible;
+	});
 	$effect(() => {
 		if (!connectionState.me?.team_mode && !contactsState.loaded) void contactsState.load();
 	});
@@ -59,12 +70,14 @@
 
 	function openDialog(person: string, existing: PeerShareInfo | null) {
 		open = false;
+		onclose?.();
 		confirming = null;
 		dialog = { person, existing };
 	}
 
 	function addPerson() {
 		open = false;
+		onclose?.();
 		uiState.settingsTab = 'devices';
 		openView('settings');
 	}
@@ -85,23 +98,25 @@
 
 <svelte:window
 	onclick={(e) => {
-		if (open && root && !e.composedPath().includes(root)) open = false;
+		if (!embedded && open && root && !e.composedPath().includes(root)) open = false;
 	}}
 	onkeydown={(e) => {
-		if (open && e.key === 'Escape') open = false;
+		if (!embedded && open && e.key === 'Escape') open = false;
 	}}
 />
 
 {#if visible}
 	<span class="relative" bind:this={root}>
+		{#if !embedded}
 		<button
 			onclick={toggleOpen}
 			aria-expanded={open}
 			title="Share this meeting with people"
 			class="px-2 py-0.5 rounded border border-gray-800 {shares.length ? 'text-blue-300' : 'text-gray-400'} hover:text-gray-200"
 		>{label}</button>
-		{#if open}
-			<div class="absolute right-0 z-30 mt-1 w-72 rounded-lg border border-gray-700 bg-gray-900 p-3 text-sm shadow-xl space-y-2" role="dialog" aria-label="Share this meeting with people">
+		{/if}
+		{#if isOpen}
+			<div class={embedded ? 'text-sm space-y-2' : 'absolute right-0 z-30 mt-1 w-72 rounded-lg border border-gray-700 bg-gray-900 p-3 text-sm shadow-xl space-y-2'} role="dialog" aria-label="Share this meeting with people">
 				<p class="text-xs text-gray-500">People you share with</p>
 				{#if contactsState.contacts.length}
 					<ul class="max-h-64 space-y-2 overflow-y-auto">
@@ -140,7 +155,7 @@
 					</ul>
 					<button onclick={addPerson} class="text-xs text-gray-400 hover:text-gray-200">Add a person…</button>
 				{:else}
-					<p class="text-gray-400">Nobody to share with yet.</p>
+					<p class="text-gray-400">Nobody to share with yet. Add a person in Settings → Devices and people.</p>
 					<button onclick={addPerson} class="w-full rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-500">Add a person</button>
 				{/if}
 			</div>

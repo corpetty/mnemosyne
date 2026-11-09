@@ -10,7 +10,14 @@
 
 	// The owner's controls for guest notes: a link anyone in the meeting can type in the notes
 	// through (backend guest notes room). `compact` is the small button beside the Copilot.
-	let { compact = false }: { compact?: boolean } = $props();
+	// `embedded`: the Share menu shows the panel (when `show`) and reports through `available` whether it applies.
+	let {
+		compact = false,
+		embedded = false,
+		show = false,
+		available = $bindable(false),
+		onclose
+	}: { compact?: boolean; embedded?: boolean; show?: boolean; available?: boolean; onclose?: () => void } = $props();
 
 	let open = $state(false);
 	let root = $state<HTMLElement | null>(null);
@@ -18,6 +25,7 @@
 	let showQr = $state(false);
 	let qr = $state('');
 	let noHost = $state('');
+	const isOpen = $derived(embedded ? show : open);
 
 	const session = $derived(sessionState.activeSession);
 	const sid = $derived(session?.id ?? '');
@@ -27,6 +35,9 @@
 	const room = $derived(loaded && loaded.state !== 'stopped' ? loaded : null);
 	const live = $derived(room?.state === 'live');
 
+	$effect(() => {
+		available = visible;
+	});
 	$effect(() => {
 		if (!guestNotesState.settingsLoaded) void guestNotesState.loadSettings();
 	});
@@ -78,6 +89,7 @@
 
 	function openSettings() {
 		open = false;
+		onclose?.();
 		uiState.settingsTab = 'devices';
 		openView('settings');
 	}
@@ -118,10 +130,10 @@
 
 <svelte:window
 	onclick={(e) => {
-		if (open && root && !e.composedPath().includes(root)) open = false;
+		if (!embedded && open && root && !e.composedPath().includes(root)) open = false;
 	}}
 	onkeydown={(e) => {
-		if (open && e.key === 'Escape') open = false;
+		if (!embedded && open && e.key === 'Escape') open = false;
 	}}
 />
 
@@ -154,15 +166,17 @@
 
 {#if visible}
 	<span class="relative inline-block" bind:this={root}>
+		{#if !embedded}
 		<button
 			onclick={toggleOpen}
 			aria-expanded={open}
 			title="Let the people in this meeting take notes with you"
 			class="{btnClass} {live ? 'text-green-400' : 'text-gray-400'} hover:text-gray-200"
 		>{#if compact}{live ? 'Guests · live' : 'Invite guests to the notes'}{:else if live}Guests · live{:else if room}Guests · ended{:else}Invite guests{/if}</button>
-		{#if open}
+		{/if}
+		{#if isOpen}
 			<div
-				class="absolute right-0 z-30 mt-1 w-80 rounded-lg border border-gray-700 bg-gray-900 p-3 text-left text-sm font-normal shadow-xl space-y-2"
+				class={embedded ? 'text-left text-sm font-normal space-y-2' : 'absolute right-0 z-30 mt-1 w-80 rounded-lg border border-gray-700 bg-gray-900 p-3 text-left text-sm font-normal shadow-xl space-y-2'}
 				role="dialog"
 				aria-label="Guest notes"
 			>
@@ -173,7 +187,7 @@
 					</p>
 					{#if noHost}
 						<p class="text-xs text-amber-300">{noHost}</p>
-						<button onclick={openSettings} class="rounded bg-gray-800 border border-gray-700 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700">Open Settings</button>
+						<button onclick={openSettings} class="rounded bg-gray-800 border border-gray-700 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700">Open Settings → Devices and people</button>
 					{/if}
 					<button
 						onclick={create}

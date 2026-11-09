@@ -1,6 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 import { importMeeting, openApp } from './fixtures';
 
+async function openLiveNotes(page: Page) {
+  await page.getByRole('button', { name: 'Share', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^A link to the live notes/ }).click();
+}
+
 const BACKEND = 'http://127.0.0.1:8018';
 const NAME = 'guest-notes-demo';
 
@@ -49,7 +54,7 @@ test('guests take notes with the owner through a link, comment, and are ended', 
     const owner = await openNotesTab(page);
 
     // Invite guests -> Create a guest link; the link sits in a read-only input.
-    await page.getByRole('button', { name: 'Invite guests', exact: true }).click();
+    await openLiveNotes(page);
     const menu = page.getByRole('dialog', { name: 'Guest notes' });
     await menu.getByRole('button', { name: 'Create a guest link' }).click();
     const linkInput = menu.getByLabel('Guest link');
@@ -58,7 +63,7 @@ test('guests take notes with the owner through a link, comment, and are ended', 
     // The API says the same.
     const room: { url: string | null } = await (await request.get(`${BACKEND}/api/sessions/${id}/guest-notes`)).json();
     expect(room.url).toBe(link);
-    await expect(page.getByRole('button', { name: 'Guests · live' })).toBeVisible();
+    await expect(page.getByLabel('Guest link')).toBeVisible();
     await expect(menu.getByText('Nobody has opened it yet')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(menu).toHaveCount(0);
@@ -87,7 +92,7 @@ test('guests take notes with the owner through a link, comment, and are ended', 
     await expect(guestEditor).toContainText('Hello from Ana');
 
     // The owner's menu names the guest too.
-    await page.getByRole('button', { name: 'Guests · live' }).click();
+    await openLiveNotes(page);
     await expect(page.getByRole('dialog', { name: 'Guest notes' })).toContainText('Here now: Ana', { timeout: 20_000 });
     await page.keyboard.press('Escape');
 
@@ -126,11 +131,11 @@ test('guests take notes with the owner through a link, comment, and are ended', 
     await expect(threads).toContainText('Is this right?');
 
     // 6. End guest notes (the menu asks inline: Yes / No). The guest page turns read-only.
-    await page.getByRole('button', { name: 'Guests · live' }).click();
+    await openLiveNotes(page);
     const menu2 = page.getByRole('dialog', { name: 'Guest notes' });
     await menu2.getByRole('button', { name: 'End guest notes' }).click();
     await menu2.getByRole('button', { name: 'Yes', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Guests · ended' })).toBeVisible();
+    await expect(menu2).toContainText('Guest notes ended');
     await expect(guest.getByText(/These notes ended\. You can still read and copy them/)).toBeVisible({ timeout: 30_000 });
     await expect(guestEditor).toHaveAttribute('contenteditable', 'false');
     // What was written is still there to read.
@@ -140,7 +145,7 @@ test('guests take notes with the owner through a link, comment, and are ended', 
     // 7. Stop sharing the notes: the room is deleted; the guest page, loaded again, has none.
     await menu2.getByRole('button', { name: 'Stop sharing the notes' }).click();
     await menu2.getByRole('button', { name: 'Yes', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Invite guests', exact: true })).toBeVisible();
+    await expect(menu2.getByRole('button', { name: 'Create a guest link' })).toBeVisible();
     expect(await (await request.get(`${BACKEND}/api/sessions/${id}/guest-notes`)).json()).toBeNull();
     await guest.reload();
     await expect(guest.getByRole('alert')).toContainText(/These notes are no longer shared\.|doesn't open these notes/, {

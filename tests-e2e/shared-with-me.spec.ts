@@ -99,6 +99,7 @@ test('sharing my own meeting: the menu lists Ada and the dialog warns about the 
   await importMeeting(page, info.outputDir, OWN);
 
   await page.getByRole('button', { name: 'Share', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^People with Mnemosyne/ }).click();
   const menu = page.getByRole('dialog', { name: 'Share this meeting with people' });
   await expect(menu.getByText('People you share with')).toBeVisible();
   await expect(menu.getByText('Ada Lovelace')).toBeVisible();

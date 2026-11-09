@@ -1,6 +1,11 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { addImage, importMeeting, openApp } from './fixtures';
 
+async function openLiveNotes(page: Page) {
+  await page.getByRole('button', { name: 'Share', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^A link to the live notes/ }).click();
+}
+
 const BACKEND = 'http://127.0.0.1:8018';
 const PUBLISH_HOST = 'http://127.0.0.1:8028';
 const RELAY = '127.0.0.1:8038';
@@ -61,14 +66,14 @@ async function setUp(page: Page, request: APIRequestContext, dir: string) {
 
 /** Invite guests -> Create a guest link; returns the link from the menu (the menu is closed). */
 async function createLink(page: Page) {
-  await page.getByRole('button', { name: 'Invite guests', exact: true }).click();
+  await openLiveNotes(page);
   const menu = page.getByRole('dialog', { name: 'Guest notes' });
   // Starting a room starts the rooms sidecar and an iroh endpoint: allow for it.
   await menu.getByRole('button', { name: 'Create a guest link' }).click();
   const linkInput = menu.getByLabel('Guest link');
   await expect(linkInput).toHaveValue(/#2\./, { timeout: 60_000 });
   const link = await linkInput.inputValue();
-  await expect(page.getByRole('button', { name: 'Guests · live' })).toBeVisible();
+  await expect(page.getByLabel('Guest link')).toBeVisible();
   return { link, menu };
 }
 
@@ -124,12 +129,12 @@ test('guests join over iroh through the relay, with no host in the link, and are
     await expect(guestEditor).toContainText('Hello from Ina');
 
     // End guest notes: the guest page turns read-only, with what was written still readable.
-    await page.getByRole('button', { name: 'Guests · live' }).click();
+    await openLiveNotes(page);
     const menu2 = page.getByRole('dialog', { name: 'Guest notes' });
     await expect(menu2).toContainText('Here now: Ina', { timeout: 30_000 });
     await menu2.getByRole('button', { name: 'End guest notes' }).click();
     await menu2.getByRole('button', { name: 'Yes', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Guests · ended' })).toBeVisible();
+    await expect(menu2).toContainText('Guest notes ended');
     await expect(guest.getByText(/These notes ended\. You can still read and copy them/)).toBeVisible({ timeout: 60_000 });
     await expect(guestEditor).toHaveAttribute('contenteditable', 'false');
     await expect(guestEditor).toContainText('Hello from Ina');
@@ -171,11 +176,11 @@ test('with a publish host the link points at its page and a mirror keeps the roo
     await expect(guestEditor).toContainText('Mirrored hello');
 
     // Stop sharing the notes: both rooms are deleted; the guest page, loaded again, has none.
-    await page.getByRole('button', { name: 'Guests · live' }).click();
+    await openLiveNotes(page);
     const menu2 = page.getByRole('dialog', { name: 'Guest notes' });
     await menu2.getByRole('button', { name: 'Stop sharing the notes' }).click();
     await menu2.getByRole('button', { name: 'Yes', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Invite guests', exact: true })).toBeVisible();
+    await expect(menu2.getByRole('button', { name: 'Create a guest link' })).toBeVisible();
     expect(await (await request.get(`${BACKEND}/api/sessions/${id}/guest-notes`)).json()).toBeNull();
     await guest.reload();
     await expect(guest.getByRole('alert')).toContainText(/These notes are no longer shared\.|doesn't open these notes/, {
