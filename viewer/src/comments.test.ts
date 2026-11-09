@@ -571,3 +571,46 @@ describe('ReaderIdentity', () => {
     expect(await id.rid()).toBe(vec.reader.rid);
   });
 });
+
+describe('a reader the owner has blocked', () => {
+  const RID: string = vec.reader.rid;
+  const OTHER = '0123456789abcdef';
+  const meeting = { anchor: meetingAnchor(), line: null };
+
+  it('loses its ops in flight and makes no new ones; nothing more is sent', async () => {
+    const { m, sent } = model();
+    await m.init();
+    const op = m.create(meeting, 'Before the block')!;
+    expect(m.pending.list).toHaveLength(1);
+    m.setThreads([], null, [RID]);
+    expect(m.blockedHere).toBe(true);
+    expect(m.pending.list).toEqual([]);
+    expect(m.stateOf(op.id)).toBeNull();
+    expect(m.create(meeting, 'After the block')).toBeNull();
+    expect(m.reply(op.id, 'A reply')).toBeNull();
+    expect(m.retry(op.id)).toEqual([]);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('is unchanged for a reader whose rid is another one on the list', async () => {
+    const { m, sent } = model();
+    await m.init();
+    const op = m.create(meeting, 'Still fine')!;
+    m.setThreads([], null, [OTHER]);
+    expect(m.blockedHere).toBe(false);
+    expect(m.pending.list).toHaveLength(1);
+    expect(m.stateOf(op.id)).toBe('sending');
+    expect(m.create(meeting, 'Again')).not.toBeNull();
+    expect(sent).toHaveLength(2);
+  });
+
+  it('is lifted when a later THREADS no longer lists its rid', async () => {
+    const { m } = model();
+    await m.init();
+    m.setThreads([], null, [RID]);
+    expect(m.create(meeting, 'Blocked')).toBeNull();
+    m.setThreads([], null, []);
+    expect(m.blockedHere).toBe(false);
+    expect(m.create(meeting, 'Allowed again')).not.toBeNull();
+  });
+});

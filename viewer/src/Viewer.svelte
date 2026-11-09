@@ -110,7 +110,7 @@
 					meta = f.meta;
 					if (comments && f.threads !== seenThreads) {
 						seenThreads = f.threads;
-						comments.setThreads(f.threads?.threads, f.threads?.pending);
+						comments.setThreads(f.threads?.threads, f.threads?.pending, f.threads?.blocked);
 					}
 				}
 			}

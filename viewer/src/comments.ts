@@ -470,6 +470,8 @@ export class ReaderComments {
   rid: string | null = null;
   /** THREADS' `pending` of the newest THREADS (null before any): ids waiting for approval, by rid. */
   private waitingBy: Record<string, string[]> | null = null;
+  /** THREADS' `blocked`: the rids the owner has stopped taking comments from. */
+  private blocked: string[] = [];
   /** An op counts as seen when THREADS shows it, or lists its comment as waiting for approval. */
   readonly pending = new PendingOps<ReaderOp, ReaderPending>(
     (p, threads) => shows(p, threads) || this.waitingIds().has(p.op.id)
@@ -496,9 +498,21 @@ export class ReaderComments {
       return; // no WebCrypto: own comments are not recognised, sending still fails gracefully
     }
     if (this.rid) {
+      this.dropIfBlocked();
       this.forgetHeld();
       this.onChange();
     }
+  }
+
+  /** Is this reader's own rid on the owner's block list (THREADS `blocked`)? */
+  get blockedHere(): boolean {
+    return this.rid !== null && this.blocked.includes(this.rid);
+  }
+
+  /** A blocked reader's ops in flight are dropped, not retried: the bridge would refuse them. */
+  private dropIfBlocked(): void {
+    if (!this.blockedHere) return;
+    for (const p of [...this.pending.list]) this.pending.drop(p.op.id);
   }
 
   get name(): string {
@@ -514,10 +528,16 @@ export class ReaderComments {
   }
 
   /** The newest THREADS' `threads` and `pending` (as live.ts kept them). */
-  setThreads(raw: readonly unknown[] | null | undefined, waiting: Record<string, string[]> | null = null): void {
+  setThreads(
+    raw: readonly unknown[] | null | undefined,
+    waiting: Record<string, string[]> | null = null,
+    blocked: readonly string[] = []
+  ): void {
     this.threads = parseThreads(raw);
     this.waitingBy = waiting ?? {};
+    this.blocked = [...blocked];
     this.pending.settle(this.threads);
+    this.dropIfBlocked();
     this.forgetHeld();
     this.onChange();
   }
@@ -644,14 +664,14 @@ export class ReaderComments {
   /** A new thread; null when there is no name yet or the text cannot be sent. */
   create(draft: Draft, text: string): ReaderOp | null {
     const t = text.trim();
-    if (!this.name || !sendable(t)) return null;
+    if (this.blockedHere || !this.name || !sendable(t)) return null;
     const op = createOp(mintId(), t, this.name, this.at(), draft.anchor);
     return this.submit(op, null, { parent_id: null, text: t, name: this.name, at: op.at, anchor: threadAnchor(op.anchor) });
   }
 
   reply(rootId: string, text: string): ReaderOp | null {
     const t = text.trim();
-    if (!this.name || !sendable(t)) return null;
+    if (this.blockedHere || !this.name || !sendable(t)) return null;
     const op = replyOp(mintId(), rootId, t, this.name, this.at());
     return this.submit(op, null, { parent_id: rootId, text: t, name: this.name, at: op.at, anchor: threadAnchor(null) });
   }
@@ -659,7 +679,7 @@ export class ReaderComments {
   /** Edit one's own comment; null when it is not one's own, unchanged or cannot be sent. */
   edit(c: ReaderComment, text: string): ReaderOp | null {
     const t = text.trim();
-    if (!this.isMine(c) || !sendable(t) || t === c.text) return null;
+    if (this.blockedHere || !this.isMine(c) || !sendable(t) || t === c.text) return null;
     // With approval on, the edited text waits again: its words stay here meanwhile.
     const keep = { parent_id: c.parent_id, text: t, name: this.name, at: c.created_at, anchor: c.anchor };
     return this.submit(editOp(c.id, t, this.name, this.at()), c.updated_at, keep);
@@ -667,7 +687,7 @@ export class ReaderComments {
 
   /** Delete one's own comment; null when it is not one's own. */
   remove(c: ReaderComment): ReaderOp | null {
-    if (!this.isMine(c)) return null;
+    if (this.blockedHere || !this.isMine(c)) return null;
     this.held.delete(c.id);
     return this.submit(deleteOp(c.id, this.name, this.at()));
   }
@@ -676,7 +696,7 @@ export class ReaderComments {
   retry(id: string): ReaderOp[] {
     const key = this.identity.key;
     const ps = this.pending.list.filter((p) => p.op.id === id);
-    if (!key || !ps.length) return [];
+    if (this.blockedHere || !key || !ps.length) return [];
     const t = this.now();
     for (const p of ps) {
       p.sent = t;

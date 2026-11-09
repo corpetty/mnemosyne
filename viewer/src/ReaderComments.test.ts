@@ -425,3 +425,45 @@ describe('affordances in the meeting', () => {
 		expect(onShow).toHaveBeenCalledWith('notes');
 	});
 });
+
+describe('a reader the owner has blocked', () => {
+	it('loses the composer and the controls, shows one line, and drops what was sent and not yet seen', async () => {
+		const { model, sent } = column({ name: 'Ana', key: true });
+		await model.init();
+		const mine = { root: comment('mine', { rid: model.rid }), replies: [] };
+		model.setThreads([mine]);
+		flushSync();
+		expect(q('[data-testid="reader-compose"]')).not.toBeNull();
+		expect(button('Edit')).toBeDefined();
+		expect(button('Reply')).toBeDefined();
+
+		type(q('[data-testid="reader-compose"] textarea') as HTMLTextAreaElement, 'Pending one');
+		button('Send').click();
+		flushSync();
+		expect(text()).toContain('Sending');
+		expect(model.pending.list).toHaveLength(1);
+		expect(sent).toHaveLength(1);
+
+		model.setThreads([mine], null, [model.rid!]);
+		flushSync();
+		expect(model.pending.list).toEqual([]);
+		expect(q('[data-testid="reader-compose"]')).toBeNull();
+		expect(q('textarea')).toBeNull();
+		expect(q('[data-testid="reader-blocked"]')?.textContent).toBe('The owner has stopped taking comments from you on this page.');
+		expect(text()).not.toContain('Sending');
+		expect(button('Edit')).toBeUndefined();
+		expect(button('Reply')).toBeUndefined();
+		expect(button('Delete')).toBeUndefined();
+		expect(sent).toHaveLength(1);
+	});
+
+	it('leaves the page as it was for a reader that is not on the list', async () => {
+		const { model } = column({ name: 'Ana', key: true });
+		await model.init();
+		model.setThreads([{ root: comment('mine', { rid: model.rid }), replies: [] }], null, ['0123456789abcdef']);
+		flushSync();
+		expect(q('[data-testid="reader-compose"]')).not.toBeNull();
+		expect(q('[data-testid="reader-blocked"]')).toBeNull();
+		expect(button('Edit')).toBeDefined();
+	});
+});

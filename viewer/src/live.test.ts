@@ -9,7 +9,7 @@ import type { RoomSocket } from '$lib/rooms/client';
 import { deriveLiveKeys, openBox, PubKind, signFrame } from '$lib/sealed/signed';
 import { createOp, itemAnchor } from './comments';
 import { b64urlDecode, blobHash, fromHex, parseManifest, type Manifest } from './format';
-import { Follower, POLL_MS, STATUS, parsePending, statusLine, type Gone, type Shown } from './live';
+import { Follower, POLL_MS, STATUS, parseBlocked, parsePending, statusLine, type Gone, type Shown } from './live';
 import { openHosted, type Ready } from './load';
 
 const vec = JSON.parse(
@@ -406,6 +406,30 @@ describe('the room', () => {
 		);
 		await settle();
 		expect(follower!.threads).toMatchObject({ threads: [], pending: { [rid]: ['aaaaaaaaaaaa', 'bbbbbbbbbbbb'] } });
+	});
+
+	it('carries the blocked rids of THREADS, none from an older owner', async () => {
+		const { ws } = await live();
+		ws.frame(1, b64urlDecode(vec.samples.threads.envelope_b64url)); // no `blocked` in it
+		await settle();
+		expect(follower!.threads?.blocked).toEqual([]);
+		ws.frame(
+			2,
+			await signed(PubKind.THREADS, {
+				at: '2026-11-05T10:30:00Z',
+				threads: [],
+				pending: {},
+				blocked: ['ffffffffffffffff', vec.reader.rid]
+			})
+		);
+		await settle();
+		expect(follower!.threads?.blocked).toEqual([vec.reader.rid, 'ffffffffffffffff'].sort());
+	});
+
+	it('reads `blocked` carefully', () => {
+		const rid = 'feedfacefeedface';
+		expect(parseBlocked([rid, 'nope', 3, null, rid, '0123456789abcdef'])).toEqual(['0123456789abcdef', rid]);
+		for (const bad of [undefined, null, 'x', 4, { [rid]: true }]) expect(parseBlocked(bad)).toEqual([]);
 	});
 
 	it('reads `pending` carefully', () => {
