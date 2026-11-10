@@ -121,7 +121,7 @@
 			oninput={(e) => playerState.seek(Number((e.currentTarget as HTMLInputElement).value), false)}
 			class="flex-1 accent-blue-500"
 		/>
-		<span class="font-mono text-xs text-gray-400 w-24 text-right">{fmt(playerState.currentTime)} / {fmt(playerState.duration)}</span>
+		<span class="font-mono text-xs text-gray-400 w-24 text-right">{fmt(playerState.currentTime)} / {playerState.duration ? fmt(playerState.duration) : '–:––'}</span>
 		{#if commentsState.canComment && transcriptState.segments.length > 0}
 			<button
 				onclick={commentHere}
