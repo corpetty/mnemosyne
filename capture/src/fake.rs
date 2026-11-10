@@ -245,7 +245,7 @@ mod tests {
                         rates.push(c.rate);
                     }
                 }
-                Ok(Event::Idle) => {}
+                Ok(Event::Idle) | Ok(Event::Note(_)) => {}
                 Ok(Event::End) => return (frames, rates, Ok(())),
                 Err(e) => return (frames, rates, Err(e)),
             }

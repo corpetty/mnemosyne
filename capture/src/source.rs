@@ -31,6 +31,9 @@ pub enum Event {
     Idle,
     /// The source ended by itself (a fake file played to its end).
     End,
+    /// Something worth a log line that is not an error (the microphone's stream opened again
+    /// after a rate change, the system's output device changed). `key=value ...` text.
+    Note(String),
 }
 
 pub trait Source: Send {

@@ -4,7 +4,7 @@ use mnemosyne_capture::fake::{self, Fake};
 use mnemosyne_capture::log::Log;
 use mnemosyne_capture::record::{self, Pipeline, Settings};
 use mnemosyne_capture::source::Source;
-use mnemosyne_capture::{devices, doctor, DEFAULT_RATE};
+use mnemosyne_capture::{devices, doctor, OpenError, DEFAULT_RATE};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -148,11 +148,14 @@ fn record(args: RecordArgs) -> ExitCode {
             Ok(f) => Box::new(f),
             Err(e) => return unsupported(&format!("{e:#}")),
         },
-        (None, Some(target)) => {
-            return unsupported(&format!(
-                "recording {target:?} is not supported on this system yet"
-            ))
-        }
+        (None, Some(target)) => match mnemosyne_capture::open_target(target) {
+            Ok(s) => s,
+            Err(OpenError::Unsupported(msg)) => return unsupported(&msg),
+            Err(e @ OpenError::Failed(_)) => {
+                eprintln!("mnemosyne-capture: {e}");
+                return ExitCode::from(1);
+            }
+        },
         (None, None) => return unsupported("give --target <device|system> (or --fake <spec>)"),
     };
 

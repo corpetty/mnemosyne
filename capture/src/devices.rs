@@ -16,9 +16,17 @@ pub struct Device {
     pub default: bool,
 }
 
-/// The devices this system can record from. Real ones are listed per OS; there are none yet.
+/// The devices this system can record from: Core Audio's on macOS (plus the `system` entry),
+/// none elsewhere (Linux lists PipeWire's itself).
 pub fn list() -> anyhow::Result<Vec<Device>> {
-    Ok(Vec::new())
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos::devices()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(Vec::new())
+    }
 }
 
 #[cfg(test)]

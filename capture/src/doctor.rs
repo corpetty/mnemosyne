@@ -1,10 +1,13 @@
 //! `mnemosyne-capture doctor`: what this binary can do on this machine, as JSON for the
-//! diagnostics. The permission and device fields come with the real sources.
+//! diagnostics. On macOS it adds the macOS version, the microphone permission
+//! (`mic_authorization`), the default input and output devices with their rates and
+//! `taps_supported`.
 
 use serde_json::{json, Value};
 
 pub fn report() -> Value {
-    json!({
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut report = json!({
         "version": env!("CARGO_PKG_VERSION"),
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
@@ -12,7 +15,12 @@ pub fn report() -> Value {
         "sources": ["fake"],
         // Whether a real microphone or system audio can be recorded on this system.
         "real_capture": false,
-    })
+    });
+    #[cfg(target_os = "macos")]
+    if let Value::Object(map) = &mut report {
+        crate::macos::doctor_fields(map);
+    }
+    report
 }
 
 #[cfg(test)]

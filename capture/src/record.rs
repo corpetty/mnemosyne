@@ -225,6 +225,7 @@ pub fn run(source: &mut dyn Source, mut pipeline: Pipeline, stop: &AtomicBool) -
                 }
             }
             Ok(Event::Idle) => {}
+            Ok(Event::Note(text)) => pipeline.log().event("note", &text),
             Ok(Event::End) => {
                 reason = "source_ended";
                 break;

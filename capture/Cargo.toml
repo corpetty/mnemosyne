@@ -23,6 +23,33 @@ rubato = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# macOS only: Core Audio (devices, the process tap, the aggregate device) through the objc2
+# framework crates cpal 0.18 itself uses, and cpal for the microphone stream. Pinned: the
+# bindings are generated and a bump can rename things; the macOS CI job is the only compiler.
+[target.'cfg(target_os = "macos")'.dependencies]
+cpal = { version = "=0.18.2", default-features = false }
+libc = "0.2"
+objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }
+objc2-core-audio = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "AudioHardware",
+    "objc2",
+    "objc2-foundation",
+    "objc2-core-audio-types",
+] }
+objc2-core-audio-types = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "CoreAudioBaseTypes",
+] }
+objc2-core-foundation = { version = "=0.3.2" }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSString",
+    "NSValue",
+    "NSUUID",
+] }
+
 [dev-dependencies]
 tempfile = "3"
 
