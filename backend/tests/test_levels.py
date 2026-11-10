@@ -43,6 +43,7 @@ other-rec:input_FL
 """
 
 
+@pytest.mark.linux_only("pw-link graph")
 def test_linked_sources_parses_pw_link(monkeypatch):
     class R:
         stdout = PW_LINK
@@ -100,6 +101,7 @@ def fake_selftest(monkeypatch, tmp_path):
 
 
 @pytest.mark.anyio
+@pytest.mark.linux_only("the self-test plays a tone through PipeWire")
 async def test_self_test_outcomes(fake_selftest):
     r = await L.self_test(SINK)
     assert r.passed and r.captures_monitor and r.tone_detected and "works" in r.message

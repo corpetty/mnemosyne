@@ -211,7 +211,7 @@ export type BackendEvent =
       type: 'capture_health';
       session_id: string;
       device_id: number;
-      state: 'stopped' | 'stalled' | 'ok';
+      state: 'stopped' | 'stalled' | 'silent' | 'ok';
       message: string;
     };
 

@@ -142,9 +142,11 @@ class RecordingSession:
 
 
 def list_devices() -> list[AudioDevice]:
-    """List available PipeWire audio devices using pw-dump."""
+    """List available PipeWire audio devices using pw-dump (on a Mac: the capture sidecar's)."""
     if sys.platform == "darwin":
-        return []  # no PipeWire on a Mac; recording there comes later (plan P1)
+        from . import coreaudio
+
+        return coreaudio.list_devices()
     try:
         result = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired as e:
@@ -199,7 +201,14 @@ def build_record_command(
     targeting the sink node itself. (`<sink>.monitor` is a PulseAudio name that
     PipeWire does not resolve: pw-record then silently falls back to the default
     microphone.) Sources are targeted by node name, which survives restarts.
+
+    On a Mac the command is the capture sidecar's (audio/coreaudio.py); PipeWire's node names
+    and properties mean nothing there.
     """
+    if sys.platform == "darwin":
+        from . import coreaudio
+
+        return coreaudio.build_record_command(device, output_path, sample_rate, channels, format)
     cmd = ["pw-record", f"--rate={sample_rate}", f"--channels={channels}", f"--format={format}"]
     # Named so the meeting-app monitor (audio/streams.py) can tell our streams apart.
     props = ["application.name=Mnemosyne"]

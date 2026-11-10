@@ -74,6 +74,8 @@ Summarization is LAN-first by default:
 
 ## Prerequisites
 
+macOS (Apple silicon) test builds: docs/macos.md
+
 - Linux with PipeWire audio (Fedora 43+, Ubuntu 22.04+, etc.)
 - NVIDIA GPU with CUDA support (for WhisperX inference)
 - [Rust](https://rustup.rs/) (1.77+)

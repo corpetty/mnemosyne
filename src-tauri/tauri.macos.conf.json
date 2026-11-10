@@ -7,6 +7,7 @@
     "externalBin": [
       "binaries/mnemosyne-uv",
       "binaries/mnemosyne-link",
+      "binaries/mnemosyne-capture",
       "binaries/ffmpeg",
       "binaries/ffprobe"
     ],

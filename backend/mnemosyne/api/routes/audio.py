@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Literal
@@ -122,6 +123,7 @@ async def _stream_levels(ctx: AppContext, session_id: str, recording, interval: 
     ids = [p.device_id for p in recording.processes]
     health = CaptureHealth({d: recording.labels.get(d, str(d)) for d in ids})
     browser = is_browser(recording)
+    watch_zeros = await _watch_exact_zeros(recording)
     last_audio = time.monotonic()
     try:
         while True:
@@ -139,6 +141,13 @@ async def _stream_levels(ctx: AppContext, session_id: str, recording, interval: 
                 change = health.update(proc.device_id, 0 if pcm is None else pcm.size, exited)
                 if change is not None:
                     _report_health(ctx, session_id, recording, health, change)
+                if proc.device_id in watch_zeros and pcm is not None and pcm.size:
+                    rate = tails[proc.device_id].sample_rate or 1
+                    change = health.observe_silence(
+                        proc.device_id, pcm.size / rate, not bool(pcm.any())
+                    )
+                    if change is not None:
+                        _report_health(ctx, session_id, recording, health, change)
             if levels:
                 ctx.bus.publish({"type": "levels", "session_id": session_id, "levels": levels})
             if browser and time.monotonic() - last_audio > BROWSER_GONE_SECONDS:
@@ -150,6 +159,17 @@ async def _stream_levels(ctx: AppContext, session_id: str, recording, interval: 
                 return
     except asyncio.CancelledError:
         pass
+
+
+async def _watch_exact_zeros(recording) -> set[int]:
+    """Sources whose exact digital silence means a denied permission: macOS system audio."""
+    if sys.platform != "darwin" or is_browser(recording):
+        return set()
+    try:
+        devices = await asyncio.to_thread(_devices)
+    except Exception:
+        devices = {}
+    return {p.device_id for p in recording.processes if source_of(p, devices) == "system"}
 
 
 def _report_health(ctx: AppContext, session_id: str, recording, health, change) -> None:
@@ -622,7 +642,7 @@ class ActiveRecording(ApiModel):
     part: int
     live: bool  # live transcription is running
     live_segments: list[LiveSegment] = []  # the live transcript so far
-    problems: dict[str, str] = {}  # device id -> "stopped" | "stalled" (audio/health.py)
+    problems: dict[str, str] = {}  # device id -> "stopped" | "stalled" | "silent" (audio/health.py)
     clock: PartClock | None = None
 
 

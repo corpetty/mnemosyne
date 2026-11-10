@@ -504,6 +504,11 @@ function announceCaptureHealth(msg: Extract<BackendEvent, { type: 'capture_healt
     toastState.success(msg.message);
     return;
   }
+  if (msg.state === 'silent') {
+    // A hint, not a failure: the recorder runs (RecordingSources shows it beside the source).
+    toastState.show(msg.message, 'info', 30_000);
+    return;
+  }
   toastState.show(`${msg.message}. What was recorded is safe.`, 'error', 60_000, {
     label: 'Restart capture',
     run: restartCapture

@@ -7,6 +7,9 @@ Each bundle (AppImage, deb, rpm) needs its .sig next to it (tauri build with
 createUpdaterArtifacts and TAURI_SIGNING_PRIVATE_KEY set). The updater picks the
 entry for its own bundle type (linux-x86_64-deb, ...); plain linux-x86_64 is the
 AppImage, used by builds that do not know their bundle type.
+
+The Mac app is `*.app.tar.gz` (+ .sig) in the same directory and becomes `darwin-aarch64`.
+It is optional here (a Linux-only directory still works); the Release workflow checks it is there.
 """
 
 import json
@@ -40,6 +43,16 @@ def main() -> int:
         print("no AppImage found", file=sys.stderr)
         return 1
     platforms["linux-x86_64"] = platforms["linux-x86_64-appimage"]
+    mac = sorted(dist.glob("*.app.tar.gz"))
+    if mac:
+        sig = mac[0].with_name(mac[0].name + ".sig")
+        if not sig.is_file():
+            print(f"missing signature for {mac[0].name}", file=sys.stderr)
+            return 1
+        platforms["darwin-aarch64"] = {
+            "signature": sig.read_text().strip(),
+            "url": f"https://github.com/{REPO}/releases/download/{tag}/{mac[0].name}",
+        }
     manifest = {
         "version": tag.removeprefix("v"),
         "notes": notes,

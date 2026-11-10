@@ -23,14 +23,17 @@ ADMIN = [Depends(access.require_admin)]  # team-wide: an admin's job (access.py)
 
 
 MAC_CAPTURE_PROBLEM = (
-    "Recording on a Mac comes in a later version. "
-    "You can already import recordings and transcribe them."
+    "Recording on a Mac needs the capture helper, which this build does not include."
 )
 
 
 def _capture() -> tuple[bool, str | None]:
     """Whether this computer can record, and if not, why."""
     if sys.platform == "darwin":
+        from ...audio import coreaudio
+
+        if coreaudio.sidecar() and coreaudio.real_capture():
+            return True, None
         return False, MAC_CAPTURE_PROBLEM
     if shutil.which("pw-record") and shutil.which("pw-dump"):
         return True, None
@@ -99,7 +102,7 @@ async def system_info(ctx: AppContext = Depends(get_ctx)):
     transcriber = await asyncio.to_thread(resolve_transcriber, ctx.settings)
     live = await asyncio.to_thread(resolve_live_transcriber, ctx.settings)
     diarizer = await asyncio.to_thread(resolve_diarizer, ctx.settings)
-    capture, capture_problem = _capture()
+    capture, capture_problem = await asyncio.to_thread(_capture)  # a Mac asks the helper
     return SystemInfo(
         onnx_diarizer=_has("sherpa_onnx"),
         transcriber_in_use=transcriber,

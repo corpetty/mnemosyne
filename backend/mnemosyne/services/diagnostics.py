@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import importlib.util
+import json
 import os
 import platform
 import shutil
@@ -101,6 +102,34 @@ def _ffmpeg() -> str:
     return f"ffmpeg: {path}, {version}"
 
 
+def _capture_helper() -> list[str]:
+    """The Mac's recorder (mnemosyne-capture): where it is and what its doctor says."""
+    from ..audio import coreaudio
+
+    path = coreaudio.sidecar()
+    if path is None:
+        return ["capture helper: not found"]
+    report = coreaudio.doctor()
+    return [
+        f"capture helper: {path}",
+        "capture doctor: "
+        + (json.dumps(report, sort_keys=True) if report is not None else "failed (see the log)"),
+    ]
+
+
+def _capture_log(data_dir: Path, lines: int = 20) -> list[str]:
+    """The tail of the capture sidecar's own log (a Mac only; Linux records with pw-record)."""
+    if sys.platform != "darwin":
+        return []
+    from ..audio import coreaudio
+
+    return [
+        "",
+        f"### Capture log (last {lines} lines)",
+        *(tail(coreaudio.log_path(data_dir), lines) or ["(no capture log yet)"]),
+    ]
+
+
 def _install_kind() -> str:
     if sys.platform == "darwin":
         here = Path(__file__).resolve()
@@ -186,7 +215,7 @@ def build_report(app: AppContext, log_lines: int = 200) -> str:
         f"whisperx {_version('whisperx')}, onnx-asr {_version('onnx-asr')}, "
         f"pyannote.audio {_version('pyannote.audio')}, nemo-toolkit {_version('nemo-toolkit')}",
         *(
-            []
+            _capture_helper()
             if sys.platform == "darwin"
             else [f"pw-record: {'found' if shutil.which('pw-record') else 'not found'}"]
         ),
@@ -209,5 +238,6 @@ def build_report(app: AppContext, log_lines: int = 200) -> str:
         "",
         f"### Backend log (last {log_lines} lines)",
         *(tail(log_path(settings.data_dir), log_lines) or ["(no log file yet)"]),
+        *_capture_log(settings.data_dir),
     ]
     return _redact_home("\n".join(out))
