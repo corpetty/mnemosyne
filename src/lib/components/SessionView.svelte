@@ -331,9 +331,12 @@
 						</button>
 						<RecordingSources />
 					</div>
-					<!-- Side by side when wide; stacked (copilot, then the live transcript) when narrow. -->
-					<div class="grid gap-4 lg:grid-cols-5">
-						<div class="lg:col-span-2 lg:order-2 space-y-4">
+					<!-- Side by side when the content area (not the window: the sidebar takes its share) is wide;
+					     stacked (copilot, then the live transcript) when narrow. Equal halves: the notes are
+					     where people type during a meeting. -->
+					<div class="@container">
+					<div class="grid gap-4 @4xl:grid-cols-2">
+						<div class="@4xl:order-2 min-w-0 space-y-4">
 							<div class="flex justify-end"><GuestNotesMenu compact /></div>
 							<CopilotPanel />
 							<section class="rounded-lg border border-gray-800 bg-gray-900/40 p-3 space-y-2" aria-label="Notes">
@@ -343,7 +346,8 @@
 							<ResourcesCard compact />
 							<HistoryCard />
 						</div>
-						<div class="lg:col-span-3 lg:order-1"><LiveTranscript tall /></div>
+						<div class="@4xl:order-1 min-w-0"><LiveTranscript tall /></div>
+					</div>
 					</div>
 				</div>
 			{:else}

@@ -160,7 +160,7 @@
 		<header class="flex items-center gap-2 text-xs">
 			<span class="font-semibold text-purple-200 uppercase tracking-wide">{autoAdds ? 'Ask' : 'Copilot'}</span>
 			<span class="text-purple-300/60">
-				{#if autoAdds}the copilot's points go into the notes{#if notes && !waiting}{' · '}updated {clock(notes.updated_at)}{/if}{:else if !waiting && notes}updated {clock(notes.updated_at)} · {notes.lines} lines{:else}running notes appear after the first minutes of talk{/if}
+				{#if autoAdds}the copilot writes into the notes{#if notes && !waiting}{' · '}{clock(notes.updated_at)}{/if}{:else if !waiting && notes}updated {clock(notes.updated_at)} · {notes.lines} lines{:else}running notes appear after the first minutes of talk{/if}
 			</span>
 		</header>
 
@@ -201,7 +201,8 @@
 		<form onsubmit={(e) => { e.preventDefault(); ask(); }} class="flex gap-2">
 			<input
 				bind:value={question}
-				placeholder="Ask about this meeting… (e.g. what did they just say about the budget?)"
+				placeholder="Ask about this meeting…"
+				title="For example: what did they just say about the budget?"
 				aria-label="Ask about this meeting"
 				class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 placeholder-gray-600"
 			/>
