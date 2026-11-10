@@ -51,6 +51,14 @@
 		setup: { component: SetupWizard as Component<{ onOpenSession?: () => void }>, width: 'max-w-2xl' }
 	};
 	const panel = $derived(PANELS[uiState.view]);
+	// One scroller for every view and every Settings tab: back to the top on a change, else the
+	// next one opened at the last one's offset (cut off, or at its very bottom).
+	let panelScroller = $state<HTMLDivElement | null>(null);
+	$effect.pre(() => {
+		void uiState.view;
+		void uiState.settingsTab;
+		if (panelScroller) panelScroller.scrollTop = 0;
+	});
 
 	$effect(() => connectApp());
 	$effect(() => listenForRemoteActions());
@@ -141,7 +149,7 @@
 				{#if sessionState.activeSession}
 					<SessionView />
 				{:else if panel}
-					<div class="flex-1 overflow-y-auto p-6">
+					<div bind:this={panelScroller} class="flex-1 overflow-y-auto p-6">
 						<div class="mx-auto w-full {panel.width}">
 							<panel.component onOpenSession={() => (uiState.view = 'home')} />
 						</div>
