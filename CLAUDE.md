@@ -121,8 +121,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - This machine runs EasyEffects: recording streams from the mic get rerouted to
   `easyeffects_source`, whose RNNoise outputs exact digital silence when nobody speaks. A −90 dB
   mic level with the mic unmuted is that, not a capture bug.
-- Updates: the Tauri updater (AppImage, deb and rpm) reads `latest.json` from the latest
-  GitHub release; `scripts/updater-manifest.py` writes it in the Release workflow. Bundles are
+- Updates: the Tauri updater (AppImage, deb, rpm and the Mac app) reads `latest.json` from the latest
+  GitHub release; `scripts/updater-manifest.py` writes it in the Release workflow's `assemble` job
+  (after the Linux `bundle` and the `macos` job: the signed Mac app, dmg + `.app.tar.gz`, smoke tested; `darwin-aarch64`). Bundles are
   signed with `~/.tauri/mnemosyne.key`, password in `~/.tauri/mnemosyne.key.password` (repo
   secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; public key in
   tauri.conf.json). A key without a password cannot sign non-interactively (tauri-cli 2.10). Losing the key means shipped apps can never update again.

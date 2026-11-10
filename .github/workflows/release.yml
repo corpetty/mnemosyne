@@ -1,6 +1,8 @@
 name: Release
 
-# Tag a commit `vX.Y.Z` to build the Linux bundles and attach them to a GitHub release.
+# Tag a commit `vX.Y.Z` to build the Linux bundles and the signed Mac app and attach them to a GitHub
+# release. Run by hand (workflow_dispatch, no tag) it is a dry run: everything is built and uploaded as
+# artifacts (the `assemble` job's latest.json and SHA256SUMS included) and nothing is attached.
 on:
   push:
     tags: ["v*"]
@@ -62,15 +64,71 @@ jobs:
       - name: Offline AppImage (base install bundled; no download on first launch)
         run: |
           bash scripts/build-offline-appimage.sh "$(ls dist/*.AppImage | grep -v -- -offline)" dist
-      - name: Updater manifest (latest.json)
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          case "$tag" in v*) ;; *) tag="v$(jq -r .version src-tauri/tauri.conf.json)";; esac
-          python3 scripts/updater-manifest.py "$tag" dist "docs/releases/$tag.md"
       - uses: actions/upload-artifact@v7
         with:
           name: mnemosyne-linux
           path: dist/*
+
+  macos:
+    name: Build the Mac app (signed, dmg + updater bundle) and smoke test it
+    runs-on: macos-15 # Apple silicon
+    timeout-minutes: 75
+    env:
+      APPLE_SIGNING_IDENTITY: "Mnemosyne Test Signing"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            link
+            capture
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The same identity as smoke-macos.yml: macOS keeps microphone and system-audio grants across
+      # updates only when the signing certificate stays the same.
+      - name: Signing identity
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+        run: bash scripts/macos-signing-keychain.sh
+      - name: Build the app and the dmg
+        env:
+          # Signs the updater bundle (Mnemosyne.app.tar.gz.sig), the same key as the Linux bundles.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: >
+          pnpm tauri build --bundles app,dmg
+          --config '{"bundle":{"createUpdaterArtifacts":true}}'
+      - name: Verify the signature
+        run: bash scripts/verify-macos-signature.sh "$(ls -d src-tauri/target/release/bundle/macos/*.app)" "$APPLE_SIGNING_IDENTITY"
+      - name: Collect artifacts
+        run: |
+          version="$(jq -r .version src-tauri/tauri.conf.json)"
+          mkdir -p dist
+          bundle=src-tauri/target/release/bundle
+          # Tauri names the updater bundle without a version: Mnemosyne.app.tar.gz (+ .sig).
+          cp "$bundle/macos/Mnemosyne.app.tar.gz" "dist/Mnemosyne_${version}_aarch64.app.tar.gz"
+          cp "$bundle/macos/Mnemosyne.app.tar.gz.sig" "dist/Mnemosyne_${version}_aarch64.app.tar.gz.sig"
+          cp "$bundle"/dmg/*.dmg dist/
+          test -f "dist/Mnemosyne_${version}_aarch64.dmg" # the name the release page and docs promise
+          ls -la dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mnemosyne-macos
+          path: dist/*
+      - name: First launch, playback, transcription
+        run: bash scripts/smoke-macos.sh "$(ls -d src-tauri/target/release/bundle/macos/*.app)"
 
   smoke:
     needs: bundle
@@ -106,10 +164,11 @@ jobs:
           cache: false
           artifact-name: mnemosyne-flatpak
 
-  release:
-    name: Attach to the GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [bundle, smoke, gpu-extra, phonon, flatpak]
+  # latest.json and SHA256SUMS over everything that is attached. It runs on a dry run too, so a
+  # workflow_dispatch shows what a tag would publish (artifact mnemosyne-release-extra).
+  assemble:
+    name: latest.json and SHA256SUMS
+    needs: [bundle, macos, flatpak]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -119,13 +178,52 @@ jobs:
           path: dist
       - uses: actions/download-artifact@v8
         with:
+          name: mnemosyne-macos
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
           name: mnemosyne-flatpak
           path: flatpak-out
       - name: Collect
         run: |
-          cp flatpak-out/mnemosyne.flatpak "dist/Mnemosyne_${GITHUB_REF_NAME#v}_x86_64.flatpak"
-          (cd dist && sha256sum *.AppImage *.deb *.rpm *.flatpak > SHA256SUMS)
-          ls -la dist
+          tag="${GITHUB_REF_NAME}"
+          case "$tag" in v*) ;; *) tag="v$(jq -r .version src-tauri/tauri.conf.json)";; esac
+          echo "tag: $tag"
+          cp flatpak-out/mnemosyne.flatpak "dist/Mnemosyne_${tag#v}_x86_64.flatpak"
+          python3 scripts/updater-manifest.py "$tag" dist "docs/releases/$tag.md"
+          # The Mac app must be in the manifest: without it the updater would skip every Mac.
+          jq -e '.platforms["darwin-aarch64"] and .platforms["linux-x86_64"]' dist/latest.json
+          (cd dist && sha256sum *.AppImage *.deb *.rpm *.flatpak *.dmg *.app.tar.gz > SHA256SUMS)
+          cat dist/latest.json
+          cat dist/SHA256SUMS
+          mkdir -p extra
+          cp dist/latest.json dist/SHA256SUMS "dist/Mnemosyne_${tag#v}_x86_64.flatpak" extra/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mnemosyne-release-extra
+          path: extra/*
+
+  release:
+    name: Attach to the GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [assemble, smoke, gpu-extra, phonon]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: mnemosyne-linux
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: mnemosyne-macos
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: mnemosyne-release-extra
+          path: dist
+      - name: Collect
+        run: ls -la dist
       - name: Release notes
         id: notes
         run: |

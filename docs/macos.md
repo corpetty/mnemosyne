@@ -15,13 +15,14 @@ maintainer, about the signing certificate. The plan and its reasons are in
 
 ### Where builds come from
 
-For now a build is the `mnemosyne-macos-app` artifact of a "Smoke test (macOS)" workflow run on
-GitHub Actions: a zip, kept 7 days. You are sent the link. Later builds will be a download on the
-release page.
+Builds are on the [release page](https://github.com/corpetty/mnemosyne/releases): download
+`Mnemosyne_<version>_aarch64.dmg`. Once installed, the app offers updates itself (an in-app update
+prompt); you do not download again. Pull-request builds of the app are also kept for 7 days as
+the `mnemosyne-macos-app` artifact of a "Smoke test (macOS)" run; you are sent the link when needed.
 
 ### Install
 
-1. Unzip it. You get `Mnemosyne.app`.
+1. Open the `.dmg` (from a pull-request artifact: unzip it instead).
 2. Drag `Mnemosyne.app` to Applications **before** opening it. Opened from Downloads, macOS runs it
    from a temporary location and permissions do not stick.
 3. Open it from Applications.
@@ -51,8 +52,8 @@ flat while something plays, look there first.
 
 Be aware this is a test build.
 
-- If recording is not in your build yet, you can import recordings (Import, or the sample meeting)
-  and transcribe them. Your build's notes say which it is.
+- Recording works: your microphone and the system audio (the other people on a call), live
+  transcript included. You can also import recordings (Import, or the sample meeting) and transcribe them.
 - Transcription runs on the CPU with Parakeet, and speaker labels with the onnx diarizer. It is
   slower than on a PC with a GPU.
 - Not on the Mac yet: Phonon-2 and the built-in summary model. Use Ollama, vLLM, OpenAI or
