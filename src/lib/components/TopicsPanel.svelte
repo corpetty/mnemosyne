@@ -146,8 +146,8 @@
 				<button
 					onclick={() => follow(t.topic)}
 					class="px-2 py-0.5 rounded-full border text-xs {thread?.query === t.topic ? 'bg-gray-700 border-gray-600 text-gray-100' : 'border-gray-800 text-gray-400 hover:text-gray-200'}"
-					title="{t.meetings} meetings, last {day(t.last_seen)}"
-				>{t.topic}{#if t.meetings > 1}<span class="text-gray-600"> {t.meetings}</span>{/if}</button>
+					title="{t.meetings} meeting{t.meetings === 1 ? '' : 's'}, last {day(t.last_seen)}"
+				>{t.topic}{#if t.meetings > 1}<span class="ml-1 text-gray-600">{t.meetings}</span>{/if}</button>
 			{/each}
 		</div>
 	{/if}
