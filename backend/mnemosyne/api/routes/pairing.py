@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ... import access, config
 from ...models.base import ApiModel
@@ -17,6 +17,9 @@ from ...models.contact import Card
 from ...models.sync import SyncPeerPayload, SyncPersonOffer, SyncRedeemSelf
 from ...services import contacts, sync_peers
 from ...services.pairing import (
+    CODE_MINUTES_MAX,
+    CODE_MINUTES_MIN,
+    CODE_TTL_SECONDS,
     CONTACT_CODE,
     DESKTOP,
     PHONE,
@@ -41,6 +44,8 @@ ADMIN = [Depends(require_owner_channel), Depends(access.require_admin)]
 class CodeRequest(BaseModel):
     # sync: a desktop that also syncs; contact: another person's computer (services/contacts.py)
     kind: Literal["phone", "desktop", "sync", "contact"] = PHONE
+    # How long the code works; None = CODE_TTL_SECONDS (an hour).
+    minutes: int | None = Field(default=None, ge=CODE_MINUTES_MIN, le=CODE_MINUTES_MAX)
 
 
 class PairingCode(ApiModel):
@@ -109,12 +114,15 @@ async def _prepare(ctx: AppContext, kind: str):
         raise HTTPException(status_code=409, detail=str(e)) from e
 
 
-async def make_code(ctx: AppContext, kind: str) -> PairingCode:
+async def make_code(ctx: AppContext, kind: str, minutes: int | None = None) -> PairingCode:
     """A one-time pairing code of `kind` and what the other side needs to redeem it (shared by
-    this route and POST /api/contacts/codes). Makes the API token and remote access first."""
+    this route and POST /api/contacts/codes), working for `minutes` (None: an hour). Makes the
+    API token and remote access first."""
     await _prepare(ctx, kind)
     ticket = ctx.link.status.ticket
-    code, expires = ctx.pairing.new_code(kind)
+    code, expires = ctx.pairing.new_code(
+        kind, CODE_TTL_SECONDS if minutes is None else minutes * 60
+    )
     return PairingCode(
         code=code,
         kind=kind,
@@ -126,7 +134,7 @@ async def make_code(ctx: AppContext, kind: str) -> PairingCode:
 
 @router.post("/codes", response_model=PairingCode, dependencies=ADMIN)
 async def create_code(body: CodeRequest | None = None, ctx: AppContext = Depends(get_ctx)):
-    return await make_code(ctx, body.kind if body else PHONE)
+    return await make_code(ctx, body.kind if body else PHONE, body.minutes if body else None)
 
 
 class PrepareRequest(BaseModel):

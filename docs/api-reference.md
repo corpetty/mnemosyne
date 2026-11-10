@@ -39,8 +39,9 @@ QR code.
 Paired devices live in `<data_dir>/paired_devices.json` (0600) as SHA-256 hashes of their tokens,
 outside the database, so they are checked even while encrypted meetings are locked.
 
-- `POST /api/pairing/codes` `{kind: "phone" | "desktop"}` (body optional, default phone) →
-  `{code, kind, expires_at, urls, invite}`: a one-time code, valid for 10 minutes. For a phone, `urls`
+- `POST /api/pairing/codes` `{kind: "phone" | "desktop" | "sync" | "contact", minutes?}` (body optional,
+  default phone) → `{code, kind, expires_at, urls, invite}`: a one-time code, valid for `minutes` (5 to
+  1440, default 60). Codes are held in memory: restarting the backend ends unused ones. For a phone, `urls`
   are the phone page addresses carrying it (`…/m?pair=<code>`); for a computer, `invite` is
   `<iroh ticket>#<code>`, to paste on the other machine. Making a code makes what it needs
   (services/pairing_prep.py `prepare_pairing`): the API token when none is set, and for a computer,
@@ -1757,7 +1758,7 @@ under pairing above.
 | Method | Path | What, and who |
 |--------|------|---------------|
 | GET | `/api/contacts` | `{me, contacts: [ContactInfo]}`, each with `pull` state. Admin / the desktop |
-| POST | `/api/contacts/codes` | A one-time contact invite `{code, kind: "contact", expires_at, urls, invite}`. Admin; makes the API token and remote access itself |
+| POST | `/api/contacts/codes` | Body optional `{minutes?}` (5 to 1440, default 60). A one-time contact invite `{code, kind: "contact", expires_at, urls, invite}`. Admin; makes the API token and remote access itself |
 | POST | `/api/contacts/pair` | `{invite}` → `ContactInfo`: redeem the other person's invite. Admin |
 | PATCH | `/api/contacts/{person}` | `{name}`: rename locally (empty = the card's name). Admin |
 | DELETE | `/api/contacts/{person}` | Remove: their CONTACT devices are revoked, their shares end. Admin |

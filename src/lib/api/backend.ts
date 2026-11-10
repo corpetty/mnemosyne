@@ -878,9 +878,10 @@ export async function preparePairing(kind: PairingKind): Promise<void> {
 
 /** A one-time pairing code: for a phone, the phone page addresses carrying it; for a computer,
  * the invite to paste on it. The API token and remote access are made first. */
-export async function createPairingCode(kind: PairingKind = 'phone'): Promise<PairingCode> {
+/** A one-time pairing code; `minutes` is how long it works (the backend's default is an hour). */
+export async function createPairingCode(kind: PairingKind = 'phone', minutes?: number): Promise<PairingCode> {
   await preparePairing(kind);
-  return request('/api/pairing/codes', { method: 'POST', body: JSON.stringify({ kind }) });
+  return request('/api/pairing/codes', { method: 'POST', body: JSON.stringify({ kind, minutes }) });
 }
 
 /** Everything connected to this computer in one list: phones, computers, sync peers, contacts. */
@@ -905,9 +906,9 @@ export async function getContacts(): Promise<ContactsResponse> {
 }
 
 /** A one-time contact code; `invite` is what the other person pastes in their app. */
-export async function createContactCode(): Promise<PairingCode> {
+export async function createContactCode(minutes?: number): Promise<PairingCode> {
   await preparePairing('contact');
-  return request('/api/contacts/codes', { method: 'POST' });
+  return request('/api/contacts/codes', { method: 'POST', body: JSON.stringify({ minutes }) });
 }
 
 export async function pairContact(invite: string): Promise<ContactInfo> {

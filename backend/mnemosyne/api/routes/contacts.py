@@ -6,6 +6,7 @@ POST /api/pairing/redeem. Admin only, and not on a team server."""
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from ... import access
 from ...models.contact import (
@@ -17,7 +18,7 @@ from ...models.contact import (
     ContactsResponse,
 )
 from ...services import contacts
-from ...services.pairing import CONTACT_CODE
+from ...services.pairing import CODE_MINUTES_MAX, CODE_MINUTES_MIN, CONTACT_CODE
 from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 from .pairing import PairingCode, make_code
@@ -69,10 +70,15 @@ async def list_contacts(ctx: AppContext = Depends(get_ctx)):
     )
 
 
+class ContactCodeRequest(BaseModel):
+    # How long the invite works; None = an hour (services/pairing.py CODE_TTL_SECONDS).
+    minutes: int | None = Field(default=None, ge=CODE_MINUTES_MIN, le=CODE_MINUTES_MAX)
+
+
 @router.post("/codes", response_model=PairingCode)
-async def create_code(ctx: AppContext = Depends(get_ctx)):
+async def create_code(body: ContactCodeRequest | None = None, ctx: AppContext = Depends(get_ctx)):
     """A one-time contact code: the other person pastes the invite in their own app."""
-    return await make_code(ctx, CONTACT_CODE)
+    return await make_code(ctx, CONTACT_CODE, body.minutes if body else None)
 
 
 @router.post("/pair", response_model=ContactInfo)

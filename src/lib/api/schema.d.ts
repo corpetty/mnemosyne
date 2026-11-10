@@ -4939,6 +4939,8 @@ export interface components {
              * @enum {string}
              */
             kind: "phone" | "desktop" | "sync" | "contact";
+            /** Minutes */
+            minutes?: number | null;
         };
         /** CombineRequest */
         CombineRequest: {
@@ -5154,6 +5156,11 @@ export interface components {
             name: string;
             /** Remove */
             remove: string;
+        };
+        /** ContactCodeRequest */
+        ContactCodeRequest: {
+            /** Minutes */
+            minutes?: number | null;
         };
         /** ContactInfo */
         ContactInfo: {
@@ -11445,7 +11452,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ContactCodeRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -11454,6 +11465,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PairingCode"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

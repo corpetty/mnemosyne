@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { codeLength, until } from '$lib/app/codeLength.svelte.js';
+	import CodeLength from './CodeLength.svelte';
 	import { createPairingCode, getPhoneLink, listPairedDevices } from '$lib/api/backend.js';
 	import { devicesState } from '$lib/stores/devices.svelte.js';
 	import type { PairedDevice, PairingCode, PhoneLink } from '$lib/types/index.js';
@@ -73,13 +75,12 @@
 		justPaired = '';
 		chosen = 0;
 		try {
-			code = await createPairingCode();
+			code = await createPairingCode('phone', codeLength.minutes);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not create a pairing code';
 		}
 	}
 
-	const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 </script>
 
 {#if link}
@@ -92,6 +93,7 @@
 					onclick={showCode}
 					class="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200"
 				>{code ? 'New pairing code' : 'Pair a phone'}</button>
+				<CodeLength />
 				{#if justPaired}<span class="text-xs text-green-400">Paired: {justPaired}</span>{/if}
 				{#if error}<span class="text-xs text-red-400">{error}</span>{/if}
 			</div>
@@ -108,7 +110,7 @@
 						>{u}</button>
 					{/each}
 					{#if code}
-						<p class="text-gray-600">Works once, until {clock(code.expires_at)}. The phone gets its own key; the API token stays here.</p>
+						<p class="text-gray-600">Works once, until {until(code.expires_at)}. The phone gets its own key; the API token stays here.</p>
 					{/if}
 				</div>
 			</div>
