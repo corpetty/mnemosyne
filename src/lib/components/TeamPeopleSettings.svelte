@@ -14,7 +14,13 @@
 	let email = $state('');
 	let role = $state('member');
 	let busy = $state(false);
-	let invite = $state<{ name: string; link: string; until: string } | null>(null);
+	let invite = $state<{
+		name: string;
+		link: string;
+		app: string | null;
+		problem: string;
+		until: string;
+	} | null>(null);
 
 	const ROLES: [string, string][] = [
 		['member', 'Member: their own meetings'],
@@ -37,7 +43,13 @@
 	}
 
 	function showInvite(i: UserInvite) {
-		invite = { name: i.user.name, link: linkFor(i), until: new Date(i.expires_at).toLocaleString() };
+		invite = {
+			name: i.user.name,
+			link: linkFor(i),
+			app: i.app_invite,
+			problem: i.app_invite_problem,
+			until: new Date(i.expires_at).toLocaleString()
+		};
 	}
 
 	async function load() {
@@ -109,10 +121,29 @@
 
 	{#if invite}
 		<div class="mb-3 rounded border border-blue-800 bg-blue-950/30 p-3 text-sm space-y-2">
-			<p class="text-gray-200">Invite link for {invite.name} (works once, until {invite.until}):</p>
-			<code class="block break-all text-xs text-gray-300">{invite.link}</code>
-			<div class="flex gap-3">
+			{#if invite.app}
+				<p class="text-gray-200">Invite for {invite.name}:</p>
+				<div class="space-y-1">
+					<p class="text-xs text-gray-400">In a browser</p>
+					<code class="block break-all text-xs text-gray-300">{invite.link}</code>
+					<button onclick={() => copyText(invite!.link, 'Invite link copied')} class="text-blue-400 hover:text-blue-300">Copy</button>
+				</div>
+				<div class="space-y-1">
+					<p class="text-xs text-gray-400">In the Mnemosyne app</p>
+					<code class="block break-all text-xs text-gray-300">{invite.app}</code>
+					<button onclick={() => copyText(invite!.app!, 'App invite copied')} class="text-blue-400 hover:text-blue-300">Copy</button>
+					<p class="text-xs text-gray-500">
+						They paste it in the app: Settings → Devices and people → Join a team. It works from anywhere, and they never join your network.
+					</p>
+				</div>
+				<p class="text-xs text-gray-500">Either one works, once, until {invite.until}; whichever they use first uses it up.</p>
+			{:else}
+				<p class="text-gray-200">Invite link for {invite.name} (works once, until {invite.until}):</p>
+				<code class="block break-all text-xs text-gray-300">{invite.link}</code>
 				<button onclick={() => copyText(invite!.link, 'Invite link copied')} class="text-blue-400 hover:text-blue-300">Copy</button>
+				{#if invite.problem}<p class="text-xs text-gray-500">No app invite: {invite.problem}</p>{/if}
+			{/if}
+			<div class="flex gap-3">
 				<button onclick={() => (invite = null)} class="text-gray-400 hover:text-gray-200">Done</button>
 			</div>
 			<p class="text-xs text-gray-500">Send it to them directly (not in a shared channel): whoever opens it first signs in as them.</p>

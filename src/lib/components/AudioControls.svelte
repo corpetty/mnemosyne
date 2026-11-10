@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { audioState } from '$lib/stores/audio.svelte.js';
+	import { connectionState } from '$lib/stores/connection.svelte.js';
+	import { teamMemberState } from '$lib/stores/teamMember.svelte.js';
+	import RecordDestination from './RecordDestination.svelte';
 
 	interface Props {
 		onStartOverride?: () => Promise<void>;
@@ -36,26 +39,32 @@
 </script>
 
 <div class="flex items-center gap-4">
-	<button
-		onclick={handleToggle}
-		disabled={!!audioState.pending || (!audioState.isRecording && (audioState.selectedDeviceIds.size === 0 || !!disabledReason))}
-		title={disabledReason || undefined}
-		class="flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed
-			{audioState.isRecording
-			? 'bg-red-600 hover:bg-red-700 text-white'
-			: 'bg-blue-600 hover:bg-blue-700 text-white'}"
-	>
-		{#if audioState.pending}
-			<span class="w-3 h-3 rounded-full border-2 border-white/40 border-t-white animate-spin"></span>
-			{audioState.pending === 'starting' ? 'Starting…' : 'Stopping…'}
-		{:else if audioState.isRecording}
-			<span class="w-3 h-3 rounded-sm bg-white"></span>
-			Stop
-		{:else}
-			<span class="w-3 h-3 rounded-full bg-red-400"></span>
-			Record
+	<div class="flex items-center gap-1">
+		<button
+			onclick={handleToggle}
+			disabled={!!audioState.pending || (!audioState.isRecording && (audioState.selectedDeviceIds.size === 0 || !!disabledReason))}
+			title={disabledReason || undefined}
+			class="flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+				{audioState.isRecording
+				? 'bg-red-600 hover:bg-red-700 text-white'
+				: 'bg-blue-600 hover:bg-blue-700 text-white'}"
+		>
+			{#if audioState.pending}
+				<span class="w-3 h-3 rounded-full border-2 border-white/40 border-t-white animate-spin"></span>
+				{audioState.pending === 'starting' ? 'Starting…' : 'Stopping…'}
+			{:else if audioState.isRecording}
+				<span class="w-3 h-3 rounded-sm bg-white"></span>
+				Stop
+			{:else}
+				<span class="w-3 h-3 rounded-full bg-red-400"></span>
+				Record
+			{/if}
+		</button>
+		{#if teamMemberState.joined && !connectionState.usesMain && !audioState.isRecording}
+			<!-- Joined a team: where this recording goes. -->
+			<RecordDestination disabled={!!audioState.pending || !!disabledReason} />
 		{/if}
-	</button>
+	</div>
 
 	{#if audioState.isRecording}
 		<div class="flex items-center gap-2">

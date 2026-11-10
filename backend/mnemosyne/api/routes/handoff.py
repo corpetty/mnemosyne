@@ -11,9 +11,10 @@ part's sources are written as WAVs with a recovery manifest (services/recovery.p
 `auto_summarize`). Answered as soon as the audio is on disk: from there a crash is recovered at
 the next start like an interrupted recording, so the laptop may delete its copy.
 
-Who: a paired computer (a DESKTOP device token) or this computer's own owner (its API token, or
-the desktop app); never a phone, a contact, a team member, or a team server. Idempotent by
-`handoff_id` (services/handoff.py).
+Who: a paired computer (a DESKTOP device token), this computer's own owner (its API token, or
+the desktop app), or a team member's app (a MEMBER device, on a computer that hosts a team: the
+meeting is the member's); never a phone, a contact, a signed-in browser user, or a team server.
+Idempotent by `handoff_id` (services/handoff.py).
 
 With `session_id`, the hand-off REPLACES the audio of a meeting this same device was streaming
 into (POST /api/audio/start-browser with its token: `by_device` in the history) because the
@@ -21,11 +22,28 @@ stream had gaps. Only before anything transcribed it, and only when every record
 from that device's stream: otherwise 409. Replacing is the one exception to "never replace a
 session's audio wholesale" (CLAUDE.md), and safe only then: no transcript, part or clip yet
 depends on the old timeline.
+
+Hand-off v2 (docs/plans/2026-11-10-team-members-in-the-app.md 1.3 (b)): a team member's app that
+did the work itself MOVES the finished meeting here. `transcribed` with `session`, the meeting as
+library sync's portable document (models/sync_session.py, the member's `export_session`), and one
+`media:<sha>` part per image row it lists. The audio goes as above, one Ogg per recording with its
+part, so `add_part` rebuilds the joined timeline its transcript's times refer to; it is saved
+without transcribing, and the answer waits until it is (the member deletes its copy on it; a
+retry is answered once the meeting is saved, also by the recovery after a crash, which never
+transcribes such a meeting: its `handed_over` line says `transcribed`). The document is
+written first (`sync_state.take_document`, as library sync's fast-forward writes one: origin
+here, a new version, the notes document adopted), owned by the sender's user whatever it says,
+its publications and contact shares left behind; then flagged phrases, invitee shares and task
+links follow as after a transcription and summary.
+Images are checked (hash, WebP/JPEG by magic number, size) before anything is stored. Refused:
+`transcribed` on a REPLACE, from a paired computer of the owner (a DESKTOP device), and without a
+`consent` event in the document's history while this computer requires consent.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -51,24 +69,38 @@ from ...audio.capture import (
 from ...config import dedicated_team_server
 from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, SessionStatus
+from ...models.sync_session import SyncSession
 from ...services import handoff as handoffs
 from ...services import history, records, shared_notes
-from ...services.pairing import DESKTOP
+from ...services.pairing import DESKTOP, MEMBER
 from ...services.recovery import write_manifest
-from ..auth import require_owner_channel
+from ..auth import MEMBER_DEVICE, require_owner_channel
 from ..context import AppContext, get_ctx
 
 logger = logging.getLogger(__name__)
 
+
 # A paired computer (a DESKTOP device) is an owner channel; members, reviewers, phones are not.
+# A team member's app (a MEMBER device through the tunnel) hands over too (`_sender`): it is no
+# owner channel, so this route lets that one channel in beside them.
+def _owner_or_member_app(request: Request) -> None:
+    if (request.scope.get("state") or {}).get("channel") == MEMBER_DEVICE:
+        return
+    require_owner_channel(request)
+
+
 router = APIRouter(
-    prefix="/api/connections", tags=["connections"], dependencies=[Depends(require_owner_channel)]
+    prefix="/api/connections", tags=["connections"], dependencies=[Depends(_owner_or_member_app)]
 )
 
 # The whole request. A 3-hour meeting is about 1 GB per source as 48 kHz WAV; Ogg is far less.
 MAX_HANDOFF_BYTES = 4 * 1024**3
-MAX_META_BYTES = 8 * 1024 * 1024  # the JSON part, notes included
+# The JSON part, notes included; with hand-off v2 the whole meeting document (transcript with
+# its words, notes document, comments) of a long meeting.
+MAX_META_BYTES = 64 * 1024 * 1024
 MAX_FILES = 64
+MAX_MEDIA = 1000  # image parts of a v2 hand-off (the meeting's 50 MB cap applies too)
+MEDIA_PREFIX = "media:"
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 # Kinds of events after which a meeting's audio may no longer be replaced.
 _TRANSCRIBED = {"transcribed", "transcribe_failed", "flagged_lines_removed"}
@@ -90,8 +122,13 @@ class HandoffMeta(ApiModel):
     started_at: datetime | None = None
     ended_at: datetime | None = None
     notes: str = ""  # markdown typed during the meeting; may be empty
-    sources: list[HandoffSource] = Field(min_length=1, max_length=MAX_FILES)
+    # At least one, except for a v2 hand-off of a meeting without audio (notes only).
+    sources: list[HandoffSource] = Field(default_factory=list, max_length=MAX_FILES)
     session_id: str | None = None  # replace the audio of the meeting this device streamed
+    # Hand-off v2: the sender did the work (transcript, summary, notes): `session` is the
+    # meeting as library sync's document, written here as it came; nothing is transcribed.
+    transcribed: bool = False
+    session: SyncSession | None = None
 
 
 class HandoffResult(ApiModel):
@@ -103,6 +140,14 @@ def _sender(ctx: AppContext, request: Request) -> tuple[str | None, str]:
     """(device id or None for this computer's owner, a name for the history). 403 for anyone
     else. The middleware already keeps phones (DEVICE_PATHS) and contacts (/api/share/) out."""
     state = request.scope.get("state") or {}
+    if state.get("channel") == MEMBER_DEVICE:
+        # A team member's app on a computer that hosts a team: the meeting is theirs (the
+        # middleware runs the request as that person), the hand-off key is the device's.
+        device = ctx.pairing.get(state.get("device_id") or "")
+        user = ctx.users.get(state.get("user_id") or "")
+        if device is None or device.kind != MEMBER or user is None or user.disabled:
+            raise HTTPException(status_code=403, detail="Only a paired computer can hand over")
+        return device.id, f"{user.name} ({device.name})"
     if state.get("user_id"):
         raise HTTPException(status_code=403, detail="Only a paired computer can hand over")
     device_id = state.get("device_id")
@@ -248,13 +293,21 @@ def _parts(meta: HandoffMeta, out_dir: Path) -> list[RecordingSession]:
     return recordings
 
 
-def _finish_all(ctx: AppContext, session_id: str, recordings, old_files: list[Path]):
+def _done_status(ctx: AppContext, session_id: str) -> SessionStatus:
+    session = ctx.sessions.get_session(session_id)
+    return SessionStatus.COMPLETED if session and session.transcript else SessionStatus.CREATED
+
+
+def _finish_all(
+    ctx: AppContext, session_id: str, recordings, old_files: list[Path], finished: bool = False
+):
     """The finish job of a hand-off: each part saved as a stopped recording is, in order; the
-    last one queues transcription per `auto_transcribe`. Replaced audio is deleted once the
-    new audio is in the meeting."""
+    last one queues transcription per `auto_transcribe`, except for a meeting that came
+    `finished` (hand-off v2: its transcript is the sender's, never redone here). Replaced audio
+    is deleted once the new audio is in the meeting."""
     from .audio import _finish_recording
 
-    want = ctx.settings.auto_transcribe
+    want = ctx.settings.auto_transcribe and not finished
 
     async def run(job) -> dict:
         result: dict = {}
@@ -266,6 +319,8 @@ def _finish_all(ctx: AppContext, session_id: str, recordings, old_files: list[Pa
         for path in old_files:
             if str(path) not in keep:
                 path.unlink(missing_ok=True)
+        if finished:
+            ctx.sessions.set_status(session_id, _done_status(ctx, session_id))
         return {**result, "parts": len(recordings)}
 
     return run
@@ -278,6 +333,7 @@ async def handoff(request: Request, ctx: AppContext = Depends(get_ctx)):
     sample_rate, file, label}], session_id?} plus one WAV or Ogg file per source and part, in
     the field each source names). Idempotent by handoff_id. 413 over 4 GB."""
     device_id, sender = _sender(ctx, request)
+    member_app = (request.scope.get("state") or {}).get("channel") == MEMBER_DEVICE
     if dedicated_team_server(ctx.settings):
         raise HTTPException(status_code=409, detail="A team server does not take hand-offs")
     length = request.headers.get("content-length")
@@ -285,17 +341,19 @@ async def handoff(request: Request, ctx: AppContext = Depends(get_ctx)):
         raise HTTPException(status_code=413, detail="A hand-off is at most 4 GB")
     try:
         form = await request.form(
-            max_files=MAX_FILES, max_fields=MAX_FILES + 8, max_part_size=MAX_META_BYTES
+            max_files=MAX_FILES + MAX_MEDIA, max_fields=MAX_FILES + 8, max_part_size=MAX_META_BYTES
         )
     except Exception as e:  # noqa: BLE001 - malformed multipart (Starlette's own errors)
         raise HTTPException(status_code=400, detail=f"Not a hand-off: {e}") from e
     try:
-        return await _receive(ctx, form, device_id, sender)
+        return await _receive(ctx, form, device_id, sender, member_app)
     finally:
         await form.close()
 
 
-async def _receive(ctx: AppContext, form, device_id: str | None, sender: str) -> HandoffResult:
+async def _receive(
+    ctx: AppContext, form, device_id: str | None, sender: str, member_app: bool = False
+) -> HandoffResult:
     raw = form.get("meta")
     if not isinstance(raw, str):
         raise HTTPException(status_code=400, detail="No meta part")
@@ -307,11 +365,19 @@ async def _receive(ctx: AppContext, form, device_id: str | None, sender: str) ->
         raise HTTPException(status_code=400, detail="Bad handoff_id")
     if len({(s.source, s.part) for s in meta.sources}) != len(meta.sources):
         raise HTTPException(status_code=400, detail="A source appears twice in one part")
+    if meta.transcribed != (meta.session is not None):
+        raise HTTPException(status_code=400, detail="A finished meeting comes with its document")
+    if not meta.sources and not meta.transcribed:
+        raise HTTPException(status_code=400, detail="No audio in the hand-off")
+    if meta.transcribed:
+        _check_finished(ctx, meta, device_id, member_app)
 
     store = handoffs.store(ctx)
     key = store.key(device_id, meta.handoff_id)
     done = store.session_for(key)
     if done is not None:  # a retry: the answer was lost, the work was not
+        if meta.transcribed:
+            await _settled(ctx, done, meta)
         return HandoffResult(session_id=done, replaced=bool(meta.session_id))
     if not store.claim(key):
         raise HTTPException(status_code=409, detail="This hand-off is being received; try again")
@@ -321,7 +387,107 @@ async def _receive(ctx: AppContext, form, device_id: str | None, sender: str) ->
         store.release(key)
 
 
+def _check_finished(ctx: AppContext, meta: HandoffMeta, device_id, member_app: bool) -> None:
+    """A v2 hand-off (a finished meeting) may come from a team member's app or this computer's
+    owner, never as a REPLACE; with this computer's consent rule met by the meeting's history."""
+    if meta.session_id is not None:
+        raise HTTPException(
+            status_code=409, detail="A streamed meeting is completed with its audio only"
+        )
+    if device_id is not None and not member_app:
+        raise HTTPException(
+            status_code=403, detail="Only a team member's app hands over a finished meeting"
+        )
+    if ctx.settings.require_consent and not any(e.kind == "consent" for e in meta.session.events):
+        raise HTTPException(
+            status_code=409,
+            detail="The team asks how the people in the meeting agreed to be recorded",
+        )
+
+
+async def _media_parts(form, meta: HandoffMeta) -> dict[str, bytes]:
+    """The images of a v2 hand-off, sha -> bytes, each checked before anything is stored: a row
+    of the document names it, its hash is its name, its type (by magic number) is the row's
+    WebP or JPEG, its size within the cap. Any other file part that is not a source: 400."""
+    from ...services import notes_media
+
+    rows = {m.sha256: m for m in (meta.session.media if meta.session else None) or []}
+    audio = {s.file for s in meta.sources}
+    out: dict[str, bytes] = {}
+    for name, value in form.multi_items():
+        if name == "meta" or name in audio:
+            continue
+        sha = name.removeprefix(MEDIA_PREFIX)
+        listed = name.startswith(MEDIA_PREFIX) and sha in rows
+        if not listed or not isinstance(value, UploadFile):
+            raise HTTPException(status_code=400, detail=f"Unexpected part {name[:80]!r}")
+        if sha in out:
+            raise HTTPException(status_code=400, detail="An image appears twice")
+        data = await value.read(notes_media.IMAGE_MAX_BYTES + 1)
+        if len(data) > notes_media.IMAGE_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="An image may be at most 2 MB")
+        if not notes_media.SHA.match(sha) or hashlib.sha256(data).hexdigest() != sha:
+            raise HTTPException(status_code=400, detail="An image does not match its hash")
+        kind = notes_media.sniff(data)
+        if kind is None or kind != rows[sha].ext:
+            raise HTTPException(status_code=400, detail="Only WebP and JPEG images are taken")
+        out[sha] = data
+    return out
+
+
+def _take_document(ctx: AppContext, sid: str, meta: HandoffMeta, sender: str, images) -> None:
+    """Write the meeting a member's app finished into the meeting `sid` made for it here, as
+    library sync takes a document (`take_document`): origin here, owner the one this meeting was
+    made for, no version vector of the sender's, a new version of ours. The sender's publications
+    and its shares with its own contacts stay its own. Then its images' bytes, checked."""
+    from ...services import notes_media
+    from ...services.sync_state import take_document
+
+    session = ctx.sessions.get_session(sid)
+    doc = meta.session.model_copy(
+        update={
+            "id": sid,
+            "origin": "",
+            "owner_id": "",
+            "vv": {},
+            "publications": [],
+            "peer_shares": [],
+        }
+    )
+    with shared_notes.unrestricted():
+        take_document(
+            ctx,
+            doc,
+            origin="",
+            vv={},
+            bump=True,
+            owner=session.owner_id if session else "",
+            by=sender,
+        )
+    for sha, data in images.items():
+        by = next((m.by for m in doc.media or [] if m.sha256 == sha), "")
+        try:
+            notes_media.store(ctx, sid, sha, data, by=by)
+        except notes_media.MediaError as e:  # the meeting's cap: the row stays, without bytes
+            logger.warning("Session %s: image %s not kept: %s", sid, sha[:12], e)
+
+
+def _after_finished(ctx: AppContext, sid: str) -> None:
+    """What a transcription and a summary would have run here: flagged phrases, the invitees'
+    shares, tasks agreeing across meetings. Never raises."""
+    from ...services import sharing, supervision, task_links
+
+    with shared_notes.unrestricted():  # the app's own follow-up, over every meeting it touches
+        supervision.scan(ctx, sid, replace=True)
+        sharing.share_with_invitees(ctx, sid)
+        try:
+            task_links.reconcile(ctx)
+        except Exception:
+            logger.warning("Session %s: tasks not reconciled after a hand-off", sid, exc_info=True)
+
+
 async def _take(ctx, form, meta: HandoffMeta, device_id, sender, key, store) -> HandoffResult:
+    images = await _media_parts(form, meta) if meta.transcribed else {}
     uploads: dict[str, tuple[UploadFile, str]] = {}
     total = 0
     for s in meta.sources:
@@ -373,6 +539,18 @@ async def _take(ctx, form, meta: HandoffMeta, device_id, sender, key, store) -> 
         if not replaced:
             ctx.sessions.delete_session(sid)
         raise HTTPException(status_code=400, detail=f"Could not read the audio: {e}") from e
+    if meta.transcribed:
+        try:
+            _take_document(ctx, sid, meta, sender, images)
+        except Exception as e:
+            logger.exception("Session %s: the handed-over meeting could not be written", sid)
+            for dest in paths.values():
+                dest.unlink(missing_ok=True)
+            with shared_notes.unrestricted():
+                ctx.sessions.delete_session(sid)
+            raise HTTPException(
+                status_code=400, detail=f"Could not take the meeting: {type(e).__name__}"
+            ) from e
 
     if replaced:
         old_files = [Path(r.path) for r in session.recordings]
@@ -390,13 +568,8 @@ async def _take(ctx, form, meta: HandoffMeta, device_id, sender, key, store) -> 
                 pass
             manifest.unlink(missing_ok=True)
         ctx.repo.clear_audio(sid)
-    for rec in recordings:  # from here a crash is recovered at the next start
-        write_manifest(rec, {})
-    ctx.sessions.set_status(sid, SessionStatus.ENCODING)
-    if meta.notes.strip() and not (replaced and session.notes.strip()):
-        # A streamed meeting's notes were typed into it live; a hand-off's come with it.
-        with shared_notes.unrestricted():
-            ctx.sessions.update_notes(sid, meta.notes)
+    # Before anything can be recovered: for a finished meeting (v2) this line is what keeps a
+    # recovery from transcribing it again (recovery.finished_elsewhere).
     history.log(
         ctx,
         sid,
@@ -409,8 +582,56 @@ async def _take(ctx, form, meta: HandoffMeta, device_id, sender, key, store) -> 
         started_at=meta.started_at.isoformat() if meta.started_at else None,
         ended_at=meta.ended_at.isoformat() if meta.ended_at else None,
         replaced=replaced,
+        **({"transcribed": True} if meta.transcribed else {}),
     )
+    for rec in recordings:  # from here a crash is recovered at the next start
+        write_manifest(rec, {})
+    if recordings:
+        ctx.sessions.set_status(sid, SessionStatus.ENCODING)
+    else:  # a finished meeting without audio: nothing to save
+        ctx.sessions.set_status(sid, _done_status(ctx, sid))
+    if meta.transcribed:
+        _after_finished(ctx, sid)
+    elif meta.notes.strip() and not (replaced and session.notes.strip()):
+        # A streamed meeting's notes were typed into it live; a hand-off's come with it.
+        with shared_notes.unrestricted():
+            ctx.sessions.update_notes(sid, meta.notes)
     store.remember(key, sid)
-    ctx.jobs.submit("finish", _finish_all(ctx, sid, recordings, old_files), sid)
+    job = None
+    if recordings:
+        finish = _finish_all(ctx, sid, recordings, old_files, finished=meta.transcribed)
+        job = ctx.jobs.submit("finish", finish, sid)
     logger.info("Session %s: %d part(s) handed over by %s", sid, len(recordings), sender)
+    if meta.transcribed and job is not None:
+        # A finished meeting is answered only once its audio is saved: the member's app deletes
+        # its copy on the answer, so nothing may be left for a recovery to redo.
+        done = await ctx.jobs.wait(job.id)
+        if done is None or done.status != "completed":
+            raise HTTPException(
+                status_code=500,
+                detail="The audio could not be saved here yet; it is saved again at the next "
+                f"start ({getattr(done, 'error', None) or 'stopped'})",
+            )
     return HandoffResult(session_id=sid, replaced=replaced)
+
+
+async def _settled(ctx: AppContext, sid: str, meta: HandoffMeta) -> None:
+    """A retry of a finished meeting (v2) is answered only once the meeting's audio is saved
+    here (its finish, or the recovery after a crash, has run): 409 while it is not."""
+    from ...services.recovery import pending_recordings
+
+    for job in ctx.jobs.list(session_id=sid, active_only=True):
+        if job.kind in ("finish", "recover"):
+            await ctx.jobs.wait(job.id)
+    session = ctx.sessions.get_session(sid)
+    if session is None or not meta.sources:
+        return  # deleted here since (it was received), or nothing to save
+    folder = ctx.settings.recordings_dir / sid
+    if (
+        session.status in (SessionStatus.RECORDING, SessionStatus.ENCODING)
+        or not session.audio_file
+        or (folder.is_dir() and pending_recordings(folder, session))
+    ):
+        raise HTTPException(
+            status_code=409, detail="The meeting's audio is not saved here yet; try again later"
+        )

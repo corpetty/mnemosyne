@@ -8,7 +8,11 @@ import type {
   SatelliteStopResponse
 } from "$lib/types/index.js";
 import * as api from "$lib/api/backend.js";
-import { startSatellite as startSatelliteApi, stopSatellite as stopSatelliteApi } from "$lib/api/local.js";
+import {
+  startSatellite as startSatelliteApi,
+  stopSatellite as stopSatelliteApi,
+  type SatelliteDestination
+} from "$lib/api/local.js";
 import { wsState } from "./websocket.svelte.js";
 import { SAME_ORIGIN } from "./connection.svelte.js";
 import { browserCapture, type Acquired } from "$lib/app/browser-capture.js";
@@ -67,6 +71,8 @@ class AudioState {
   /** The recording in progress goes through THIS computer's backend for its main computer
    * (api/local.ts, backend services/satellite.py): this window is connected to that main computer. */
   satellite = $state(false);
+  /** Where that recording goes: the main computer this one uses, or the team it joined. */
+  satelliteDestination = $state<SatelliteDestination>('main');
   /** A satellite recording the main computer is not receiving: kept on this computer, handed
    * over when it can be reached. It has no meeting (`activeSessionId` is null) until then. */
   localOnly = $state(false);
@@ -122,6 +128,7 @@ class AudioState {
     this.stopClock();
     this.activeSessionId = null;
     this.satellite = false;
+    this.satelliteDestination = 'main';
     this.localOnly = false;
     this.satelliteId = null;
     this.clock = null;
@@ -225,7 +232,9 @@ class AudioState {
     return this.selectedDeviceIds.size > 0;
   }
 
-  async startRecording(sessionId?: string, consent?: string | null) {
+  /** `forTeam`: recorded here for the team this computer joined; the meeting moves there once
+   * its work is done (backend services/team_move.py). */
+  async startRecording(sessionId?: string, consent?: string | null, forTeam = false) {
     if (this.selectedDeviceIds.size === 0) {
       this.error = "Select at least one audio device";
       return;
@@ -257,7 +266,7 @@ class AudioState {
           d.id === BROWSER_MIC && got.labels.mic ? { ...d, description: got.labels.mic } : d
         );
       } else {
-        res = await api.startRecording([...this.selectedDeviceIds], sessionId, consent);
+        res = await api.startRecording([...this.selectedDeviceIds], sessionId, consent, forTeam);
       }
       this.activeSessionId = res.session_id;
       this.clock = res.clock ?? null;
@@ -277,7 +286,11 @@ class AudioState {
    * local backend streams to it, or keeps the recording until it is reachable. The selection is
    * the devices ticked in the picker (this computer's own, see getDevices): the first microphone
    * and the first output or monitor. */
-  async startSatellite(consent?: string | null): Promise<SatelliteStartResponse | undefined> {
+  async startSatellite(
+    consent?: string | null,
+    destination?: SatelliteDestination,
+    sessionId?: string
+  ): Promise<SatelliteStartResponse | undefined> {
     const picked = this.devices.filter((d) => this.selectedDeviceIds.has(d.id));
     const mic = picked.find((d) => d.is_input && !d.is_monitor) ?? null;
     const call = picked.find((d) => d.is_output || d.is_monitor) ?? null;
@@ -291,9 +304,12 @@ class AudioState {
       const res = await startSatelliteApi({
         mic_device: mic?.id ?? null,
         system_device: call?.id ?? null,
-        consent: (consent ?? null) as 'all_parties' | 'in_person' | 'one_party' | null
+        consent: (consent ?? null) as 'all_parties' | 'in_person' | 'one_party' | null,
+        ...(destination ? { destination } : {}),
+        ...(sessionId ? { session_id: sessionId } : {})
       });
       this.satellite = true;
+      this.satelliteDestination = destination ?? 'main';
       this.satelliteId = res.local_id;
       this.localOnly = !res.streaming;
       this.activeSessionId = res.session_id;
@@ -331,6 +347,7 @@ class AudioState {
   /** Show the satellite recording the local backend is making (the window was reopened). */
   resumeSatellite(rec: SatelliteRecording) {
     this.satellite = true;
+    this.satelliteDestination = rec.destination;
     this.satelliteId = rec.local_id;
     this.localOnly = !rec.streaming;
     this.activeSessionId = rec.streaming ? rec.session_id : null;

@@ -781,14 +781,27 @@ class SyncService:
         from .link import find_binary
         from .shared_notes import NotesDocError
         from .sync_merge import apply, both_docs, merge, vv_relation
-        from .sync_state import export_session, same_meeting, write_session
+        from .sync_state import export_session, local_origin, same_meeting, take_document
 
         repo, me, own, sid = self.ctx.repo, self.me, self.own, theirs.id
+
+        def fast_forward(doc: SyncSession, adopt: bool) -> None:
+            """Theirs taken as it is: written, notes items settled, its notes document adopted
+            when we have none (`take_document`, shared with hand-off v2)."""
+            take_document(
+                self.ctx,
+                doc,
+                origin=local_origin(doc, me),
+                vv=doc.vv,
+                bump=False,
+                owner=own,
+                by=peer.name,
+                adopt=adopt,
+            )
+
         ours = export_session(repo, sid, me, own)
         if ours is None:
-            write_session(repo, theirs, local_device_id=me, vv=theirs.vv, bump=False, owner=own)
-            if theirs.notes_doc is not None:
-                sync_notes.adopt(self.ctx, sid, theirs.notes_doc, peer.name)
+            fast_forward(theirs, adopt=True)
             self._remember(peer, sid)
             return _Outcome("new", sid)
         if not same_meeting(ours.created_at, theirs.created_at):
@@ -825,9 +838,7 @@ class SyncService:
             theirs = theirs.model_copy(
                 update={"publications": merge_publications(ours.publications, theirs.publications)}
             )
-            write_session(repo, theirs, local_device_id=me, vv=theirs.vv, bump=False, owner=own)
-            if adopt_doc:
-                sync_notes.adopt(self.ctx, sid, theirs.notes_doc, peer.name)
+            fast_forward(theirs, adopt=adopt_doc)
             self._remember(peer, sid)
             return _Outcome("updated", sid)
         raw = repo.served_snapshot(sid, peer.id, theirs.vv.get(me, 0))

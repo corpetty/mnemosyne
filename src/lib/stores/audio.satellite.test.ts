@@ -91,6 +91,19 @@ describe('recording through this computer', () => {
 		expect(audioState.isRecording).toBe(true);
 	});
 
+	it('passes the destination it is given (the team) and none otherwise', async () => {
+		const { audioState } = await fresh();
+		await audioState.loadDevices();
+		audioState.toggleDevice(1);
+		await audioState.startSatellite(null, 'team');
+		expect(posted.at(-1)?.body).toEqual({
+			mic_device: 1,
+			system_device: null,
+			consent: null,
+			destination: 'team'
+		});
+	});
+
 	it('asks for a device first, and says why a start was refused', async () => {
 		const { audioState } = await fresh();
 		await audioState.loadDevices();
@@ -110,6 +123,7 @@ describe('recording through this computer', () => {
 		audioState.resumeSatellite({
 			local_id: 'loc3',
 			session_id: 'sess3',
+			destination: 'main',
 			streaming: true,
 			title: '',
 			started_at: new Date(Date.now() - 65_000).toISOString(),
@@ -120,5 +134,53 @@ describe('recording through this computer', () => {
 		expect(audioState.recordingDuration).toBeGreaterThanOrEqual(65);
 		audioState.ended();
 		expect(audioState.satellite).toBe(false);
+	});
+});
+
+describe('recording while the window shows the team library', () => {
+	it('lists this computer\'s devices and streams to the team, and remembers where it goes', async () => {
+		const { audioState, connectionState, LOCAL_BACKEND } = await fresh();
+		connectionState.save(LOCAL_BACKEND, 'local-tok', false);
+		connectionState.useLibrary('team');
+		await audioState.loadDevices();
+		expect(audioState.devices.map((d) => d.id)).toEqual([1, 2, 3]); // the local backend's, not the host's
+		audioState.toggleDevice(1);
+		await audioState.startSatellite('one_party', 'team');
+		expect(posted.at(-1)).toEqual({
+			path: '/api/satellite/start',
+			body: { mic_device: 1, system_device: null, consent: 'one_party', destination: 'team' }
+		});
+		expect(audioState.satelliteDestination).toBe('team');
+		await audioState.stopSatellite();
+		expect(audioState.satelliteDestination).toBe('main');
+	});
+
+	it('a recording made here for the team marks the start with for_team', async () => {
+		const { audioState, connectionState, LOCAL_BACKEND } = await fresh();
+		connectionState.save(LOCAL_BACKEND, 'local-tok', false);
+		(fetch as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+			async (url: string, init?: RequestInit) => {
+				posted.push({ path: url.replace(/^https?:\/\/[^/]+/, ''), body: JSON.parse(init!.body as string) });
+				return new Response(JSON.stringify({ session_id: 's9', recording_id: 'r', status: 'recording' }));
+			}
+		);
+		audioState.selectedDeviceIds = new Set([1]);
+		await audioState.startRecording('s9', 'all_parties', true);
+		expect(posted[0].path).toBe('/api/audio/start');
+		expect(posted[0].body).toMatchObject({ device_ids: [1], session_id: 's9', for_team: true });
+	});
+
+	it('an ordinary start does not mention the team', async () => {
+		const { audioState, connectionState, LOCAL_BACKEND } = await fresh();
+		connectionState.save(LOCAL_BACKEND, 'local-tok', false);
+		(fetch as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+			async (url: string, init?: RequestInit) => {
+				posted.push({ path: url.replace(/^https?:\/\/[^/]+/, ''), body: JSON.parse(init!.body as string) });
+				return new Response(JSON.stringify({ session_id: 's9', recording_id: 'r', status: 'recording' }));
+			}
+		);
+		audioState.selectedDeviceIds = new Set([1]);
+		await audioState.startRecording('s9');
+		expect(posted[0].body).not.toHaveProperty('for_team');
 	});
 });

@@ -35,6 +35,7 @@
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
 	import { satelliteState } from '$lib/stores/satellite.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
+	import { teamMemberState } from '$lib/stores/teamMember.svelte.js';
 	import { transcriptState } from '$lib/stores/transcript.svelte.js';
 	import { uiState, type View } from '$lib/stores/ui.svelte.js';
 	import { untrack, type Component } from 'svelte';
@@ -69,6 +70,13 @@
 		const uses = connectionState.usesMain;
 		untrack(() => satelliteState.follow(uses));
 		return () => satelliteState.stop();
+	});
+
+	// Whether this computer has joined a team (and can reach it) comes from its own backend, which the
+	// window may reach even when the team's library does not answer.
+	$effect(() => {
+		void teamMemberState.load();
+		return () => teamMemberState.stop();
 	});
 
 	// Mirror recording state into the tray label and tooltip.

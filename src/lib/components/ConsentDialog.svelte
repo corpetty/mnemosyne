@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { getSettings } from '$lib/api/backend.js';
 	import { focusOnMount } from '$lib/app/focus.js';
-	import { startRecording, type Consent } from '$lib/app/controller.svelte.js';
+	import { addMoveConsent, startRecording, type Consent } from '$lib/app/controller.svelte.js';
 	import { guestNotesState } from '$lib/stores/guestNotes.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
@@ -35,6 +35,11 @@
 		const ask = uiState.consentAsk;
 		if (!ask || !choice) return;
 		uiState.consentAsk = null;
+		// A meeting waiting to move to the team: only the answer is needed.
+		if (ask.moveId) {
+			void addMoveConsent(ask.moveId, choice);
+			return;
+		}
 		// Straight from this click: the browser's microphone and share dialogs need it.
 		void startRecording(ask.fresh, choice);
 	}
@@ -51,7 +56,7 @@
 		onclick={(e) => e.stopPropagation()}
 		onkeydown={(e) => e.key === 'Escape' && cancel()}
 	>
-		<h3 class="text-lg font-semibold text-gray-100">Before recording</h3>
+		<h3 class="text-lg font-semibold text-gray-100">{uiState.consentAsk?.moveId ? 'How they agreed' : 'Before recording'}</h3>
 		<p class="text-sm text-gray-400">How did the people in this meeting agree to be recorded?</p>
 		{#if guestsLive}
 			<p class="text-xs text-gray-400">Guests with the notes link can also type in this meeting's notes.</p>
@@ -75,7 +80,7 @@
 		</div>
 		<div class="flex items-center gap-3">
 			<button onclick={start} disabled={!choice} class="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-500 disabled:opacity-50">
-				Start recording
+				{uiState.consentAsk?.moveId ? 'Save' : 'Start recording'}
 			</button>
 			<button onclick={cancel} class="text-sm text-gray-400 hover:text-gray-200">Cancel</button>
 		</div>

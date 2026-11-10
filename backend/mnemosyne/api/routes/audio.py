@@ -61,6 +61,9 @@ class StartRecordingRequest(ApiModel):
     device_ids: list[int]
     session_id: str | None = None  # Existing session ID, or create new
     consent: Consent | None = None
+    # Recorded here for the team this computer is in: the meeting moves there once its work is
+    # done (services/team_move.py). Nothing else about the recording changes.
+    for_team: bool = False
 
 
 class StartBrowserRecordingRequest(ApiModel):
@@ -232,12 +235,38 @@ async def _apply_calendar(ctx: AppContext, session: Session) -> Session:
 async def start(request: StartRecordingRequest, ctx: AppContext = Depends(get_ctx)):
     if not request.device_ids:
         raise HTTPException(status_code=400, detail="No devices selected")
-    return await _start(
+    if request.for_team:
+        _check_for_team(ctx, request.session_id)
+    started = await _start(
         ctx,
         request.session_id,
         lambda session: begin_recording(ctx, session, request.device_ids),
         request.consent,
     )
+    if request.for_team:
+        _queue_for_team(ctx, started.session_id)
+    return started
+
+
+def _check_for_team(ctx: AppContext, session_id: str | None) -> None:
+    """Before anything is recorded or imported for the team: this computer is in one and the
+    meeting (when it exists) may go there (services/team_move.py)."""
+    moves = ctx.team_moves
+    reason = moves.not_joined()
+    if reason is None and session_id:
+        session = ctx.sessions.get_session(session_id)
+        reason = moves.refusal(session) if session is not None else None
+    if reason:
+        raise HTTPException(status_code=409, detail=reason)
+
+
+def _queue_for_team(ctx: AppContext, session_id: str) -> None:
+    from ...services.team_move import MoveError
+
+    try:
+        ctx.team_moves.queue(session_id)
+    except MoveError as e:  # checked before: only a team left meanwhile
+        logger.warning("Meeting %s not marked for the team: %s", session_id, e.detail)
 
 
 @router.post("/start-browser", response_model=StartRecordingResponse)
@@ -264,6 +293,15 @@ async def start_browser(
 
 def consent_required(ctx: AppContext) -> bool:
     return ctx.settings.require_consent
+
+
+def log_consent(ctx: AppContext, session_id: str, consent: str, part: int | None = None) -> None:
+    """How the people in a meeting agreed to be recorded, in its history (and so in its record,
+    and wherever the meeting travels)."""
+    from ... import access
+
+    who = access.principal()
+    history.log(ctx, session_id, "consent", part, consent=consent, by=who.name if who else "")
 
 
 async def _start(
@@ -297,18 +335,8 @@ async def _start(
         session = ctx.sessions.get_session(session.id) or session
         started = await begin(session)
         if consent is not None:
-            from ... import access
-
-            who = access.principal()
             recording = ctx.active_recordings.get(session.id)
-            history.log(
-                ctx,
-                session.id,
-                "consent",
-                recording.part if recording else None,
-                consent=consent,
-                by=who.name if who else "",
-            )
+            log_consent(ctx, session.id, consent, recording.part if recording else None)
         return started
     finally:
         ctx.starting.discard(session.id)
@@ -832,13 +860,26 @@ async def import_audio(
     name: str | None = Form(None),
     transcribe: bool = Form(True),
     session_id: str | None = Form(None),
+    for_team: bool = Form(False),
     ctx: AppContext = Depends(get_ctx),
 ):
     """Create a session from an uploaded audio/video file and (by default) transcribe it. With
-    `session_id`, the file is added to that meeting as its next part instead."""
+    `session_id`, the file is added to that meeting as its next part instead. `for_team`: the
+    meeting moves to the team this computer is in once its work is done."""
     original = Path(file.filename or "import")
     if original.suffix.lower() not in IMPORT_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Unsupported file type {original.suffix!r}")
+    if for_team:
+        _check_for_team(ctx, session_id)
+    imported = await _import_new(ctx, file, original, name, transcribe, session_id)
+    if for_team:
+        _queue_for_team(ctx, imported.session.id)
+    return imported
+
+
+async def _import_new(
+    ctx: AppContext, file, original: Path, name: str | None, transcribe: bool, session_id
+) -> StopRecordingResponse:
     if session_id:
         return await _import_part(ctx, session_id, file, original, transcribe)
 
@@ -911,6 +952,7 @@ async def import_sample(ctx: AppContext = Depends(get_ctx)):
             name="Sample meeting (AMI corpus)",
             transcribe=False,
             session_id=None,
+            for_team=False,  # called directly: the Form default would be truthy
             ctx=ctx,
         )
     sid = result.session.id

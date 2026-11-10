@@ -10,9 +10,12 @@ relaunched app that cannot attach loses the recording its crashed predecessor le
 (services/pairing.py) opens only DEVICE_PATHS, what the phone page needs; a paired computer's
 opens everything. Another person's computer (a CONTACT device, services/contacts.py) opens only
 /api/share/ over HTTP, as that contact (a member principal), and only while the contact exists
-and is not removed; never on a team server. A person's token (services/users.py) opens the
-API as that person:
-the request runs with them in `access.current`, which decides what they see (access.py).
+and is not removed; never on a team server. A team member's app (a MEMBER device, redeemed with
+an invite through the sidecar) opens the API as its user, but only through the tunnel, only on
+a computer that hosts a team, and only while the user exists and is enabled (checked on every
+request); its channel is `member`, never an owner channel. A person's token (services/users.py)
+opens the API as that person: the request runs with them in `access.current`, which decides what
+they see (access.py).
 
 Requests that came through the link sidecar's tunnel (other computers, other people's too)
 arrive on a loopback port of their own, the tunnel listener (services/tunnel_listener.py), which
@@ -40,7 +43,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .. import access
 from ..config import hosts_team, personal_allowed
-from ..services.pairing import CONTACT, DESKTOP
+from ..services.pairing import CONTACT, DESKTOP, MEMBER
 from .context import AppContext, get_ctx
 
 OPEN_PATHS = {
@@ -78,10 +81,12 @@ API_TOKEN = "api_token"  # the configured API token
 DEVICE = "device"  # a DESKTOP device token: a paired laptop or sync peer
 USER = "user"  # a users.json token (state.user_id)
 CONTACT_CHANNEL = "contact"  # another person's computer (state.device_id)
+MEMBER_DEVICE = "member"  # a team member's app through the tunnel (state.user_id, state.device_id)
 PHONE = "phone"  # a paired phone, DEVICE_PATHS only
 LOCAL = "local"  # no sign-in needed at all: a plain main computer's own window
-CHANNELS = (DESKTOP_WINDOW, API_TOKEN, DEVICE, USER, CONTACT_CHANNEL, PHONE, LOCAL)
+CHANNELS = (DESKTOP_WINDOW, API_TOKEN, DEVICE, USER, CONTACT_CHANNEL, MEMBER_DEVICE, PHONE, LOCAL)
 # The owner of a computer that hosts a team (require_owner_channel); USER only with more checks.
+# MEMBER_DEVICE is never one: an app member is a team member whoever they are.
 OWNER_CHANNELS = {DESKTOP_WINDOW, API_TOKEN, DEVICE, LOCAL}
 
 
@@ -162,7 +167,19 @@ class TokenAuthMiddleware:
             finally:
                 access.current.reset(reset)
         device = self.ctx.pairing.verify(presented)
-        if device is not None and device.kind == CONTACT:
+        if device is not None and device.kind == MEMBER:
+            # Never falls through to the PHONE/DESKTOP branch below: refused means 401.
+            principal = self._member_principal(scope, device)
+            if principal is not None:
+                state["device_id"] = device.id
+                state["user_id"] = principal.user_id
+                state["channel"] = MEMBER_DEVICE
+                reset = access.current.set(principal)
+                try:
+                    return await self.app(scope, receive, send)
+                finally:
+                    access.current.reset(reset)
+        elif device is not None and device.kind == CONTACT:
             principal = self._contact_principal(scope, device, path)
             if principal is not None:
                 state["device_id"] = device.id
@@ -201,6 +218,19 @@ class TokenAuthMiddleware:
             }
         )
         await send({"type": "http.response.body", "body": body})
+
+    def _member_principal(self, scope: Scope, device) -> access.Principal | None:
+        """Who a MEMBER device's request runs as, or None to refuse (401). Looked up on every
+        request: a person disabled or removed is out at once, before the sidecar re-reads the
+        device file. Only through the tunnel (the sidecar vouched for the endpoint), only while
+        this computer hosts a team: with hosting off every caller would read as the owner
+        (`is_owner_channel`), which an app member never is."""
+        if not is_tunnelled(scope) or not hosts_team(self.ctx.settings) or not device.user_id:
+            return None
+        user = self.ctx.users.get(device.user_id)
+        if user is None or user.disabled:
+            return None
+        return access.Principal(user.id, user.name, user.role)
 
     def _contact_principal(self, scope: Scope, device, path: str) -> access.Principal | None:
         """Who a CONTACT token's request runs as, or None to refuse. Resolved by the device's

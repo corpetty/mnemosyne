@@ -9,8 +9,12 @@ import { connectionState, LOCAL_BACKEND } from '$lib/stores/connection.svelte.js
 import type {
   AudioDevice,
   EchoCancelStatus,
+  JoinResponse,
+  JoinedStatus,
   Level,
+  MovesStatus,
   OutboxEntry,
+  PendingMove,
   PrepareResult,
   SatelliteStartResponse,
   SatelliteStatus,
@@ -44,11 +48,18 @@ export async function localRequest<T>(path: string, options?: RequestInit): Prom
 // Recording through this computer (the satellite routes)
 export const getSatellite = (): Promise<SatelliteStatus> => localRequest('/api/satellite');
 
+/** Where a recording goes: the main computer this one uses, or the team it joined (the backend
+ * answers 409 when this computer has no such destination). Left out = the main computer. */
+export type SatelliteDestination = 'main' | 'team';
+
 export interface SatelliteStart {
   mic_device: number | null;
   system_device: number | null;
   title?: string;
   consent?: 'all_parties' | 'in_person' | 'one_party' | null;
+  destination?: SatelliteDestination;
+  /** A meeting already there (an untouched draft) to record into, instead of a new one. */
+  session_id?: string;
 }
 
 export const startSatellite = (body: SatelliteStart): Promise<SatelliteStartResponse> =>
@@ -96,3 +107,42 @@ export const localRemoveSyncPeer = (id: string): Promise<unknown> =>
   localRequest(`/api/sync/peers/${encodeURIComponent(id)}`, { method: 'DELETE' });
 
 export const localSyncNow = (): Promise<unknown> => localRequest('/api/sync/now', { method: 'POST' });
+
+// This computer in a team another computer hosts (backend api/routes/team_member.py). The team's
+// library itself is reached through the connection (stores/connection: `library`); these manage the
+// membership and the meetings moving there, and are always this computer's own backend's.
+export const getJoined = (): Promise<JoinedStatus> => localRequest('/api/joined');
+
+/** Join with the app invite from the hosting computer. The backend makes this computer's API token
+ * when it has none (remote access needs one); the window takes it, or its next request is refused. */
+export async function joinTeam(invite: string, name = ''): Promise<JoinResponse> {
+  const r = await localRequest<JoinResponse>('/api/joined/join', {
+    method: 'POST',
+    body: JSON.stringify({ invite, name })
+  });
+  if (r.new_api_token) connectionState.setLocalToken(r.new_api_token);
+  return r;
+}
+
+export const leaveTeam = (): Promise<JoinedStatus> => localRequest('/api/joined', { method: 'DELETE' });
+
+export const setTeamWork = (work: 'here' | 'host'): Promise<JoinedStatus> =>
+  localRequest('/api/joined/work', { method: 'PUT', body: JSON.stringify({ work }) });
+
+export const getMoves = (): Promise<MovesStatus> => localRequest('/api/joined/moves');
+
+/** Put a meeting of this computer in the team: it moves once its work is done. */
+export const queueMove = (sessionId: string): Promise<PendingMove> =>
+  localRequest(`/api/joined/moves/${encodeURIComponent(sessionId)}`, { method: 'POST' });
+
+export const unqueueMove = (sessionId: string): Promise<MovesStatus> =>
+  localRequest(`/api/joined/moves/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+
+export const consentMove = (
+  sessionId: string,
+  consent: 'all_parties' | 'in_person' | 'one_party'
+): Promise<PendingMove> =>
+  localRequest(`/api/joined/moves/${encodeURIComponent(sessionId)}/consent`, {
+    method: 'POST',
+    body: JSON.stringify({ consent })
+  });

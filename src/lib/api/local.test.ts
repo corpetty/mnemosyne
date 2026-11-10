@@ -79,6 +79,13 @@ describe('the local client', () => {
 		expect(calls[3]).toMatchObject({ method: 'DELETE' });
 	});
 
+	it('a start can name the team as its destination', async () => {
+		const { local } = await fresh();
+		fakeFetch(() => ({ session_id: null, local_id: 'abc', streaming: false }));
+		await local.startSatellite({ mic_device: 5, system_device: null, destination: 'team' });
+		expect(calls[0].body).toEqual({ mic_device: 5, system_device: null, destination: 'team' });
+	});
+
 	it('an error carries the status and the backend detail', async () => {
 		const { local } = await fresh();
 		fakeFetch(() => 409);
@@ -123,5 +130,42 @@ describe('the local client', () => {
 		expect(connectionState.token).toBe('main-tok'); // the main connection is untouched
 		expect(calls[1].auth).toBe('Bearer made-here');
 		expect((await fresh()).connectionState.localToken).toBe('made-here');
+	});
+
+	it('joining a team takes the token the backend made for this computer, and the moves calls name the meeting', async () => {
+		const { connectionState, LOCAL_BACKEND, local } = await fresh();
+		fakeFetch((path, method) =>
+			path === '/api/joined/join'
+				? { joined: true, host_name: 'Desk', new_api_token: 'made-by-join', pending_moves: 0 }
+				: path.endsWith('/consent')
+					? { session_id: 'a/b' }
+					: method === 'DELETE'
+						? { pending: [], moved: [] }
+						: {}
+		);
+		const r = await local.joinTeam('ticket#code', 'Laptop');
+		expect(r.host_name).toBe('Desk');
+		expect(calls[0].body).toEqual({ invite: 'ticket#code', name: 'Laptop' });
+		expect(connectionState.localToken).toBe('made-by-join');
+		await local.queueMove('a/b');
+		await local.unqueueMove('a/b');
+		await local.consentMove('a/b', 'in_person');
+		expect(calls.slice(1).map((c) => [c.method, c.url.replace(LOCAL_BACKEND, '')])).toEqual([
+			['POST', '/api/joined/moves/a%2Fb'],
+			['DELETE', '/api/joined/moves/a%2Fb'],
+			['POST', '/api/joined/moves/a%2Fb/consent']
+		]);
+		expect(calls[3].body).toEqual({ consent: 'in_person' });
+		expect(calls.slice(1).every((c) => c.auth === 'Bearer made-by-join')).toBe(true);
+	});
+
+	it('the team library\'s requests go to the proxy with this computer\'s token', async () => {
+		const { connectionState, LOCAL_BACKEND, backend } = await fresh();
+		connectionState.save(LOCAL_BACKEND, 'local-tok', false);
+		connectionState.useLibrary('team');
+		fakeFetch(() => []);
+		await backend.listSessions();
+		expect(calls[0].url).toBe(`${LOCAL_BACKEND}/api/joined/api/sessions`);
+		expect(calls[0].auth).toBe('Bearer local-tok');
 	});
 });

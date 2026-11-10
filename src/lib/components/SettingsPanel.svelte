@@ -20,6 +20,7 @@
 	import EncryptionSettings from './EncryptionSettings.svelte';
 	import TeamPeopleSettings from './TeamPeopleSettings.svelte';
 	import TeamHostSettings from './TeamHostSettings.svelte';
+	import TeamMembership from './TeamMembership.svelte';
 	import WindowSettings from './WindowSettings.svelte';
 	import GpuSupportCard from './GpuSupportCard.svelte';
 	import PhononCard from './PhononCard.svelte';
@@ -1426,11 +1427,23 @@
 			</div>
 		{/if}
 
-		{#if tab === 'devices'}
+		{#if tab === 'devices' && connectionState.inTeam}
+			<!-- The team's library: what Settings shows here is the host's. This computer's own devices,
+			     sharing and links are in its own library; only the team card is about this computer. -->
+			<TeamMembership />
+			<p class="text-xs text-gray-500">This computer's devices, sharing and links are in Your library.</p>
+		{/if}
+
+		{#if tab === 'devices' && !connectionState.inTeam}
 			<!-- Devices and people: this computer, my devices, people, links, advanced, team server -->
 			<ThisComputer {role} {readOnly} />
 			{#if role === 'satellite'}
 				<p class="text-sm text-gray-400">These are your main computer's settings.</p>
+			{/if}
+			<!-- Joining a team another computer hosts: a computer of one's own that does not host a team
+			     (and the team's own library, whose settings are the host's, still reaches this card). -->
+			{#if !SAME_ORIGIN && !teamMode && !hostsTeam && (role === 'satellite' || (role === 'main' && !readOnly))}
+				<TeamMembership />
 			{/if}
 
 			{#if role === 'main' && !readOnly}
@@ -1659,7 +1672,7 @@
 		{/if}
 
 		<p class="text-xs text-gray-600">
-			Saved to <code class="text-gray-500">{settings.config_file}</code>.
+			{#if settings.config_file}Saved to <code class="text-gray-500">{settings.config_file}</code>.{/if}
 			{#if settings.env_overrides.length > 0}
 				Locked fields are set by environment variables: {settings.env_overrides.join(', ')}.
 			{/if}

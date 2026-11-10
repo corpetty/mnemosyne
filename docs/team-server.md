@@ -64,6 +64,101 @@ when I quit Mnemosyne** leaves the backend serving them after you quit (until yo
 → General → Window can also make closing the window keep Mnemosyne in the tray. **Stop hosting**
 closes the address; accounts and meetings stay.
 
+## Members in the app
+
+A teammate who has the Mnemosyne app (Linux or Mac) can join your team from it instead of using a
+browser. Their app keeps its own library on their computer and shows the team's one click away.
+
+**The invite.** Settings → Devices and people → Your team → People and access: adding a person (or
+**New invite**) shows two things made from one code: the link for a browser and, when remote access
+can run on this computer, the **app invite** (`endpoint…#…`). Whichever is used first uses the code
+up. Send it directly, as the browser link: whoever redeems it first is that person. Without the
+`mnemosyne-link` program the box says why there is no app invite.
+
+**Joining.** In their app: Settings → Devices and people → Your team → **Join a team**. They paste
+the invite, name their computer and press Join. A computer that uses a main computer, hosts a team
+itself or is a team server cannot join, and an app is in one team at a time. The connection is the
+one a paired laptop uses (iroh, a direct line on the same network, else a relay), but it opens a single
+door: the team's address on this computer. It is never your tailnet, your other ports or your
+meetings, and this computer gets no way back into theirs. Like any computer with remote access on,
+theirs announces itself on its local network (mDNS); it accepts no connection from anyone.
+
+**What they see.** The sidebar gets a switch, **Your library** and **Team on <this computer>**, one
+shown at a time. In the team's library they are an ordinary member: their own meetings and what is
+shared with them, read-only for the rest, with search, Ask, tasks and notes done here, on this
+computer, as them. Nothing of the team is kept on their computer. When this computer cannot be
+reached the team library says so and their own library keeps working.
+
+**Where the work runs.** Their choice, with this computer as the opt-in. Settings → Your team has
+the default (**On this computer** or **On <this computer>**), and the menu beside Record chooses for one
+recording:
+
+- *Team on <host>, done on <host>*: their app streams the audio here as it records (the way a laptop
+  records into its main computer), and this computer shows the live transcript, transcribes and
+  summarizes it, as it would for a browser. It needs the connection while recording; gaps are filled
+  from their copy when it ends.
+- *Team on <host>, done on this computer*: recorded, transcribed and summarized on their computer, then
+  **moved**: sent here whole (audio, transcript, summary, notes, comments, images) once it is ready,
+  and deleted there when this computer has answered. A move is retried when the connection is back;
+  Settings → Your team lists meetings waiting, with Retry and Remove from the queue.
+
+Any meeting of their own library can be moved the same way with **Put in the team…** in its menu
+(meetings recorded on another computer or shared with them cannot). A personal meeting never reaches
+this computer unless they do.
+
+**Consent.** If this computer requires consent for recordings (`require_consent`, always in team mode),
+their app asks how the people agreed with this computer's rule for a team recording, wherever it is
+done. A move without that answer is refused until they add it (the waiting list offers it).
+
+**What you see.** A team meeting made either way is the member's meeting on this computer, with the
+team's rules: records, retention, legal hold, flagged phrases, the owner's and reviewers' read access
+and your admin rights. It never leaves for your other computers, your vault, your digest or your
+contacts, as any team meeting. People and access lists their app next to their browsers (`Pat's
+MacBook (app)`), with when it was last seen. An app is not a device of yours: it is not under My
+devices, it can never open your personal features, and it is only accepted through the tunnel door
+(not on the main port or the team address). Hosting must be on: when you stop hosting, apps cannot
+sign in.
+
+**Leaving and removing.** **Leave the team** in their app tells this computer (the device is revoked),
+hangs up and forgets the team; meetings already in the team stay, ones still waiting to move stay in
+their library. Disabling a person or **Sign out everywhere** revokes their apps at once. A removed
+person's app cannot tell that from this computer being off: the sidecar just stops answering, so it
+says the team computer cannot be reached (and, when it can reach it but is refused, that they were signed
+out and need a new invite).
+
+## Members from home
+
+Browser members on your network need only the address. From elsewhere, the easy way is Tailscale
+**machine sharing**: you share this computer, and only it, with their Tailscale account, and they open
+`https://<this computer's tailnet name>:8443` with the invite link. App members need none of this:
+their app reaches you over iroh, without a tailnet.
+
+1. In the Tailscale admin console, Machines → this computer → Share, and invite their email address.
+   They accept and then see this computer in their tailnet.
+2. Restrict what a shared machine's guest can reach. **With Tailscale's default allow-all policy a
+   person you share with reaches every port this computer listens on**, not only 8443 (SSH, a
+   database, anything). Replace it with grants such as these, using this computer's own `100.x`
+   address:
+
+   ```json
+   "grants": [
+     {"src": ["autogroup:member"], "dst": ["*"], "ip": ["*"]},
+     {"src": ["autogroup:shared"], "dst": ["100.101.102.103"], "ip": ["tcp:8443"]}
+   ]
+   ```
+
+   The first line keeps everything working for you and your own devices; the second lets people you
+   shared with reach port 8443 of this computer and nothing else.
+3. Mind the rules around that: `"src": ["*"]` also matches people you shared a machine with, so an
+   old rule written that way gives them whatever it allows. Once a `grants` section exists,
+   anything no rule matches is denied, including what the default policy allowed: add a `tests` block
+   (an invited person's address must reach `100.101.102.103:8443` and not its other ports or your other
+   machines) so the console checks it each time you save.
+4. Tagged machines cannot be shared: this computer has to be a user's own machine, not `tag:…`. If
+   Tailnet Lock is on, a signing node must sign the invited person's device before it can reach anything.
+
+Use **Use my Tailscale name** (above) so their browser gets a real certificate.
+
 The rest of this page is for a dedicated team server: a machine with no owner at it (team mode on,
 no `team_owner_id`), which can run while nobody is at it, encrypts with a TPM-sealed key and has its
 own backups. Library sync, laptops recording through it, hand-offs and sharing with people stay off

@@ -59,6 +59,7 @@ from .routes.sync import router as sync_router
 from .routes.system import router as system_router
 from .routes.tasks import router as tasks_router
 from .routes.team import router as team_router
+from .routes.team_member import router as team_member_router
 from .routes.topics import router as topics_router
 from .routes.users import router as users_router
 from .websocket import router as ws_router
@@ -135,6 +136,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(connections_router)
     app.include_router(handoff_router)
     app.include_router(satellite_router)
+    app.include_router(team_member_router)
     app.include_router(contacts_router)
     app.include_router(demo_router)
     app.include_router(sync_router)

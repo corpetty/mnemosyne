@@ -2,14 +2,17 @@
  * App behaviour that spans stores: connecting to the backend, recording actions
  * (buttons, shortcuts, tray, command line, calendar banner) and keyboard shortcuts.
  */
+import { consentMove, leaveTeam, queueMove } from '$lib/api/local.js';
 import {
   addBookmark,
   exportToObsidian,
   getActiveRecordings,
   getEncryption,
   getHealth,
+  deleteSession,
   getJob,
   getMe,
+  getSession,
   redeemInvite,
   getSettings,
   getSystemInfo,
@@ -23,20 +26,31 @@ import { audioState } from '$lib/stores/audio.svelte.js';
 import { autoRecordState, type AutoMode } from '$lib/stores/autorecord.svelte.js';
 import { commentsState } from '$lib/stores/comments.svelte.js';
 import { calendarState } from '$lib/stores/calendar.svelte.js';
-import { connectionState, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
+import { connectionState, SAME_ORIGIN, type Library } from '$lib/stores/connection.svelte.js';
 import { guestNotesState } from '$lib/stores/guestNotes.svelte.js';
 import { jobsState } from '$lib/stores/jobs.svelte.js';
 import { satelliteState } from '$lib/stores/satellite.svelte.js';
 import { sessionState } from '$lib/stores/session.svelte.js';
 import { toastState } from '$lib/stores/toast.svelte.js';
 import { teamState } from '$lib/stores/team.svelte.js';
+import { teamMemberState } from '$lib/stores/teamMember.svelte.js';
+import {
+  consentRequiredFor,
+  draftPlan,
+  isEmptyDraft,
+  libraryFor,
+  saveOpenAfterSwitch,
+  savePendingStart,
+  takeOpenAfterSwitch,
+  takePendingStart
+} from '$lib/app/teamDestination.js';
 import { transcriptState } from '$lib/stores/transcript.svelte.js';
 import { uiState, type ShellStage, type View } from '$lib/stores/ui.svelte.js';
 import { contactsState } from '$lib/stores/contacts.svelte.js';
 import { syncState } from '$lib/stores/sync.svelte.js';
 import { updateState } from '$lib/stores/update.svelte.js';
 import { wsState } from '$lib/stores/websocket.svelte.js';
-import type { BackendEvent, RecoveredRecording, SatelliteRecording } from '$lib/types/index.js';
+import type { BackendEvent, MovedMeeting, RecoveredRecording, SatelliteRecording } from '$lib/types/index.js';
 
 // ---- navigation ----------------------------------------------------------------
 
@@ -58,14 +72,56 @@ export const openSetup = () => openView('setup');
 /** How the people in a recording agreed to it (backend routes/audio.py Consent). */
 export type Consent = 'all_parties' | 'in_person' | 'one_party';
 
+/** Show the other library: this computer's own, or the team's. Saves the choice and reloads the
+ * window, as connecting to a main computer does (RemoteConnect): every store, the WebSocket, the
+ * open meeting and the notes document belong to one backend, and a reload is the way that cannot
+ * leave one of them on the other library. A recording in progress is followed in the library it
+ * was started in, so there is no switching while there is one. */
+export function switchLibrary(library: Library): boolean {
+  if (library === connectionState.library) return false;
+  if (audioState.isRecording || audioState.pending) {
+    toastState.info('Stop the recording before switching library');
+    return false;
+  }
+  connectionState.useLibrary(library);
+  location.reload();
+  return true;
+}
+
 export async function startRecording(fresh = false, consent?: Consent) {
   if (audioState.pending) return; // a click already on its way
-  if (connectionState.consentRequired && !consent) {
+  // Where this recording goes (the Record menu, else the default for the library shown). A team
+  // destination is followed in the library it needs: a recording made on this computer is on this
+  // computer's own backend, one streamed to the team is a meeting of the team's library.
+  const destination = teamMemberState.destination;
+  if (teamMemberState.joined && !connectionState.usesMain) {
+    const needs = libraryFor(destination);
+    if (needs !== connectionState.library) {
+      // A "New meeting" left open and untouched would stay behind empty in this library.
+      if (draftPlan(connectionState.library, destination, sessionState.activeSession) === 'remove') {
+        await discardEmptyDraft();
+      }
+      savePendingStart({ destination, fresh });
+      switchLibrary(needs);
+      return;
+    }
+  }
+  // A team destination follows the HOST's rule for consent, whichever backend the window is on.
+  const asks = consentRequiredFor(destination, connectionState.consentRequired, teamMemberState.hostConsentRequired);
+  if (asks && !consent) {
     uiState.consentAsk = { fresh }; // ConsentDialog asks, then comes back here
     return;
   }
   // A computer that uses a main computer records through its own backend, never the main one's.
-  if (connectionState.usesMain) return startSatelliteRecording(consent);
+  if (connectionState.usesMain) return startSatelliteRecording(consent, 'main');
+  // Streamed to the team: the same path, with the team as its destination.
+  if (destination === 'team-host') {
+    // An untouched draft open in the team's library is the meeting recorded into, not a second one.
+    const draft = draftPlan(connectionState.library, destination, sessionState.activeSession) === 'use';
+    await startSatelliteRecording(consent, 'team', draft ? sessionState.activeSession?.id : undefined);
+    if (audioState.isRecording) teamMemberState.choose(null);
+    return;
+  }
   // In the browser the microphone and share dialogs come first, straight from the click.
   if (audioState.inBrowser && !(await audioState.acquireBrowser())) {
     toastState.error(audioState.error ?? 'Could not start recording');
@@ -79,28 +135,150 @@ export async function startRecording(fresh = false, consent?: Consent) {
     }
     if (!sessionState.activeSession) return;
     const sessionId = sessionState.activeSession.id;
-    const res = await audioState.startRecording(sessionId, consent);
+    const forTeam = destination === 'team-here';
+    const res = await audioState.startRecording(sessionId, consent, forTeam);
     if (res) {
       transcriptState.startLive(sessionId);
-      toastState.info(res.live_job_id ? 'Recording started, live transcript on' : 'Recording started');
+      const note = res.live_job_id ? 'Recording started, live transcript on' : 'Recording started';
+      toastState.info(forTeam ? `${note}. It moves to ${teamMemberState.teamName} once transcribed` : note);
       uiState.activeTab = 'recording';
+      teamMemberState.choose(null);
+    } else if (audioState.error) {
+      toastState.error(audioState.error);
     }
   } finally {
     audioState.pending = null;
   }
 }
 
+/** Remove the meeting that is open when it is still an empty draft (looked at again just now: notes
+ * may have been typed since it was loaded). Whatever goes wrong, it stays: an empty meeting is
+ * harmless, a lost one is not. */
+async function discardEmptyDraft() {
+  const open = sessionState.activeSession;
+  if (!open) return;
+  try {
+    if (!isEmptyDraft(await getSession(open.id))) return;
+    await deleteSession(open.id);
+    if (sessionState.activeSession?.id === open.id) sessionState.show(null);
+  } catch {
+    /* kept */
+  }
+}
+
+/** Leave the team this computer joined. The window goes back to its own library first when it shows
+ * the team's. Meetings already in the team stay there; waiting ones stay in this library. */
+export async function leaveCurrentTeam(): Promise<boolean> {
+  try {
+    teamMemberState.apply(await leaveTeam());
+  } catch (e) {
+    toastState.error(e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not leave the team');
+    return false;
+  }
+  if (connectionState.inTeam) {
+    connectionState.useLocal();
+    location.reload();
+  }
+  return true;
+}
+
+/** Put a meeting of this library in the team (it moves once its work is done). */
+export async function putInTeam(sessionId: string): Promise<boolean> {
+  const team = teamMemberState.teamName;
+  try {
+    await queueMove(sessionId);
+  } catch (e) {
+    toastState.error(e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not put the meeting in the team');
+    return false;
+  }
+  toastState.info(`Moving to ${team}`);
+  void teamMemberState.load();
+  void teamMemberState.loadMoves();
+  teamMemberState.expectMove(); // the window hears when it has arrived
+  return true;
+}
+
+/** A meeting arrived in the team (the move finished; its copy here is deleted): the list is
+ * refreshed, an open copy is closed, and the toast opens the team's meeting. */
+function announceMoved(m: MovedMeeting) {
+  void sessionState.loadSessions();
+  if (!connectionState.inTeam && sessionState.activeSession?.id === m.session_id) sessionState.show(null);
+  toastState.show(`Moved to ${teamMemberState.teamName}`, 'success', 20_000, {
+    label: 'Open',
+    run: () => openInTeam(m.host_session_id)
+  });
+}
+teamMemberState.onMoved = announceMoved;
+
+/** The team's meeting `hostSessionId`: open it, in the team library (switching there first). */
+export async function openInTeam(hostSessionId: string) {
+  if (connectionState.inTeam) {
+    uiState.view = 'home';
+    await sessionState.selectSession(hostSessionId);
+    return;
+  }
+  saveOpenAfterSwitch(hostSessionId);
+  switchLibrary('team');
+}
+
+/** After a switch made by "Open" on a moved meeting: open it, once. */
+async function runOpenAfterSwitch() {
+  const id = takeOpenAfterSwitch();
+  if (!id || !connectionState.inTeam) return;
+  uiState.view = 'home';
+  await sessionState.selectSession(id);
+}
+
+/** The team asked how the people in a waiting meeting agreed to be recorded: the consent dialog
+ * answers for that meeting, and the move is tried again. */
+export function askMoveConsent(sessionId: string) {
+  uiState.consentAsk = { fresh: false, moveId: sessionId };
+}
+
+export async function addMoveConsent(sessionId: string, consent: Consent) {
+  try {
+    await consentMove(sessionId, consent);
+    toastState.info(`Saved how they agreed. Moving to ${teamMemberState.teamName}`);
+  } catch (e) {
+    toastState.error(e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not save how they agreed');
+  }
+  void teamMemberState.load();
+  void teamMemberState.loadMoves();
+}
+
+/** Settings → Devices and people → Your team. */
+export function openYourTeam() {
+  uiState.settingsTab = 'devices';
+  openView('settings');
+  setTimeout(() => document.getElementById('your-team')?.scrollIntoView({ block: 'start' }), 100);
+}
+
+/** After a library switch made by Record: start the recording that asked for it, once. */
+async function runPendingStart() {
+  const p = takePendingStart();
+  if (!p) return;
+  await teamMemberState.load();
+  if (!teamMemberState.joined || audioState.isRecording || audioState.pending) return;
+  if (libraryFor(p.destination) !== connectionState.library) return;
+  teamMemberState.choose(p.destination);
+  await startRecording(p.fresh);
+}
+
 /** Uses-my-main-computer role (docs/plans/2026-11-09-connections-design.md, task 8): this laptop's
  * backend captures and streams to the main computer's meeting, or, when it cannot be reached, keeps
  * the recording until it can. The meeting is made by the main computer (always a new one), so
  * there is no session to create here. */
-async function startSatelliteRecording(consent?: Consent) {
+async function startSatelliteRecording(
+  consent?: Consent,
+  destination: 'main' | 'team' = 'main',
+  sessionId?: string
+) {
   if (!(await audioState.ensureDevices())) {
     toastState.error('Choose a microphone and/or call audio on this computer first');
     uiState.view = 'home';
     return;
   }
-  const res = await audioState.startSatellite(consent);
+  const res = await audioState.startSatellite(consent, destination, sessionId);
   if (!res) {
     toastState.error(audioState.error ?? 'Could not start recording');
     return;
@@ -111,17 +289,18 @@ async function startSatelliteRecording(consent?: Consent) {
     transcriptState.startLive(res.session_id);
     await sessionState.selectSession(res.session_id);
     sessionState.loadSessions();
-    toastState.info(`Recording started, going to ${satelliteState.mainName}`);
+    toastState.info(`Recording started, going to ${satelliteState.nameFor(destination)}`);
   } else {
     // Nothing on the main computer yet: the recording screen shows it on this computer.
     sessionState.show(null);
     uiState.view = 'home';
-    toastState.info(`Recording on this computer. It goes to ${satelliteState.mainName} when it can be reached.`);
+    toastState.info(`Recording on this computer. It goes to ${satelliteState.nameFor(destination)} when it can be reached.`);
   }
 }
 
 /** Stop a satellite recording and say where it stands. */
 async function stopSatelliteRecording() {
+  const main = satelliteState.nameFor(audioState.satelliteDestination);
   const res = await audioState.stopSatellite();
   if (res) stoppedLocal.add(res.local_id);
   void satelliteState.refresh();
@@ -129,7 +308,6 @@ async function stopSatelliteRecording() {
     if (audioState.error) toastState.error(audioState.error);
     return;
   }
-  const main = satelliteState.mainName;
   if (res.outcome === 'waiting') {
     toastState.show(`Recording kept on this computer. It goes to ${main} when it can be reached.`, 'info', 15_000);
     return;
@@ -168,7 +346,9 @@ export async function stopAndTranscribe() {
  *  to come back; backend/mnemosyne/api/app_watch.py): show that recording, Stop and all. */
 async function resumeActiveRecording() {
   if (audioState.isRecording || audioState.pending) return;
-  if (connectionState.usesMain) return; // this computer's own recording: followSatelliteRecording
+  // This computer's own recording is followed through its own backend (followSatelliteRecording);
+  // the team's backend knows only what is streamed to it.
+  if (connectionState.usesMain || connectionState.inTeam) return;
   const [active] = await getActiveRecordings().catch(() => []);
   if (!active || audioState.isRecording) return;
   audioState.resume(active.session_id, active.started_at, active.device_ids, active.problems);
@@ -257,7 +437,8 @@ function followSatelliteRecording() {
   const rec = status.recording;
   if (rec) {
     satelliteSeen = rec.local_id;
-    if (!audioState.isRecording && !stoppedLocal.has(rec.local_id) && connectionState.usesMain) {
+    const followed = connectionState.usesMain || (connectionState.inTeam && rec.destination === 'team');
+    if (!audioState.isRecording && !stoppedLocal.has(rec.local_id) && followed) {
       void resumeSatelliteRecording(rec);
     }
     return;
@@ -265,11 +446,12 @@ function followSatelliteRecording() {
   if (audioState.satellite && audioState.isRecording && satelliteSeen === audioState.satelliteId) {
     satelliteSeen = null;
     const wasStreaming = !audioState.localOnly;
+    const main = satelliteState.nameFor(audioState.satelliteDestination);
     audioState.ended();
     toastState.show(
       wasStreaming
-        ? `The recording stopped. What was recorded is kept and goes to ${satelliteState.mainName}.`
-        : `The recording stopped. It goes to ${satelliteState.mainName} when it can be reached.`,
+        ? `The recording stopped. What was recorded is kept and goes to ${main}.`
+        : `The recording stopped. It goes to ${main} when it can be reached.`,
       'info',
       15_000
     );
@@ -620,7 +802,7 @@ export async function handleRemoteAction(action: string) {
     if (!(await audioState.ensureDevices())) {
       await invokeShell('show_window');
       uiState.closePanels();
-      if (!connectionState.usesMain) await sessionState.createSession();
+      if (!connectionState.usesMain && !connectionState.inTeam) await sessionState.createSession();
       uiState.activeTab = 'recording';
       toastState.error('Choose a microphone and/or system audio first, then start again');
       return;
@@ -761,6 +943,8 @@ function onConnected(): () => void {
   if (connectionState.ownsPersonal) void contactsState.load();
   transcriptState.init();
   void resumeActiveRecording();
+  void runPendingStart();
+  void runOpenAfterSwitch();
   jobsState.init();
   askState.init();
   digestState.init();

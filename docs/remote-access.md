@@ -97,6 +97,12 @@ On a trusted LAN without Tailscale, run the backend with `--host 0.0.0.0` from a
 `http://<lan address>:8008` and record with their own recorder app rather than in the page, and
 anyone on the network can see the traffic. The desktop app cannot be started that way.
 
+## A team on someone else's computer
+
+A teammate's app can join a team hosted on another computer (Settings → Devices and people → Your
+team) over the same connection, keeping its own library beside the team's. It is not one of your
+devices: see "Members in the app" in [team-server.md](team-server.md).
+
 ## Two equal main computers
 
 Two computers that both run Mnemosyne can share one library, each recording and working for itself:

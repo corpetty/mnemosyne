@@ -311,6 +311,24 @@ its copy only after it. The main computer logs `handed_over` in the meeting's hi
 like a stopped recording (`finish` job, `auto_transcribe`). `api/app_watch.py` treats an active
 laptop recording like a local one: it outlives a crashed window by the grace period.
 
+### A team member's app (joins a team another computer hosts)
+
+A second tenant of the same machinery (docs/plans/2026-11-10-team-members-in-the-app.md; use in
+docs/team-server.md "Members in the app"). The member's app redeems the host's app invite through its
+sidecar (`pair`), so the host makes a MEMBER device for that endpoint and person (`services/pairing.py`,
+`api/routes/pairing.py`), and the sidecar `dial`s the host: the host's tunnel listener is served on a
+loopback port of the member's computer. The host accepts the MEMBER token only there (`auth.py`
+`_member_principal`: tunnelled, hosting, user enabled), as that person on channel `member`, which no owner
+route accepts. The member's own backend holds the connection (`services/team_member.py`, `<data_dir>/team.json`)
+and proxies the team under `/api/joined/*` (`api/routes/team_member.py`, allowed paths only, HTTP and
+WebSockets bridged, its own token never forwarded), so the window shows the team's library by repointing its
+one connection (`connectionState.library`) and never holds the member token. Nothing of the team is stored on
+the member's computer. A recording goes to the team in one of two ways: streamed to the host with the
+laptop recorder above, the team as its destination (`satellite.py`), or recorded and transcribed here and
+then MOVED (`services/team_move.py`): hand-off v2 sends the finished meeting as library sync's document plus
+its audio and images, the host answers once the audio is saved, and only then is the local copy deleted
+(`handoff.py`; recovery never transcribes such a meeting). The host's copy is the record.
+
 ### Speaker bleed removal
 
 Without headphones the mic hears the remote participants through the speakers, so the mic transcript

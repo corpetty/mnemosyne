@@ -254,6 +254,20 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
 - Team hosting: every new reader of meetings (route, job, export, index) must go through `repo.read_scope()` / `_sees`;
   `test_hosting_visibility.py` lists the known readers and fails on an unknown one. A new session-less WebSocket event type is
   denied to non-owners on a host until it is added to `TEAM_EVENTS` (api/websocket.py). Personal routes take `require_owner_channel`.
+- Team members' apps: a MEMBER device's token (services/pairing.py `MEMBER`, `user_id`) is tunnel-only and never an owner channel: auth.py
+  `_member_principal` also requires hosting and an enabled user, and gives channel `member` (not in `OWNER_CHANNELS`), so every
+  `require_owner_channel` route answers 403 to it. Never accept it on the main port or the team listener.
+- The member's own backend proxies the team under `/api/joined` (api/routes/team_member.py): allowed paths only (`api/...` but not
+  `api/joined`/`api/record`, `ws`, `health`), its own token never forwarded and the member token never given to the window. A new
+  route on the member's backend that must reach the host goes through `TeamMember.destination()`, never a URL from the window.
+- A move (services/team_move.py) deletes the local copy only after the host answered with its id, and the host answers a
+  `transcribed` hand-off only after the audio is saved; recovery never transcribes a meeting whose history has a `handed_over`
+  line with `transcribed` (services/recovery.py). Do not delete or re-transcribe on either side before that.
+- A revoked member's app reads the host as unreachable (the sidecar just stops answering and cannot tell why); only a 401 through a
+  live connection marks `signed_out`. The team is called "Team on <host>" everywhere in the UI (`teamLabel`, teamDestination.ts).
+- The member e2e (tests-e2e/team-members.spec.ts) uses two demo backends, 8078 (host) and 8088 (member), joined through
+  `POST /api/demo/team-host` and `/api/demo/join-team` (routes/demo.py): no sidecar, the member's `TeamMember.listen` is the host's
+  tunnel listener. The window's 127.0.0.1:8008 is rewritten to 8088 by the spec.
 
 ## Roadmap (agreed 2026-09-22)
 
@@ -726,6 +740,21 @@ top of the caller, an intersection; services/host_scope.py asks for OWN/PERSONAL
 `X-Mnemosyne-Client: mcp`); `repo._sees` is the one SQL condition. Library sync carries OWN meetings only and tombstones keep the
 deleted meeting's owner. Records period and flagged phrases cover team meetings only while hosting (a legal hold holds any meeting).
 Non-owners get `PERSONAL_SETTINGS` at defaults from `GET /api/settings`. Tests: `tests/test_hosting_*.py`, `test_sync_hosting.py`.
+
+Team members in the app (unreleased; plan docs/plans/2026-11-10-team-members-in-the-app.md, use in docs/team-server.md "Members in the app"):
+a teammate's app (Linux or Mac) joins a team hosted on someone's main computer and shows its own library and the team's one click apart
+(library switch, "Team on <host>"). Join: the host's invite also carries an `app_invite` (`<ticket>#<code>`, routes/users.py); the member's
+backend redeems it through its sidecar (`pair` with `card {"want": "team"}`, services/team_member.py, `<data_dir>/team.json`), the host makes a
+MEMBER device (pairing.py `add_member`, `revoke_members` on disable and sign-out, `DELETE /api/pairing/me` when the app leaves) and the
+sidecar `dial`s the host's tunnel listener on a loopback port. The window never holds the member token: the member's backend proxies the
+team under `/api/joined/*` and the window repoints its one connection (`connectionState.library`, `TEAM_URL`, `LibrarySwitch.svelte`).
+Recording into the team has two work modes (per-member default `team.json work`, per recording in `RecordDestination.svelte`): streamed
+to the host with the laptop recorder, the team as a destination (satellite.py `destination: team`); or recorded and transcribed on the
+member's computer and MOVED (services/team_move.py, `team_moves.json`, hand-off v2 `transcribed` + `session` in routes/handoff.py written by
+sync_state.py `take_document`, as library sync's fast-forward, `Put in the team…` in MeetingActions, `MovingToTeam`, `TeamMembership.svelte`). The host's copy is the
+record: team meetings never leave the host and a member's personal meetings never reach it unless moved. Consent follows the host's rule.
+Browser members from home: Tailscale machine sharing of the host only (docs/team-server.md "Members from home"). e2e as in Gotchas.
+Out of scope: dedicated servers taking app members, more than one team per computer, an offline team cache, Windows.
 
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 

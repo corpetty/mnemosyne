@@ -4,6 +4,7 @@
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { uiState, type View } from '$lib/stores/ui.svelte.js';
+	import { teamMemberState } from '$lib/stores/teamMember.svelte.js';
 	import { wsState } from '$lib/stores/websocket.svelte.js';
 	import { signOut } from '$lib/api/backend.js';
 	import { canReview } from '$lib/app/supervision.js';
@@ -32,17 +33,15 @@
 	);
 
 	const active = (v: View) => uiState.view === v && !sessionState.activeSession;
-	const status = $derived(
-		uiState.backendStatus === 'unreachable'
-			? 'Backend not answering'
-			: uiState.backendStatus === 'checking'
-				? 'Connecting to the backend…'
-				: connectionState.isLocal
-					? wsState.connected
-						? 'Connected'
-						: 'Connected (no live updates)'
-					: `Connected to ${connectionState.host ?? connectionState.url}`
-	);
+	const status = $derived.by(() => {
+		const team = connectionState.inTeam ? teamMemberState.teamName : '';
+		if (uiState.backendStatus === 'unreachable') return team ? `${team} not reachable` : 'Backend not answering';
+		if (uiState.backendStatus === 'checking') return 'Connecting to the backend…';
+		// In the team's library the label names the library.
+		if (team) return wsState.connected ? team : `${team} (no live updates)`;
+		if (connectionState.isLocal) return wsState.connected ? 'Connected' : 'Connected (no live updates)';
+		return `Connected to ${connectionState.host ?? connectionState.url}`;
+	});
 </script>
 
 <header class="border-b border-gray-800 px-4 py-2 flex items-center gap-4 flex-shrink-0">

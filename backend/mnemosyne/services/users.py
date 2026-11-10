@@ -215,6 +215,21 @@ class UserService:
             expires, user_id = self._invites.get(_hash(code), (0.0, ""))
             return self._users.get(user_id) if expires > self.clock() else None
 
+    def use_invite(self, code: str) -> User:
+        """Use an invite up without signing any browser in (an app member's device is made by
+        the pairing service instead). Raises InvalidInvite like `redeem`."""
+        with self._lock:
+            self._fresh()
+            expires, user_id = self._invites.pop(_hash(code), (0.0, ""))
+            user = self._users.get(user_id)
+            if expires <= self.clock() or user is None or user.disabled:
+                self._save()
+                raise InvalidInvite(
+                    "This invite link is invalid, used or expired: ask for a new one"
+                )
+            self._save()
+            return user
+
     def redeem(self, code: str, device: str) -> tuple[User, str]:
         with self._lock:
             self._fresh()

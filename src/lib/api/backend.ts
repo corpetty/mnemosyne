@@ -150,7 +150,7 @@ export async function getHealth(): Promise<{
 // A computer that uses a main computer records with ITS OWN devices (api/local.ts), never the main
 // computer's: the device list, level checks, self-test and echo cancellation go to the local backend.
 export async function getDevices(): Promise<AudioDevice[]> {
-  if (connectionState.usesMain) return getLocalDevices();
+  if (connectionState.devicesAreLocal) return getLocalDevices();
   return request('/api/devices');
 }
 
@@ -158,11 +158,17 @@ export async function getDevices(): Promise<AudioDevice[]> {
 export async function startRecording(
   deviceIds: number[],
   sessionId?: string,
-  consent?: string | null
+  consent?: string | null,
+  forTeam = false
 ): Promise<StartRecordingResponse> {
   return request('/api/audio/start', {
     method: 'POST',
-    body: JSON.stringify({ device_ids: deviceIds, session_id: sessionId ?? null, consent: consent ?? null })
+    body: JSON.stringify({
+      device_ids: deviceIds,
+      session_id: sessionId ?? null,
+      consent: consent ?? null,
+      ...(forTeam ? { for_team: true } : {})
+    })
   });
 }
 
@@ -702,13 +708,14 @@ export async function importSample(): Promise<StopRecordingResponse> {
 
 export async function importAudio(
   file: File,
-  opts: { name?: string; transcribe?: boolean; sessionId?: string } = {}
+  opts: { name?: string; transcribe?: boolean; sessionId?: string; forTeam?: boolean } = {}
 ): Promise<StopRecordingResponse> {
   const form = new FormData();
   form.append('file', file, file.name);
   if (opts.name) form.append('name', opts.name);
   if (opts.sessionId) form.append('session_id', opts.sessionId); // added as the meeting's next part
   if (opts.transcribe === false) form.append('transcribe', 'false');
+  if (opts.forTeam) form.append('for_team', 'true'); // recorded here, moves to the team once transcribed
   const res = await fetch(`${base()}/api/audio/import`, {
     method: 'POST',
     body: form,
@@ -730,7 +737,7 @@ export async function importAudio(
 export type { EchoCancelStatus };
 
 export async function getEchoCancel(): Promise<EchoCancelStatus> {
-  if (connectionState.usesMain) return getLocalEchoCancel();
+  if (connectionState.devicesAreLocal) return getLocalEchoCancel();
   return request('/api/audio/echo-cancel');
 }
 
@@ -742,7 +749,7 @@ export async function setEchoCancel(
   mic?: string,
   noise?: { noise_suppression?: boolean; noise_suppression_db?: number; noise_suppression_record?: boolean },
 ): Promise<EchoCancelStatus> {
-  if (connectionState.usesMain) return setLocalEchoCancel(enabled, mic, noise);
+  if (connectionState.devicesAreLocal) return setLocalEchoCancel(enabled, mic, noise);
   return request('/api/audio/echo-cancel', {
     method: 'POST',
     body: JSON.stringify({ enabled, mic, ...noise }),
@@ -1225,12 +1232,12 @@ export async function setAttendees(sessionId: string, attendees: string[]): Prom
 
 // Levels and the system-audio self-test
 export async function getDeviceLevel(deviceId: number, seconds = 1): Promise<Level> {
-  if (connectionState.usesMain) return getLocalDeviceLevel(deviceId, seconds);
+  if (connectionState.devicesAreLocal) return getLocalDeviceLevel(deviceId, seconds);
   return request(`/api/audio/level/${deviceId}?seconds=${seconds}`);
 }
 
 export async function runSelfTest(deviceId: number): Promise<SelfTestResult> {
-  if (connectionState.usesMain) return runLocalSelfTest(deviceId);
+  if (connectionState.devicesAreLocal) return runLocalSelfTest(deviceId);
   return request('/api/audio/self-test', { method: 'POST', body: JSON.stringify({ device_id: deviceId }) });
 }
 

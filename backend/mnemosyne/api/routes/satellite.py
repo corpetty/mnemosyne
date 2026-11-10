@@ -40,6 +40,9 @@ class SatelliteMain(ApiModel):
     name: str
 
 
+Destination = Literal["main", "team"]
+
+
 class SatelliteSource(ApiModel):
     source: Literal["mic", "system"]
     label: str
@@ -51,7 +54,8 @@ class SatelliteSource(ApiModel):
 
 class SatelliteRecording(ApiModel):
     local_id: str
-    session_id: str | None  # the main computer's meeting when streaming, else None
+    session_id: str | None  # the main computer's (or team's) meeting when streaming, else None
+    destination: Destination  # where this recording goes
     streaming: bool  # False: recorded here only, handed over later
     title: str
     started_at: str  # UTC ISO
@@ -68,11 +72,14 @@ class OutboxEntry(ApiModel):
     state: Literal["recording", "waiting", "sending", "failed"]
     last_error: str
     replaces: str | None  # the main computer's meeting whose streamed audio it completes
+    destination: Destination  # the main computer or the team it is handed to
 
 
 class SatelliteStatus(ApiModel):
     main: SatelliteMain | None  # the main computer this one uses (None: it is one)
-    reachable: bool
+    reachable: bool  # the main computer answers
+    team: SatelliteMain | None  # the team this computer is in (None: not in one, or signed out)
+    team_reachable: bool  # the team's host answers
     recording: SatelliteRecording | None
     outbox: list[OutboxEntry]
 
@@ -82,10 +89,13 @@ class SatelliteStartRequest(ApiModel):
     system_device: int | None = None
     title: str = ""
     consent: Consent | None = None
+    destination: Destination = "main"  # the main computer, or the team this computer is in
+    # A meeting already there (an empty draft the person opened) to record into, not a new one.
+    session_id: str | None = None
 
 
 class SatelliteStartResponse(ApiModel):
-    session_id: str | None  # the main computer's meeting, when streaming
+    session_id: str | None  # the main computer's (or team's) meeting, when streaming
     local_id: str
     streaming: bool
 
@@ -107,9 +117,13 @@ async def status(ctx: AppContext = Depends(get_ctx)):
     sat = satellite.service(ctx)
     await sat.ready()
     main = ctx.main_computer
+    member = ctx.team_member.membership if ctx.team_member is not None else None
+    team = member if member is not None and not member.signed_out_at else None
     return SatelliteStatus(
         main=SatelliteMain(name=main.name) if main else None,
         reachable=await sat.reachable(),
+        team=SatelliteMain(name=team.host_name) if team else None,
+        team_reachable=team is not None and await sat.reachable("team"),
         recording=sat.recording(),
         outbox=sat.items(),
     )
@@ -117,10 +131,17 @@ async def status(ctx: AppContext = Depends(get_ctx)):
 
 @router.post("/start", response_model=SatelliteStartResponse, dependencies=HERE)
 async def start(body: SatelliteStartRequest, ctx: AppContext = Depends(get_ctx)):
-    """Record with this computer's devices: streamed to the main computer, which records the
-    meeting, or (not reachable) kept here until it can be handed over."""
+    """Record with this computer's devices: streamed to the destination (the main computer, or
+    the team's host), which records the meeting, or (not reachable) kept here until it can be
+    handed over. A destination this computer does not have (no main computer, not in a team,
+    signed out): 409."""
     active = await satellite.service(ctx).start(
-        body.mic_device, body.system_device, body.title, body.consent
+        body.mic_device,
+        body.system_device,
+        body.title,
+        body.consent,
+        body.destination,
+        body.session_id,
     )
     return SatelliteStartResponse(
         session_id=active.item.session_id,
