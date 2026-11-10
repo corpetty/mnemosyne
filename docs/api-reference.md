@@ -66,7 +66,16 @@ outside the database, so they are checked even while encrypted meetings are lock
 - `POST /api/pairing/redeem` `{code, name, endpoint_id?}` → `{device, token}`. No token needed; the
   code works once. A desktop code needs `endpoint_id`, which the link sidecar sets from the
   connection's verified iroh key; a phone code must not have one. `403` when the code is unknown,
-  used, expired or of the other kind (a refusal of the wrong kind does not use it up).
+  used, expired or of the other kind (a refusal of the wrong kind does not use it up). A team
+  **user's invite** is also redeemable here, by a member's app through its sidecar (it needs
+  `endpoint_id`; `400` without, `409` unless this computer hosts a team or when that endpoint belongs
+  to another person): it uses the invite up and makes a **MEMBER** device for that person (one per
+  endpoint per person), answering `{device, token, card: {team: {name, user: {id, name, role},
+  consent_required}}}` and no `sync`. `card: {"want": "team"}` says the caller will take nothing else:
+  anything but a live user invite is then refused as an invalid code and left unused. The refusals
+  read like an invalid pairing code, so nothing says which codes exist.
+- `DELETE /api/pairing/me`: a member's app leaves the team; revokes the calling MEMBER device and only
+  it (`404` for any other token). Open to the device itself, through the tunnel.
 - Contacts (another person's computers, services/contacts.py; admin only, `409` on a team server,
   without an API token or without remote access): `POST /api/contacts/codes` → the same
   `{code, kind: "contact", expires_at, urls, invite}`; `POST /api/contacts/pair` `{invite}` →
@@ -127,6 +136,12 @@ history (at most once per person per half hour).
 | POST | `/api/users/me/signout` | forget this token |
 
 The web app turns `<address>/?invite=<code>` into a token for that browser.
+
+On a computer that hosts a team, `POST /api/users` and `POST /api/users/{id}/invite` also answer
+`app_invite`: `<this computer's iroh ticket>#<code>`, what a teammate pastes into their Mnemosyne
+app (Settings → Your team); or `app_invite_problem` with the reason there is none (no sidecar, remote
+access cannot start). It is the same one-time code as the browser link: whichever is redeemed first
+uses it up. `GET /api/users` lists a person's app devices in `devices` as `<name> (app)` for admins.
 
 **Sharing** (`services/sharing.py`): a meeting's owner or an admin shares it with people or with
 everyone (`session_shares`, `"*"`). Sharing gives read access (and ticking action items done);
@@ -265,6 +280,12 @@ computer or a dedicated server.
 - `X-Mnemosyne-Client: mcp` (sent by the MCP server): the request runs in the owner's own view
   (`access.limited_to`), so MCP tools never read a member's meeting. A privacy default, not a security
   boundary.
+- A team member's app is a **MEMBER** device (`/api/pairing/redeem` with a user's invite, below):
+  its token is accepted only through the tunnel listener (never on the main port or the team
+  listener, `api/auth.py` `_member_principal`), only while this computer hosts a team and the person
+  is not disabled. It runs as that person, channel `member`, never an owner channel. It is revoked by
+  `PATCH /api/users/{id}` `disabled`, `POST /api/users/{id}/signout`, `DELETE /api/pairing/me` (the
+  app leaving) and `DELETE /api/pairing/devices/{id}`.
 - Library sync carries only the owner's meetings (`sessions.owner_id` '' or the owner); the team's
   never sync, and a peer's delete never removes a meeting records keep.
 
@@ -328,7 +349,7 @@ shell's own tunnel, `http://127.0.0.1:<port>` and nothing else (`400` otherwise:
 point this computer's recordings at another host); `token` is the one the pairing returned. All three
 answer `{connected, name, url}`; the token is stored in `<data_dir>/main_computer.json` (0600, not
 backed up) and never returned. `PUT` also wakes the outbox worker, so recordings waiting for the main
-computer go now.
+computer go now. `PUT` answers `409` while this computer is in a team (`/api/joined`): one or the other.
 
 ### Auth: `LOCAL_PATHS`
 `/api/system/attach`, `/api/system` and `/api/system/main` (`LOCAL_PATHS`, api/auth.py) are open to the
@@ -354,8 +375,24 @@ Idempotent: a retry of the same `handoff_id` from the same device returns the sa
 "being received" while the first is still arriving. With `session_id` it REPLACES the audio of a
 meeting that same device streamed (`recording_started` with `by_device`), only before anything has
 transcribed it and only if every recording of it came from that stream; otherwise `409`. `403` for a
-phone, a contact or a team member, `409` on a team server, `400` for a bad `meta` or a file that is
+phone, a contact or a signed-in browser user, `409` on a team server, `400` for a bad `meta` or a file that is
 neither WAV nor Ogg, `413` over 4 GB.
+
+**Hand-off v2: a finished meeting from a team member's app** (a MEMBER device's token, on a computer
+that hosts a team; the member's app did the work itself and MOVES the meeting here, docs/plans/
+2026-11-10-team-members-in-the-app.md 1.3). `meta` gains `transcribed: true` and `session`: the
+meeting as library sync's portable document (`SyncSession`: transcript, summary, notes document,
+comments, history events, images), with the audio as one Ogg per recording and part (the parts rebuild
+the joined timeline its times refer to) and one `media:<sha>` file per image its `media` lists (WebP or
+JPEG by magic number, at most 2 MB, hash checked). `transcribed` and `session` go together (`400`
+otherwise). Nothing is transcribed here: the document is written as it came (owner = the member,
+whatever it says; its publications and contact shares are dropped), then flagged phrases, invitee
+shares and task links follow. Answered only once the audio is saved, which is when the member deletes
+its copy; a retry (same `handoff_id`, same device) is answered with the same meeting after that, and a
+crash in between is recovered without ever transcribing it (its `handed_over` history line says
+`transcribed`). Refused: `transcribed` with a `session_id` (a REPLACE) `409`; `transcribed` from a
+paired computer of the owner `403`; `409` "The team asks how the people in the meeting agreed to be
+recorded" when `require_consent` is on and the document's events hold no `consent`.
 
 ### Recording for a main computer: `/api/satellite/*`
 The local half of the laptop recorder (services/satellite.py; docs/architecture.md). **This computer
@@ -376,6 +413,40 @@ reports the main computer back (`PUT /api/system/main`). An item is deleted here
 computer has answered with its meeting. A refusal other than `409` busy or `429` (and a `409` that says
 the streamed meeting can no longer be replaced) stops the retries: the item stays `failed` with
 `last_error`.
+
+### A team this computer joined: `/api/joined/*`
+The member's half (services/team_member.py, team_move.py, api/routes/team_member.py; docs/team-server.md
+"Members in the app"). **This computer's owner only**: `403` through the tunnel, on the team port, and
+on a computer that hosts a team for anyone but its owner. The window calls them on its OWN backend,
+`http://127.0.0.1:8008`. The membership is in `<data_dir>/team.json` (0600, the member token in it,
+never returned, not backed up).
+
+| Method | Path | What |
+|--------|------|------|
+| GET | `/api/joined` | `{joined, host_name, user: {id, name, role} \| null, reachable, work: here\|host, consent_required, signed_out, pending_moves}`. `consent_required` is the host's rule (its `/health`, else as joined); `signed_out`: the host refused the token |
+| POST | `/api/joined/join` | `{invite, name?}` (the app invite, `<ticket>#<code>`) → the status and `new_api_token` (the token made for this computer by remote access, once; the window must carry it). `409`: this computer uses a main computer, hosts a team, is a team server or is in a team already; `400`: not an invite, or the host refused it |
+| DELETE | `/api/joined` | Leave: tells the host (`DELETE /api/pairing/me`, best effort), hangs up, forgets. Waiting moves stay in the library |
+| PUT | `/api/joined/work` | `{work: "here" \| "host"}`: where a team recording's work runs by default |
+| GET | `/api/joined/moves` | `{pending: [{session_id, name, added_at, attempts, last_error, host_session_id}], moved: [{session_id, host_session_id, name, at}]}` |
+| POST | `/api/joined/moves/{session_id}` | Put a meeting of this library in the team; it moves once nothing works on it and it is transcribed. `409` for one recorded elsewhere (`origin`), shared with this person or not theirs |
+| DELETE | `/api/joined/moves/{session_id}` | Keep a waiting meeting here after all |
+| POST | `/api/joined/moves/{session_id}/consent` | `{consent: all_parties\|in_person\|one_party}`: how the people agreed, when the team asked; logged in the meeting's history, then the move is tried again |
+| ANY | `/api/joined/{path}` | The team's library: forwarded to the host as the member |
+
+The proxy takes only `api/…` (not `api/joined` or `api/record`), `ws`, `ws/…` and `health`; any other
+path, and any `.` or `..` segment, is `404`. It sends the member token and drops the caller's
+`Authorization`, cookies, `Host`, proxy headers and the `token` query parameter (the window's token never
+reaches the host). Bodies and answers stream (audio with ranges, exports, long Ask answers) and
+WebSockets (`/api/joined/ws`, `/api/joined/ws/notes/{id}`) are bridged with their close codes (`4409`
+when the host signed this member out). `409` when not joined or signed out, `502` when the host cannot be
+reached. A `401` from the host never reaches the window (it would read as its own token being refused): it
+is checked once more with `GET /api/pairing/me`, and if the token is gone the membership becomes
+`signed_out` (`409`), else `502`.
+A member revoked on the host reads as "not reachable" instead: the sidecar just stops answering.
+
+The satellite routes above take `destination: team` for a recording streamed to the team (see
+`/api/satellite/start`), and `for_team` on `POST /api/audio/start` marks a recording made here to move
+once transcribed.
 
 ---
 
