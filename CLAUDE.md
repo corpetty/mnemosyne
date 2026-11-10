@@ -741,7 +741,15 @@ top of the caller, an intersection; services/host_scope.py asks for OWN/PERSONAL
 deleted meeting's owner. Records period and flagged phrases cover team meetings only while hosting (a legal hold holds any meeting).
 Non-owners get `PERSONAL_SETTINGS` at defaults from `GET /api/settings`. Tests: `tests/test_hosting_*.py`, `test_sync_hosting.py`.
 
-Team members in the app (unreleased; plan docs/plans/2026-11-10-team-members-in-the-app.md, use in docs/team-server.md "Members in the app"):
+Mac app (released as 0.32.0, docs/plans/2026-11-09-macos.md, tester guide docs/macos.md): Apple silicon, macOS 15.4+, signed with a
+stable self-signed certificate (APPLE_CERTIFICATE secrets; CN "Mnemosyne Test Signing") so permissions survive updates, not notarized.
+Recording through the `mnemosyne-capture` sidecar (capture/: cpal microphone; system audio = a global Core Audio process tap in a private
+aggregate device, `system` = device id 1; WAV header identical to pw-record's), backend audio/coreaudio.py behind the darwin switches in
+capture.py/levels.py, caffeinate while recording, a silent-system-audio hint (`capture_health` "silent"). The System Audio Recording prompt
+blocks `AudioDeviceCreateIOProcID` until answered. Not on the Mac: Phonon-2, the built-in summary model, echo cancellation, noise
+suppression. CI: `macos` job, smoke-macos.yml, the Release `macos` job. Confirmed on a tester's Mac 2026-11-10.
+
+Team members in the app (released as 0.32.0; plan docs/plans/2026-11-10-team-members-in-the-app.md, use in docs/team-server.md "Members in the app"):
 a teammate's app (Linux or Mac) joins a team hosted on someone's main computer and shows its own library and the team's one click apart
 (library switch, "Team on <host>"). Join: the host's invite also carries an `app_invite` (`<ticket>#<code>`, routes/users.py); the member's
 backend redeems it through its sidecar (`pair` with `card {"want": "team"}`, services/team_member.py, `<data_dir>/team.json`), the host makes a
