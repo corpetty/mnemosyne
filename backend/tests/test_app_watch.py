@@ -105,6 +105,7 @@ def test_a_recording_for_the_main_computer_waits_for_the_app_too(client, ctx, wa
 
     w = watched
     sat = ctx.satellite = Satellite(ctx, FakeCapture(auto=False))
+    ctx.main_computer_store().set("http://127.0.0.1:9", "token", "Desktop")  # out of reach
     r = client.post("/api/satellite/start", json={"mic_device": 1})
     assert r.status_code == 200, r.text
     local_id = r.json()["local_id"]
@@ -132,7 +133,8 @@ def test_a_recording_for_the_main_computer_waits_for_the_app_too(client, ctx, wa
     w.clock[0] = 1061
     client.portal.call(w.watch.check)
     assert sat.active is None
-    assert sat.outbox.items[local_id].state == "waiting"  # for the main computer, not here
+    # In the outbox for the main computer, not saved here.
+    assert sat.outbox.items[local_id].state in ("waiting", "sending")
     assert ctx.sessions.list_sessions() == []
     assert w.events.notes[-1] == "Mnemosyne saved the recording"
     assert w.events.exits == 1

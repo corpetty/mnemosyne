@@ -932,6 +932,7 @@ async def import_sample(ctx: AppContext = Depends(get_ctx)):
             name="Sample meeting (AMI corpus)",
             transcribe=False,
             session_id=None,
+            for_team=False,  # called directly: the Form default would be truthy
             ctx=ctx,
         )
     sid = result.session.id
