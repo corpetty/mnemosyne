@@ -381,6 +381,7 @@ def test_diagnostics_on_a_mac_name_the_helper_and_tail_its_log(client, ctx, monk
     assert "capture helper: not found" in text and "(no capture log yet)" in text
 
 
+@pytest.mark.linux_only("diagnostics without the capture helper")
 def test_diagnostics_on_linux_have_no_capture_log(client):
     text = client.get("/api/system/diagnostics").json()["text"]
     assert "Capture log" not in text and "capture helper" not in text

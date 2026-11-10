@@ -3,7 +3,16 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 from mnemosyne.audio.capture import AudioDevice, build_record_command
+
+
+@pytest.fixture(autouse=True)
+def on_linux(monkeypatch):
+    """The pw-record command is built from Python alone: check it on every runner."""
+    monkeypatch.setattr(sys, "platform", "linux")
+
 
 SINK = AudioDevice(
     id=69, name="alsa_output.usb.spdif", description="S/PDIF", media_class="Audio/Sink"
