@@ -11,9 +11,10 @@ part's sources are written as WAVs with a recovery manifest (services/recovery.p
 `auto_summarize`). Answered as soon as the audio is on disk: from there a crash is recovered at
 the next start like an interrupted recording, so the laptop may delete its copy.
 
-Who: a paired computer (a DESKTOP device token) or this computer's own owner (its API token, or
-the desktop app); never a phone, a contact, a team member, or a team server. Idempotent by
-`handoff_id` (services/handoff.py).
+Who: a paired computer (a DESKTOP device token), this computer's own owner (its API token, or
+the desktop app), or a team member's app (a MEMBER device, on a computer that hosts a team: the
+meeting is the member's); never a phone, a contact, a signed-in browser user, or a team server.
+Idempotent by `handoff_id` (services/handoff.py).
 
 With `session_id`, the hand-off REPLACES the audio of a meeting this same device was streaming
 into (POST /api/audio/start-browser with its token: `by_device` in the history) because the
@@ -53,16 +54,25 @@ from ...models.base import ApiModel
 from ...models.session import DEFAULT_SESSION_NAME, SessionStatus
 from ...services import handoff as handoffs
 from ...services import history, records, shared_notes
-from ...services.pairing import DESKTOP
+from ...services.pairing import DESKTOP, MEMBER
 from ...services.recovery import write_manifest
-from ..auth import require_owner_channel
+from ..auth import MEMBER_DEVICE, require_owner_channel
 from ..context import AppContext, get_ctx
 
 logger = logging.getLogger(__name__)
 
+
 # A paired computer (a DESKTOP device) is an owner channel; members, reviewers, phones are not.
+# A team member's app (a MEMBER device through the tunnel) hands over too (`_sender`): it is no
+# owner channel, so this route lets that one channel in beside them.
+def _owner_or_member_app(request: Request) -> None:
+    if (request.scope.get("state") or {}).get("channel") == MEMBER_DEVICE:
+        return
+    require_owner_channel(request)
+
+
 router = APIRouter(
-    prefix="/api/connections", tags=["connections"], dependencies=[Depends(require_owner_channel)]
+    prefix="/api/connections", tags=["connections"], dependencies=[Depends(_owner_or_member_app)]
 )
 
 # The whole request. A 3-hour meeting is about 1 GB per source as 48 kHz WAV; Ogg is far less.
@@ -103,6 +113,14 @@ def _sender(ctx: AppContext, request: Request) -> tuple[str | None, str]:
     """(device id or None for this computer's owner, a name for the history). 403 for anyone
     else. The middleware already keeps phones (DEVICE_PATHS) and contacts (/api/share/) out."""
     state = request.scope.get("state") or {}
+    if state.get("channel") == MEMBER_DEVICE:
+        # A team member's app on a computer that hosts a team: the meeting is theirs (the
+        # middleware runs the request as that person), the hand-off key is the device's.
+        device = ctx.pairing.get(state.get("device_id") or "")
+        user = ctx.users.get(state.get("user_id") or "")
+        if device is None or device.kind != MEMBER or user is None or user.disabled:
+            raise HTTPException(status_code=403, detail="Only a paired computer can hand over")
+        return device.id, f"{user.name} ({device.name})"
     if state.get("user_id"):
         raise HTTPException(status_code=403, detail="Only a paired computer can hand over")
     device_id = state.get("device_id")

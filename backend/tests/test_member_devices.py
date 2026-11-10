@@ -3,7 +3,8 @@ the-app.md 1.1, 1.6): a MEMBER device, redeemed with a user's invite through the
 runs as that person on the tunnel and is never the owner.
 
 Covers M1 (tunnel only), M2 (never an owner channel), M3 (reads what the person reads), M5
-(revocation), M6 (redeeming an invite), M7 (the event stream). M4 (hand-offs) is task T3.
+(revocation), M6 (redeeming an invite), M7 (the event stream). M4 (hand-offs and streams) is the
+last section.
 
 The machine and its callers come from test_hosting_access.py (`make_machine`, the owner-only
 route list); the meetings from test_hosting_visibility.py (`host`). A tunnelled request is one
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -160,10 +162,15 @@ def test_the_member_channel_is_never_the_owner_even_for_the_owners_own_user(apps
     assert not auth.is_owner_channel(apps.ctx, {**state, "on_team_port": False})
 
 
+# The one personal route a member's app may use: it hands over its own recording (M4, below).
+MEMBER_ROUTES = {("POST", "/api/connections/handoff")}
+OWNER_ROUTES = [r for r in PERSONAL_ROUTES if r not in MEMBER_ROUTES]
+
+
 @pytest.mark.parametrize("who", ["member_app", "reviewer_app", "owner_app"])
 def test_every_personal_route_is_refused_to_a_member_device(apps, who):
     wrong = []
-    for method, path in PERSONAL_ROUTES:
+    for method, path in OWNER_ROUTES:
         r = _send(apps, who, method, path)
         if not _owner_refusal(r):
             wrong.append((method, path, r.status_code))
@@ -173,7 +180,7 @@ def test_every_personal_route_is_refused_to_a_member_device(apps, who):
 def test_a_member_device_is_refused_in_the_owners_words_whatever_the_route(apps):
     details = {
         (r.status_code, r.json()["detail"])
-        for r in (_send(apps, "member_app", m, p) for m, p in PERSONAL_ROUTES)
+        for r in (_send(apps, "member_app", m, p) for m, p in OWNER_ROUTES)
     }
     assert details == {(403, OWNER_ONLY)}
 
@@ -622,3 +629,194 @@ def test_over_a_real_socket_a_member_device_hears_only_what_it_may(apps):
         while (msg := ws.receive_json())["type"] != "pong":
             got.append((msg["type"], msg.get("session_id")))
     assert got == [("live_segment", apps.ids["team"]), ("shares", None)]
+
+
+# ---- M4: hand-offs and streams from a member's app (task T3) -----------------------------------
+
+
+def _calm(m: Machine) -> None:
+    st = m.ctx.settings
+    st.live_transcription = False  # no live job behind a streamed recording
+    st.copilot = False
+    st.auto_transcribe = False
+
+
+def avia(m: Machine, how: str, token: str):
+    """`via` for async tests (jobs need the test's own loop): (client, headers)."""
+
+    app, base, addr = {
+        "tunnel": (Tunnelled(m.app), MAIN, "127.0.0.1"),
+        "main": (m.app, MAIN, "127.0.0.1"),
+        "team": (m.app, f"http://{LAN}:{TEAM_PORT}", LAN),
+        "lan": (m.app, MAIN, LAN),
+    }[how]
+    transport = httpx.ASGITransport(app=app, client=(addr, 50000))
+    return httpx.AsyncClient(transport=transport, base_url=base), {
+        "Authorization": f"Bearer {token}"
+    }
+
+
+async def _jobs_done(m: Machine, sid: str) -> None:
+    jobs = [j for j in m.ctx.jobs.list(session_id=sid) if j.kind == "finish"]
+    assert jobs, "no finish job"
+    for j in jobs:
+        done = await m.ctx.jobs.wait(j.id)
+        assert done.status == "completed", done.error
+
+
+async def _hand(client, headers, meta_: dict):
+    from tests.test_handoff import handoff_form
+
+    form = handoff_form(meta_)
+    return await client.post(
+        "/api/connections/handoff", data=form["data"], files=form["files"], headers=headers
+    )
+
+
+async def _stream(client, headers, **body) -> httpx.Response:  # noqa: F821
+    body = {"sources": ["mic", "system"], "sample_rate": 16000} | body
+    return await client.post("/api/audio/start-browser", json=body, headers=headers)
+
+
+async def _stream_and_stop(m: Machine, client, headers) -> str:
+    r = await _stream(client, headers)
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+    r = await client.post(f"/api/audio/stop/{sid}", json={"transcribe": False}, headers=headers)
+    assert r.status_code == 200, r.text
+    await _jobs_done(m, sid)
+    return sid
+
+
+def _owner_of(m: Machine, sid: str) -> str:
+    repo = m.ctx.repo
+    with repo._lock:
+        return repo._conn.execute("SELECT owner_id FROM sessions WHERE id=?", (sid,)).fetchone()[0]
+
+
+@pytest.fixture
+def ann_app(apps):
+    """A second member's app (Ann), beside Sam's."""
+    apps.tokens["ann_app"] = app_device(apps, "Ann", "a4" * 32)
+    return apps.tokens["ann_app"]
+
+
+@pytest.mark.anyio
+async def test_a_members_handoff_makes_a_meeting_the_member_owns(apps, ann_app, fake_pipewire):
+    from tests.test_handoff import meta
+
+    _calm(apps)
+    sam = apps.users["Sam"]
+    client, headers = avia(apps, "tunnel", apps.tokens["member_app"])
+    r = await _hand(client, headers, meta("m-1"))
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+    await _jobs_done(apps, sid)
+    assert _owner_of(apps, sid) == sam
+    assert (await client.get(f"/api/sessions/{sid}", headers=headers)).status_code == 200
+    assert sid in {s["id"] for s in (await client.get("/api/sessions", headers=headers)).json()}
+    # Another member does not see it.
+    other, oh = avia(apps, "tunnel", ann_app)
+    assert (await other.get(f"/api/sessions/{sid}", headers=oh)).status_code == 404
+    assert sid not in {s["id"] for s in (await other.get("/api/sessions", headers=oh)).json()}
+    # The history names the person and the device.
+    handed = next(e for e in apps.ctx.repo.events(sid) if e["kind"] == "handed_over")
+    device = apps.ctx.pairing.members_for(sam)[0]
+    assert handed["detail"]["device_id"] == device.id
+    assert handed["detail"]["by"] == f"Sam ({device.name})"
+    # A retry is the same meeting (the key is the device's).
+    again = await _hand(client, headers, meta("m-1"))
+    assert again.status_code == 200 and again.json()["session_id"] == sid
+
+
+@pytest.mark.anyio
+async def test_a_members_handoff_is_refused_off_the_tunnel_and_for_browser_users(apps):
+    from tests.test_handoff import meta
+
+    _calm(apps)
+    for how in ("main", "team", "lan"):
+        c, h = avia(apps, how, apps.tokens["member_app"])
+        assert (await _hand(c, h, meta("x"))).status_code == 401, how
+    # A signed-in browser user (a users.json token) is still not a computer.
+    c, h = avia(apps, "tunnel", apps.tokens["member"])
+    assert (await _hand(c, h, meta("x"))).status_code == 403
+
+
+@pytest.mark.anyio
+async def test_a_disabled_member_cannot_hand_over(apps):
+    from tests.test_handoff import meta
+
+    c, h = avia(apps, "tunnel", apps.tokens["member_app"])
+    apps.ctx.users.update(apps.users["Sam"], disabled=True)
+    assert (await _hand(c, h, meta("d"))).status_code == 401
+
+
+@pytest.mark.anyio
+async def test_a_member_replaces_only_a_meeting_its_own_device_streamed(
+    apps, ann_app, fake_pipewire
+):
+    from tests.test_handoff import meta
+
+    _calm(apps)
+    sam = apps.users["Sam"]
+    sc, sh = avia(apps, "tunnel", apps.tokens["member_app"])
+    sid = await _stream_and_stop(apps, sc, sh)
+    assert _owner_of(apps, sid) == sam
+    started = next(e for e in apps.ctx.repo.events(sid) if e["kind"] == "recording_started")
+    assert started["detail"]["by_device"] == apps.ctx.pairing.members_for(sam)[0].id
+
+    # Another member's device, the owner's laptop, and the owner's own app: refused.
+    ac, ah = avia(apps, "tunnel", ann_app)
+    assert (await _hand(ac, ah, meta("r0", session_id=sid))).status_code in (404, 409)
+    lc, lh = avia(apps, "tunnel", apps.tokens["device"])
+    assert (await _hand(lc, lh, meta("r0b", session_id=sid))).status_code == 409
+    oc, oh = avia(apps, "tunnel", apps.tokens["owner_app"])
+    assert (await _hand(oc, oh, meta("r0c", session_id=sid))).status_code in (404, 409)
+
+    r = await _hand(sc, sh, meta("r1", session_id=sid))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"session_id": sid, "replaced": True}
+    await _jobs_done(apps, sid)
+    assert _owner_of(apps, sid) == sam
+
+    # A meeting the owner's laptop streamed is not Sam's to replace either.
+    laptop_sid = await _stream_and_stop(apps, lc, lh)
+    r = await _hand(sc, sh, meta("r2", session_id=laptop_sid))
+    assert r.status_code in (404, 409), r.text
+
+
+@pytest.mark.anyio
+async def test_the_owners_laptop_handoff_is_unchanged(apps, fake_pipewire):
+    from tests.test_handoff import meta
+
+    _calm(apps)
+    lc, lh = avia(apps, "tunnel", apps.tokens["device"])
+    r = await _hand(lc, lh, meta("l-1"))
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+    await _jobs_done(apps, sid)
+    handed = next(e for e in apps.ctx.repo.events(sid) if e["kind"] == "handed_over")
+    assert handed["detail"]["by"] == "Laptop"
+    assert _owner_of(apps, sid) != apps.users["Sam"]
+
+
+@pytest.mark.anyio
+async def test_a_member_streams_a_meeting_it_owns_and_consent_applies(apps, fake_pipewire):
+    _calm(apps)
+    sam = apps.users["Sam"]
+    sc, sh = avia(apps, "tunnel", apps.tokens["member_app"])
+    apps.ctx.settings.require_consent = True
+    assert (await _stream(sc, sh)).status_code == 400
+    r = await _stream(sc, sh, consent="all_parties")
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+    assert _owner_of(apps, sid) == sam
+    events = apps.ctx.repo.events(sid)
+    started = next(e for e in events if e["kind"] == "recording_started")
+    assert started["detail"]["by_device"] == apps.ctx.pairing.members_for(sam)[0].id
+    consent = next(e for e in events if e["kind"] == "consent")
+    assert consent["detail"]["by"] == "Sam"
+    assert (
+        await sc.post(f"/api/audio/stop/{sid}", json={"transcribe": False}, headers=sh)
+    ).status_code == 200
+    await _jobs_done(apps, sid)
