@@ -493,6 +493,18 @@ async def test_the_pairing_code_response_shape(nodes):
     assert plain.status_code == 200 and plain.json()["kind"] == "contact"
 
 
+async def test_a_contact_invite_takes_a_length(nodes):
+    from datetime import UTC, datetime
+
+    a, _ = nodes
+    async with a.client() as c:
+        day = await c.post("/api/contacts/codes", json={"minutes": 1440})
+        bad = await c.post("/api/contacts/codes", json={"minutes": 2})
+    left = datetime.fromisoformat(day.json()["expires_at"]) - datetime.now(UTC)
+    assert 1439 < left.total_seconds() / 60 <= 1440
+    assert bad.status_code == 422
+
+
 # ---- dialing at startup ---------------------------------------------------------------------
 
 

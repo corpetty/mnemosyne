@@ -145,7 +145,7 @@
 					<header>
 						<h3 class="text-lg font-semibold text-gray-100">{detail.name}</h3>
 						<p class="text-xs text-gray-500">
-							{detail.meetings.length} meetings{#if detail.total_talk_seconds} · talked {dur(detail.total_talk_seconds)} in total{/if}
+							{detail.meetings.length} meeting{detail.meetings.length === 1 ? '' : 's'}{#if detail.total_talk_seconds} · talked {dur(detail.total_talk_seconds)} in total{/if}
 							{#if detail.has_voice} · voice saved{/if}
 						</p>
 						{#if organizationOf(detail.name)}

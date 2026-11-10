@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { codeLength, until } from '$lib/app/codeLength.svelte.js';
+	import CodeLength from './CodeLength.svelte';
 	// Settings → Devices and people → My devices: this backend's remote access (services/link.py)
 	// and the invite for another computer. `status` is the small line under the heading while
 	// remote access is on; `invite` is the "A laptop or another computer" choice of Add a device.
@@ -42,7 +44,7 @@
 		error = '';
 		copied = false;
 		try {
-			code = await createPairingCode('desktop');
+			code = await createPairingCode('desktop', codeLength.minutes);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not create an invite';
 		}
@@ -69,7 +71,6 @@
 		copied = true;
 	}
 
-	const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 </script>
 
 {#if part === 'status'}
@@ -98,6 +99,7 @@
 				class="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200"
 				>New invite</button
 			>
+			<CodeLength />
 			{#if error}<span class="text-xs text-red-400">{error}</span>{/if}
 		</div>
 		{#if code?.invite}
@@ -115,7 +117,7 @@
 			<p class="text-xs text-gray-600">
 				On the other computer, open Settings → Devices and people → This computer, choose
 				<span class="text-gray-400">Uses my main computer</span> and paste it. Works once, until
-				{clock(code.expires_at)}. That computer gets its own key; remove it from the list above at any time.
+				{until(code.expires_at)}. That computer gets its own key; remove it from the list above at any time.
 			</p>
 		{/if}
 	</div>

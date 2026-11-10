@@ -128,8 +128,8 @@
 				<tr class="border-t border-gray-800 {p.disabled ? 'opacity-50' : ''}">
 					<td class="py-1.5">
 						<span class="text-gray-200">{p.name}</span>
-						{#if p.email}<span class="text-xs text-gray-500"> {p.email}</span>{/if}
-						{#if p.id === connectionState.me?.id}<span class="text-xs text-gray-500"> (you)</span>{/if}
+						{#if p.email}<span class="ml-1 text-xs text-gray-500">{p.email}</span>{/if}
+						{#if p.id === connectionState.me?.id}<span class="ml-1 text-xs text-gray-500">(you)</span>{/if}
 						{#if p.devices.length}<span class="block text-xs text-gray-500">{p.devices.map((d) => d.device).join(', ')}</span>{/if}
 					</td>
 					<td>

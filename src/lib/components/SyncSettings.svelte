@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { codeLength, until } from '$lib/app/codeLength.svelte.js';
+	import CodeLength from './CodeLength.svelte';
 	// Settings → Devices and people → My devices → More: keep one library across this person's computers (backend
 	// services/sync_service.py, docs/api-reference.md "Library sync").
 	import { createPairingCode, removeSyncPeer, syncNow, syncPair } from '$lib/api/backend.js';
@@ -28,7 +30,7 @@
 		error = '';
 		copied = false;
 		try {
-			code = await createPairingCode('sync');
+			code = await createPairingCode('sync', codeLength.minutes);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not create an invite';
 		}
@@ -76,7 +78,6 @@
 		}
 	}
 
-	const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 </script>
 
 <div class="mt-3 space-y-2" aria-label="Sync with your other computers">
@@ -94,6 +95,7 @@
 			class="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200"
 			>Invite a computer</button
 		>
+		<CodeLength />
 		{#if error}<span class="text-xs text-red-400">{error}</span>{/if}
 	</div>
 	{#if code?.invite}
@@ -107,7 +109,7 @@
 			<button onclick={copy} class="text-xs text-gray-400 hover:text-gray-200 whitespace-nowrap">{copied ? 'Copied' : 'Copy'}</button>
 		</div>
 		<p class="text-xs text-gray-600">
-			Paste it under Sync on the other computer. Works once, until {clock(code.expires_at)}.
+			Paste it under Sync on the other computer. Works once, until {until(code.expires_at)}.
 		</p>
 	{/if}
 

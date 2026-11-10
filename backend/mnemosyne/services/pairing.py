@@ -23,7 +23,11 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-CODE_TTL_SECONDS = 600
+# How long a pairing code works unless the person making it picks another length (an hour: ten
+# minutes ran out while people were still fetching the other device). The bounds are the
+# route's: a code is one-time, so a day is the longest an unused one lies around.
+CODE_TTL_SECONDS = 3600
+CODE_MINUTES_MIN, CODE_MINUTES_MAX = 5, 24 * 60
 # last_seen is written to disk at most this often per device; it is kept in memory in between.
 SEEN_WRITE_INTERVAL = 300.0
 
@@ -91,11 +95,15 @@ class PairingService:
         os.chmod(tmp, 0o600)
         tmp.replace(self.path)
 
-    def new_code(self, kind: str = PHONE) -> tuple[str, float]:
+    def new_code(
+        self, kind: str = PHONE, ttl_seconds: float = CODE_TTL_SECONDS
+    ) -> tuple[str, float]:
+        """A one-time code of `kind` that works for `ttl_seconds`. Codes are kept in memory: a
+        restart of the backend ends every unused one."""
         now = self.clock()
         self._codes = {c: v for c, v in self._codes.items() if v[0] > now}
         code = secrets.token_urlsafe(16)
-        expires = now + CODE_TTL_SECONDS
+        expires = now + ttl_seconds
         self._codes[code] = (expires, kind)
         return code, expires
 

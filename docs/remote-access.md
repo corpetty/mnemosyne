@@ -24,7 +24,8 @@ window closed, turn on "Closing the window keeps Mnemosyne running in the tray" 
 ## A laptop that uses the main computer
 
 On the main computer: Settings → Devices and people → My devices → **Add a device → A laptop or
-another computer**. Choose **New invite** and copy it (it works once, for 10 minutes).
+another computer**. Choose **New invite** and copy it (it works once, for an hour; the "works for" list next to the
+button gives 15 minutes or a day instead).
 
 On the laptop (desktop app): Settings → Devices and people → This computer → **Uses my main
 computer**, paste the invite, name the laptop, and connect. In the setup wizard, answer "No, I
@@ -69,7 +70,7 @@ main computer's library) but cannot record into it until it is paired again.
 ## A phone
 
 Settings → Devices and people → My devices → **Add a device → A phone**, and scan the QR code with
-the phone. The code works once and expires after 10 minutes; the phone keeps its own key, and the
+the phone. The code works once and expires after an hour (or what "works for" says); the phone keeps its own key, and the
 API token never leaves the computer. The phone opens a small page: record in it (keep it open while
 recording), or pick a file, and upload; the main computer transcribes. A phone's key only allows
 uploading recordings, not reading your meetings.

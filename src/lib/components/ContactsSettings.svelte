@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { codeLength, until } from '$lib/app/codeLength.svelte.js';
+	import CodeLength from './CodeLength.svelte';
 	// Settings → Devices and people → People: people whose computers this one shares chosen meetings with
 	// (backend services/contacts.py, share_pull.py).
 	import { createContactCode, pairContact, pullContact, removeContact, renameContact } from '$lib/api/backend.js';
@@ -25,12 +27,11 @@
 	});
 
 	const fail = (e: unknown, fallback: string) => toastState.error(e instanceof Error ? e.message : fallback);
-	const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 	async function makeInvite() {
 		copied = false;
 		try {
-			code = await createContactCode();
+			code = await createContactCode(codeLength.minutes);
 		} catch (e) {
 			fail(e, 'Could not create an invite');
 		}
@@ -141,6 +142,7 @@
 				class="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 disabled:opacity-50"
 				>Show my invite</button
 			>
+			<CodeLength />
 		</div>
 		{#if code?.invite}
 			<div class="flex items-center gap-2 max-w-2xl">
@@ -152,7 +154,7 @@
 				/>
 				<button onclick={copy} class="text-xs text-gray-400 hover:text-gray-200 whitespace-nowrap">{copied ? 'Copied' : 'Copy'}</button>
 			</div>
-			<p class="text-xs text-gray-600">Send this to them; it works once, until {clock(code.expires_at)}.</p>
+			<p class="text-xs text-gray-600">Send this to them; it works once, until {until(code.expires_at)}.</p>
 		{/if}
 
 		<div class="flex items-center gap-2 max-w-2xl">

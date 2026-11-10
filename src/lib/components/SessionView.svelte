@@ -54,6 +54,15 @@
 		const id = sessionState.activeSession?.id;
 		if (id && sharedFrom) void contactsState.loadStatus(id);
 	});
+	// The tabs share one scroller: back to the top on another tab (or meeting) before it renders,
+	// else the new tab opened at the old tab's offset and showed cut off. `pre` so a tab that scrolls
+	// itself to something once mounted (the transcript's jump to a time) still wins.
+	let tabScroller = $state<HTMLDivElement | null>(null);
+	$effect.pre(() => {
+		void uiState.activeTab;
+		void sessionState.activeSession?.id;
+		if (tabScroller) tabScroller.scrollTop = 0;
+	});
 	function plural(n: number, one: string, many = one + 's'): string {
 		return `${n} ${n === 1 ? one : many}`;
 	}
@@ -79,6 +88,11 @@
 	// This meeting is being recorded right now.
 	const recordingHere = $derived(
 		audioState.isRecording && audioState.activeSessionId === sessionState.activeSession?.id
+	);
+	// One column for the header and the tab, centred in whatever room the window (and a collapsed
+	// sidebar) leaves: wide while recording (transcript beside the notes), else a reading width.
+	const contentWidth = $derived(
+		recordingHere && uiState.activeTab === 'recording' ? 'max-w-7xl' : 'max-w-6xl'
 	);
 
 	const tabs: { id: Tab; label: string }[] = [
@@ -166,6 +180,7 @@
 {#if sessionState.activeSession}
 <!-- Session header + tabs -->
 <div class="border-b border-gray-800 px-6 pt-4 pb-0 flex-shrink-0">
+<div class="mx-auto w-full {contentWidth}">
 	<div class="flex items-center justify-between mb-3">
 		<h2 class="group flex min-w-0 flex-1 items-center gap-2 mr-4 text-xl font-semibold">
 			{#if mine && editing}
@@ -292,14 +307,15 @@
 		{/each}
 	</nav>
 </div>
+</div>
 
 {#if publishingState.dialogFor === sessionState.activeSession.id}
 	<PublishDialog />
 {/if}
 
 <!-- Tab content -->
-<div class="flex-1 overflow-y-auto p-6">
-	<div class={recordingHere && uiState.activeTab === 'recording' ? 'max-w-7xl' : 'max-w-4xl'}>
+<div bind:this={tabScroller} class="flex-1 overflow-y-auto p-6 [scrollbar-gutter:stable_both-edges]">
+	<div class="mx-auto w-full {contentWidth}">
 		{#if uiState.activeTab === 'recording'}
 			{#if recordingHere}
 				<!-- While recording: controls on top, then the live transcript and the copilot side by side. -->
@@ -315,9 +331,12 @@
 						</button>
 						<RecordingSources />
 					</div>
-					<!-- Side by side when wide; stacked (copilot, then the live transcript) when narrow. -->
-					<div class="grid gap-4 lg:grid-cols-5">
-						<div class="lg:col-span-2 lg:order-2 space-y-4">
+					<!-- Side by side when the content area (not the window: the sidebar takes its share) is wide;
+					     stacked (copilot, then the live transcript) when narrow. Equal halves: the notes are
+					     where people type during a meeting. -->
+					<div class="@container">
+					<div class="grid gap-4 @4xl:grid-cols-2">
+						<div class="@4xl:order-2 min-w-0 space-y-4">
 							<div class="flex justify-end"><GuestNotesMenu compact /></div>
 							<CopilotPanel />
 							<section class="rounded-lg border border-gray-800 bg-gray-900/40 p-3 space-y-2" aria-label="Notes">
@@ -327,7 +346,8 @@
 							<ResourcesCard compact />
 							<HistoryCard />
 						</div>
-						<div class="lg:col-span-3 lg:order-1"><LiveTranscript tall /></div>
+						<div class="@4xl:order-1 min-w-0"><LiveTranscript tall /></div>
+					</div>
 					</div>
 				</div>
 			{:else}

@@ -108,9 +108,15 @@
 	);
 
 	// The backend adds every point itself while this is on and the notes are live (not the plain-text
-	// fallback): the per-item button would only add a second copy.
+	// fallback): the notes then hold the copilot's points, so the panel keeps only Ask (and the agenda)
+	// instead of showing them a second time.
+	// Only once the live notes are known to be there: while connecting (or on an error) the points
+	// may have nowhere else to show.
 	const autoAdds = $derived(
-		toNotes && !!notesDoc && notesDoc.status !== 'unavailable' && !notesDoc.readOnly && notesDoc.status !== 'gone'
+		toNotes &&
+			!!notesDoc &&
+			!notesDoc.readOnly &&
+			(notesDoc.status === 'live' || notesDoc.status === 'catching_up' || notesDoc.status === 'reconnecting')
 	);
 
 	async function addToNotes(item: CopilotItem, key: string) {
@@ -138,7 +144,7 @@
 </script>
 
 {#snippet add(item: CopilotItem, key: string)}
-		{#if canAdd && !autoAdds}
+		{#if canAdd}
 			<button
 				type="button"
 				onclick={() => addToNotes(item, key)}
@@ -150,18 +156,18 @@
 	{/snippet}
 
 {#if recordingHere || notes}
-	<section class="rounded-lg border border-purple-900/60 bg-purple-950/20 p-3 space-y-3" aria-label="Copilot">
+	<section class="rounded-lg border border-purple-900/60 bg-purple-950/20 p-3 space-y-3" aria-label={autoAdds ? 'Ask' : 'Copilot'}>
 		<header class="flex items-center gap-2 text-xs">
-			<span class="font-semibold text-purple-200 uppercase tracking-wide">Copilot</span>
+			<span class="font-semibold text-purple-200 uppercase tracking-wide">{autoAdds ? 'Ask' : 'Copilot'}</span>
 			<span class="text-purple-300/60">
-				{#if !waiting && notes}updated {clock(notes.updated_at)} · {notes.lines} lines{#if autoAdds} · adds to the notes{/if}{:else}running notes appear after the first minutes of talk{/if}
+				{#if autoAdds}the copilot writes into the notes{#if notes && !waiting}{' · '}{clock(notes.updated_at)}{/if}{:else if !waiting && notes}updated {clock(notes.updated_at)} · {notes.lines} lines{:else}running notes appear after the first minutes of talk{/if}
 			</span>
 		</header>
 
 		{#if recordingHere}
 			<AgendaCard covered={notes?.agenda_covered ?? []} compact />
 		{/if}
-		{#if !empty && notes}
+		{#if !empty && notes && !autoAdds}
 			<div class="grid gap-3 sm:grid-cols-2 text-sm">
 				{#if notes.summary.length}
 					<div class="sm:col-span-2">
@@ -195,7 +201,8 @@
 		<form onsubmit={(e) => { e.preventDefault(); ask(); }} class="flex gap-2">
 			<input
 				bind:value={question}
-				placeholder="Ask about this meeting… (e.g. what did they just say about the budget?)"
+				placeholder="Ask about this meeting…"
+				title="For example: what did they just say about the budget?"
 				aria-label="Ask about this meeting"
 				class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 placeholder-gray-600"
 			/>

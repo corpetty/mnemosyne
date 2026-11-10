@@ -604,13 +604,39 @@
 		<SummaryEditor session={sessionState.activeSession} ondone={() => (editing = false)} />
 	{:else if sessionState.activeSession?.summary}
 		<div bind:this={summaryRoot} class="relative space-y-3">
-			{#if data && data.topics.length}
+			<!-- Topics on the left, the tools on the right: a row of their own, so the tools never sit on the text. -->
+			<div class="flex items-start justify-between gap-2">
 				<div class="flex flex-wrap gap-1">
-					{#each data.topics as t}
+					{#each data?.topics ?? [] as t}
 						<span class="text-[11px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700">{t}</span>
 					{/each}
 				</div>
-			{/if}
+				<div class="flex shrink-0 gap-1">
+					<button
+						onclick={() => (showVersions = !showVersions)}
+						class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
+						title="Earlier summaries, and putting one back"
+					>
+						Versions
+					</button>
+					{#if mine}
+						<button
+							onclick={() => (editing = true)}
+							class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
+							title="Edit the summary, topics, decisions, action items, chapters and questions"
+						>
+							Edit
+						</button>
+					{/if}
+					<button
+						onclick={copyToClipboard}
+						class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
+						title="Copy summary as markdown"
+					>
+						Copy
+					</button>
+				</div>
+			</div>
 			{#if showVersions}
 				<SummaryVersions sessionId={sessionState.activeSession.id} canRestore={mine} onclose={() => (showVersions = false)} />
 			{/if}
@@ -676,7 +702,8 @@
 									<div class="flex gap-2 items-start">
 										{#if a.issue_url}
 											<a href={a.issue_url} target="_blank" rel="noopener noreferrer" onclick={(e) => { e.preventDefault(); openLink(a.issue_url!); }} class="text-green-500 hover:text-green-300 text-xs mt-0.5" title="Open the GitHub issue">✓ issue</a>
-										{:else if mine}
+										{:else if mine && trackers.length}
+											<!-- Picks items for issues; only with a tracker set up, else it reads as a "done" box next to the real one. -->
 											<input type="checkbox" checked={selected.has(i)} onchange={() => toggle(i)} class="mt-1 rounded border-gray-600 bg-gray-800" title="Select to create a GitHub issue" />
 										{/if}
 										<button
@@ -749,11 +776,14 @@
 					{/if}
 				</div>
 			{/if}
-			<SummaryComments ongoto={goToBlock} bind:filter={commentsFilter} />
 			{#if data}
+				<!-- Under the summary it describes, not under the comments. -->
 				<p class="text-[11px] text-gray-600">
 					{data.style} summary{#if data.provider} · {data.provider}/{data.model}{/if}{#if data.edited_at} · edited {new Date(data.edited_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}{#if data.edited_by} by {data.edited_by}{/if}{/if}
 				</p>
+			{/if}
+			<SummaryComments ongoto={goToBlock} bind:filter={commentsFilter} />
+			{#if data}
 				{#if hubspot && mine}<HubSpotCard />{/if}
 				{#if mine}
 				<section class="bg-gray-900 border border-gray-700 rounded-lg p-3 space-y-2">
@@ -799,31 +829,6 @@
 				</section>
 				{/if}
 			{/if}
-			<div class="absolute top-0 right-0 flex gap-1">
-				<button
-					onclick={() => (showVersions = !showVersions)}
-					class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
-					title="Earlier summaries, and putting one back"
-				>
-					Versions
-				</button>
-				{#if mine}
-					<button
-						onclick={() => (editing = true)}
-						class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
-						title="Edit the summary, topics, decisions, action items, chapters and questions"
-					>
-						Edit
-					</button>
-				{/if}
-				<button
-					onclick={copyToClipboard}
-					class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800 border border-gray-700 transition-colors"
-					title="Copy summary as markdown"
-				>
-					Copy
-				</button>
-			</div>
 		</div>
 	{:else if mine && sessionState.activeSession}
 		<button onclick={() => (editing = true)} class="text-xs text-blue-400 hover:text-blue-300">Write a summary yourself</button>

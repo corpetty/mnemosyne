@@ -41,16 +41,24 @@
 
 	// Views shown in the main area when no meeting is open.
 	const PANELS: Partial<Record<View, { component: Component<{ onOpenSession?: () => void }>; width: string }>> = {
-		ask: { component: AskPanel, width: 'max-w-3xl' },
-		tasks: { component: TasksPanel, width: 'max-w-3xl' },
-		people: { component: PeoplePanel, width: 'max-w-4xl' },
-		topics: { component: TopicsPanel, width: 'max-w-3xl' },
-		digest: { component: DigestPanel, width: 'max-w-3xl' },
-		review: { component: SupervisionPanel, width: 'max-w-3xl' },
+		ask: { component: AskPanel, width: 'max-w-4xl' },
+		tasks: { component: TasksPanel, width: 'max-w-5xl' },
+		people: { component: PeoplePanel, width: 'max-w-5xl' },
+		topics: { component: TopicsPanel, width: 'max-w-5xl' },
+		digest: { component: DigestPanel, width: 'max-w-4xl' },
+		review: { component: SupervisionPanel, width: 'max-w-5xl' },
 		settings: { component: SettingsPanel as Component<{ onOpenSession?: () => void }>, width: 'max-w-3xl' },
 		setup: { component: SetupWizard as Component<{ onOpenSession?: () => void }>, width: 'max-w-2xl' }
 	};
 	const panel = $derived(PANELS[uiState.view]);
+	// One scroller for every view and every Settings tab: back to the top on a change, else the
+	// next one opened at the last one's offset (cut off, or at its very bottom).
+	let panelScroller = $state<HTMLDivElement | null>(null);
+	$effect.pre(() => {
+		void uiState.view;
+		void uiState.settingsTab;
+		if (panelScroller) panelScroller.scrollTop = 0;
+	});
 
 	$effect(() => connectApp());
 	$effect(() => listenForRemoteActions());
@@ -141,8 +149,8 @@
 				{#if sessionState.activeSession}
 					<SessionView />
 				{:else if panel}
-					<div class="flex-1 overflow-y-auto p-6">
-						<div class={panel.width}>
+					<div bind:this={panelScroller} class="flex-1 overflow-y-auto p-6">
+						<div class="mx-auto w-full {panel.width}">
 							<panel.component onOpenSession={() => (uiState.view = 'home')} />
 						</div>
 					</div>

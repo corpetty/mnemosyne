@@ -101,6 +101,38 @@ def test_codes_expire(tmp_path):
         svc.redeem(code, "Phone")
 
 
+def test_a_code_works_an_hour_unless_told_otherwise(tmp_path):
+    now = [1000.0]
+    svc = PairingService(tmp_path / "paired_devices.json", clock=lambda: now[0])
+    assert CODE_TTL_SECONDS == 3600
+    code, expires = svc.new_code()
+    assert expires == 1000.0 + 3600
+    now[0] += 3599  # ten minutes used to be the end of it
+    assert svc.redeem(code, "Phone")[0].name == "Phone"
+    short, expires = svc.new_code(ttl_seconds=300)
+    assert expires == now[0] + 300
+    now[0] += 301
+    with pytest.raises(InvalidPairingCode):
+        svc.redeem(short, "Phone")
+
+
+def test_the_route_takes_a_length_in_minutes(server):
+    from datetime import UTC, datetime
+
+    def lasts(body) -> float:
+        r = server.post("/api/pairing/codes", headers=ADMIN, json=body)
+        assert r.status_code == 200, r.text
+        left = datetime.fromisoformat(r.json()["expires_at"]) - datetime.now(UTC)
+        return left.total_seconds() / 60
+
+    assert 59 < lasts({"kind": "phone"}) <= 60
+    assert 1439 < lasts({"kind": "phone", "minutes": 1440}) <= 1440
+    assert 14 < lasts({"kind": "phone", "minutes": 15}) <= 15
+    for bad in (0, 4, 1441):
+        r = server.post("/api/pairing/codes", headers=ADMIN, json={"kind": "phone", "minutes": bad})
+        assert r.status_code == 422
+
+
 def test_devices_persist_as_hashes(tmp_path):
     path = tmp_path / "paired_devices.json"
     svc = PairingService(path)
