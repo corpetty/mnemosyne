@@ -19,6 +19,8 @@ class TeamMemberState {
   chosen = $state<Destination | null>(null);
   private timer: ReturnType<typeof setInterval> | null = null;
   private loading: Promise<void> | null = null;
+  private tries = 0;
+  private retry: ReturnType<typeof setTimeout> | null = null;
 
   get joined(): boolean {
     return this.status?.joined === true;
@@ -61,8 +63,15 @@ class TeamMemberState {
     this.loading = (async () => {
       try {
         this.status = await getJoined();
+        this.tries = 0;
       } catch {
-        /* keep what we knew */
+        // Keep what we knew. A window that has not heard yet (the backend is still starting) asks again.
+        if (this.status === null && this.tries++ < 40 && !this.retry) {
+          this.retry = setTimeout(() => {
+            this.retry = null;
+            void this.load();
+          }, 3000);
+        }
       } finally {
         this.loading = null;
       }
@@ -102,11 +111,14 @@ class TeamMemberState {
 
   stop() {
     this.stopTimer();
+    if (this.retry) clearTimeout(this.retry);
+    this.retry = null;
   }
 
   /** Forget everything (tests). */
   reset() {
-    this.stopTimer();
+    this.stop();
+    this.tries = 0;
     this.status = null;
     this.moves = null;
     this.chosen = null;

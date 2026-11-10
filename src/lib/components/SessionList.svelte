@@ -3,6 +3,8 @@
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import type { SessionSummary } from '$lib/types/index.js';
 	import SearchBox from './SearchBox.svelte';
+	import LibrarySwitch from './LibrarySwitch.svelte';
+	import MovingToTeam from './MovingToTeam.svelte';
 	import { canChange } from '$lib/app/access.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { teamState } from '$lib/stores/team.svelte.js';
@@ -161,6 +163,7 @@
 	ondragleave={() => (dragOver = false)}
 	ondrop={onDrop}
 >
+	<LibrarySwitch />
 	<SearchBox />
 	<div class="flex gap-2">
 		<button
@@ -206,5 +209,6 @@
 		{#if sessionState.sessions.length === 0 && !sessionState.loading}
 			<p class="text-gray-500 text-sm text-center py-4">No meetings yet</p>
 		{/if}
+		<MovingToTeam />
 	</div>
 </div>

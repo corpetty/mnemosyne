@@ -2,6 +2,7 @@
  * App behaviour that spans stores: connecting to the backend, recording actions
  * (buttons, shortcuts, tray, command line, calendar banner) and keyboard shortcuts.
  */
+import { consentMove, leaveTeam, queueMove } from '$lib/api/local.js';
 import {
   addBookmark,
   exportToObsidian,
@@ -136,6 +137,61 @@ export async function startRecording(fresh = false, consent?: Consent) {
   } finally {
     audioState.pending = null;
   }
+}
+
+/** Leave the team this computer joined. The window goes back to its own library first when it shows
+ * the team's. Meetings already in the team stay there; waiting ones stay in this library. */
+export async function leaveCurrentTeam(): Promise<boolean> {
+  try {
+    teamMemberState.apply(await leaveTeam());
+  } catch (e) {
+    toastState.error(e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not leave the team');
+    return false;
+  }
+  if (connectionState.inTeam) {
+    connectionState.useLocal();
+    location.reload();
+  }
+  return true;
+}
+
+/** Put a meeting of this library in the team (it moves once its work is done). */
+export async function putInTeam(sessionId: string): Promise<boolean> {
+  const team = teamMemberState.teamName;
+  try {
+    await queueMove(sessionId);
+  } catch (e) {
+    toastState.error(e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not put the meeting in the team');
+    return false;
+  }
+  toastState.info(`Moving to ${team}`);
+  void teamMemberState.load();
+  void teamMemberState.loadMoves();
+  return true;
+}
+
+/** The team asked how the people in a waiting meeting agreed to be recorded: the consent dialog
+ * answers for that meeting, and the move is tried again. */
+export function askMoveConsent(sessionId: string) {
+  uiState.consentAsk = { fresh: false, moveId: sessionId };
+}
+
+export async function addMoveConsent(sessionId: string, consent: Consent) {
+  try {
+    await consentMove(sessionId, consent);
+    toastState.info(`Saved how they agreed. Moving to ${teamMemberState.teamName}`);
+  } catch (e) {
+    toastState.error(e instanceof Error ? e.message.replace(/^\d+: /, '') : 'Could not save how they agreed');
+  }
+  void teamMemberState.load();
+  void teamMemberState.loadMoves();
+}
+
+/** Settings → Devices and people → Your team. */
+export function openYourTeam() {
+  uiState.settingsTab = 'devices';
+  openView('settings');
+  setTimeout(() => document.getElementById('your-team')?.scrollIntoView({ block: 'start' }), 100);
 }
 
 /** After a library switch made by Record: start the recording that asked for it, once. */

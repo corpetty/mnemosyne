@@ -3,6 +3,7 @@
 	import DeviceSelector from './DeviceSelector.svelte';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { satelliteState } from '$lib/stores/satellite.svelte.js';
+	import { teamMemberState } from '$lib/stores/teamMember.svelte.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
 	import { uiState } from '$lib/stores/ui.svelte.js';
@@ -48,12 +49,14 @@
 			<div class="space-y-2">
 				<div class="flex items-center justify-center gap-2 text-red-400">
 					<span class="w-2 h-2 rounded-full bg-red-500"></span>
-					<span class="text-sm">{uiState.shellStage === 'error' ? 'Backend failed to start' : `Backend unreachable at ${connectionState.url}`}</span>
+					<span class="text-sm">{uiState.shellStage === 'error' ? 'Backend failed to start' : connectionState.inTeam ? `${teamMemberState.teamName} cannot be reached` : `Backend unreachable at ${connectionState.url}`}</span>
 				</div>
 				{#if uiState.shellStage === 'error'}
 					<pre class="mx-auto max-w-lg text-left text-[11px] leading-4 text-red-300/80 bg-gray-900 border border-gray-800 rounded p-2 whitespace-pre-wrap">{uiState.shellMessage}</pre>
 				{:else}
-					<p class="text-xs text-gray-600">Make sure the Python backend is running (still retrying)</p>
+					<p class="text-xs text-gray-600">
+						{connectionState.inTeam ? "Your library still works: switch to it in the sidebar (still retrying)" : 'Make sure the Python backend is running (still retrying)'}
+					</p>
 				{/if}
 			</div>
 		{:else}

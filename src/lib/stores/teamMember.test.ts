@@ -97,3 +97,16 @@ describe('teamMemberState', () => {
 		teamMemberState.stop();
 	});
 });
+
+describe('before the backend answers', () => {
+	it('asks again until it hears', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('starting'); }));
+		const { teamMemberState } = await fresh();
+		await teamMemberState.load();
+		expect(teamMemberState.joined).toBe(false);
+		vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(status()), { status: 200 })));
+		await vi.advanceTimersByTimeAsync(3000);
+		expect(teamMemberState.joined).toBe(true);
+		teamMemberState.stop();
+	});
+});
