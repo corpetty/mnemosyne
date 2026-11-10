@@ -61,6 +61,21 @@ export default defineConfig({
       timeout: 120_000
     },
     {
+      // A team's host (8078) and a team member's computer (8088) for team-members.spec.ts. Both are
+      // demo backends; the spec makes the first host a team and joins the second to it through the
+      // demo routes (`/api/demo/team-host`, `/join-team`), so no link sidecar or iroh takes part.
+      command: 'E2E_BACKEND_PORT=8078 bash tests-e2e/start-backend.sh',
+      url: 'http://127.0.0.1:8078/health',
+      reuseExistingServer: false,
+      timeout: 120_000
+    },
+    {
+      command: 'E2E_BACKEND_PORT=8088 bash tests-e2e/start-backend.sh',
+      url: 'http://127.0.0.1:8088/health',
+      reuseExistingServer: false,
+      timeout: 120_000
+    },
+    {
       command: 'bash tests-e2e/start-publish-host.sh',
       url: 'http://127.0.0.1:8028/health',
       reuseExistingServer: false,

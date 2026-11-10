@@ -180,3 +180,72 @@ def test_demo_copilot_needs_demo_mode_and_a_meeting(monkeypatch, client, ctx):
     assert client.post(f"/api/demo/copilot/{sid}").status_code == 404
     monkeypatch.setenv("MNEMOSYNE_DEMO", "1")
     assert client.post("/api/demo/copilot/nope").status_code == 404
+
+
+# ---- teams without iroh: the e2e seams (api/routes/demo.py `team-host`, `join-team`) -----------
+
+
+def test_demo_team_routes_need_demo_mode(client, ctx):
+    assert client.post("/api/demo/team-host", json={}).status_code == 404
+    assert client.delete("/api/demo/team-host").status_code == 404
+    body = {"url": "http://127.0.0.1:1", "token": "t", "user": {"id": "u", "name": "Sam"}}
+    assert client.post("/api/demo/join-team", json=body).status_code == 404
+    assert ctx.team_member.membership is None
+
+
+def test_demo_team_host_and_join(monkeypatch, settings, keystore):
+    """The host opens a tunnel listener and a member device (its token works there, not on the
+    main port); the member's membership is written pointing at it."""
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from mnemosyne.api.app import create_app
+
+    monkeypatch.setenv("MNEMOSYNE_DEMO", "1")
+    host_settings = settings.model_copy(update={"api_token": ""})
+    with TestClient(create_app(host_settings, keystore=keystore)) as host:
+        # A team host asks for a token: refused until one is set.
+        assert host.post("/api/demo/team-host", json={}).status_code == 409
+        host_settings.api_token = "admin-token"
+        auth = {"Authorization": "Bearer admin-token"}
+        r = host.post("/api/demo/team-host", json={"host_name": "Desk"}, headers=auth)
+        assert r.status_code == 200, r.text
+        team = r.json()
+        again = host.post("/api/demo/team-host", json={"host_name": "Desk"}, headers=auth).json()
+        assert again["member_meeting"] == team["member_meeting"]
+        assert again["token"] != team["token"]  # the device is replaced, never doubled
+        assert again["url"] == team["url"]
+        token = again["token"]
+
+        # Through the tunnel the token is the member's; on the main port it is nobody's.
+        me = httpx.get(
+            f"{team['url']}/api/users/me", headers={"Authorization": f"Bearer {token}"}
+        ).json()
+        assert (me["name"], me["role"], me["owner"]) == ("Sam", "member", False)
+        ids = [
+            s["id"]
+            for s in httpx.get(
+                f"{team['url']}/api/sessions", headers={"Authorization": f"Bearer {token}"}
+            ).json()
+        ]
+        assert ids == [team["member_meeting"]]  # not the owner's personal meeting
+        assert (
+            host.get("/api/users/me", headers={"Authorization": f"Bearer {token}"}).status_code
+            == 401
+        )
+
+        assert host.delete("/api/demo/team-host", headers=auth).status_code == 204
+        assert not host.app.state.ctx.pairing.members_for(team["user"]["id"])
+
+        # The member's side: a membership pointed straight at the listener.
+        with TestClient(
+            create_app(
+                settings.model_copy(update={"data_dir": settings.data_dir / "m"}), keystore=keystore
+            )
+        ) as member:
+            body = {"url": team["url"], "token": token, "name": "Desk", "user": team["user"]}
+            assert member.post("/api/demo/join-team", json=body).json()["joined"] is True
+            m = member.app.state.ctx.team_member
+            assert m.membership.host_name == "Desk" and m.membership.user["name"] == "Sam"
+            assert m.listen == team["url"].removeprefix("http://")
+            assert m.destination().url == team["url"]
