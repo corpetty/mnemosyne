@@ -2,6 +2,10 @@
 	import { focusOnMount } from '$lib/app/focus.js';
 	import { combineSessions, getJob, importAudio } from '$lib/api/backend.js';
 	import { audioReason } from '$lib/app/access.js';
+	import { putInTeam } from '$lib/app/controller.svelte.js';
+	import { putInTeamReason } from '$lib/app/teamDestination.js';
+	import { connectionState } from '$lib/stores/connection.svelte.js';
+	import { teamMemberState } from '$lib/stores/teamMember.svelte.js';
 	import { publishingState } from '$lib/stores/publishing.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -19,6 +23,21 @@
 	const session = $derived(sessionState.activeSession);
 	const foreignReason = $derived(audioReason(session));
 	const recordingHere = $derived(audioState.isRecording && audioState.activeSessionId === session?.id);
+	// "Put in the team…": a meeting of your own library that is yours and was recorded here. Where the
+	// meeting obviously cannot go the entry is left out; the backend's refusal is the last word.
+	const canPutInTeam = $derived(
+		teamMemberState.joined && !connectionState.inTeam && !!session && !putInTeamReason(session)
+	);
+
+	async function moveToTeam() {
+		if (!session) return;
+		const team = teamMemberState.teamName;
+		const ok = confirm(
+			`Move this meeting to ${team}? It leaves your library once ${team} has it, and the team's records rules apply there.`
+		);
+		if (!ok) return;
+		await putInTeam(session.id);
+	}
 
 	// The other meetings with audio, closest in time first: the other half of a dropped call is
 	// usually minutes away.
@@ -148,6 +167,19 @@
 				Combine with another meeting…
 				<span class="block text-xs text-gray-500">E.g. a call that dropped and was recorded again</span>
 			</button>
+			{#if canPutInTeam}
+				<button
+					role="menuitem"
+					class="block w-full px-3 py-1.5 text-left text-gray-200 hover:bg-gray-800"
+					onclick={() => {
+						open = false;
+						void moveToTeam();
+					}}
+				>
+					Put in the team…
+					<span class="block text-xs text-gray-500">Moves to {teamMemberState.teamName} once its work is done</span>
+				</button>
+			{/if}
 			{#if publishingState.allowed}
 				<button
 					role="menuitem"

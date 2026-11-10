@@ -10,6 +10,7 @@
 	import { onExternalClick } from '$lib/app/externalLink.js';
 	import LibraryCopy from './LibraryCopy.svelte';
 	import RemoteConnect from './RemoteConnect.svelte';
+	import { teamMemberState } from '$lib/stores/teamMember.svelte.js';
 	import TeamHostSettings from './TeamHostSettings.svelte';
 
 	let { role, readOnly = false }: { role: Role; readOnly?: boolean } = $props();
@@ -17,6 +18,13 @@
 	// The card the person is looking at; the current role until they pick another.
 	let picked = $state<Role | null>(null);
 	const pick = $derived(picked ?? role);
+	// "Uses my main computer" and "Join a team" exclude each other (the backend answers 409 too): while
+	// this computer is in a team, using a main computer is shown disabled, with the reason.
+	const satelliteLocked = $derived(
+		role !== 'satellite' && teamMemberState.joined
+			? `Leave ${teamMemberState.teamName} first: a computer in a team does not also use a main computer.`
+			: ''
+	);
 
 	const CARDS: { id: Role; title: string; text: string }[] = [
 		{
@@ -37,8 +45,9 @@
 	<h3 class="text-lg font-semibold text-gray-200 mb-1">This computer</h3>
 	<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3" role="radiogroup" aria-label="What this computer is">
 		{#each CARDS as c (c.id)}
+			{@const locked = c.id === 'satellite' && !!satelliteLocked}
 			<label
-				class="relative block rounded border px-3 py-2 {readOnly ? 'opacity-60' : 'cursor-pointer'} {pick === c.id
+				class="relative block rounded border px-3 py-2 {readOnly || locked ? 'opacity-60' : 'cursor-pointer'} {pick === c.id
 					? 'border-blue-600 bg-blue-950/30'
 					: 'border-gray-700 hover:border-gray-600'}"
 			>
@@ -47,12 +56,13 @@
 					name="computer-role"
 					value={c.id}
 					checked={pick === c.id}
-					disabled={readOnly}
+					disabled={readOnly || locked}
 					onchange={() => (picked = c.id)}
 					class="sr-only"
 				/>
 				<span class="block text-sm font-medium {pick === c.id ? 'text-gray-100' : 'text-gray-300'}">{c.title}</span>
 				<span class="block text-xs text-gray-500 mt-0.5">{c.text}</span>
+				{#if locked}<span class="block text-xs text-amber-300/80 mt-1">{satelliteLocked}</span>{/if}
 			</label>
 		{/each}
 	</div>
@@ -81,7 +91,7 @@
 			</div>
 		{/if}
 	{:else if pick === 'satellite'}
-		<RemoteConnect />
+		{#if !satelliteLocked}<RemoteConnect />{/if}
 		{#if role === 'satellite'}<LibraryCopy />{/if}
 	{:else if role === 'team'}
 		<TeamHostSettings part="role" />

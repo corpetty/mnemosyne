@@ -20,6 +20,7 @@
 	import EncryptionSettings from './EncryptionSettings.svelte';
 	import TeamPeopleSettings from './TeamPeopleSettings.svelte';
 	import TeamHostSettings from './TeamHostSettings.svelte';
+	import TeamMembership from './TeamMembership.svelte';
 	import WindowSettings from './WindowSettings.svelte';
 	import GpuSupportCard from './GpuSupportCard.svelte';
 	import PhononCard from './PhononCard.svelte';
@@ -1431,6 +1432,11 @@
 			<ThisComputer {role} {readOnly} />
 			{#if role === 'satellite'}
 				<p class="text-sm text-gray-400">These are your main computer's settings.</p>
+			{/if}
+			<!-- Joining a team another computer hosts: a computer of one's own that does not host a team
+			     (and the team's own library, whose settings are the host's, still reaches this card). -->
+			{#if !SAME_ORIGIN && (connectionState.inTeam || (!teamMode && !hostsTeam && (role === 'satellite' || (role === 'main' && !readOnly))))}
+				<TeamMembership />
 			{/if}
 
 			{#if role === 'main' && !readOnly}
