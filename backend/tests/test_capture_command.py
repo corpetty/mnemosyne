@@ -28,12 +28,13 @@ def test_source_targeted_by_node_name():
     assert cmd[cmd.index("--target") + 1] == "alsa_input.usb.rode"
 
 
-def test_list_devices_on_a_mac_runs_nothing(monkeypatch):
+def test_list_devices_on_a_mac_without_the_helper_runs_nothing(monkeypatch, tmp_path):
     from mnemosyne.audio import capture
 
     def no_pw_dump(*args, **kwargs):
         raise AssertionError("pw-dump must not run on a Mac")
 
     monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setenv("MNEMOSYNE_CAPTURE_BIN", str(tmp_path / "missing"))  # tests/test_coreaudio
     monkeypatch.setattr(capture.subprocess, "run", no_pw_dump)
     assert capture.list_devices() == []

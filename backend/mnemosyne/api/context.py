@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -280,6 +281,10 @@ class AppContext:
         from ..storage.crypto import SystemKeyStore, derive, key_check
 
         settings.data_dir.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "darwin":  # recorders (the capture sidecar) log beside the backend's
+            from ..audio import coreaudio
+
+            coreaudio.configure(settings.data_dir)
         from ..services.backup import apply_path_rebase, apply_pending_restore
 
         apply_pending_restore(settings)  # before the database (and its key check) is opened
