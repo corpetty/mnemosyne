@@ -1106,6 +1106,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/joined": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["status_api_joined_get"];
+        put?: never;
+        post?: never;
+        /**
+         * Leave
+         * @description Leave the team: the host is told when it can be reached (this computer's device there
+         *     is removed), and this computer forgets the membership either way.
+         */
+        delete: operations["leave_api_joined_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/joined/join": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Join
+         * @description Join the team whose app invite this is (Settings on the hosting computer, People and
+         *     access). Turns on this computer's API token and remote access when they are off.
+         */
+        post: operations["join_api_joined_join_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/joined/work": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Work */
+        put: operations["set_work_api_joined_work_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/local-model": {
         parameters: {
             query?: never;
@@ -3783,7 +3843,8 @@ export interface paths {
         /**
          * Set Main Computer
          * @description The desktop shell connected to the main computer through remote access (and at each
-         *     launch): where its tunnel is, the token and the name (services/main_computer.py).
+         *     launch): where its tunnel is, the token and the name (services/main_computer.py). Not
+         *     while this computer is in a team (services/team_member.py): one or the other.
          */
         put: operations["set_main_computer_api_system_main_put"];
         post?: never;
@@ -6048,6 +6109,65 @@ export interface components {
          * @enum {string}
          */
         JobStatus: "queued" | "running" | "completed" | "failed" | "cancelled";
+        /** JoinRequest */
+        JoinRequest: {
+            /** Invite */
+            invite: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+        };
+        /** JoinResponse */
+        JoinResponse: {
+            /** Consent Required */
+            consent_required: boolean;
+            /** Host Name */
+            host_name: string | null;
+            /** Joined */
+            joined: boolean;
+            /** New Api Token */
+            new_api_token: string | null;
+            /** Reachable */
+            reachable: boolean;
+            /** Signed Out */
+            signed_out: boolean;
+            user: components["schemas"]["JoinedUser"] | null;
+            /**
+             * Work
+             * @enum {string}
+             */
+            work: "here" | "host";
+        };
+        /** JoinedStatus */
+        JoinedStatus: {
+            /** Consent Required */
+            consent_required: boolean;
+            /** Host Name */
+            host_name: string | null;
+            /** Joined */
+            joined: boolean;
+            /** Reachable */
+            reachable: boolean;
+            /** Signed Out */
+            signed_out: boolean;
+            user: components["schemas"]["JoinedUser"] | null;
+            /**
+             * Work
+             * @enum {string}
+             */
+            work: "here" | "host";
+        };
+        /** JoinedUser */
+        JoinedUser: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+        };
         /** LegalHoldRequest */
         LegalHoldRequest: {
             /** Reason */
@@ -10373,6 +10493,14 @@ export interface components {
             /** Word */
             word: string;
         };
+        /** WorkRequest */
+        WorkRequest: {
+            /**
+             * Work
+             * @enum {string}
+             */
+            work: "here" | "host";
+        };
         /** AttachRequest */
         mnemosyne__api__routes__assets__AttachRequest: {
             /** Asset Id */
@@ -12298,6 +12426,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    status_api_joined_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JoinedStatus"];
+                };
+            };
+        };
+    };
+    leave_api_joined_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JoinedStatus"];
+                };
+            };
+        };
+    };
+    join_api_joined_join_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JoinRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JoinResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_work_api_joined_work_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JoinedStatus"];
                 };
             };
             /** @description Validation Error */
