@@ -11,22 +11,25 @@
 
 	const items = $derived(satelliteState.waiting);
 	const failed = $derived(items.some((e) => e.state === 'failed'));
-	const main = $derived(satelliteState.mainName);
 
 	const when = (iso: string) =>
 		new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
+	// Each item says where it goes: the main computer, or the team (`goes to <team>`).
+	const where = (e: OutboxEntry) => satelliteState.nameFor(e.destination);
+
 	function stateText(e: OutboxEntry): string {
-		if (e.state === 'sending') return `Being sent to ${main}`;
-		if (e.state === 'failed') return `${main} did not take it`;
-		return `Waiting for ${main}`;
+		const name = where(e);
+		if (e.state === 'sending') return `Being sent to ${name}`;
+		if (e.state === 'failed') return `${name} did not take it`;
+		return e.destination === 'team' ? `Waiting to go to ${name}` : `Waiting for ${name}`;
 	}
 
 	async function newMeeting(e: OutboxEntry) {
 		busy = e.id;
 		try {
 			await outboxAsNewMeeting(e.id);
-			toastState.info(`It will go to ${main} as a new meeting`);
+			toastState.info(`It will go to ${where(e)} as a new meeting`);
 			await satelliteState.refresh();
 		} catch (err) {
 			toastState.error(err instanceof Error ? err.message : 'Could not send it as a new meeting');
@@ -37,7 +40,7 @@
 
 	async function discard(e: OutboxEntry) {
 		const name = e.title || 'this recording';
-		if (!confirm(`Delete ${name} from this computer for good? Its audio has not reached ${main}, so it cannot be recovered.`)) return;
+		if (!confirm(`Delete ${name} from this computer for good? Its audio has not reached ${where(e)}, so it cannot be recovered.`)) return;
 		busy = e.id;
 		try {
 			await outboxDiscard(e.id);
