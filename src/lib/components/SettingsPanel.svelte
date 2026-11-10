@@ -1427,7 +1427,14 @@
 			</div>
 		{/if}
 
-		{#if tab === 'devices'}
+		{#if tab === 'devices' && connectionState.inTeam}
+			<!-- The team's library: what Settings shows here is the host's. This computer's own devices,
+			     sharing and links are in its own library; only the team card is about this computer. -->
+			<TeamMembership />
+			<p class="text-xs text-gray-500">This computer's devices, sharing and links are in Your library.</p>
+		{/if}
+
+		{#if tab === 'devices' && !connectionState.inTeam}
 			<!-- Devices and people: this computer, my devices, people, links, advanced, team server -->
 			<ThisComputer {role} {readOnly} />
 			{#if role === 'satellite'}
@@ -1435,7 +1442,7 @@
 			{/if}
 			<!-- Joining a team another computer hosts: a computer of one's own that does not host a team
 			     (and the team's own library, whose settings are the host's, still reaches this card). -->
-			{#if !SAME_ORIGIN && (connectionState.inTeam || (!teamMode && !hostsTeam && (role === 'satellite' || (role === 'main' && !readOnly))))}
+			{#if !SAME_ORIGIN && !teamMode && !hostsTeam && (role === 'satellite' || (role === 'main' && !readOnly))}
 				<TeamMembership />
 			{/if}
 

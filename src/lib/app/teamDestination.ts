@@ -37,6 +37,72 @@ export function consentRequiredFor(destination: Destination, connected: boolean,
   return destination === 'mine' ? connected : host;
 }
 
+// ---- the draft a recording leaves behind ---------------------------------------------------------
+
+/** What of a meeting says it was touched (backend models/session.py): a new meeting has the default
+ * name and none of these. */
+export interface DraftFacts {
+  name: string;
+  status?: string;
+  audio_file?: string | null;
+  recordings?: unknown[];
+  transcript?: unknown[];
+  summary?: string;
+  notes?: string;
+  own_notes?: string | null;
+  participants?: unknown[];
+  attendees?: unknown[];
+  agenda?: unknown[];
+  assets?: unknown[];
+  external_notes?: unknown[];
+  bookmarks?: unknown[];
+  copilot_notes?: unknown;
+  meeting_type?: string;
+  shared_from?: string;
+  origin?: string;
+}
+
+export const DEFAULT_SESSION_NAME = 'Untitled Session';
+
+/** A meeting nobody has touched: "New meeting", still with its default name and nothing in it (no
+ * title change, agenda, resources, notes, other assistants' notes, audio or transcript). */
+export function isEmptyDraft(s: DraftFacts | null | undefined): boolean {
+  if (!s) return false;
+  const none = (a: unknown[] | undefined) => !a || a.length === 0;
+  return (
+    s.name === DEFAULT_SESSION_NAME &&
+    (!s.status || s.status === 'created') &&
+    !s.audio_file &&
+    none(s.recordings) &&
+    none(s.transcript) &&
+    !s.summary &&
+    !s.notes?.trim() &&
+    !s.own_notes?.trim() &&
+    none(s.participants) &&
+    none(s.attendees) &&
+    none(s.agenda) &&
+    none(s.assets) &&
+    none(s.external_notes) &&
+    none(s.bookmarks) &&
+    !s.copilot_notes &&
+    !s.meeting_type &&
+    !s.shared_from &&
+    !s.origin
+  );
+}
+
+/** What a recording does with the meeting that is open in the library shown:
+ * - use: it is an empty draft and the recording goes into this library, so it is recorded into;
+ * - remove: it is an empty draft but the recording goes into the other library (the window switches),
+ *   so it would stay behind empty: it is removed;
+ * - keep: it has content, it is not touched. */
+export type DraftPlan = 'use' | 'remove' | 'keep';
+
+export function draftPlan(shown: Library, destination: Destination, open: DraftFacts | null | undefined): DraftPlan {
+  if (!isEmptyDraft(open)) return 'keep';
+  return libraryFor(destination) === shown ? 'use' : 'remove';
+}
+
 /** The team destinations. */
 export const isTeamDestination = (d: Destination): boolean => d !== 'mine';
 
@@ -97,5 +163,30 @@ function safeSession(): Storage | undefined {
     return typeof sessionStorage === 'undefined' ? undefined : sessionStorage;
   } catch {
     return undefined;
+  }
+}
+
+// ---- opening a meeting after the window switched library -----------------------------------------
+
+const OPEN_KEY = 'mnemosyne.openAfterSwitch';
+
+/** The id (in the library about to be shown) of a meeting to open once the switch has reloaded. */
+export function saveOpenAfterSwitch(id: string, store: Storage | undefined = safeSession(), now = Date.now()) {
+  try {
+    store?.setItem(OPEN_KEY, JSON.stringify({ id, at: now }));
+  } catch {
+    /* no storage: the person finds it in the list */
+  }
+}
+
+export function takeOpenAfterSwitch(store: Storage | undefined = safeSession(), now = Date.now()): string | null {
+  try {
+    const raw = store?.getItem(OPEN_KEY);
+    store?.removeItem(OPEN_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    return typeof p?.id === 'string' && p.id && typeof p.at === 'number' && now - p.at <= PENDING_MS ? p.id : null;
+  } catch {
+    return null;
   }
 }

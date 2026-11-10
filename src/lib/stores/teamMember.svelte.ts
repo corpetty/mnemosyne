@@ -1,9 +1,12 @@
 import { getJoined, getMoves } from '$lib/api/local.js';
 import { defaultDestination, teamLabel, type Destination } from '$lib/app/teamDestination.js';
 import { connectionState, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
-import type { JoinedStatus, MovesStatus } from '$lib/types/index.js';
+import type { JoinedStatus, MovedMeeting, MovesStatus } from '$lib/types/index.js';
 
 export const POLL_MS = 10_000;
+/** After a meeting was put in the team: look this often, for this long, for it to arrive. */
+export const FAST_MS = 2000;
+export const FAST_FOR_MS = 120_000;
 
 /**
  * This computer in a team another computer hosts (backend services/team_member.py, `/api/joined`):
@@ -20,6 +23,12 @@ class TeamMemberState {
   private timer: ReturnType<typeof setInterval> | null = null;
   private loading: Promise<void> | null = null;
   private tries = 0;
+  /** Meetings known to have moved (null until the first look): only a move seen after it is news. */
+  private movedSeen: Set<string> | null = null;
+  private pendingBefore = 0;
+  private fast: ReturnType<typeof setInterval> | null = null;
+  /** A meeting recorded or put here has arrived in the team (it is gone from this library). */
+  onMoved: ((m: MovedMeeting) => void) | null = null;
   private retry: ReturnType<typeof setTimeout> | null = null;
 
   get joined(): boolean {
@@ -79,18 +88,44 @@ class TeamMemberState {
       } finally {
         this.loading = null;
       }
-      if (this.status?.joined) this.startTimer();
-      else this.stopTimer();
+      if (this.status?.joined) {
+        this.startTimer();
+        // Moves finish quietly: look at the list while meetings wait, just after the last one went,
+        // and once to know what had moved before.
+        const waiting = this.status.pending_moves;
+        if (this.movedSeen === null || waiting > 0 || this.pendingBefore > 0) await this.loadMoves();
+        this.pendingBefore = waiting;
+        if (waiting === 0) this.stopFast();
+      } else this.stopTimer();
     })();
     return this.loading;
   }
 
   async loadMoves(): Promise<void> {
     try {
-      this.moves = await getMoves();
+      const moves = await getMoves();
+      this.moves = moves;
+      const seen = this.movedSeen;
+      this.movedSeen = new Set(moves.moved.map((m) => m.session_id));
+      if (seen === null) return;
+      for (const m of [...moves.moved].reverse()) if (!seen.has(m.session_id)) this.onMoved?.(m);
     } catch {
       /* not joined, or the backend did not answer */
     }
+  }
+
+  /** A meeting was just put in the team: look closely for a while, so the window hears of its arrival. */
+  expectMove() {
+    if (this.fast) return;
+    const until = Date.now() + FAST_FOR_MS;
+    this.fast = setInterval(() => {
+      if (Date.now() > until) this.stopFast();
+      else void this.load();
+    }, FAST_MS);
+  }
+  private stopFast() {
+    if (this.fast) clearInterval(this.fast);
+    this.fast = null;
   }
 
   /** A change made through the membership routes answered with the new status. */
@@ -101,6 +136,9 @@ class TeamMemberState {
       this.stopTimer();
       this.chosen = null;
       this.moves = null;
+      this.movedSeen = null;
+      this.pendingBefore = 0;
+      this.stopFast();
     }
   }
 
@@ -115,6 +153,7 @@ class TeamMemberState {
 
   stop() {
     this.stopTimer();
+    this.stopFast();
     if (this.retry) clearTimeout(this.retry);
     this.retry = null;
   }
@@ -127,6 +166,9 @@ class TeamMemberState {
     this.moves = null;
     this.chosen = null;
     this.loading = null;
+    this.movedSeen = null;
+    this.pendingBefore = 0;
+    this.onMoved = null;
   }
 }
 

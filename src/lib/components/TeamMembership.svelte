@@ -242,7 +242,10 @@
 			{/if}
 
 			<div>
-				<button onclick={leave} disabled={busy} class="text-sm text-gray-400 hover:text-red-400 disabled:opacity-50"
+				<button
+					onclick={leave}
+					disabled={busy}
+					class="rounded border border-red-900 bg-gray-800 px-3 py-1.5 text-sm text-red-400 hover:bg-gray-700 hover:text-red-300 disabled:opacity-50"
 					>Leave the team</button
 				>
 			</div>

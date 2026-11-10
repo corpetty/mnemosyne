@@ -7,7 +7,11 @@ import {
   savePendingStart,
   takePendingStart,
   putInTeamReason,
-  teamLabel
+  teamLabel,
+  isEmptyDraft,
+  draftPlan,
+  saveOpenAfterSwitch,
+  takeOpenAfterSwitch
 } from './teamDestination.js';
 
 describe('the team name', () => {
@@ -91,5 +95,73 @@ describe('a recording started from the other library', () => {
     expect(takePendingStart(s, 2)).toBeNull();
     s.setItem('mnemosyne.pendingRecord', 'not json');
     expect(takePendingStart(s, 2)).toBeNull();
+  });
+});
+
+describe('the draft a recording leaves behind', () => {
+  const draft = { name: 'Untitled Session', status: 'created', transcript: [], notes: '', agenda: [], assets: [] };
+
+  it('a new meeting is empty; anything done to it makes it content', () => {
+    expect(isEmptyDraft(draft)).toBe(true);
+    expect(isEmptyDraft({ name: 'Untitled Session' })).toBe(true);
+    for (const touched of [
+      { name: 'Standup' },
+      { audio_file: '/x.wav' },
+      { recordings: [{}] },
+      { transcript: [{}] },
+      { notes: 'a line' },
+      { own_notes: 'a line' },
+      { agenda: [{}] },
+      { assets: [{}] },
+      { external_notes: [{}] },
+      { attendees: ['Ada'] },
+      { bookmarks: [{}] },
+      { summary: 'x' },
+      { meeting_type: 'standup' },
+      { status: 'completed' },
+      { shared_from: 'someone' },
+      { origin: 'peer' }
+    ])
+      expect(isEmptyDraft({ ...draft, ...touched }), JSON.stringify(touched)).toBe(false);
+    expect(isEmptyDraft({ ...draft, notes: '  \n' })).toBe(true); // whitespace is nothing
+    expect(isEmptyDraft(null)).toBe(false);
+  });
+
+  it('is recorded into when the recording stays in its library', () => {
+    expect(draftPlan('mine', 'mine', draft)).toBe('use');
+    expect(draftPlan('mine', 'team-here', draft)).toBe('use');
+    expect(draftPlan('team', 'team-host', draft)).toBe('use');
+  });
+
+  it('is removed when the recording goes to the other library', () => {
+    expect(draftPlan('team', 'team-here', draft)).toBe('remove');
+    expect(draftPlan('team', 'mine', draft)).toBe('remove');
+    expect(draftPlan('mine', 'team-host', draft)).toBe('remove');
+  });
+
+  it('is kept when it has content, wherever the recording goes', () => {
+    const notes = { ...draft, notes: 'something' };
+    for (const lib of ['mine', 'team'] as const)
+      for (const d of ['mine', 'team-here', 'team-host'] as const) expect(draftPlan(lib, d, notes)).toBe('keep');
+    expect(draftPlan('mine', 'mine', null)).toBe('keep');
+  });
+});
+
+describe('opening a meeting after a library switch', () => {
+  const mem = () => {
+    const m = new Map<string, string>();
+    return {
+      getItem: (k: string) => m.get(k) ?? null,
+      setItem: (k: string, v: string) => void m.set(k, v),
+      removeItem: (k: string) => void m.delete(k)
+    } as unknown as Storage;
+  };
+  it('is remembered once, and stale after a minute', () => {
+    const s = mem();
+    saveOpenAfterSwitch('host1', s, 1000);
+    expect(takeOpenAfterSwitch(s, 2000)).toBe('host1');
+    expect(takeOpenAfterSwitch(s, 2000)).toBeNull();
+    saveOpenAfterSwitch('host1', s, 1000);
+    expect(takeOpenAfterSwitch(s, 1000 + 61_000)).toBeNull();
   });
 });

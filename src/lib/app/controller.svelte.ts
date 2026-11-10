@@ -9,8 +9,10 @@ import {
   getActiveRecordings,
   getEncryption,
   getHealth,
+  deleteSession,
   getJob,
   getMe,
+  getSession,
   redeemInvite,
   getSettings,
   getSystemInfo,
@@ -34,8 +36,12 @@ import { teamState } from '$lib/stores/team.svelte.js';
 import { teamMemberState } from '$lib/stores/teamMember.svelte.js';
 import {
   consentRequiredFor,
+  draftPlan,
+  isEmptyDraft,
   libraryFor,
+  saveOpenAfterSwitch,
   savePendingStart,
+  takeOpenAfterSwitch,
   takePendingStart
 } from '$lib/app/teamDestination.js';
 import { transcriptState } from '$lib/stores/transcript.svelte.js';
@@ -44,7 +50,7 @@ import { contactsState } from '$lib/stores/contacts.svelte.js';
 import { syncState } from '$lib/stores/sync.svelte.js';
 import { updateState } from '$lib/stores/update.svelte.js';
 import { wsState } from '$lib/stores/websocket.svelte.js';
-import type { BackendEvent, RecoveredRecording, SatelliteRecording } from '$lib/types/index.js';
+import type { BackendEvent, MovedMeeting, RecoveredRecording, SatelliteRecording } from '$lib/types/index.js';
 
 // ---- navigation ----------------------------------------------------------------
 
@@ -91,6 +97,10 @@ export async function startRecording(fresh = false, consent?: Consent) {
   if (teamMemberState.joined && !connectionState.usesMain) {
     const needs = libraryFor(destination);
     if (needs !== connectionState.library) {
+      // A "New meeting" left open and untouched would stay behind empty in this library.
+      if (draftPlan(connectionState.library, destination, sessionState.activeSession) === 'remove') {
+        await discardEmptyDraft();
+      }
       savePendingStart({ destination, fresh });
       switchLibrary(needs);
       return;
@@ -106,7 +116,9 @@ export async function startRecording(fresh = false, consent?: Consent) {
   if (connectionState.usesMain) return startSatelliteRecording(consent, 'main');
   // Streamed to the team: the same path, with the team as its destination.
   if (destination === 'team-host') {
-    await startSatelliteRecording(consent, 'team');
+    // An untouched draft open in the team's library is the meeting recorded into, not a second one.
+    const draft = draftPlan(connectionState.library, destination, sessionState.activeSession) === 'use';
+    await startSatelliteRecording(consent, 'team', draft ? sessionState.activeSession?.id : undefined);
     if (audioState.isRecording) teamMemberState.choose(null);
     return;
   }
@@ -139,6 +151,21 @@ export async function startRecording(fresh = false, consent?: Consent) {
   }
 }
 
+/** Remove the meeting that is open when it is still an empty draft (looked at again just now: notes
+ * may have been typed since it was loaded). Whatever goes wrong, it stays: an empty meeting is
+ * harmless, a lost one is not. */
+async function discardEmptyDraft() {
+  const open = sessionState.activeSession;
+  if (!open) return;
+  try {
+    if (!isEmptyDraft(await getSession(open.id))) return;
+    await deleteSession(open.id);
+    if (sessionState.activeSession?.id === open.id) sessionState.show(null);
+  } catch {
+    /* kept */
+  }
+}
+
 /** Leave the team this computer joined. The window goes back to its own library first when it shows
  * the team's. Meetings already in the team stay there; waiting ones stay in this library. */
 export async function leaveCurrentTeam(): Promise<boolean> {
@@ -167,7 +194,39 @@ export async function putInTeam(sessionId: string): Promise<boolean> {
   toastState.info(`Moving to ${team}`);
   void teamMemberState.load();
   void teamMemberState.loadMoves();
+  teamMemberState.expectMove(); // the window hears when it has arrived
   return true;
+}
+
+/** A meeting arrived in the team (the move finished; its copy here is deleted): the list is
+ * refreshed, an open copy is closed, and the toast opens the team's meeting. */
+function announceMoved(m: MovedMeeting) {
+  void sessionState.loadSessions();
+  if (!connectionState.inTeam && sessionState.activeSession?.id === m.session_id) sessionState.show(null);
+  toastState.show(`Moved to ${teamMemberState.teamName}`, 'success', 20_000, {
+    label: 'Open',
+    run: () => openInTeam(m.host_session_id)
+  });
+}
+teamMemberState.onMoved = announceMoved;
+
+/** The team's meeting `hostSessionId`: open it, in the team library (switching there first). */
+export async function openInTeam(hostSessionId: string) {
+  if (connectionState.inTeam) {
+    uiState.view = 'home';
+    await sessionState.selectSession(hostSessionId);
+    return;
+  }
+  saveOpenAfterSwitch(hostSessionId);
+  switchLibrary('team');
+}
+
+/** After a switch made by "Open" on a moved meeting: open it, once. */
+async function runOpenAfterSwitch() {
+  const id = takeOpenAfterSwitch();
+  if (!id || !connectionState.inTeam) return;
+  uiState.view = 'home';
+  await sessionState.selectSession(id);
 }
 
 /** The team asked how the people in a waiting meeting agreed to be recorded: the consent dialog
@@ -209,13 +268,17 @@ async function runPendingStart() {
  * backend captures and streams to the main computer's meeting, or, when it cannot be reached, keeps
  * the recording until it can. The meeting is made by the main computer (always a new one), so
  * there is no session to create here. */
-async function startSatelliteRecording(consent?: Consent, destination: 'main' | 'team' = 'main') {
+async function startSatelliteRecording(
+  consent?: Consent,
+  destination: 'main' | 'team' = 'main',
+  sessionId?: string
+) {
   if (!(await audioState.ensureDevices())) {
     toastState.error('Choose a microphone and/or call audio on this computer first');
     uiState.view = 'home';
     return;
   }
-  const res = await audioState.startSatellite(consent, destination);
+  const res = await audioState.startSatellite(consent, destination, sessionId);
   if (!res) {
     toastState.error(audioState.error ?? 'Could not start recording');
     return;
@@ -876,6 +939,7 @@ function onConnected(): () => void {
   transcriptState.init();
   void resumeActiveRecording();
   void runPendingStart();
+  void runOpenAfterSwitch();
   jobsState.init();
   askState.init();
   digestState.init();

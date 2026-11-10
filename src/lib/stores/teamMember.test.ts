@@ -111,3 +111,50 @@ describe('before the backend answers', () => {
 		teamMemberState.stop();
 	});
 });
+
+describe('meetings that arrive in the team', () => {
+	const moved = (id: string, host: string) => ({ session_id: id, host_session_id: host, name: id, at: '2026-11-10T10:00:00+00:00' });
+	let movesAnswer: { pending: unknown[]; moved: ReturnType<typeof moved>[] };
+
+	beforeEach(() => {
+		movesAnswer = { pending: [], moved: [moved('old', 'h-old')] };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) =>
+				url.endsWith('/api/joined/moves')
+					? new Response(JSON.stringify(movesAnswer))
+					: new Response(JSON.stringify(current))
+			)
+		);
+	});
+
+	it('tells of a move that finished after the first look, once, and not of earlier ones', async () => {
+		const { teamMemberState } = await fresh();
+		const seen: string[] = [];
+		teamMemberState.onMoved = (m) => seen.push(m.host_session_id);
+		current = status({ pending_moves: 1 });
+		await teamMemberState.load(); // first look: 'old' is what had moved before
+		expect(seen).toEqual([]);
+		movesAnswer = { pending: [], moved: [moved('new', 'h-new'), moved('old', 'h-old')] };
+		current = status({ pending_moves: 0 });
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(seen).toEqual(['h-new']);
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(seen).toEqual(['h-new']);
+		teamMemberState.stop();
+	});
+
+	it('looks every two seconds for a while after a meeting was put in the team', async () => {
+		const { teamMemberState } = await fresh();
+		const seen: string[] = [];
+		teamMemberState.onMoved = (m) => seen.push(m.host_session_id);
+		current = status({ pending_moves: 1 });
+		await teamMemberState.load();
+		teamMemberState.expectMove();
+		movesAnswer = { pending: [], moved: [moved('new', 'h-new'), moved('old', 'h-old')] };
+		current = status({ pending_moves: 0 });
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(seen).toEqual(['h-new']);
+		teamMemberState.stop();
+	});
+});

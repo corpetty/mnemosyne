@@ -131,6 +131,20 @@ test('Settings, Your team: the card names the team, who you are and where team r
   await expect(card.getByRole('button', { name: 'Leave the team' })).toBeVisible();
 });
 
+test('Settings in the team library: Devices and people is only the Your team card', async ({ page }) => {
+  await openMember(page);
+  await library(page).getByRole('button', { name: TEAM }).click();
+  await expect(library(page).getByRole('button', { name: TEAM })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Devices and people', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Your team' })).toBeVisible();
+  await expect(page.getByText("This computer's devices, sharing and links are in Your library.")).toBeVisible();
+  // The host's own sections are not shown as this computer's.
+  await expect(page.getByRole('region', { name: 'This computer' })).toHaveCount(0);
+  await expect(page.getByText('Host a team on this computer')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Leave the team' })).toBeVisible();
+});
+
 test('the Record menu offers the team, and a recording done on the host ends up in the team library', async ({ page, request }) => {
   test.setTimeout(90_000);
   const before: { id: string }[] = await (await request.get(`${MEMBER}/api/joined/api/sessions`)).json();
@@ -177,7 +191,6 @@ test('the Record menu offers the team, and a recording done on the host ends up 
   await expect
     .poll(async () => {
       const all: { id: string; has_transcript: boolean }[] = await (await request.get(`${MEMBER}/api/joined/api/sessions`)).json();
-      // ("New meeting" made an empty one on the host too: the recorded one has the transcript.)
       const fresh = all.find((s) => s.has_transcript && !before.some((b) => b.id === s.id));
       made = fresh?.id ?? '';
       return fresh?.has_transcript;
@@ -187,10 +200,11 @@ test('the Record menu offers the team, and a recording done on the host ends up 
   expect(own.map((s) => s.id)).not.toContain(made);
   const seen = await (await request.get(`${HOST}/api/sessions/${made}`, { headers: auth })).json();
   expect(seen.owner_id).not.toBe('');
+  // The draft "New meeting" made is the meeting that was recorded: no empty one is left behind.
   const after: { id: string }[] = await (await request.get(`${MEMBER}/api/joined/api/sessions`)).json();
-  for (const s of after.filter((x) => !before.some((b) => b.id === x.id))) {
-    await request.delete(`${MEMBER}/api/joined/api/sessions/${s.id}`);
-  }
+  const added = after.filter((x) => !before.some((b) => b.id === x.id));
+  expect(added.map((s) => s.id)).toEqual([made]);
+  for (const s of added) await request.delete(`${MEMBER}/api/joined/api/sessions/${s.id}`);
 });
 
 test('"Put in the team" moves a local meeting: it leaves Your library and appears in the team\'s', async ({ page, request }, info) => {
@@ -228,13 +242,15 @@ test('"Put in the team" moves a local meeting: it leaves Your library and appear
       return mine.some((s) => s.id === id);
     })
     .toBe(false);
-  // (The open window does not hear of the deletion: its list is refreshed by a reload.)
-  await page.reload();
-  await expect(library(page)).toBeVisible();
+  // The open window hears of it without a reload: the list and the open meeting follow, and the
+  // toast opens the team's copy.
+  await expect(page.getByText('Moved to Team on Desk')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('button', { name: new RegExp(`^${name}`) })).toHaveCount(0);
-
-  await library(page).getByRole('button', { name: TEAM }).click();
-  await expect(page.getByRole('button', { name: new RegExp(`^${name}`) })).toBeVisible();
+  await expect(page.getByRole('heading', { name })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await expect(library(page).getByRole('button', { name: TEAM })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('heading', { name })).toBeVisible();
+  await expect(page.getByRole('button', { name: new RegExp(`^${name}`) }).first()).toBeVisible(); // in the list
   const team: { id: string; name: string }[] = await (await request.get(`${MEMBER}/api/joined/api/sessions`)).json();
   for (const s of team.filter((x) => x.name === name)) await request.delete(`${MEMBER}/api/joined/api/sessions/${s.id}`);
 });

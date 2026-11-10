@@ -8,9 +8,10 @@ async function fresh() {
 	const team = await import('../stores/teamMember.svelte.js');
 	const ui = await import('../stores/ui.svelte.js');
 	const audio = await import('../stores/audio.svelte.js');
+	const session = await import('../stores/session.svelte.js');
 	const controller = await import('./controller.svelte.js');
 	const destination = await import('./teamDestination.js');
-	return { ...connection, ...team, ...ui, ...audio, ...controller, ...destination };
+	return { ...connection, ...team, ...ui, ...audio, ...session, ...controller, ...destination };
 }
 
 const joined = (over: Partial<JoinedStatus> = {}): JoinedStatus => ({
@@ -26,13 +27,15 @@ const joined = (over: Partial<JoinedStatus> = {}): JoinedStatus => ({
 });
 
 let status: JoinedStatus;
-let requests: { path: string; method: string }[];
+let requests: { path: string; method: string; body?: unknown }[];
+let stored: Record<string, unknown>; // meetings the fake backend has, by id
 let reload: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
 	localStorage.clear();
 	sessionStorage.clear();
 	requests = [];
+	stored = {};
 	status = joined();
 	reload = vi.fn();
 	vi.stubGlobal('location', { reload, origin: 'http://localhost', search: '', pathname: '/', hash: '' });
@@ -40,8 +43,17 @@ beforeEach(() => {
 		'fetch',
 		vi.fn(async (url: string, init?: RequestInit) => {
 			const path = url.replace(/^https?:\/\/[^/]+/, '');
-			requests.push({ path, method: init?.method ?? 'GET' });
+			requests.push({ path, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body as string) : undefined });
 			if (path === '/api/joined') return new Response(JSON.stringify(status));
+			const m = path.match(/^(?:\/api\/joined)?\/api\/sessions\/(\w+)$/);
+			if (m && stored[m[1]]) return new Response(JSON.stringify(init?.method === 'DELETE' ? {} : stored[m[1]]));
+			if (path === '/api/devices')
+				return new Response(
+					JSON.stringify([{ id: 1, name: 'mic', description: 'Mic', media_class: 'Audio/Source', is_input: true, is_output: false, is_monitor: false, is_echo_cancelled: false }])
+				);
+			if (path === '/api/satellite/start')
+				return new Response(JSON.stringify({ session_id: 'd1', local_id: 'l1', streaming: true }));
+			if (path === '/api/satellite') return new Response('{}', { status: 500 });
 			return new Response('{}');
 		})
 	);
@@ -130,5 +142,113 @@ describe('Record when this computer has joined a team', () => {
 		expect(c.switchLibrary('team')).toBe(false);
 		expect(reload).not.toHaveBeenCalled();
 		expect(c.connectionState.library).toBe('mine');
+	});
+});
+
+describe('the empty draft left open by "New meeting"', () => {
+	const draft = (over: Record<string, unknown> = {}) => ({
+		id: 'd1',
+		name: 'Untitled Session',
+		status: 'created',
+		transcript: [],
+		recordings: [],
+		notes: '',
+		...over
+	});
+
+	it('is removed when the recording goes to the other library', async () => {
+		const c = await fresh();
+		stored.d1 = draft();
+		c.connectionState.save(c.LOCAL_BACKEND, 'tok', false);
+		await c.teamMemberState.load();
+		c.sessionState.show(stored.d1 as never);
+		c.teamMemberState.choose('team-host');
+		await c.startRecording(true);
+		expect(requests.some((r) => r.method === 'DELETE' && r.path === '/api/sessions/d1')).toBe(true);
+		expect(reload).toHaveBeenCalledOnce();
+		expect(c.sessionState.activeSession).toBeNull();
+	});
+
+	it('is kept when it has something in it', async () => {
+		const c = await fresh();
+		stored.d1 = draft({ notes: 'agenda for later' });
+		c.connectionState.save(c.LOCAL_BACKEND, 'tok', false);
+		await c.teamMemberState.load();
+		c.sessionState.show(stored.d1 as never);
+		c.teamMemberState.choose('team-host');
+		await c.startRecording(true);
+		expect(requests.some((r) => r.method === 'DELETE')).toBe(false);
+		expect(reload).toHaveBeenCalledOnce();
+	});
+
+	it('is looked at again before it goes: notes typed since it was opened keep it', async () => {
+		const c = await fresh();
+		stored.d1 = draft({ notes: 'typed meanwhile' });
+		c.connectionState.save(c.LOCAL_BACKEND, 'tok', false);
+		await c.teamMemberState.load();
+		c.sessionState.show(draft() as never); // what the window loaded: still empty
+		c.teamMemberState.choose('team-host');
+		await c.startRecording(true);
+		expect(requests.some((r) => r.method === 'DELETE')).toBe(false);
+	});
+
+	it('is recorded into when the team\'s host does the work from the team library', async () => {
+		const c = await fresh();
+		stored.d1 = draft();
+		c.connectionState.save(c.LOCAL_BACKEND, 'tok', false);
+		c.connectionState.useLibrary('team');
+		await c.teamMemberState.load();
+		c.sessionState.show(stored.d1 as never);
+		c.teamMemberState.choose('team-host');
+		c.audioState.selectedDeviceIds = new Set([1]);
+		await c.startRecording(true);
+		const start = requests.find((r) => r.path === '/api/satellite/start');
+		expect(start?.body).toMatchObject({ destination: 'team', session_id: 'd1' });
+		expect(requests.some((r) => r.method === 'DELETE')).toBe(false);
+		expect(reload).not.toHaveBeenCalled();
+	});
+
+	it('a team meeting with content is not recorded into: the host makes a new one', async () => {
+		const c = await fresh();
+		stored.t1 = draft({ id: 't1', name: 'Team standup', transcript: [{}] });
+		c.connectionState.save(c.LOCAL_BACKEND, 'tok', false);
+		c.connectionState.useLibrary('team');
+		await c.teamMemberState.load();
+		c.sessionState.show(stored.t1 as never);
+		c.teamMemberState.choose('team-host');
+		c.audioState.selectedDeviceIds = new Set([1]);
+		await c.startRecording(true);
+		const start = requests.find((r) => r.path === '/api/satellite/start');
+		expect(start?.body).not.toHaveProperty('session_id');
+	});
+});
+
+describe('a meeting that arrived in the team', () => {
+	it('refreshes the list, closes the open copy and offers to open the team\'s', async () => {
+		const c = await fresh();
+		const toast = await import('../stores/toast.svelte.js');
+		c.connectionState.save(c.LOCAL_BACKEND, 'tok', false);
+		await c.teamMemberState.load();
+		c.sessionState.show({ id: 'local1', name: 'Local planning' } as never);
+		c.teamMemberState.onMoved!({ session_id: 'local1', host_session_id: 'host1', name: 'Local planning', at: '' });
+		expect(c.sessionState.activeSession).toBeNull();
+		expect(requests.some((r) => r.path === '/api/sessions')).toBe(true);
+		const t = toast.toastState.toasts.at(-1)!;
+		expect(t.message).toBe('Moved to Team on Desk');
+		t.action!.run();
+		await Promise.resolve();
+		// Opening it switches to the team library, and leaves a note for the reloaded window.
+		expect(reload).toHaveBeenCalledOnce();
+		expect(c.connectionState.library).toBe('team');
+		expect(c.takeOpenAfterSwitch()).toBe('host1');
+	});
+
+	it('another open meeting stays open', async () => {
+		const c = await fresh();
+		c.connectionState.save(c.LOCAL_BACKEND, 'tok', false);
+		await c.teamMemberState.load();
+		c.sessionState.show({ id: 'other', name: 'Other' } as never);
+		c.teamMemberState.onMoved!({ session_id: 'local1', host_session_id: 'host1', name: '', at: '' });
+		expect(c.sessionState.activeSession?.id).toBe('other');
 	});
 });
