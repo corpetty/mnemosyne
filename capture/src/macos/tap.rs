@@ -48,11 +48,21 @@ pub const NAME: &str = "System audio (all apps)";
 const STALL: Duration = Duration::from_secs(10);
 const MAX_STALL_REBUILDS: u32 = 3;
 
+static LAST_STAGE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// The last Core Audio step `open` reached (for the tests: where a call blocks).
+pub fn last_stage() -> String {
+    LAST_STAGE.lock().map(|s| s.clone()).unwrap_or_default()
+}
+
 /// `MNEMOSYNE_CAPTURE_TRACE=1`: one stderr line per Core Audio step, with the time since the
 /// first one. For finding which call waits on a permission prompt (the tester's Mac, CI).
 fn trace(stage: &str) {
     use std::sync::OnceLock;
     static START: OnceLock<Option<Instant>> = OnceLock::new();
+    if let Ok(mut last) = LAST_STAGE.lock() {
+        *last = stage.to_string();
+    }
     let start =
         START.get_or_init(|| std::env::var_os("MNEMOSYNE_CAPTURE_TRACE").map(|_| Instant::now()));
     if let Some(start) = start {
@@ -277,7 +287,7 @@ impl Aggregate {
     /// AudioCap builds it. Without an output device (a bare CI runner) it is the tap alone,
     /// as cpal builds it.
     fn create(tap_uuid: &str, main_uid: Option<&str>, shared: &Arc<Shared>) -> Result<Self> {
-        let description = composition(tap_uuid, main_uid);
+        let description = composition(Some(tap_uuid), main_uid);
         let mut id: AudioObjectID = 0;
         trace("AudioHardwareCreateAggregateDevice");
         // SAFETY: a complete composition dictionary and an out-pointer.
@@ -513,7 +523,7 @@ fn cf_array(items: &[*const c_void]) -> CFRetained<CFArray> {
     .expect("CFArrayCreate")
 }
 
-fn composition(tap_uuid: &str, main_uid: Option<&str>) -> CFRetained<CFDictionary> {
+fn composition(tap_uuid: Option<&str>, main_uid: Option<&str>) -> CFRetained<CFDictionary> {
     let pid = std::process::id();
     let d = Dict::new();
     d.set_str(
@@ -522,20 +532,25 @@ fn composition(tap_uuid: &str, main_uid: Option<&str>) -> CFRetained<CFDictionar
     );
     d.set_str(
         kAudioAggregateDeviceUIDKey,
-        &format!("com.corpetty.mnemosyne.capture.{pid}.{tap_uuid}"),
+        &format!(
+            "com.corpetty.mnemosyne.capture.{pid}.{}",
+            tap_uuid.unwrap_or("notap")
+        ),
     );
     d.set_bool(kAudioAggregateDeviceIsPrivateKey, true);
     d.set_bool(kAudioAggregateDeviceIsStackedKey, false);
-    d.set_bool(kAudioAggregateDeviceTapAutoStartKey, true);
 
-    let tap = Dict::new();
-    tap.set_str(kAudioSubTapUIDKey, tap_uuid);
-    tap.set_bool(kAudioSubTapDriftCompensationKey, true);
-    let taps = cf_array(&[tap.as_ptr()]);
-    d.set(
-        kAudioAggregateDeviceTapListKey,
-        (&*taps as *const CFArray).cast(),
-    );
+    if let Some(tap_uuid) = tap_uuid {
+        d.set_bool(kAudioAggregateDeviceTapAutoStartKey, true);
+        let tap = Dict::new();
+        tap.set_str(kAudioSubTapUIDKey, tap_uuid);
+        tap.set_bool(kAudioSubTapDriftCompensationKey, true);
+        let taps = cf_array(&[tap.as_ptr()]);
+        d.set(
+            kAudioAggregateDeviceTapListKey,
+            (&*taps as *const CFArray).cast(),
+        );
+    }
 
     if let Some(uid) = main_uid {
         let sub = Dict::new();
@@ -554,6 +569,7 @@ fn composition(tap_uuid: &str, main_uid: Option<&str>) -> CFRetained<CFDictionar
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::RecvTimeoutError;
 
     #[test]
     fn planar_buffers_are_interleaved() {
@@ -570,44 +586,175 @@ mod tests {
 
     #[test]
     fn the_composition_builds() {
-        let _ = composition("ABC-123", Some("BuiltInSpeakerDevice"));
-        let _ = composition("ABC-123", None);
+        let _ = composition(Some("ABC-123"), Some("BuiltInSpeakerDevice"));
+        let _ = composition(Some("ABC-123"), None);
+        let _ = composition(None, Some("BuiltInSpeakerDevice"));
     }
 
-    /// A hosted runner has no TCC grant and maybe no output device. Whatever happens, it must
-    /// be an Ok tap or a clear error, never a crash or a hang.
+    /// Run `f` on a thread of its own; None when it has not returned after `secs`.
+    fn within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        match rx.recv_timeout(Duration::from_secs(secs)) {
+            Ok(v) => Some(v),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => panic!("the probe thread panicked"),
+        }
+    }
+
+    /// Create and destroy an IOProc on `device` (no start): does the call return?
+    fn probe_io_proc(device: AudioObjectID) -> Result<()> {
+        let mut proc_id: AudioDeviceIOProcID = None;
+        // SAFETY: a null client; `io_proc` returns at once for it.
+        let status = unsafe {
+            AudioDeviceCreateIOProcID(
+                device,
+                Some(io_proc),
+                std::ptr::null_mut(),
+                NonNull::from(&mut proc_id),
+            )
+        };
+        check(status, "AudioDeviceCreateIOProcID")?;
+        // SAFETY: just created.
+        unsafe { AudioDeviceDestroyIOProcID(device, proc_id) };
+        Ok(())
+    }
+
+    fn probe_aggregate(tap: bool, sub_device: bool) -> Result<()> {
+        let tap_uuid = if tap { Some(create_tap()?.1) } else { None };
+        let main_uid = if sub_device {
+            default_output_uid()
+        } else {
+            None
+        };
+        let description = composition(tap_uuid.as_deref(), main_uid.as_deref());
+        let mut id: AudioObjectID = 0;
+        // SAFETY: a complete composition and an out-pointer.
+        let status =
+            unsafe { AudioHardwareCreateAggregateDevice(&description, NonNull::from(&mut id)) };
+        check(status, "AudioHardwareCreateAggregateDevice")?;
+        let r = probe_io_proc(id);
+        // SAFETY: ours; the tap (if any) leaks on purpose in this probe.
+        unsafe { AudioHardwareDestroyAggregateDevice(id) };
+        r
+    }
+
+    /// Tell the HAL to use a thread of its own for notifications instead of a run loop
+    /// (kAudioHardwarePropertyRunLoop = NULL; the constant is in the deprecated set).
+    fn detach_hal_run_loop() -> Result<()> {
+        use objc2_core_audio::AudioObjectSetPropertyData;
+        const RUN_LOOP: u32 = 0x726e6c70; // 'rnlp'
+        let addr = global(RUN_LOOP);
+        let null: *const c_void = std::ptr::null();
+        // SAFETY: the property takes a CFRunLoopRef; NULL is documented.
+        let status = unsafe {
+            AudioObjectSetPropertyData(
+                SYSTEM_OBJECT,
+                NonNull::from(&addr),
+                0,
+                std::ptr::null(),
+                std::mem::size_of::<*const c_void>() as u32,
+                NonNull::from(&null).cast(),
+            )
+        };
+        check(status, "kAudioHardwarePropertyRunLoop = NULL")
+    }
+
+    type Opened = Result<(String, usize), String>;
+
+    fn try_open(label: &str) -> Option<Opened> {
+        let started = Instant::now();
+        let outcome = within(30, || {
+            SystemTap::open()
+                .and_then(|mut tap| {
+                    let mut got = 0;
+                    for _ in 0..20 {
+                        if let Event::Audio(c) = tap.next(Duration::from_millis(100))? {
+                            assert!(c.channels >= 1);
+                            assert!(c.rate > 0);
+                            got += 1;
+                        }
+                    }
+                    Ok((tap.format().to_string(), got))
+                })
+                .map_err(|e| format!("{e:#}"))
+        });
+        match &outcome {
+            Some(Ok((format, buffers))) => eprintln!(
+                "{label}: tap ok in {:.2}s: {format}, {buffers} buffers in 2 s",
+                started.elapsed().as_secs_f64()
+            ),
+            Some(Err(e)) => eprintln!("{label}: tap refused: {e}"),
+            None => eprintln!("{label}: no answer after 30 s; last step: {}", last_stage()),
+        }
+        outcome
+    }
+
+    type Probe = Box<dyn FnOnce() -> Result<()> + Send>;
+
+    /// A hosted runner has no "System Audio Recording" grant. Creating the tap and the
+    /// aggregate device must work (they need none); creating the IOProc is where TCC asks
+    /// (and, with nobody to answer, waits). The test proves the first two and accepts the
+    /// wait at the third; an answer must be Ok or a clear error, never a crash.
     #[test]
-    fn opening_the_system_tap_works_or_fails_clearly() {
+    fn opening_the_system_tap_works_or_waits_for_the_permission() {
         std::env::set_var("MNEMOSYNE_CAPTURE_TRACE", "1");
         eprintln!("doctor: {}", crate::doctor::report());
         eprintln!(
             "devices: {}",
             serde_json::to_string(&crate::macos::devices().unwrap()).unwrap()
         );
-        let (tx, rx) = channel();
-        std::thread::spawn(move || {
-            let outcome = SystemTap::open().and_then(|mut tap| {
-                let mut got = 0;
-                for _ in 0..20 {
-                    if let Event::Audio(c) = tap.next(Duration::from_millis(100))? {
-                        assert!(c.channels >= 1);
-                        assert!(c.rate > 0);
-                        got += 1;
-                    }
-                }
-                Ok((tap.format().to_string(), got))
-            });
-            let _ = tx.send(outcome.map_err(|e| format!("{e:#}")));
-        });
-        match rx.recv_timeout(Duration::from_secs(30)) {
-            Ok(Ok((format, buffers))) => eprintln!("tap ok: {format}, {buffers} buffers in 2 s"),
-            Ok(Err(e)) => {
-                eprintln!("tap refused: {e}");
-                assert!(e.contains("system audio"), "{e}");
-            }
-            Err(_) => panic!(
-                "opening the system tap hung for 30 s (a permission prompt? see the trace lines)"
+        // Where does an IOProc wait? Diagnostics only, printed for the CI log.
+        let probes: [(&str, Probe); 4] = [
+            (
+                "IOProc on the default output device",
+                Box::new(|| {
+                    let id = coreaudio::default_device(false)
+                        .ok_or_else(|| anyhow::anyhow!("no default output"))?;
+                    probe_io_proc(id)
+                }),
             ),
+            (
+                "IOProc on an aggregate of the default output, no tap",
+                Box::new(|| probe_aggregate(false, true)),
+            ),
+            (
+                "IOProc on an aggregate of the tap alone",
+                Box::new(|| probe_aggregate(true, false)),
+            ),
+            (
+                "IOProc on an aggregate of the tap and the default output",
+                Box::new(|| probe_aggregate(true, true)),
+            ),
+        ];
+        for (label, probe) in probes {
+            let started = Instant::now();
+            match within(10, probe) {
+                Some(Ok(())) => {
+                    eprintln!("{label}: ok in {:.2}s", started.elapsed().as_secs_f64())
+                }
+                Some(Err(e)) => eprintln!("{label}: error: {e:#}"),
+                None => eprintln!("{label}: no answer after 10 s"),
+            }
+        }
+
+        let mut outcome = try_open("open");
+        if outcome.is_none() {
+            eprintln!("detaching the HAL run loop: {:?}", detach_hal_run_loop());
+            outcome = try_open("open after detaching the run loop");
+        }
+        match outcome {
+            Some(Ok(_)) => {}
+            Some(Err(e)) => assert!(e.contains("system audio"), "{e}"),
+            None => {
+                let stage = last_stage();
+                assert!(
+                    stage.starts_with("rate ") || stage.starts_with("AudioDeviceStart"),
+                    "blocked before the IOProc step, at: {stage}"
+                );
+            }
         }
     }
 }
