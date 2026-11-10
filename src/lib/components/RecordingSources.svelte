@@ -5,8 +5,10 @@
 
 	// While recording: one line naming the sources, with their levels, instead of the device list.
 	const sources = $derived(audioState.devices.filter((d) => audioState.selectedDeviceIds.has(d.id)));
-	const failing = $derived(Object.keys(audioState.problems).length > 0);
+	const failing = $derived(Object.values(audioState.problems).some((s) => s !== 'silent'));
 	const PROBLEM: Record<string, string> = { stopped: 'stopped', stalled: 'no audio' };
+	// macOS system audio of exact zeros (backend audio/health.py SILENT_HINT): a hint, not a failure.
+	const SILENT_HINT = 'System audio is silent: check Privacy & Security → Screen & System Audio Recording';
 </script>
 
 <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400" aria-label="Recording from">
@@ -14,12 +16,17 @@
 	{#each sources as d (d.id)}
 		<span class="flex items-center gap-1.5">
 			<span class="text-gray-300">{d.description}</span>
-			{#if audioState.problems[String(d.id)]}
+			{#if audioState.problems[String(d.id)] === 'silent'}
+				<LevelMeter level={audioState.levels[String(d.id)]} compact />
+			{:else if audioState.problems[String(d.id)]}
 				<span class="rounded bg-red-900/60 px-1.5 text-red-200">{PROBLEM[audioState.problems[String(d.id)]]}</span>
 			{:else}
 				<LevelMeter level={audioState.levels[String(d.id)]} compact />
 			{/if}
 		</span>
+	{/each}
+	{#each sources.filter((d) => audioState.problems[String(d.id)] === 'silent') as d (d.id)}
+		<span class="w-full text-amber-300" role="status">{SILENT_HINT}</span>
 	{/each}
 	{#if failing && !audioState.inBrowser}
 		<!-- In a browser the connection comes back by itself (app/browser-capture.ts). -->

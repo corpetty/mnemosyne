@@ -4,14 +4,18 @@ is on, while this computer is shared with a team (services/team_host.py), and wh
 rooms on this computer (iroh or tunnel) are live: guests type straight into it.
 
 It runs `systemd-inhibit --what=sleep --mode=block ... sleep infinity` and stops it to let go.
+On macOS it runs `/usr/bin/caffeinate -i -w <backend pid>` instead: `-i` stops idle sleep and `-w`
+ends it when the backend exits. `release` stops it the same way.
 Best effort: without systemd-inhibit (the Flatpak) nothing is held, and `available` says so.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -21,17 +25,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+CAFFEINATE = "/usr/bin/caffeinate"
+
+
+def _command(reason: str) -> list[str]:
+    if sys.platform == "darwin":
+        return [CAFFEINATE, "-i", "-w", str(os.getpid())]
+    return [
+        "systemd-inhibit",
+        "--what=sleep",
+        "--mode=block",
+        "--who=Mnemosyne",
+        f"--why={reason}",
+        "sleep",
+        "infinity",
+    ]
+
+
+def _available() -> bool:
+    if sys.platform == "darwin":
+        return os.path.exists(CAFFEINATE)
+    return shutil.which("systemd-inhibit") is not None
+
+
 def _spawn(reason: str) -> subprocess.Popen:
     return subprocess.Popen(
-        [
-            "systemd-inhibit",
-            "--what=sleep",
-            "--mode=block",
-            "--who=Mnemosyne",
-            f"--why={reason}",
-            "sleep",
-            "infinity",
-        ],
+        _command(reason),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -61,7 +80,7 @@ class KeepAwake:
     ):
         self._own_spawn = spawn  # tests; else the module's _spawn, looked up when used
         if available is None:
-            available = shutil.which("systemd-inhibit") is not None
+            available = _available()
         self.available = available
         self._proc: subprocess.Popen | None = None
         self.reason = ""

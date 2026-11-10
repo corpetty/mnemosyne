@@ -7,6 +7,7 @@ import logging
 import math
 import re
 import subprocess
+import sys
 import tempfile
 import uuid
 import wave
@@ -53,7 +54,12 @@ def read_wav(path: Path) -> tuple[np.ndarray, int]:
 
 
 async def _record_for(device: AudioDevice, path: Path, seconds: float, node_name: str):
-    cmd = build_record_command(device, path, 48000, 1, "s16", node_name=node_name)
+    if sys.platform == "darwin":
+        from . import coreaudio
+
+        cmd = coreaudio.build_record_command(device, path, 48000, 1, "s16", log=False)
+    else:
+        cmd = build_record_command(device, path, 48000, 1, "s16", node_name=node_name)
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
     )
@@ -78,7 +84,10 @@ async def sample_level(device: AudioDevice, seconds: float = 1.0) -> Level:
 
 
 def linked_sources(node_name: str) -> list[str]:
-    """Ports feeding the given node, from `pw-link -l` (e.g. "alsa_output...:monitor_FL")."""
+    """Ports feeding the given node, from `pw-link -l` (e.g. "alsa_output...:monitor_FL").
+    There is no such graph on a Mac."""
+    if sys.platform == "darwin":
+        return []
     try:
         out = subprocess.run(["pw-link", "-l"], capture_output=True, text=True, timeout=5).stdout
     except Exception:
@@ -133,7 +142,25 @@ def _tone_wav(path: Path, rate: int = 48000, seconds: float = 0.6, amplitude: fl
 
 async def self_test(sink: AudioDevice) -> SelfTestResult:
     """Record `sink` exactly as a recording would, play a quiet tone through it, and
-    report whether the tone was captured and where the recorder was connected."""
+    report whether the tone was captured and where the recorder was connected.
+
+    On a Mac nothing is played (never audio the person did not ask for) and nothing is recorded:
+    the person plays something and watches the System audio meter."""
+    if sys.platform == "darwin":
+        return SelfTestResult(
+            passed=False,
+            tone_detected=False,
+            tone_snr_db=0.0,
+            level=Level(rms_db=FLOOR_DB, peak_db=FLOOR_DB),
+            linked_from=[],
+            captures_monitor=False,
+            message=(
+                "Mnemosyne plays no test sound on a Mac. Play something (a video, music) and "
+                "watch the System audio meter: if it moves, system audio is being captured. "
+                "If it stays flat, check System Settings > Privacy & Security > "
+                "Screen & System Audio Recording > System Audio Recording Only."
+            ),
+        )
     node = f"mnemosyne-selftest-{uuid.uuid4().hex[:6]}"
     with tempfile.TemporaryDirectory() as tmp:
         rec_path, tone_path = Path(tmp) / "rec.wav", Path(tmp) / "tone.wav"

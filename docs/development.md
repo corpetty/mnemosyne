@@ -341,7 +341,7 @@ covers Tailscale and pairing phones.
 
 `.github/workflows/ci.yml` runs on every push and PR: backend ruff + pytest (no GPU; ML is faked),
 `pnpm check` + `pnpm build`, Playwright browser tests against a demo-mode backend, and `cargo check`
-for the shell. `.github/workflows/release.yml` builds the deb, rpm and AppImage on `ubuntu-22.04` when
+for the shell. `.github/workflows/release.yml` builds the deb, rpm and AppImage on `ubuntu-22.04` and the signed Mac app (dmg and updater bundle) on `macos-15` when
 a `vX.Y.Z` tag is pushed and attaches them, with a `.sig` per bundle, `latest.json` (the updater
 manifest, from `scripts/updater-manifest.py`) and `SHA256SUMS`, to the GitHub release. Running the
 workflow by hand (`gh workflow run Release`) builds and signs without releasing:
