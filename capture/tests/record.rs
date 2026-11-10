@@ -322,7 +322,6 @@ fn a_real_target_is_not_supported_yet_and_usage_errors_exit_two() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("a.wav");
     for args in [
-        vec!["record", "--target", "system", out.to_str().unwrap()],
         vec![
             "record",
             "--fake",
@@ -338,10 +337,28 @@ fn a_real_target_is_not_supported_yet_and_usage_errors_exit_two() {
         let output = capture(&args).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{args:?}");
     }
-    let output = capture(&["record", "--target", "system", out.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(String::from_utf8_lossy(&output.stderr).contains("not supported on this system yet"));
+    // A real target: on macOS a device that does not exist fails to open (exit 1); elsewhere
+    // real targets are not supported at all (exit 2). (`--target system` is not tried here:
+    // on a Mac without the permission it waits for the prompt.)
+    let output = capture(&[
+        "record",
+        "--target",
+        "mnemosyne-no-such-device",
+        out.to_str().unwrap(),
+    ])
+    .output()
+    .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if cfg!(target_os = "macos") {
+        assert_eq!(output.status.code(), Some(1), "{stderr}");
+        assert!(stderr.contains("no audio device with the UID"), "{stderr}");
+    } else {
+        assert_eq!(output.status.code(), Some(2), "{stderr}");
+        assert!(
+            stderr.contains("not supported on this system yet"),
+            "{stderr}"
+        );
+    }
     assert!(
         !out.exists(),
         "nothing is written for a source that cannot start"
@@ -353,7 +370,14 @@ fn devices_and_doctor_print_json() {
     let output = capture(&["devices"]).output().unwrap();
     assert_eq!(output.status.code(), Some(0));
     let v: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(v, serde_json::json!([]));
+    if cfg!(target_os = "macos") {
+        // Core Audio's devices behind the `system` entry (a runner may have only that one).
+        assert_eq!(v[0]["id"], 1, "{v}");
+        assert_eq!(v[0]["name"], "system", "{v}");
+        assert_eq!(v[0]["media_class"], "Audio/Sink", "{v}");
+    } else {
+        assert_eq!(v, serde_json::json!([]));
+    }
     let output = capture(&["doctor"]).output().unwrap();
     assert_eq!(output.status.code(), Some(0));
     let v: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();

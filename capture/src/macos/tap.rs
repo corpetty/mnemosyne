@@ -66,11 +66,18 @@ fn trace(stage: &str) {
     let start =
         START.get_or_init(|| std::env::var_os("MNEMOSYNE_CAPTURE_TRACE").map(|_| Instant::now()));
     if let Some(start) = start {
-        eprintln!(
+        say(&format!(
             "mnemosyne-capture trace +{:.3}s {stage}",
             start.elapsed().as_secs_f64()
-        );
+        ));
     }
+}
+
+/// A line on stderr, written to the handle directly so the test harness's capture (which
+/// only wraps the print macros) never hides it.
+pub(crate) fn say(line: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{line}");
 }
 
 /// What the IOProc and the listeners reach: the channel to the recorder and the current rate.
@@ -571,6 +578,10 @@ mod tests {
     use super::*;
     use std::sync::mpsc::RecvTimeoutError;
 
+    macro_rules! say_fmt {
+        ($($arg:tt)*) => { say(&format!($($arg)*)) };
+    }
+
     #[test]
     fn planar_buffers_are_interleaved() {
         let l = [1.0, 2.0, 3.0];
@@ -682,12 +693,12 @@ mod tests {
                 .map_err(|e| format!("{e:#}"))
         });
         match &outcome {
-            Some(Ok((format, buffers))) => eprintln!(
+            Some(Ok((format, buffers))) => say_fmt!(
                 "{label}: tap ok in {:.2}s: {format}, {buffers} buffers in 2 s",
                 started.elapsed().as_secs_f64()
             ),
-            Some(Err(e)) => eprintln!("{label}: tap refused: {e}"),
-            None => eprintln!("{label}: no answer after 30 s; last step: {}", last_stage()),
+            Some(Err(e)) => say_fmt!("{label}: tap refused: {e}"),
+            None => say_fmt!("{label}: no answer after 30 s; last step: {}", last_stage()),
         }
         outcome
     }
@@ -701,8 +712,8 @@ mod tests {
     #[test]
     fn opening_the_system_tap_works_or_waits_for_the_permission() {
         std::env::set_var("MNEMOSYNE_CAPTURE_TRACE", "1");
-        eprintln!("doctor: {}", crate::doctor::report());
-        eprintln!(
+        say_fmt!("doctor: {}", crate::doctor::report());
+        say_fmt!(
             "devices: {}",
             serde_json::to_string(&crate::macos::devices().unwrap()).unwrap()
         );
@@ -733,16 +744,16 @@ mod tests {
             let started = Instant::now();
             match within(10, probe) {
                 Some(Ok(())) => {
-                    eprintln!("{label}: ok in {:.2}s", started.elapsed().as_secs_f64())
+                    say_fmt!("{label}: ok in {:.2}s", started.elapsed().as_secs_f64())
                 }
-                Some(Err(e)) => eprintln!("{label}: error: {e:#}"),
-                None => eprintln!("{label}: no answer after 10 s"),
+                Some(Err(e)) => say_fmt!("{label}: error: {e:#}"),
+                None => say_fmt!("{label}: no answer after 10 s"),
             }
         }
 
         let mut outcome = try_open("open");
         if outcome.is_none() {
-            eprintln!("detaching the HAL run loop: {:?}", detach_hal_run_loop());
+            say_fmt!("detaching the HAL run loop: {:?}", detach_hal_run_loop());
             outcome = try_open("open after detaching the run loop");
         }
         match outcome {
