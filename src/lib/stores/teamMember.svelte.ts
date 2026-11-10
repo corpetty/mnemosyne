@@ -1,5 +1,5 @@
 import { getJoined, getMoves } from '$lib/api/local.js';
-import { defaultDestination, type Destination } from '$lib/app/teamDestination.js';
+import { defaultDestination, teamLabel, type Destination } from '$lib/app/teamDestination.js';
 import { connectionState, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
 import type { JoinedStatus, MovesStatus } from '$lib/types/index.js';
 
@@ -25,9 +25,13 @@ class TeamMemberState {
   get joined(): boolean {
     return this.status?.joined === true;
   }
-  /** The team's name: its hosting computer's. */
+  /** The team's name, "Team on <host>". */
   get teamName(): string {
-    return this.status?.host_name || 'the team';
+    return teamLabel(this.status?.host_name);
+  }
+  /** The hosting computer's own name. */
+  get hostName(): string {
+    return this.status?.host_name || 'the host';
   }
   get reachable(): boolean {
     return this.status?.reachable === true;

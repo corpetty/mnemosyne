@@ -11,6 +11,7 @@
 	let root = $state<HTMLElement>();
 
 	const team = $derived(teamMemberState.teamName);
+	const host = $derived(teamMemberState.hostName);
 	const options = $derived<{ value: Destination; label: string; hint: string }[]>([
 		{ value: 'mine', label: 'Your library', hint: '' },
 		{
@@ -20,7 +21,7 @@
 		},
 		{
 			value: 'team-host',
-			label: `${team}, done on ${team}'s computer`,
+			label: `${team}, done on ${host}`,
 			hint: 'Streams as you record; needs a connection'
 		}
 	]);

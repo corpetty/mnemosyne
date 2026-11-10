@@ -10,6 +10,13 @@ export type Destination = 'mine' | 'team-here' | 'team-host';
 /** The member's default for a team recording (`/api/joined` `work`). */
 export type Work = 'here' | 'host';
 
+/** What the team is called wherever it is named: "Team on <host>", its hosting computer's name (the
+ * one helper every label goes through). Before the host's name is known: "the team". */
+export function teamLabel(host: string | null | undefined): string {
+  const h = host?.trim();
+  return h ? `Team on ${h}` : 'the team';
+}
+
 /** What the Record button does when its menu was not touched: your own library records into your
  * own library; the team's library records for the team the way the member chose in Settings. */
 export function defaultDestination(library: Library, work: Work): Destination {

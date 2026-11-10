@@ -23,6 +23,7 @@
 
 	const joined = $derived(teamMemberState.joined);
 	const team = $derived(teamMemberState.teamName);
+	const host = $derived(teamMemberState.hostName);
 	const user = $derived(teamMemberState.status?.user ?? null);
 	// A computer that uses a main computer cannot also join a team (the backend answers 409 too).
 	const usesMain = $derived(connectionState.usesMain);
@@ -198,7 +199,7 @@
 							checked={teamMemberState.work === 'host'}
 							onchange={() => pickWork('host')}
 						/>
-						On {team}'s computer
+						On {host}
 					</label>
 				</div>
 				{#if workError}<p class="text-xs text-red-400">{workError}</p>{/if}

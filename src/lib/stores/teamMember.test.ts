@@ -44,7 +44,8 @@ describe('teamMemberState', () => {
 		const { teamMemberState, connectionState, LOCAL_BACKEND } = await fresh();
 		connectionState.save(LOCAL_BACKEND, 't', false);
 		await teamMemberState.load();
-		expect(teamMemberState.teamName).toBe('Desk');
+		expect(teamMemberState.teamName).toBe('Team on Desk');
+		expect(teamMemberState.hostName).toBe('Desk');
 		expect(teamMemberState.destination).toBe('mine');
 		connectionState.useLibrary('team');
 		expect(teamMemberState.destination).toBe('team-here');

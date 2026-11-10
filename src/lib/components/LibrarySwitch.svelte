@@ -7,6 +7,7 @@
 	// yours or the team's, one at a time. The team's is reached through this computer; when its
 	// computer cannot be reached, or signed this one out, the list says so here.
 	const team = $derived(teamMemberState.teamName);
+	const host = $derived(teamMemberState.hostName);
 	const inTeam = $derived(connectionState.inTeam);
 	let leaving = $state(false);
 
@@ -55,7 +56,7 @@
 		{:else if inTeam && !teamMemberState.reachable}
 			<div class="rounded border border-amber-900 bg-amber-950/30 px-2 py-1.5 text-xs text-amber-200 space-y-1" role="status">
 				<p>
-					{team}'s computer can't be reached. Your library still works. If you were removed from the team, ask for a new
+					{host} can't be reached. Your library still works. If you were removed from the team, ask for a new
 					invite.
 				</p>
 				<button onclick={() => switchLibrary('mine')} class="underline hover:text-amber-100">Back to your library</button>

@@ -150,7 +150,7 @@ describe('satelliteState', () => {
 		satelliteState.follow(true);
 		await vi.advanceTimersByTimeAsync(0);
 		expect(satelliteState.inTeam).toBe(true);
-		expect(satelliteState.teamName).toBe('Acme');
+		expect(satelliteState.teamName).toBe('Team on Acme');
 		expect(satelliteState.teamDown).toBe(true);
 		expect(satelliteState.mainDown).toBe(false); // no main computer: nothing to be down
 		expect(satelliteState.waitingFor('team').map((e) => e.id)).toEqual(['a']);

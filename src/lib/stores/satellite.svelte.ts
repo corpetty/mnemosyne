@@ -1,4 +1,5 @@
 import { getSatellite } from '$lib/api/local.js';
+import { teamLabel } from '$lib/app/teamDestination.js';
 import { connectionState, LOCAL_BACKEND, SAME_ORIGIN } from '$lib/stores/connection.svelte.js';
 import type { OutboxEntry, SatelliteRecording, SatelliteStatus } from '$lib/types/index.js';
 
@@ -39,7 +40,7 @@ class SatelliteState {
   }
   /** The team this computer is in (None: not in one, or signed out). */
   get teamName(): string {
-    return this.status?.team?.name || 'the team';
+    return teamLabel(this.status?.team?.name);
   }
   get inTeam(): boolean {
     return this.status?.team != null;

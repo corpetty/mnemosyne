@@ -6,8 +6,18 @@ import {
   moveNeedsConsent,
   savePendingStart,
   takePendingStart,
-  putInTeamReason
+  putInTeamReason,
+  teamLabel
 } from './teamDestination.js';
+
+describe('the team name', () => {
+  it('is Team on <host>, and "the team" before the host is known', () => {
+    expect(teamLabel('Desk')).toBe('Team on Desk');
+    expect(teamLabel('  Desk ')).toBe('Team on Desk');
+    expect(teamLabel(null)).toBe('the team');
+    expect(teamLabel('')).toBe('the team');
+  });
+});
 
 describe('the default destination', () => {
   it('is your library while you look at your library, whatever the work default', () => {
