@@ -91,6 +91,19 @@ describe('recording through this computer', () => {
 		expect(audioState.isRecording).toBe(true);
 	});
 
+	it('passes the destination it is given (the team) and none otherwise', async () => {
+		const { audioState } = await fresh();
+		await audioState.loadDevices();
+		audioState.toggleDevice(1);
+		await audioState.startSatellite(null, 'team');
+		expect(posted.at(-1)?.body).toEqual({
+			mic_device: 1,
+			system_device: null,
+			consent: null,
+			destination: 'team'
+		});
+	});
+
 	it('asks for a device first, and says why a start was refused', async () => {
 		const { audioState } = await fresh();
 		await audioState.loadDevices();
@@ -110,6 +123,7 @@ describe('recording through this computer', () => {
 		audioState.resumeSatellite({
 			local_id: 'loc3',
 			session_id: 'sess3',
+			destination: 'main',
 			streaming: true,
 			title: '',
 			started_at: new Date(Date.now() - 65_000).toISOString(),

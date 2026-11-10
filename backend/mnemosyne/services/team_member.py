@@ -227,6 +227,14 @@ class TeamMember:
             await self.dial()
         except LinkError as e:
             logger.warning("Could not dial the team %s: %s", m.host_name, e)
+            return
+        self._kick_satellite()
+
+    def _kick_satellite(self) -> None:
+        """Recordings waiting for the team go now (services/satellite.py). Only when the
+        satellite exists: without one there is no outbox to look at."""
+        if self.app.satellite is not None:
+            self.app.satellite.kick("team")
 
     async def hang_up(self) -> None:
         m = self.store.get()
@@ -384,6 +392,8 @@ class TeamMember:
             await self.dial()
         except LinkError as e:
             logger.warning("Could not dial the team %s yet: %s", membership.host_name, e)
+        else:
+            self._kick_satellite()
         return membership, prepared.new_api_token
 
     async def leave(self) -> bool:

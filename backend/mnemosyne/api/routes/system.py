@@ -198,7 +198,7 @@ async def set_main_computer(body: MainComputerRequest, ctx: AppContext = Depends
         raise HTTPException(status_code=400, detail=str(e)) from e
     from ...services import satellite
 
-    satellite.service(ctx).kick()  # recordings waiting for it go now
+    satellite.service(ctx).kick("main")  # recordings waiting for it go now
     return _main_status(ctx)
 
 

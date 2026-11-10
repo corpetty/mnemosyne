@@ -3,7 +3,11 @@ docs/plans/2026-11-09-connections-design.md, task 7). The main computer is this 
 served by uvicorn on a free loopback port (its /api/record WebSocket needs a real socket); the
 laptop is a second app driven over httpx.ASGITransport. Capture is `FakeCapture`: synthetic PCM
 written by the test, never a device. Encoding and mixing on the main computer are the conftest
-fakes (`fake_pipewire`), transcription is `fake_engine`."""
+fakes (`fake_pipewire`), transcription is `fake_engine`.
+
+Every case runs once per destination (`dest`): "main" is the main computer, "team" a team this
+laptop joined (services/team_member.py, the host reached through `TeamMember.listen`, here the
+served main app). The team is the laptop's `team_member` membership; nothing else differs."""
 
 import asyncio
 import socket
@@ -16,7 +20,8 @@ import pytest
 from mnemosyne.api.app import create_app
 from mnemosyne.config import Settings
 from mnemosyne.services import satellite
-from mnemosyne.services.satellite import FakeCapture, Satellite
+from mnemosyne.services.satellite import FakeCapture, OutboxItem, Satellite
+from mnemosyne.services.team_member import Membership
 from mnemosyne.storage.crypto import MemoryKeyStore, new_key
 
 pytestmark = pytest.mark.anyio
@@ -127,8 +132,50 @@ def laptop_token(ctx):
     return token
 
 
+HOST_EP = "b7" * 32
+
+
+@pytest.fixture(params=["main", "team"])
+def dest(request) -> str:
+    return request.param
+
+
+def join_team(laptop, url: str | None, token: str, endpoint: str = HOST_EP) -> None:
+    """The laptop is in a team whose host answers at `url` (None: not dialed)."""
+    team = laptop.state.ctx.team_member
+    team.store.save(
+        Membership(
+            host_name="Desktop",
+            host_ticket="ticket",
+            host_endpoint=endpoint,
+            token=token,
+            user={"id": "u1", "name": "Sam", "role": "member"},
+        )
+    )
+    team.listen = url.removeprefix("http://") if url else None
+
+
+def use(laptop, dest: str, url: str | None, token: str) -> None:
+    if dest == "main":
+        laptop.state.ctx.main_computer_store().set(url, token, "Desktop")
+    else:
+        join_team(laptop, url, token)
+
+
 def use_main(laptop, url: str, token: str) -> None:
-    laptop.state.ctx.main_computer_store().set(url, token, "Desktop")
+    use(laptop, "main", url, token)
+
+
+async def back(laptop, dest: str, url: str, token: str, shell) -> None:
+    """The destination answers again: the shell says so (main), or the sidecar was redialed."""
+    if dest == "main":
+        r = await shell.put(
+            "/api/system/main", json={"url": url, "token": token, "name": "Desktop"}
+        )
+        assert r.status_code == 200, r.text
+    else:
+        laptop.state.ctx.team_member.listen = url.removeprefix("http://")
+        laptop.state.ctx.satellite.kick("team")
 
 
 def main_wavs(ctx, sid: str) -> dict:
@@ -166,14 +213,19 @@ def outbox_folders(laptop) -> list:
 
 
 async def test_a_recording_streams_to_the_main_computer(
-    app, ctx, main_url, laptop, sat, fake, laptop_token
+    dest, app, ctx, main_url, laptop, sat, fake, laptop_token
 ):
-    use_main(laptop, main_url, laptop_token)
+    use(laptop, dest, main_url, laptop_token)
     mic, call, more = pcm(0.5, 1000), pcm(0.5, 50), pcm(0.25, -700)
     async with client(laptop, "admin-laptop") as c:
         r = await c.post(
             "/api/satellite/start",
-            json={"mic_device": 1, "system_device": 2, "title": "Standup on the train"},
+            json={
+                "mic_device": 1,
+                "system_device": 2,
+                "title": "Standup on the train",
+                "destination": dest,
+            },
         )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -185,7 +237,12 @@ async def test_a_recording_streams_to_the_main_computer(
         await until(lambda: data_of(paths["mic"]) == mic and data_of(paths["system"]) == call)
 
         status = (await c.get("/api/satellite")).json()
-        assert status["main"] == {"name": "Desktop"} and status["reachable"] is True
+        if dest == "main":
+            assert status["main"] == {"name": "Desktop"} and status["reachable"] is True
+        else:
+            assert status["team"] == {"name": "Desktop"} and status["team_reachable"] is True
+            assert status["main"] is None
+        assert status["recording"]["destination"] == dest
         rec = status["recording"]
         assert rec["session_id"] == sid and rec["streaming"] is True
         assert {s["source"]: (s["sent"], s["gap"]) for s in rec["sources"]} == {
@@ -213,12 +270,14 @@ async def test_a_recording_streams_to_the_main_computer(
 
 
 async def test_a_stream_with_a_gap_is_completed_by_a_handoff(
-    app, ctx, main_url, laptop, sat, fake, laptop_token
+    dest, app, ctx, main_url, laptop, sat, fake, laptop_token
 ):
-    use_main(laptop, main_url, laptop_token)
+    use(laptop, dest, main_url, laptop_token)
     first, second, third = pcm(0.25, 100), pcm(0.25, 200), pcm(0.25, 300)
     async with client(laptop, "admin-laptop") as c:
-        r = await c.post("/api/satellite/start", json={"mic_device": 1, "system_device": 2})
+        r = await c.post(
+            "/api/satellite/start", json={"mic_device": 1, "system_device": 2, "destination": dest}
+        )
         sid = r.json()["session_id"]
         paths = main_wavs(ctx, sid)
         stream = sat.active.streams["mic"]
@@ -255,11 +314,11 @@ async def test_a_stream_with_a_gap_is_completed_by_a_handoff(
 
 
 async def test_stop_on_the_main_computer_stops_the_laptop_too(
-    app, ctx, main_url, laptop, sat, fake, laptop_token
+    dest, app, ctx, main_url, laptop, sat, fake, laptop_token
 ):
-    use_main(laptop, main_url, laptop_token)
+    use(laptop, dest, main_url, laptop_token)
     async with client(laptop, "admin-laptop") as c:
-        r = await c.post("/api/satellite/start", json={"mic_device": 1})
+        r = await c.post("/api/satellite/start", json={"mic_device": 1, "destination": dest})
         sid = r.json()["session_id"]
         paths = main_wavs(ctx, sid)
         fake.write("mic", pcm(0.25, 100))
@@ -277,15 +336,16 @@ async def test_stop_on_the_main_computer_stops_the_laptop_too(
 
 
 async def test_an_unreachable_main_computer_gets_the_recording_when_it_is_back(
-    app, ctx, main_url, dead_url, laptop, sat, fake, laptop_token
+    dest, app, ctx, main_url, dead_url, laptop, sat, fake, laptop_token
 ):
-    use_main(laptop, dead_url, laptop_token)
+    use(laptop, dest, dead_url, laptop_token)
     lctx = laptop.state.ctx
     lctx.settings.encrypt_at_rest, lctx.master_key = True, new_key()  # sealed while it waits
     audio = pcm(0.5, 400)
     async with client(laptop, "admin-laptop") as c:
         r = await c.post(
-            "/api/satellite/start", json={"mic_device": 1, "system_device": 2, "title": "Offline"}
+            "/api/satellite/start",
+            json={"mic_device": 1, "system_device": 2, "title": "Offline", "destination": dest},
         )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -304,18 +364,16 @@ async def test_an_unreachable_main_computer_gets_the_recording_when_it_is_back(
         ]
         assert audio not in (folder / "fake_mic.wav.enc").read_bytes()
         status = (await c.get("/api/satellite")).json()
-        assert status["reachable"] is False
+        assert status["reachable" if dest == "main" else "team_reachable"] is False
         (entry,) = status["outbox"]
         assert entry["id"] == body["local_id"] and entry["state"] == "waiting"
+        assert entry["destination"] == dest
         assert entry["parts"] == 1 and entry["title"] == "Offline" and entry["last_error"]
         assert ctx.sessions.list_sessions() == []
 
     # The shell's tunnel is up again: it tells the backend, which hands the recording over now.
     async with client(laptop) as shell:
-        r = await shell.put(
-            "/api/system/main", json={"url": main_url, "token": laptop_token, "name": "Desktop"}
-        )
-        assert r.status_code == 200, r.text
+        await back(laptop, dest, main_url, laptop_token, shell)
     await until(lambda: outbox_folders(laptop) == [])
 
     (session,) = ctx.sessions.list_sessions()
@@ -332,16 +390,20 @@ async def test_an_unreachable_main_computer_gets_the_recording_when_it_is_back(
 
 
 async def test_waiting_recordings_are_handed_over_after_a_restart(
-    app, ctx, main_url, dead_url, laptop_settings, laptop, sat, fake, laptop_token
+    dest, app, ctx, main_url, dead_url, laptop_settings, laptop, sat, fake, laptop_token
 ):
-    use_main(laptop, dead_url, laptop_token)
+    use(laptop, dest, dead_url, laptop_token)
     async with client(laptop, "admin-laptop") as c:
-        r = await c.post("/api/satellite/start", json={"mic_device": 1, "title": "Stopped"})
+        r = await c.post(
+            "/api/satellite/start", json={"mic_device": 1, "title": "Stopped", "destination": dest}
+        )
         stopped = r.json()["local_id"]
         fake.write("mic", pcm(0.25, 10))
         await c.post("/api/satellite/stop")
         # A second one is cut off by a crash: no stop, no shutdown.
-        r = await c.post("/api/satellite/start", json={"mic_device": 1, "title": "Cut off"})
+        r = await c.post(
+            "/api/satellite/start", json={"mic_device": 1, "title": "Cut off", "destination": dest}
+        )
         cut = r.json()["local_id"]
         fake.write("mic", pcm(0.25, 20))
     sat.active = None
@@ -353,7 +415,7 @@ async def test_waiting_recordings_are_handed_over_after_a_restart(
     actx.satellite = Satellite(actx, FakeCapture(auto=False, sample_rate=RATE))
     try:
         assert {i.state for i in actx.satellite.outbox.items.values()} == {"waiting", "recording"}
-        use_main(again, main_url, laptop_token)
+        use(again, dest, main_url, laptop_token)
         await actx._start_satellite()  # what startup does
         await until(lambda: outbox_folders(again) == [])
     finally:
@@ -365,17 +427,29 @@ async def test_waiting_recordings_are_handed_over_after_a_restart(
     assert actx.sessions.list_sessions() == []
 
 
-async def test_a_refusal_stops_the_retries(app, ctx, main_url, laptop, sat, fake, laptop_token):
+async def test_a_refusal_stops_the_retries(
+    dest, app, ctx, main_url, laptop, sat, fake, laptop_token
+):
     device = ctx.pairing.verify(laptop_token)
     ctx.pairing.revoke(device.id)  # the main computer forgot this laptop
-    use_main(laptop, main_url, laptop_token)
+    use(laptop, dest, main_url, laptop_token)
     async with client(laptop, "admin-laptop") as c:
-        r = await c.post("/api/satellite/start", json={"mic_device": 1})
+        r = await c.post("/api/satellite/start", json={"mic_device": 1, "destination": dest})
         assert r.status_code == 200 and r.json()["streaming"] is False  # 401 there: kept here
         fake.write("mic", pcm(0.25, 10))
         await c.post("/api/satellite/stop")
         local_id = r.json()["local_id"]
         item = sat.outbox.items[local_id]
+        if dest == "team":
+            # The host refusing the token is a sign-out, not a refusal of the recording: it waits
+            # (never sent anywhere) until the member joins again.
+            team = laptop.state.ctx.team_member
+            await until(lambda: team.signed_out)
+            sat.kick("team")
+            await asyncio.sleep(0.2)
+            assert item.state == "waiting" and item.attempts == 0
+            assert outbox_folders(laptop) == [local_id] and ctx.sessions.list_sessions() == []
+            return
         await until(lambda: item.state == "failed")
         assert item.attempts == 0 and "token" in item.last_error
         sat.kick()  # the main computer is back: a refused item stays refused
@@ -386,7 +460,7 @@ async def test_a_refusal_stops_the_retries(app, ctx, main_url, laptop, sat, fake
     assert ctx.sessions.list_sessions() == []
 
 
-async def test_a_busy_main_computer_is_tried_again(monkeypatch, laptop, sat, fake, dead_url):
+async def test_a_busy_main_computer_is_tried_again(dest, monkeypatch, laptop, sat, fake, dead_url):
     """409 and 429 are "later", like not reaching it at all."""
     calls = []
 
@@ -395,8 +469,8 @@ async def test_a_busy_main_computer_is_tried_again(monkeypatch, laptop, sat, fak
         raise satellite.MainError(409 if len(calls) == 1 else 429, "busy")
 
     monkeypatch.setattr(satellite, "_call", busy)
-    use_main(laptop, dead_url, "t")
-    await sat.start(1, None)
+    use(laptop, dest, dead_url, "t")
+    await sat.start(1, None, destination=dest)
     fake.write("mic", pcm(0.1, 1))
     await sat.stop()
     item = next(iter(sat.outbox.items.values()))
@@ -410,14 +484,16 @@ async def test_a_busy_main_computer_is_tried_again(monkeypatch, laptop, sat, fak
 
 
 async def test_a_refused_replace_goes_as_a_new_meeting(
-    app, ctx, main_url, laptop, sat, fake, laptop_token
+    dest, app, ctx, main_url, laptop, sat, fake, laptop_token
 ):
     """The stream had a gap, and the main computer transcribed its partial meeting before the
     complete audio arrived: the replace is refused for good, the item can go as a new one."""
-    use_main(laptop, main_url, laptop_token)
+    use(laptop, dest, main_url, laptop_token)
     first, second, third = pcm(0.25, 100), pcm(0.25, 200), pcm(0.25, 300)
     async with client(laptop, "admin-laptop") as c:
-        r = await c.post("/api/satellite/start", json={"mic_device": 1, "title": "Gappy"})
+        r = await c.post(
+            "/api/satellite/start", json={"mic_device": 1, "title": "Gappy", "destination": dest}
+        )
         sid, local_id = r.json()["session_id"], r.json()["local_id"]
         paths = main_wavs(ctx, sid)
         stream = sat.active.streams["mic"]
@@ -463,11 +539,11 @@ async def test_a_refused_replace_goes_as_a_new_meeting(
 
 
 async def test_a_waiting_or_refused_recording_can_be_discarded(
-    laptop, sat, fake, dead_url, laptop_token
+    dest, laptop, sat, fake, dead_url, laptop_token
 ):
-    use_main(laptop, dead_url, laptop_token)
+    use(laptop, dest, dead_url, laptop_token)
     async with client(laptop, "admin-laptop") as c:
-        r = await c.post("/api/satellite/start", json={"mic_device": 1})
+        r = await c.post("/api/satellite/start", json={"mic_device": 1, "destination": dest})
         local_id = r.json()["local_id"]
         # Never while it is being recorded.
         assert (await c.delete(f"/api/satellite/outbox/{local_id}")).status_code == 409
@@ -483,7 +559,7 @@ async def test_a_waiting_or_refused_recording_can_be_discarded(
         assert (await c.delete(f"/api/satellite/outbox/{local_id}")).status_code == 404
     assert outbox_folders(laptop) == []
     # A refused one too.
-    await sat.start(1, None)
+    await sat.start(1, None, destination=dest)
     fake.write("mic", pcm(0.1, 5))
     await sat.stop()
     item = next(iter(sat.outbox.items.values()))
@@ -509,7 +585,14 @@ async def test_the_routes_are_this_computers_only(laptop, sat):
     async with client(laptop, "admin-laptop") as c:
         r = await c.get("/api/satellite")
         assert r.status_code == 200
-        assert r.json() == {"main": None, "reachable": False, "recording": None, "outbox": []}
+        assert r.json() == {
+            "main": None,
+            "reachable": False,
+            "team": None,
+            "team_reachable": False,
+            "recording": None,
+            "outbox": [],
+        }
         assert (await c.post("/api/satellite/start", json={})).status_code == 400
         assert (await c.post("/api/satellite/stop")).status_code == 404
 
@@ -527,3 +610,131 @@ async def test_a_team_member_cannot_use_the_laptop_recorder_on_a_host(laptop_set
         assert (await c.get("/api/satellite")).status_code == 403
     async with client(app, "admin-laptop") as c:
         assert (await c.get("/api/satellite")).status_code != 403
+
+
+# ---- the destinations side by side ---------------------------------------------------------
+
+
+async def wait_here(laptop, sat, fake, title: str, dest: str) -> OutboxItem:
+    """A recording for `dest` that is stopped and waiting in the outbox."""
+    r = await sat.start(1, None, title=title, destination=dest)
+    item = r.item
+    fake.write("mic", pcm(0.1, 7))
+    await sat.stop()
+    return sat.outbox.items[item.id]
+
+
+async def test_a_start_for_a_destination_that_is_not_there_is_a_409(laptop, sat, laptop_token):
+    async with client(laptop, "admin-laptop") as c:
+        r = await c.post("/api/satellite/start", json={"mic_device": 1})
+        assert r.status_code == 409 and "main computer" in r.json()["detail"]
+        r = await c.post("/api/satellite/start", json={"mic_device": 1, "destination": "team"})
+        assert r.status_code == 409 and "not in a team" in r.json()["detail"]
+        join_team(laptop, None, laptop_token)
+        laptop.state.ctx.team_member.mark_signed_out()
+        r = await c.post("/api/satellite/start", json={"mic_device": 1, "destination": "team"})
+        assert r.status_code == 409 and "signed out" in r.json()["detail"]
+        r = await c.post("/api/satellite/start", json={"mic_device": 1, "destination": "elsewhere"})
+        assert r.status_code in (400, 422)
+        status = (await c.get("/api/satellite")).json()
+        assert status["team"] is None and status["team_reachable"] is False
+    assert sat.active is None and outbox_folders(laptop) == []
+
+
+async def test_the_team_is_in_the_status_beside_the_main_computer(
+    laptop, sat, main_url, dead_url, laptop_token
+):
+    use(laptop, "main", dead_url, laptop_token)
+    join_team(laptop, main_url, laptop_token)
+    async with client(laptop, "admin-laptop") as c:
+        status = (await c.get("/api/satellite")).json()
+    assert status["main"] == {"name": "Desktop"} and status["reachable"] is False
+    assert status["team"] == {"name": "Desktop"} and status["team_reachable"] is True
+
+
+async def test_a_team_recording_not_dialed_at_start_waits_and_goes_when_it_is_back(
+    app, ctx, main_url, laptop, sat, fake, laptop_token
+):
+    join_team(laptop, None, laptop_token)  # joined, but the sidecar has not dialed it (no link)
+    item = await wait_here(laptop, sat, fake, "Offline team", "team")
+    assert item.destination == "team" and item.team == HOST_EP and item.session_id is None
+    assert (sat.outbox.folder(item.id) / "manifest.json").is_file()
+    await asyncio.sleep(0.1)
+    assert item.state == "waiting" and item.attempts == 0  # skipped, not failed
+    assert ctx.sessions.list_sessions() == []
+    laptop.state.ctx.team_member.listen = main_url.removeprefix("http://")
+    sat.kick("team")
+    await until(lambda: outbox_folders(laptop) == [])
+    (session,) = ctx.sessions.list_sessions()
+    assert session.name == "Offline team"
+    await jobs_done(ctx, session.id)
+    nothing_here(laptop)
+
+
+async def test_the_main_computer_gone_while_the_team_stays(
+    app, ctx, main_url, dead_url, laptop, sat, fake, laptop_token
+):
+    use(laptop, "main", dead_url, laptop_token)
+    join_team(laptop, dead_url, laptop_token)
+    for_main = await wait_here(laptop, sat, fake, "For main", "main")
+    for_team = await wait_here(laptop, sat, fake, "For team", "team")
+    await until(lambda: for_main.attempts == 1 and for_team.attempts == 1)
+    # The main computer is forgotten; the team answers.
+    laptop.state.ctx.main_computer_store().clear()
+    laptop.state.ctx.team_member.listen = main_url.removeprefix("http://")
+    sat.kick("team")
+    await until(lambda: for_team.id not in sat.outbox.items)
+    assert for_main.state == "waiting" and for_main.attempts == 1  # untouched, not failed
+    assert outbox_folders(laptop) == [for_main.id]
+    (session,) = ctx.sessions.list_sessions()
+    assert session.name == "For team"
+    await jobs_done(ctx, session.id)
+    # A team item never goes to the main computer, even when that is the one that answers.
+    join_team(laptop, dead_url, laptop_token)
+    again = await wait_here(laptop, sat, fake, "Team again", "team")
+    laptop.state.ctx.team_member.listen = None
+    use(laptop, "main", main_url, laptop_token)
+    sat.kick()
+    await until(lambda: for_main.id not in sat.outbox.items)
+    await asyncio.sleep(0.2)
+    assert again.id in sat.outbox.items and again.state == "waiting"
+    names = sorted(s.name for s in ctx.sessions.list_sessions())
+    assert names == ["For main", "For team"]
+
+
+async def test_a_team_item_is_never_sent_to_another_team(
+    app, ctx, main_url, laptop, sat, fake, laptop_token
+):
+    join_team(laptop, main_url, laptop_token, endpoint="aa" * 32)
+    item = await wait_here(laptop, sat, fake, "For the first team", "team")
+    await until(lambda: item.id not in sat.outbox.items)  # the first team has it
+    assert [s.name for s in ctx.sessions.list_sessions()] == ["For the first team"]
+    # A second item for the first team, then the member joins a different team.
+    join_team(laptop, None, laptop_token, endpoint="aa" * 32)
+    other = await wait_here(laptop, sat, fake, "Stays", "team")
+    join_team(laptop, main_url, laptop_token, endpoint="bb" * 32)
+    sat.kick("team")
+    await asyncio.sleep(0.3)
+    assert other.id in sat.outbox.items and other.state == "waiting" and other.attempts == 0
+    assert [s.name for s in ctx.sessions.list_sessions()] == ["For the first team"]
+
+
+async def test_a_manifest_without_a_destination_is_the_main_computers(laptop, sat, tmp_path):
+    folder = sat.outbox.folder("abc123abc123")
+    folder.mkdir(parents=True)
+    (folder / "manifest.json").write_text(
+        '{"id": "abc123abc123", "title": "Old", "state": "waiting", "sources": []}',
+        encoding="utf-8",
+    )
+    bad = sat.outbox.folder("def456def456")
+    bad.mkdir(parents=True)
+    (bad / "manifest.json").write_text(
+        '{"id": "def456def456", "destination": "moon", "sources": []}', encoding="utf-8"
+    )
+    sat.outbox.load()
+    old, odd = sat.outbox.items["abc123abc123"], sat.outbox.items["def456def456"]
+    assert old.destination == "main" and old.team == ""
+    assert odd.destination == "main"
+    assert sat.entry(old)["destination"] == "main"
+    sat.outbox.save(old)
+    assert '"destination": "main"' in (folder / "manifest.json").read_text(encoding="utf-8")

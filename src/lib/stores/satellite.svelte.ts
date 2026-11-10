@@ -3,6 +3,14 @@ import { connectionState, LOCAL_BACKEND, SAME_ORIGIN } from '$lib/stores/connect
 import type { OutboxEntry, SatelliteRecording, SatelliteStatus } from '$lib/types/index.js';
 
 export const POLL_MS = 2000;
+
+/** The window's connection is this computer's own backend: the plain address, or the team
+ * library's (`/api/joined` on it: the backend proxies the team there). Either way the local
+ * backend is the one to ask about the outbox. */
+export function onLocalBackend(url: string): boolean {
+  const u = url.replace(/\/+$/, '');
+  return u === LOCAL_BACKEND || u === `${LOCAL_BACKEND}/api/joined`;
+}
 /** Failed polls in a row before the local backend counts as not answering (one blip is not). */
 const FAILS = 2;
 
@@ -28,6 +36,21 @@ class SatelliteState {
   }
   get mainName(): string {
     return this.status?.main?.name || 'the main computer';
+  }
+  /** The team this computer is in (None: not in one, or signed out). */
+  get teamName(): string {
+    return this.status?.team?.name || 'the team';
+  }
+  get inTeam(): boolean {
+    return this.status?.team != null;
+  }
+  /** This computer is in a team and its host cannot be reached from here right now. */
+  get teamDown(): boolean {
+    return this.status !== null && this.status.team !== null && !this.status.team_reachable;
+  }
+  /** Recordings waiting for (or being handed to) `destination`. */
+  waitingFor(destination: 'main' | 'team'): OutboxEntry[] {
+    return this.waiting.filter((e) => e.destination === destination);
   }
   get recording(): SatelliteRecording | null {
     return this.status?.recording ?? null;
@@ -55,7 +78,7 @@ class SatelliteState {
     }
     // On its own (or a main computer): one look for audio still waiting from before, and carry
     // on only while there is some. A window on another backend has no local outbox to ask about.
-    if (SAME_ORIGIN || connectionState.url !== LOCAL_BACKEND) {
+    if (SAME_ORIGIN || !onLocalBackend(connectionState.url)) {
       this.stop();
       return;
     }

@@ -44,11 +44,16 @@ export async function localRequest<T>(path: string, options?: RequestInit): Prom
 // Recording through this computer (the satellite routes)
 export const getSatellite = (): Promise<SatelliteStatus> => localRequest('/api/satellite');
 
+/** Where a recording goes: the main computer this one uses, or the team it joined (the backend
+ * answers 409 when this computer has no such destination). Left out = the main computer. */
+export type SatelliteDestination = 'main' | 'team';
+
 export interface SatelliteStart {
   mic_device: number | null;
   system_device: number | null;
   title?: string;
   consent?: 'all_parties' | 'in_person' | 'one_party' | null;
+  destination?: SatelliteDestination;
 }
 
 export const startSatellite = (body: SatelliteStart): Promise<SatelliteStartResponse> =>

@@ -8,7 +8,11 @@ import type {
   SatelliteStopResponse
 } from "$lib/types/index.js";
 import * as api from "$lib/api/backend.js";
-import { startSatellite as startSatelliteApi, stopSatellite as stopSatelliteApi } from "$lib/api/local.js";
+import {
+  startSatellite as startSatelliteApi,
+  stopSatellite as stopSatelliteApi,
+  type SatelliteDestination
+} from "$lib/api/local.js";
 import { wsState } from "./websocket.svelte.js";
 import { SAME_ORIGIN } from "./connection.svelte.js";
 import { browserCapture, type Acquired } from "$lib/app/browser-capture.js";
@@ -277,7 +281,10 @@ class AudioState {
    * local backend streams to it, or keeps the recording until it is reachable. The selection is
    * the devices ticked in the picker (this computer's own, see getDevices): the first microphone
    * and the first output or monitor. */
-  async startSatellite(consent?: string | null): Promise<SatelliteStartResponse | undefined> {
+  async startSatellite(
+    consent?: string | null,
+    destination?: SatelliteDestination
+  ): Promise<SatelliteStartResponse | undefined> {
     const picked = this.devices.filter((d) => this.selectedDeviceIds.has(d.id));
     const mic = picked.find((d) => d.is_input && !d.is_monitor) ?? null;
     const call = picked.find((d) => d.is_output || d.is_monitor) ?? null;
@@ -291,7 +298,8 @@ class AudioState {
       const res = await startSatelliteApi({
         mic_device: mic?.id ?? null,
         system_device: call?.id ?? null,
-        consent: (consent ?? null) as 'all_parties' | 'in_person' | 'one_party' | null
+        consent: (consent ?? null) as 'all_parties' | 'in_person' | 'one_party' | null,
+        ...(destination ? { destination } : {})
       });
       this.satellite = true;
       this.satelliteId = res.local_id;

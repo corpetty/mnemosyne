@@ -79,6 +79,13 @@ describe('the local client', () => {
 		expect(calls[3]).toMatchObject({ method: 'DELETE' });
 	});
 
+	it('a start can name the team as its destination', async () => {
+		const { local } = await fresh();
+		fakeFetch(() => ({ session_id: null, local_id: 'abc', streaming: false }));
+		await local.startSatellite({ mic_device: 5, system_device: null, destination: 'team' });
+		expect(calls[0].body).toEqual({ mic_device: 5, system_device: null, destination: 'team' });
+	});
+
 	it('an error carries the status and the backend detail', async () => {
 		const { local } = await fresh();
 		fakeFetch(() => 409);

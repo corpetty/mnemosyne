@@ -36,6 +36,15 @@ stays, `failed`, with `last_error`. Items survive restarts (scanned at startup; 
 crash is repaired and queued). Audio waiting in the outbox is sealed with encryption at rest.
 
 Tests and demo mode never touch a device: `FakeCapture` writes synthetic PCM.
+
+A recording has a DESTINATION: "main" (the main computer above) or "team" (the hosted team this
+computer joined, services/team_member.py; docs/plans/2026-11-10-team-members-in-the-app.md 1.3
+(a)). The team is streamed to exactly as a main computer is, through the dial port with the MEMBER
+token (`TeamMember.destination()`), and the hand-off goes to the same route (the host accepts
+MEMBER devices). An item remembers its destination (`OutboxItem.destination`, and for the team
+which host: `team`, so a recording for one team is never sent to another one joined later); the
+outbox worker resolves it at send time and skips, never fails, an item whose destination is not
+there now. Reachability, BACKOFF and `kick` are per destination.
 """
 
 from __future__ import annotations
@@ -69,6 +78,9 @@ DRAIN_SECONDS = 0.5  # after the sockets closed, before the main computer's reco
 PROBE_SECONDS = 5.0  # how long a reachability answer is reused
 IDLE_WAKE = 60.0  # the outbox worker looks again at least this often
 SOURCES = ("mic", "system")
+MAIN = "main"
+TEAM = "team"
+DESTINATIONS = (MAIN, TEAM)
 # A replace hand-off refused for good (api/routes/handoff.py `_check_replace`): the streamed
 # meeting was transcribed, or is not this computer's stream any more. Other 409s are "busy".
 FINAL_409 = (
@@ -237,10 +249,14 @@ class OutboxItem:
     attempts: int = 0
     next_at: float = 0.0
     last_error: str = ""
+    destination: str = MAIN  # "main" | "team"; manifests from before the team have none: main
+    team: str = ""  # the team's host endpoint at start: another team never gets this item
 
     @classmethod
     def from_json(cls, raw: dict) -> OutboxItem:
         known = {k: v for k, v in raw.items() if k in cls.__dataclass_fields__}
+        if known.get("destination") not in DESTINATIONS:
+            known["destination"] = MAIN
         known["sources"] = [OutboxSource(**s) for s in raw.get("sources") or []]
         return cls(**known)
 
@@ -303,6 +319,12 @@ class MainError(Exception):
         return 400 <= self.status < 500
 
 
+def _label(dest) -> str:
+    from .team_member import TeamDestination
+
+    return "The team's computer" if isinstance(dest, TeamDestination) else "The main computer"
+
+
 def _client(main, timeout: httpx.Timeout | float = 15.0) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         base_url=main.url,
@@ -317,7 +339,7 @@ async def _call(main, method: str, path: str, timeout=15.0, **kwargs) -> dict:
         async with _client(main, timeout) as c:
             r = await c.request(method, path, **kwargs)
     except httpx.HTTPError as e:
-        raise MainError(None, f"The main computer is not reachable ({type(e).__name__})") from e
+        raise MainError(None, f"{_label(main)} is not reachable ({type(e).__name__})") from e
     if r.status_code >= 400:
         try:
             detail = str(r.json().get("detail") or r.text)
@@ -336,8 +358,16 @@ async def _call(main, method: str, path: str, timeout=15.0, **kwargs) -> dict:
 class SourceStream:
     """Tails one source's growing WAV and sends its PCM to the main computer."""
 
-    def __init__(self, sat: Satellite, source: CapturedSource, sample_rate: int, rid: str):
+    def __init__(
+        self,
+        sat: Satellite,
+        source: CapturedSource,
+        sample_rate: int,
+        rid: str,
+        item: OutboxItem | None = None,
+    ):
         self.sat = sat
+        self.item = item or OutboxItem(id="")
         self.source = source.source
         self.path = source.path
         self.sample_rate = sample_rate
@@ -416,10 +446,18 @@ class SourceStream:
 
         failures = 0
         while not self.done():
-            main = self.sat.app.main_computer
-            if main is None:  # forgotten mid-meeting: the hand-off has everything
-                self.problem = "No main computer any more"
-                return
+            main = self.sat.destination(self.item)
+            if main is None:
+                if self.sat.gone(self.item):  # forgotten mid-meeting: the hand-off has everything
+                    self.problem = (
+                        "Not in the team any more"
+                        if self.item.destination == TEAM
+                        else "No main computer any more"
+                    )
+                    return
+                # The team is still ours but its dial port is being renewed: wait for it.
+                await asyncio.sleep(RECONNECT[-1])
+                continue
             if not self._header():
                 await asyncio.sleep(POLL)
                 continue
@@ -449,7 +487,9 @@ class SourceStream:
                     # 1000: the main computer stopped this recording; the others: it is not
                     # there for us any more. Reconnecting cannot help.
                     self.closed_by_main = code
-                    self.problem = f"The main computer closed the stream ({code})"
+                    if code == 4401:
+                        self.sat.signed_out(self.item)
+                    self.problem = f"{_label(main)} closed the stream ({code})"
                     self.sat._stream_ended(self, code)
                     return
                 self.drops += 1
@@ -514,8 +554,11 @@ class Satellite:
         self._worker: asyncio.Task | None = None
         self._wake: asyncio.Event | None = None
         self._lock = asyncio.Lock()  # start and stop, one at a time
-        self._probe: tuple[float, bool] | None = None
+        self._probes: dict[
+            str, tuple[float, bool]
+        ] = {}  # the main computer's (the team's: its own)
         self._auto_stop: asyncio.Task | None = None
+        self._tasks: set[asyncio.Task] = set()
 
     # -- life
 
@@ -570,7 +613,7 @@ class Satellite:
             item.ended_at = _now_iso()
             if item.session_id:
                 item.stop_pending = True
-                main = self.app.main_computer
+                main = self.destination(item)
                 if main is not None:
                     try:
                         await self._stop_main(main, item.session_id, False, timeout=3.0)
@@ -586,34 +629,81 @@ class Satellite:
                 await self._worker
             self._worker = None
 
-    def kick(self) -> None:
-        """The main computer is (back) there: every waiting item is tried now."""
+    def kick(self, destination: str | None = None) -> None:
+        """A destination is (back) there: every item waiting for it is tried now (None: all)."""
         for item in self.outbox.items.values():
-            if item.state == "waiting":
+            if item.state == "waiting" and destination in (None, item.destination):
                 item.next_at = 0.0
-        self._probe = None
+        for name in (destination,) if destination else DESTINATIONS:
+            self._probes.pop(name, None)
         self._ensure_worker()
         if self._wake is not None:
             self._wake.set()
 
+    # -- destinations
+
+    def destination(self, item: OutboxItem):
+        """Where `item` goes now: the main computer, or the team's backend (a TeamDestination),
+        or None. A team item only goes to the team it was recorded for."""
+        if item.destination == TEAM:
+            team = self.app.team_member
+            dest = team.destination() if team is not None else None
+            return dest if dest is not None and self._same_team(item) else None
+        return self.app.main_computer
+
+    async def resolve(self, item: OutboxItem):
+        """`destination`, dialing the team first when the sidecar has restarted."""
+        if item.destination == TEAM and self.app.team_member is not None:
+            await self.app.team_member.ensure_destination()
+        return self.destination(item)
+
+    def _same_team(self, item: OutboxItem) -> bool:
+        m = self.app.team_member.membership if self.app.team_member is not None else None
+        return m is not None and (not item.team or item.team == m.host_endpoint)
+
+    def gone(self, item: OutboxItem) -> bool:
+        """The destination is not coming back by itself: no main computer, or not in that team
+        (never joined, left, signed out, another team). A team whose port is only being renewed
+        is not gone."""
+        if item.destination != TEAM:
+            return self.app.main_computer is None
+        team = self.app.team_member
+        return team is None or team.signed_out or not self._same_team(item)
+
+    def signed_out(self, item: OutboxItem) -> None:
+        """The team refused our token (401, or a socket closed 4401): have it checked once."""
+        team = self.app.team_member
+        if item.destination == TEAM and team is not None:
+            task = asyncio.create_task(team.check_signed_out())
+            self._tasks.add(task)  # a task nobody holds can be collected mid-way
+            task.add_done_callback(self._tasks.discard)
+
     # -- reachability
 
-    async def reachable(self) -> bool:
+    async def reachable(self, destination: str = MAIN) -> bool:
+        if destination == TEAM:
+            team = self.app.team_member
+            return team is not None and await team.reachable()
         main = self.app.main_computer
         if main is None:
             return False
-        if self._probe is not None and time.monotonic() - self._probe[0] < PROBE_SECONDS:
-            return self._probe[1]
+        probe = self._probes.get(MAIN)
+        if probe is not None and time.monotonic() - probe[0] < PROBE_SECONDS:
+            return probe[1]
         try:
             async with _client(main, timeout=3.0) as c:
                 ok = (await c.get("/health")).status_code == 200
         except httpx.HTTPError:
             ok = False
-        self._probe = (time.monotonic(), ok)
+        self._probes[MAIN] = (time.monotonic(), ok)
         return ok
 
-    def _seen(self, ok: bool) -> None:
-        self._probe = (time.monotonic(), ok)
+    def _seen(self, ok: bool, item: OutboxItem | None = None) -> None:
+        if item is not None and item.destination == TEAM:
+            if self.app.team_member is not None:
+                self.app.team_member.seen(ok)
+            return
+        self._probes[MAIN] = (time.monotonic(), ok)
 
     # -- recording
 
@@ -623,8 +713,12 @@ class Satellite:
         system_device: int | None,
         title: str = "",
         consent: str | None = None,
+        destination: str = MAIN,
     ) -> Active:
         from fastapi import HTTPException
+
+        if destination not in DESTINATIONS:
+            raise HTTPException(400, "The destination is the main computer or the team")
 
         wanted = {
             s: d for s, d in (("mic", mic_device), ("system", system_device)) if d is not None
@@ -635,7 +729,10 @@ class Satellite:
             if self.active is not None:
                 raise HTTPException(409, "This computer is already recording")
             await self.ready()
-            item = OutboxItem(id=secrets.token_hex(6), title=title.strip()[:200])
+            item = OutboxItem(
+                id=secrets.token_hex(6), title=title.strip()[:200], destination=destination
+            )
+            self._check_destination(item)
             item.started_at = _now_iso()
             folder = self.outbox.folder(item.id)
             folder.mkdir(parents=True, exist_ok=True)
@@ -650,12 +747,14 @@ class Satellite:
                 raise HTTPException(400, "None of the selected devices could be opened")
             self._fill_sources(item, captured)
 
-            main = self.app.main_computer
+            main = await self.resolve(item)
             started = None
             if main is not None:
                 try:
                     started = await self._start_main(main, item, captured, consent)
                 except MainError as e:
+                    if e.status == 401:
+                        self.signed_out(item)
                     if e.status in (400, 422):  # the request itself: say so, record nothing
                         await capture.stop(captured)
                         shutil.rmtree(folder, ignore_errors=True)
@@ -666,20 +765,38 @@ class Satellite:
                 item.session_id, item.recording_id = started
                 for src in captured.sources:
                     streams[src.source] = SourceStream(
-                        self, src, captured.sample_rate, item.recording_id
+                        self, src, captured.sample_rate, item.recording_id, item
                     )
             self.outbox.save(item)
             self.active = Active(item=item, captured=captured, capture=capture, streams=streams)
             for s in streams.values():
                 s.start()
+            noun = "the team" if item.destination == TEAM else "the main computer"
             logger.info(
                 "Outbox %s: recording %s",
                 item.id,
-                f"streamed into {main.name or 'the main computer'}'s meeting {item.session_id}"
+                f"streamed into {main.name or noun}'s meeting {item.session_id}"
                 if started
-                else "here; it waits for the main computer",
+                else f"here; it waits for {noun}",
             )
             return self.active
+
+    def _check_destination(self, item: OutboxItem) -> None:
+        """A destination that is not there at all is a plain 409 (one that only cannot be reached
+        right now is recorded for, and handed over later)."""
+        from fastapi import HTTPException
+
+        if item.destination == MAIN:
+            if self.app.main_computer is None:
+                raise HTTPException(409, "This computer has no main computer to record for")
+            return
+        team = self.app.team_member
+        m = team.membership if team is not None else None
+        if m is None:
+            raise HTTPException(409, "This computer is not in a team")
+        if m.signed_out_at:
+            raise HTTPException(409, f"You were signed out of {m.host_name}; ask for a new invite")
+        item.team = m.host_endpoint
 
     async def _start_main(self, main, item: OutboxItem, captured: Captured, consent):
         body: dict = {
@@ -692,9 +809,9 @@ class Satellite:
         try:
             answer = await _call(main, "POST", "/api/audio/start-browser", timeout=8.0, json=body)
         except MainError as e:
-            self._seen(e.status is not None)
+            self._seen(e.status is not None, item)
             raise
-        self._seen(True)
+        self._seen(True, item)
         sid, rid = str(answer["session_id"]), str(answer["recording_id"])
         if item.title:
             with contextlib.suppress(MainError):
@@ -777,7 +894,7 @@ class Satellite:
             )  # fmt: skip
         if not main_stopped:
             await asyncio.sleep(DRAIN_SECONDS)  # its sockets write what they received
-            main = self.app.main_computer
+            main = await self.resolve(item)
             try:
                 if main is None:
                     raise MainError(None, "No main computer")
@@ -801,7 +918,7 @@ class Satellite:
         item.state, item.next_at, item.attempts = "waiting", 0.0, 0
         await asyncio.to_thread(self._seal, item)
         self.outbox.save(item)
-        self.kick()
+        self.kick(item.destination)
         return {"local_id": item.id, "session_id": item.session_id, "outcome": outcome}
 
     async def _stop_main(self, main, sid: str, transcribe: bool | None, timeout=30.0) -> None:
@@ -837,9 +954,12 @@ class Satellite:
                 now = time.time()
                 waiting = [i for i in self.outbox.items.values() if i.state == "waiting"]
                 due = sorted((i for i in waiting if i.next_at <= now), key=lambda i: i.started_at)
-                if due and self.app.main_computer is not None:
-                    for item in due:
-                        await self._handoff(item)
+                # Items whose destination is not there now are skipped, not failed: they wait
+                # for its kick (or the next look, IDLE_WAKE).
+                sendable = [(i, d) for i in due if (d := await self.resolve(i)) is not None]
+                if sendable:
+                    for item, dest in sendable:
+                        await self._handoff(item, dest)
                     continue
                 later = [i.next_at - now for i in waiting if i.next_at > now]
                 wait = min([IDLE_WAKE, *later])
@@ -852,8 +972,8 @@ class Satellite:
                 logger.exception("Outbox: the hand-off worker failed; trying again")
                 await asyncio.sleep(5)
 
-    async def _handoff(self, item: OutboxItem) -> None:
-        main = self.app.main_computer
+    async def _handoff(self, item: OutboxItem, main=None) -> None:
+        main = main or self.destination(item)
         if main is None or item.state != "waiting" or item.id not in self.outbox.items:
             return
         item.state = "sending"
@@ -869,8 +989,10 @@ class Satellite:
                 item.stop_pending = False
             answer = await self._upload(main, item)
         except MainError as e:
-            self._seen(e.status is not None)
+            self._seen(e.status is not None, item)
             item.last_error = e.detail
+            if e.status == 401:
+                self.signed_out(item)
             if e.final(replacing):
                 item.state = "failed"
                 logger.warning("Outbox %s: refused by the main computer: %s", item.id, e.detail)
@@ -890,10 +1012,11 @@ class Satellite:
             self.outbox.save(item)
             logger.exception("Outbox %s: could not hand it over", item.id)
             return
-        self._seen(True)
+        self._seen(True, item)
+        noun = "the team" if item.destination == TEAM else "the main computer"
         logger.info(
             "Outbox %s: handed over to %s as meeting %s%s; local copy deleted",
-            item.id, main.name or "the main computer", answer.get("session_id"),
+            item.id, main.name or noun, answer.get("session_id"),
             " (replacing the streamed audio)" if answer.get("replaced") else "",
         )  # fmt: skip
         self.outbox.delete(item)
@@ -957,7 +1080,7 @@ class Satellite:
         audio can no longer be replaced: transcribed with gaps). Idempotent: one new meeting
         per item, whatever the number of tries."""
         item = self._settled(item_id)
-        old, main = item.session_id, self.app.main_computer
+        old, main = item.session_id, self.destination(item)
         if old and item.stop_pending and main is not None:
             with contextlib.suppress(MainError):  # the stream's recording, if it still runs
                 await self._stop_main(main, old, False, timeout=10.0)
@@ -970,7 +1093,7 @@ class Satellite:
             "Outbox %s: to be handed over as a new meeting%s",
             item.id, f" (not completing meeting {old})" if old else "",
         )  # fmt: skip
-        self.kick()
+        self.kick(item.destination)
         return item
 
     def discard(self, item_id: str) -> None:
@@ -1013,6 +1136,7 @@ class Satellite:
         return {
             "local_id": active.item.id,
             "session_id": active.item.session_id,
+            "destination": active.item.destination,
             "streaming": bool(active.streams),
             "title": active.item.title,
             "started_at": active.item.started_at,
@@ -1034,6 +1158,7 @@ class Satellite:
             "state": item.state,
             "last_error": item.last_error,
             "replaces": item.session_id,
+            "destination": item.destination,
         }
 
 
