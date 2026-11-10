@@ -48,6 +48,21 @@ pub const NAME: &str = "System audio (all apps)";
 const STALL: Duration = Duration::from_secs(10);
 const MAX_STALL_REBUILDS: u32 = 3;
 
+/// `MNEMOSYNE_CAPTURE_TRACE=1`: one stderr line per Core Audio step, with the time since the
+/// first one. For finding which call waits on a permission prompt (the tester's Mac, CI).
+fn trace(stage: &str) {
+    use std::sync::OnceLock;
+    static START: OnceLock<Option<Instant>> = OnceLock::new();
+    let start =
+        START.get_or_init(|| std::env::var_os("MNEMOSYNE_CAPTURE_TRACE").map(|_| Instant::now()));
+    if let Some(start) = start {
+        eprintln!(
+            "mnemosyne-capture trace +{:.3}s {stage}",
+            start.elapsed().as_secs_f64()
+        );
+    }
+}
+
 /// What the IOProc and the listeners reach: the channel to the recorder and the current rate.
 struct Shared {
     tx: Sender<Chunk>,
@@ -87,6 +102,7 @@ impl SystemTap {
         });
         let (tap, tap_uuid, format) = create_tap().context("cannot tap the system audio")?;
         let main_uid = default_output_uid();
+        trace(&format!("default output: {main_uid:?}"));
         let aggregate = match Aggregate::create(&tap_uuid, main_uid.as_deref(), &shared) {
             Ok(a) => a,
             Err(e) => {
@@ -95,6 +111,7 @@ impl SystemTap {
                 return Err(e.context("cannot record the system audio"));
             }
         };
+        trace("adding the default-output listener");
         // SAFETY: `shared` outlives the listener (both are fields, the listener dropped first).
         let default_listener = unsafe {
             Listener::add(
@@ -113,6 +130,7 @@ impl SystemTap {
                 return Err(e);
             }
         };
+        trace("open");
         Ok(Self {
             aggregate: Some(aggregate),
             _default_listener: default_listener,
@@ -229,8 +247,13 @@ fn create_tap() -> Result<(AudioObjectID, String, String)> {
         desc
     };
     let mut tap: AudioObjectID = 0;
+    trace("AudioHardwareCreateProcessTap");
     // SAFETY: a valid description and an out-pointer.
     let status = unsafe { AudioHardwareCreateProcessTap(Some(&desc), &mut tap) };
+    trace(&format!(
+        "AudioHardwareCreateProcessTap -> {}",
+        coreaudio::status_text(status)
+    ));
     check(status, "AudioHardwareCreateProcessTap")?;
     // SAFETY: the description's UUID is set by its initializer.
     let uuid = unsafe { desc.UUID().UUIDString() }.to_string();
@@ -256,9 +279,14 @@ impl Aggregate {
     fn create(tap_uuid: &str, main_uid: Option<&str>, shared: &Arc<Shared>) -> Result<Self> {
         let description = composition(tap_uuid, main_uid);
         let mut id: AudioObjectID = 0;
+        trace("AudioHardwareCreateAggregateDevice");
         // SAFETY: a complete composition dictionary and an out-pointer.
         let status =
             unsafe { AudioHardwareCreateAggregateDevice(&description, NonNull::from(&mut id)) };
+        trace(&format!(
+            "AudioHardwareCreateAggregateDevice -> {} id={id}",
+            coreaudio::status_text(status)
+        ));
         check(status, "AudioHardwareCreateAggregateDevice")?;
         let mut agg = Self {
             id,
@@ -285,6 +313,10 @@ impl Aggregate {
             )
         }
         .ok();
+        trace(&format!(
+            "rate {} Hz; AudioDeviceCreateIOProcID",
+            shared.rate.load(Ordering::SeqCst)
+        ));
         let mut proc_id: AudioDeviceIOProcID = None;
         // SAFETY: a valid device and an IOProc whose client data lives as long as it does.
         let status = unsafe {
@@ -292,8 +324,13 @@ impl Aggregate {
         };
         check(status, "AudioDeviceCreateIOProcID")?;
         agg.proc_id = proc_id;
+        trace("AudioDeviceStart");
         // SAFETY: the IOProc was created on this device.
         let status = unsafe { AudioDeviceStart(id, proc_id) };
+        trace(&format!(
+            "AudioDeviceStart -> {}",
+            coreaudio::status_text(status)
+        ));
         check(status, "AudioDeviceStart")?;
         agg.started = true;
         Ok(agg)
@@ -541,6 +578,12 @@ mod tests {
     /// be an Ok tap or a clear error, never a crash or a hang.
     #[test]
     fn opening_the_system_tap_works_or_fails_clearly() {
+        std::env::set_var("MNEMOSYNE_CAPTURE_TRACE", "1");
+        eprintln!("doctor: {}", crate::doctor::report());
+        eprintln!(
+            "devices: {}",
+            serde_json::to_string(&crate::macos::devices().unwrap()).unwrap()
+        );
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let outcome = SystemTap::open().and_then(|mut tap| {
@@ -562,7 +605,9 @@ mod tests {
                 eprintln!("tap refused: {e}");
                 assert!(e.contains("system audio"), "{e}");
             }
-            Err(_) => panic!("opening the system tap hung for 30 s (a permission prompt?)"),
+            Err(_) => panic!(
+                "opening the system tap hung for 30 s (a permission prompt? see the trace lines)"
+            ),
         }
     }
 }
