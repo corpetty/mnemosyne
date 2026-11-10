@@ -122,3 +122,61 @@ describe('who owns the personal features', () => {
 		expect([connectionState.ownsPersonal, connectionState.isOwner]).toEqual([false, false]);
 	});
 });
+
+describe('the team library', () => {
+	it('is the local backend\'s /api/joined, with this computer\'s token, and survives a reload', async () => {
+		const { connectionState, LOCAL_BACKEND, TEAM_URL } = await fresh();
+		expect(TEAM_URL).toBe(`${LOCAL_BACKEND}/api/joined`);
+		connectionState.save(LOCAL_BACKEND, 'local-tok', false);
+		expect(connectionState.library).toBe('mine');
+		connectionState.useLibrary('team');
+		expect(connectionState.library).toBe('team');
+		expect(connectionState.inTeam).toBe(true);
+		expect(connectionState.url).toBe(TEAM_URL);
+		expect(connectionState.token).toBe('local-tok');
+		expect(connectionState.wsUrl).toBe(`ws://127.0.0.1:8008/api/joined/ws?token=local-tok`);
+		const again = (await fresh()).connectionState;
+		expect(again.library).toBe('team');
+		expect(again.token).toBe('local-tok');
+		expect(again.localToken).toBe('local-tok');
+	});
+
+	it('is not local (desktop-only features), but its devices are this computer\'s', async () => {
+		const { connectionState, LOCAL_BACKEND } = await fresh();
+		connectionState.save(LOCAL_BACKEND, 'local-tok', false);
+		expect(connectionState.isLocal).toBe(true);
+		expect(connectionState.devicesAreLocal).toBe(false);
+		connectionState.useLibrary('team');
+		expect(connectionState.isLocal).toBe(false);
+		expect(connectionState.devicesAreLocal).toBe(true);
+	});
+
+	it('switching back keeps the local token', async () => {
+		const { connectionState, LOCAL_BACKEND } = await fresh();
+		connectionState.save(LOCAL_BACKEND, 'local-tok', false);
+		connectionState.useLibrary('team');
+		connectionState.useLibrary('mine');
+		expect(connectionState.library).toBe('mine');
+		expect(connectionState.url).toBe(LOCAL_BACKEND);
+		expect(connectionState.token).toBe('local-tok');
+	});
+
+	it('a token the local backend makes while in the team library is the window\'s token', async () => {
+		const { connectionState, LOCAL_BACKEND } = await fresh();
+		connectionState.save(LOCAL_BACKEND, '', false);
+		connectionState.useLibrary('team');
+		connectionState.setLocalToken('made-by-join');
+		expect(connectionState.token).toBe('made-by-join');
+		expect((await fresh()).connectionState.token).toBe('made-by-join');
+	});
+
+	it('a main computer through remote access is not the team library', async () => {
+		const { connectionState, LOCAL_BACKEND, TEAM_URL } = await fresh();
+		connectionState.save(LOCAL_BACKEND, 'local-tok', false);
+		connectionState.save(REMOTE, 'main-tok', true);
+		expect(connectionState.inTeam).toBe(false);
+		expect(connectionState.devicesAreLocal).toBe(true);
+		connectionState.save(TEAM_URL, 'x', true); // never both
+		expect(connectionState.inTeam).toBe(false);
+	});
+});

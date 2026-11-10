@@ -11,6 +11,11 @@ const KEY = 'mnemosyne.connection';
  * services/pairing_prep.py: the person never saw it). */
 const LOCAL_KEY = 'mnemosyne.connection.local';
 export const LOCAL_BACKEND = 'http://127.0.0.1:8008';
+/** The team's library: this computer's backend proxies the team it joined under this path (backend
+ * api/routes/team_member.py). The window sends its OWN token; the backend adds the member's. */
+export const TEAM_URL = `${LOCAL_BACKEND}/api/joined`;
+/** Which library the window shows: this computer's own, or the team's. */
+export type Library = 'mine' | 'team';
 const LOCAL_URL = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
 
 /** Served by a backend itself (api/web.py, e.g. a team server opened in a browser): that
@@ -75,7 +80,26 @@ class ConnectionState {
     const onLocal = !this.remote && !SAME_ORIGIN && LOCAL_URL.test(this.url);
     // A window from before LOCAL_KEY keeps the token it had for the local backend.
     this.localToken = loadLocalToken() || (onLocal ? s.token : '');
-    this.token = onLocal && !s.token ? this.localToken : s.token;
+    // The team library is this computer's backend too: it takes this computer's token.
+    this.token = this.inTeam ? this.localToken : onLocal && !s.token ? this.localToken : s.token;
+  }
+
+  /** Which library this window shows. It is the connection's address, so it is saved with it and
+   * survives a reload: the team's library is the backend's `/api/joined` proxy. */
+  get library(): Library {
+    return !SAME_ORIGIN && !this.remote && this.url === TEAM_URL ? 'team' : 'mine';
+  }
+
+  /** The window shows the library of the team this computer joined. */
+  get inTeam(): boolean {
+    return this.library === 'team';
+  }
+
+  /** Requests for this computer's own devices (recording sources, levels, echo cancellation) go to
+   * the local backend: the window is connected to another computer's library (a main computer
+   * through remote access, or the team's), and its devices are not the ones to record from. */
+  get devicesAreLocal(): boolean {
+    return this.remote || this.inTeam;
   }
 
   /** Personal features (contacts, sharing with people) are this caller's: everyone on a plain
@@ -91,8 +115,9 @@ class ConnectionState {
   }
 
   get isLocal(): boolean {
-    // The remote-access tunnel listens on 127.0.0.1, but the backend is on another machine.
-    if (this.remote) return false;
+    // The remote-access tunnel listens on 127.0.0.1, but the backend is on another machine; the
+    // team's library is another computer's too, though reached through this one.
+    if (this.remote || this.inTeam) return false;
     return this.url === LOCAL_BACKEND || LOCAL_URL.test(this.url);
   }
 
@@ -135,7 +160,7 @@ class ConnectionState {
    * (pairing prepare): keep it, the next request to it needs it. */
   setLocalToken(token: string) {
     this.localToken = token.trim();
-    const onLocal = !this.remote && !SAME_ORIGIN && LOCAL_URL.test(this.url);
+    const onLocal = !this.remote && !SAME_ORIGIN && (LOCAL_URL.test(this.url) || this.inTeam);
     if (onLocal) this.token = this.localToken;
     try {
       localStorage.setItem(LOCAL_KEY, JSON.stringify({ token: this.localToken }));
@@ -148,6 +173,13 @@ class ConnectionState {
   /** Back to this computer's own backend, with the token it has. */
   useLocal() {
     this.save(defaultUrl(), SAME_ORIGIN ? '' : this.localToken);
+  }
+
+  /** Show the team's library (or this computer's own): saves the choice, the caller reconnects.
+   * Both are this computer's backend with this computer's token. */
+  useLibrary(library: Library) {
+    if (library === 'team') this.save(TEAM_URL, this.localToken);
+    else this.useLocal();
   }
 }
 

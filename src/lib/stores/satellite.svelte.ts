@@ -44,6 +44,10 @@ class SatelliteState {
   get inTeam(): boolean {
     return this.status?.team != null;
   }
+  /** What to call where a recording goes: the main computer's name, or the team's. */
+  nameFor(destination: 'main' | 'team'): string {
+    return destination === 'team' ? this.teamName : this.mainName;
+  }
   /** This computer is in a team and its host cannot be reached from here right now. */
   get teamDown(): boolean {
     return this.status !== null && this.status.team !== null && !this.status.team_reachable;
