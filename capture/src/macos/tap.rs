@@ -3,9 +3,11 @@
 //! the recorder. References: cpal's `host/coreaudio/macos/loopback.rs`, insidegui/AudioCap,
 //! makeusabrew/audiotee.
 //!
-//! The permission prompt ("System Audio Recording Only") appears when the aggregate device
-//! STARTS, not when the tap is made; a denied or unanswered tap delivers exact zeros, which the
-//! recorder counts (`digital_silence` in the log). Private aggregate devices and taps are
+//! The permission ("System Audio Recording Only") is checked when the IOProc is CREATED on
+//! the tap's aggregate device (`AudioDeviceCreateIOProcID`), one step before start and two
+//! after the tap is made; on a hosted runner, where nobody can answer the prompt, that call
+//! never returns (an IOProc on a tap-less aggregate returns in milliseconds). A denied tap
+//! delivers exact zeros, which the recorder counts (`digital_silence` in the log). Private aggregate devices and taps are
 //! owned by this process's HAL client and are destroyed on drop (also after SIGTERM); when the
 //! process is killed outright, coreaudiod drops the client and with it what the client made.
 
@@ -677,7 +679,7 @@ mod tests {
 
     fn try_open(label: &str) -> Option<Opened> {
         let started = Instant::now();
-        let outcome = within(30, || {
+        let outcome = within(15, || {
             SystemTap::open()
                 .and_then(|mut tap| {
                     let mut got = 0;
@@ -698,7 +700,7 @@ mod tests {
                 started.elapsed().as_secs_f64()
             ),
             Some(Err(e)) => say_fmt!("{label}: tap refused: {e}"),
-            None => say_fmt!("{label}: no answer after 30 s; last step: {}", last_stage()),
+            None => say_fmt!("{label}: no answer after 15 s; last step: {}", last_stage()),
         }
         outcome
     }
@@ -742,21 +744,19 @@ mod tests {
         ];
         for (label, probe) in probes {
             let started = Instant::now();
-            match within(10, probe) {
+            match within(5, probe) {
                 Some(Ok(())) => {
                     say_fmt!("{label}: ok in {:.2}s", started.elapsed().as_secs_f64())
                 }
                 Some(Err(e)) => say_fmt!("{label}: error: {e:#}"),
-                None => say_fmt!("{label}: no answer after 10 s"),
+                None => say_fmt!("{label}: no answer after 5 s"),
             }
         }
 
-        let mut outcome = try_open("open");
-        if outcome.is_none() {
-            say_fmt!("detaching the HAL run loop: {:?}", detach_hal_run_loop());
-            outcome = try_open("open after detaching the run loop");
-        }
-        match outcome {
+        // Detaching the HAL's run loop changed nothing on the runner (2026-11-10): it is the
+        // permission, not a run loop. Kept as a cheap ruled-out hypothesis.
+        say_fmt!("detaching the HAL run loop: {:?}", detach_hal_run_loop());
+        match try_open("open") {
             Some(Ok(_)) => {}
             Some(Err(e)) => assert!(e.contains("system audio"), "{e}"),
             None => {

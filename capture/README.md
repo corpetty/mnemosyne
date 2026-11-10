@@ -58,9 +58,13 @@ mnemosyne-capture record --fake <tone[:hz]|silence|file:<path.wav>> [...] <out.w
   the default output device as main sub-device when there is one) whose IOProc hands the
   buffers over. When the default output device changes, or nothing arrives for 10 s, the tap
   and the aggregate are built again (a `note` line). The "System Audio Recording Only"
-  permission is asked when the aggregate device **starts**, not when the tap is made; a denied
-  (or not yet answered) tap delivers exact zeros that look like silence, which the `stats` and
-  `digital_silence` log lines make visible. The aggregate device and the tap are destroyed on
+  permission is checked when the IOProc is **created** on the tap's aggregate device
+  (`AudioDeviceCreateIOProcID`), not when the tap is made: on the hosted runner (macOS 15.8.2,
+  no grant, nobody to click) the tap and the aggregate device are created in 80 ms and that
+  call never returns, while an IOProc on a tap-less aggregate returns in 20 ms. So `record
+  --target system` opens no file until the prompt is answered. A denied tap delivers exact
+  zeros that look like silence, which the `stats` and `digital_silence` log lines make
+  visible. `MNEMOSYNE_CAPTURE_TRACE=1` prints each Core Audio step with its time. The aggregate device and the tap are destroyed on
   stop and on SIGTERM (the source is dropped before the process exits); they belong to this
   process's HAL client, so coreaudiod drops them with the client when the process is killed
   outright (expected; to be confirmed on a real Mac).
@@ -76,7 +80,9 @@ Crates (pinned): cpal 0.18.2, objc2 0.6.5, objc2-core-audio / -core-audio-types 
 references). `cargo check --target aarch64-apple-darwin` type-checks it on Linux once
 `rustup target add aarch64-apple-darwin` is done (no SDK needed); only the macOS CI job links
 and runs it. Hosted runners have no TCC grants and maybe no audio device, so the macOS tests
-only check shapes and that the tap either opens or fails with a clear error.
+only check shapes and that the tap either opens, fails with a clear error, or waits at the
+permission step after the tap and the aggregate device were made (the test prints probes of
+where an IOProc waits).
 
 Fake sources (every OS) are for tests: `--fake-fast` (no real-time pacing), `--fake-duration`,
 `--fake-switch-rate-after 2s:16000`, `--fake-vanish-after 1s`, `--fake-rate`, `--fake-channels`.
