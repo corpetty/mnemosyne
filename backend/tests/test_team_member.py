@@ -561,6 +561,20 @@ async def test_joining_is_refused(member, host, why):
     assert why == "joined" or not ctx.team_member.joined
 
 
+async def test_no_main_computer_while_in_a_team(member, host):
+    """The other half of join's refusal: the shell cannot make a joined computer use a main
+    computer (one or the other)."""
+    joined(member, host)
+    async with local(member) as c:
+        body = {"url": "http://127.0.0.1:8009", "token": "main-token", "name": "Desk"}
+        r = await c.put("/api/system/main", json=body)
+        assert r.status_code == 409
+        assert r.json()["detail"] == "This computer is in Corey's desktop: leave the team first"
+        assert member.state.ctx.main_computer is None
+        assert (await c.delete("/api/joined")).status_code == 200
+        assert (await c.put("/api/system/main", json=body)).status_code == 200
+
+
 # ---- joining through the sidecar (the stand-in) -----------------------------------------------
 
 
@@ -617,6 +631,8 @@ def test_joining_pairs_dials_and_keeps_the_membership_privately(settings, sideca
         (pair,) = _ops(sidecar, "pair")
         assert pair["invite"] == invite and pair["name"] == "Sam's Mac"
         assert "peer" not in pair  # the host gets no way back in (M9)
+        # Only a team membership will do: the host refuses another kind of code unused.
+        assert pair["card"] == {"want": "team"}
         assert _ops(sidecar, "dial")[-1]["ticket"] == make_ticket(HOST_EP)
         tm = ctx.team_member
         assert tm.listen == "127.0.0.1:41000"

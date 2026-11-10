@@ -185,7 +185,13 @@ async def get_main_computer(ctx: AppContext = Depends(get_ctx)):
 @router.put("/system/main", response_model=MainComputerStatus, dependencies=MAIN_ONLY)
 async def set_main_computer(body: MainComputerRequest, ctx: AppContext = Depends(get_ctx)):
     """The desktop shell connected to the main computer through remote access (and at each
-    launch): where its tunnel is, the token and the name (services/main_computer.py)."""
+    launch): where its tunnel is, the token and the name (services/main_computer.py). Not
+    while this computer is in a team (services/team_member.py): one or the other."""
+    team = ctx.team_member.membership if ctx.team_member is not None else None
+    if team is not None:
+        raise HTTPException(
+            status_code=409, detail=f"This computer is in {team.host_name}: leave the team first"
+        )
     try:
         ctx.main_computer_store().set(body.url, body.token, body.name)
     except ValueError as e:

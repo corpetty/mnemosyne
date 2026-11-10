@@ -536,6 +536,46 @@ def test_the_other_codes_redeem_as_before(host):
     assert r.status_code == 200 and r.json()["device"]["kind"] == "phone"
 
 
+WANT_TEAM = {"want": "team"}  # what a member's app sends (services/team_member.py)
+
+
+def test_an_app_that_wants_a_team_redeems_an_invite_with_its_card(host):
+    r = _redeem(
+        host, "tunnel", code=_invite(host), name="Sam's Mac", endpoint_id=EP_SAM, card=WANT_TEAM
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["device"]["kind"] == MEMBER
+    assert r.json()["card"]["team"]["user"]["id"] == host.users["Sam"]
+
+
+@pytest.mark.parametrize("kind", ["desktop", "sync", "contact", "phone"])
+def test_an_app_that_wants_a_team_never_uses_up_another_code(host, kind):
+    """A pairing code pasted as a team invite: refused as invalid before anything is made, and
+    still good for the pairing it was made for."""
+    devices = {d.id for d in host.ctx.pairing.devices()}
+    code, _ = host.ctx.pairing.new_code(kind)
+    r = _redeem(host, "tunnel", code=code, name="Sam's Mac", endpoint_id=EP_SAM, card=WANT_TEAM)
+    assert r.status_code == 403 and r.json()["detail"] == INVALID
+    assert {d.id for d in host.ctx.pairing.devices()} == devices  # no device made
+    assert host.ctx.pairing.code_kind(code) == kind  # not used up
+    # and it still pairs what it was made for
+    if kind == "desktop":
+        r = _redeem(host, "tunnel", code=code, name="Laptop", endpoint_id="d9" * 32)
+        assert r.status_code == 200 and r.json()["device"]["kind"] == "desktop"
+    elif kind == "phone":
+        r = _redeem(host, "lan", code=code, name="Phone 2")
+        assert r.status_code == 200 and r.json()["device"]["kind"] == "phone"
+
+
+def test_an_app_that_wants_a_team_is_refused_for_an_unknown_or_used_invite(host):
+    code = _invite(host)
+    assert via(host, "team")[0].post("/api/users/redeem", json={"code": code}).status_code == 200
+    for c in (code, "no-such-code"):
+        r = _redeem(host, "tunnel", code=c, name="x", endpoint_id=EP_SAM, card=WANT_TEAM)
+        assert r.status_code == 403 and r.json()["detail"] == INVALID
+    assert host.ctx.pairing.members_for(host.users["Sam"]) == []
+
+
 # ---- the device file ---------------------------------------------------------------------------
 
 

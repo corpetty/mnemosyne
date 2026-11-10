@@ -7,7 +7,8 @@ device for this endpoint and answers with its token and `card = {"team": {name, 
 consent_required}}` (api/routes/pairing.py `_redeem_member`). The sidecar then `dial`s the
 host, serving its backend on a loopback port (`listen`, new at every sidecar start: kept in
 memory only and dialed again from `link.on_ready`). No `peer` is sent: the host is never given
-a way back into this computer.
+a way back into this computer. The pair request's `card` is `{"want": "team"}`: the host
+answers anything but a live user invite as an invalid code, without using it.
 
 <data_dir>/team.json (mode 0600, written atomically) holds the membership: the host's ticket and
 endpoint id, its name, the member token (the same class of secret as sync_peers.json's peer
@@ -42,6 +43,8 @@ logger = logging.getLogger(__name__)
 
 WORK_MODES = ("here", "host")
 PROBE_SECONDS = 5.0  # how long a reachability answer is reused (as satellite.py)
+# Sent as the `card` of the pair request; api/routes/pairing.py WANT_TEAM is the same.
+WANT_TEAM = {"want": "team"}
 NOT_AN_INVITE = "That is not a team invite (it starts with “endpoint” and has a # in it)"
 
 
@@ -342,8 +345,12 @@ class TeamMember:
             raise TeamMemberError(400, "That invite is from this computer")
         me = name.strip()[:80] or self.app.sync_peers.self_info().name
         try:
-            # No `peer`: the host gets no way back into this computer (M9).
-            reply = await self.app.link.request("pair", invite=f"{ticket}#{code}", name=me)
+            # No `peer`: the host gets no way back into this computer (M9). The card says only
+            # a team membership will do, so the host refuses (and leaves unused) a pairing code
+            # of another kind instead of making a device from it.
+            reply = await self.app.link.request(
+                "pair", invite=f"{ticket}#{code}", name=me, card=WANT_TEAM
+            )
         except LinkError as e:
             raise TeamMemberError(400, f"Joining failed: {e}") from e
         card = reply.get("card")

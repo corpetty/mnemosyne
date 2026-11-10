@@ -247,6 +247,11 @@ def _person_offer(body: RedeemRequest, ctx: AppContext) -> SyncPersonOffer | Non
     return SyncPersonOffer(pub=mine, adopt=decision)
 
 
+# The card a member's app sends with an app invite (services/team_member.py): it wants a
+# team membership and nothing else. Unlike `peer`, it gives this computer no way back.
+WANT_TEAM = {"want": "team"}
+
+
 def _invalid_code() -> HTTPException:
     """The refusal of a pairing code that is not good (unknown, used, expired): also what an
     invite that cannot be used says, so a caller learns nothing about which codes exist."""
@@ -293,6 +298,13 @@ def _redeem_member(body: RedeemRequest, ctx: AppContext, user) -> RedeemResponse
 
 @router.post("/redeem", response_model=RedeemResponse)
 async def redeem(body: RedeemRequest, ctx: AppContext = Depends(get_ctx)):
+    if body.card == WANT_TEAM:
+        # A member's app joining (services/team_member.py): only a live user invite will do.
+        # Any other code reads as invalid and is left unused: no device is made from it.
+        invited = ctx.users.invited(body.code) if ctx.pairing.code_kind(body.code) is None else None
+        if invited is None:
+            raise _invalid_code()
+        return _redeem_member(body, ctx, invited)
     if ctx.pairing.code_kind(body.code) is None:
         invited = ctx.users.invited(body.code)
         if invited is not None:
