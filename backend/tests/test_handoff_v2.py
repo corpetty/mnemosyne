@@ -33,6 +33,7 @@ from mnemosyne.services.tunnel_listener import Tunnelled
 from mnemosyne.storage.crypto import MemoryKeyStore
 from tests.test_handoff import wav
 from tests.test_notes_media import webp
+from tests.test_recovery import fake_encoding  # noqa: F401  (a fixture)
 from tests.test_sync_notes_doc import doc_frames, frame
 from tests.test_sync_service import meeting, nodes, pull, sidecar  # noqa: F401  (fixtures)
 
@@ -346,6 +347,81 @@ async def test_a_lost_answer_is_retried_into_the_same_meeting(ctx, mctx, host, w
     assert [h["status"] for h in wire.handoffs] == [200, 200]
     assert mctx.sessions.get_session(sid) is None
     assert [e["kind"] for e in ctx.repo.events(host_id)].count("handed_over") == 1
+
+
+async def test_a_crash_before_the_audio_is_saved_never_costs_the_transcript(
+    ctx,
+    mctx,
+    host,
+    wire,
+    fakes,
+    fake_encoding,  # noqa: F811
+    fake_engine,
+    monkeypatch,
+):
+    """The crash window: the host has the document but its finish never ran (killed). It does
+    not answer success, so the member keeps its copy; a retry before the restart is told to
+    wait; the recovery at the restart saves the parts and never transcribes the member's
+    transcript away; the member's retry then gets the same meeting, the document applied once."""
+    from mnemosyne.api.routes import audio as audio_routes
+    from mnemosyne.services.recovery import recover_interrupted
+
+    ctx.settings.auto_transcribe = True  # what would redo the transcript
+    sid = local_meeting(mctx, parts_=(0, 1))
+    consent(mctx, sid)
+    mctx.team_moves.queue(sid)
+    real = audio_routes._finish_recording
+
+    def killed(app_, session_id, recording, want_transcribe):
+        async def run(job):
+            raise RuntimeError("the backend was killed")
+
+        return run
+
+    monkeypatch.setattr(audio_routes, "_finish_recording", killed)
+    moves, tm = mctx.team_moves, mctx.team_member
+    assert await moves.attempt(sid) is None
+    pending = moves.store.pending[sid]
+    assert pending.attempts == 1 and "could not be saved" in pending.last_error
+    assert mctx.sessions.get_session(sid) is not None  # no answer of success: kept
+    [hosted] = host_meetings(ctx)
+    assert hosted.status == SessionStatus.ENCODING  # what a crash mid-finish leaves
+
+    # Retried before the restart: the same meeting, not saved yet: not answered as done.
+    pending.next_at = 0.0
+    assert await moves.attempt(sid) is None
+    assert "not saved here yet" in pending.last_error
+    assert mctx.sessions.get_session(sid) is not None and len(host_meetings(ctx)) == 1
+
+    # The restart: recovery saves both parts and leaves the transcript alone.
+    monkeypatch.setattr(audio_routes, "_finish_recording", real)
+    assert recover_interrupted(ctx) == [hosted.id]
+    for job in ctx.jobs.list(session_id=hosted.id):
+        if job.kind == "recover":
+            assert (await ctx.jobs.wait(job.id)).status == "completed"
+    with access.internally():
+        got = ctx.sessions.get_session(hosted.id)
+    assert [s.text for s in got.transcript] == ["hello there", "part two"]
+    assert got.summary == "We agreed on the scope."
+    assert got.status == SessionStatus.COMPLETED
+    assert not [j for j in ctx.jobs.list(session_id=hosted.id) if j.kind == "transcribe"]
+    assert sorted((r.part, r.source) for r in got.recordings) == [
+        (0, "mic"),
+        (0, "system"),
+        (1, "mic"),
+        (1, "system"),
+    ]
+
+    # The member's retry: the same meeting, the document not applied again.
+    before = export_session(ctx.repo, hosted.id, "x")
+    pending.next_at = 0.0
+    assert await moves.attempt(sid) == hosted.id
+    assert mctx.sessions.get_session(sid) is None and len(host_meetings(ctx)) == 1
+    after = export_session(ctx.repo, hosted.id, "x")
+    assert after.vv == before.vv and after.updated_at == before.updated_at
+    kinds = [e["kind"] for e in ctx.repo.events(hosted.id)]
+    assert kinds.count("handed_over") == 1 and kinds.count("consent") == 1
+    assert tm.destination() is not None
 
 
 async def test_a_copy_the_records_keep_here_stays_and_a_retry_finds_the_same_meeting(

@@ -362,7 +362,8 @@ class TeamMoves:
     async def _send(self, tm, dest, meta: dict, sources, images: dict[str, bytes]) -> dict:
         from ..storage.crypto import plaintext_async
 
-        timeout = httpx.Timeout(30.0, read=600.0, write=600.0)
+        # The host answers once the audio is saved (encoded, mixed, joined): minutes for hours.
+        timeout = httpx.Timeout(30.0, read=1800.0, write=600.0)
         async with contextlib.AsyncExitStack() as stack:
             files: list[tuple[str, tuple]] = []
             for source, part, _, path, _ in sources:

@@ -324,16 +324,22 @@ def recover_session(app: AppContext, session_id: str):
             parts.append(part)
 
         session = app.sessions.get_session(session_id)
+        # A meeting a team member's app handed over finished (hand-off v2): its transcript is
+        # the member's, whose copy is gone; it is never transcribed again here.
+        finished = finished_elsewhere(app, session_id)
+        done_status = (
+            SessionStatus.COMPLETED if finished and session.transcript else SessionStatus.CREATED
+        )
         if not parts:
-            status = SessionStatus.CREATED if session.audio_file else SessionStatus.ERROR
+            status = done_status if session.audio_file else SessionStatus.ERROR
             app.sessions.set_status(session_id, status)
             if status == SessionStatus.ERROR:
                 raise ValueError("The interrupted recording has no audio")
             return {"recovered": 0}
-        app.sessions.set_status(session_id, SessionStatus.CREATED)
+        app.sessions.set_status(session_id, done_status)
 
         transcribing = False
-        if app.settings.auto_transcribe:
+        if app.settings.auto_transcribe and not finished:
             from .pipeline import transcribe_session
 
             redo = parts if had_transcript and all(parts) else None
@@ -348,6 +354,16 @@ def recover_session(app: AppContext, session_id: str):
         return done.model_dump(mode="json")
 
     return run
+
+
+def finished_elsewhere(app: AppContext, session_id: str) -> bool:
+    """Whether the meeting came finished from a team member's app (hand-off v2): its
+    `handed_over` history line, written with the document before the audio is saved, says
+    `transcribed`. Such a meeting's transcript is never redone by a recovery."""
+    return any(
+        e["kind"] == "handed_over" and (e["detail"] or {}).get("transcribed")
+        for e in app.repo.events(session_id)
+    )
 
 
 def recover_interrupted(app: AppContext) -> list[str]:

@@ -28,10 +28,13 @@ did the work itself MOVES the finished meeting here. `transcribed` with `session
 library sync's portable document (models/sync_session.py, the member's `export_session`), and one
 `media:<sha>` part per image row it lists. The audio goes as above, one Ogg per recording with its
 part, so `add_part` rebuilds the joined timeline its transcript's times refer to; it is saved
-without transcribing. The document is written before the answer (`sync_state.take_document`, as
-library sync's fast-forward writes one: origin here, a new version, the notes document adopted),
-owned by the sender's user whatever it says, its publications and contact shares left behind;
-then flagged phrases, invitee shares and task links follow as after a transcription and summary.
+without transcribing, and the answer waits until it is (the member deletes its copy on it; a
+retry is answered once the meeting is saved, also by the recovery after a crash, which never
+transcribes such a meeting: its `handed_over` line says `transcribed`). The document is
+written first (`sync_state.take_document`, as library sync's fast-forward writes one: origin
+here, a new version, the notes document adopted), owned by the sender's user whatever it says,
+its publications and contact shares left behind; then flagged phrases, invitee shares and task
+links follow as after a transcription and summary.
 Images are checked (hash, WebP/JPEG by magic number, size) before anything is stored. Refused:
 `transcribed` on a REPLACE, from a paired computer of the owner (a DESKTOP device), and without a
 `consent` event in the document's history while this computer requires consent.
@@ -373,6 +376,8 @@ async def _receive(
     key = store.key(device_id, meta.handoff_id)
     done = store.session_for(key)
     if done is not None:  # a retry: the answer was lost, the work was not
+        if meta.transcribed:
+            await _settled(ctx, done, meta)
         return HandoffResult(session_id=done, replaced=bool(meta.session_id))
     if not store.claim(key):
         raise HTTPException(status_code=409, detail="This hand-off is being received; try again")
@@ -563,18 +568,8 @@ async def _take(ctx, form, meta: HandoffMeta, device_id, sender, key, store) -> 
                 pass
             manifest.unlink(missing_ok=True)
         ctx.repo.clear_audio(sid)
-    for rec in recordings:  # from here a crash is recovered at the next start
-        write_manifest(rec, {})
-    if recordings:
-        ctx.sessions.set_status(sid, SessionStatus.ENCODING)
-    else:  # a finished meeting without audio: nothing to save
-        ctx.sessions.set_status(sid, _done_status(ctx, sid))
-    if meta.transcribed:
-        _after_finished(ctx, sid)
-    elif meta.notes.strip() and not (replaced and session.notes.strip()):
-        # A streamed meeting's notes were typed into it live; a hand-off's come with it.
-        with shared_notes.unrestricted():
-            ctx.sessions.update_notes(sid, meta.notes)
+    # Before anything can be recovered: for a finished meeting (v2) this line is what keeps a
+    # recovery from transcribing it again (recovery.finished_elsewhere).
     history.log(
         ctx,
         sid,
@@ -589,9 +584,54 @@ async def _take(ctx, form, meta: HandoffMeta, device_id, sender, key, store) -> 
         replaced=replaced,
         **({"transcribed": True} if meta.transcribed else {}),
     )
+    for rec in recordings:  # from here a crash is recovered at the next start
+        write_manifest(rec, {})
+    if recordings:
+        ctx.sessions.set_status(sid, SessionStatus.ENCODING)
+    else:  # a finished meeting without audio: nothing to save
+        ctx.sessions.set_status(sid, _done_status(ctx, sid))
+    if meta.transcribed:
+        _after_finished(ctx, sid)
+    elif meta.notes.strip() and not (replaced and session.notes.strip()):
+        # A streamed meeting's notes were typed into it live; a hand-off's come with it.
+        with shared_notes.unrestricted():
+            ctx.sessions.update_notes(sid, meta.notes)
     store.remember(key, sid)
+    job = None
     if recordings:
         finish = _finish_all(ctx, sid, recordings, old_files, finished=meta.transcribed)
-        ctx.jobs.submit("finish", finish, sid)
+        job = ctx.jobs.submit("finish", finish, sid)
     logger.info("Session %s: %d part(s) handed over by %s", sid, len(recordings), sender)
+    if meta.transcribed and job is not None:
+        # A finished meeting is answered only once its audio is saved: the member's app deletes
+        # its copy on the answer, so nothing may be left for a recovery to redo.
+        done = await ctx.jobs.wait(job.id)
+        if done is None or done.status != "completed":
+            raise HTTPException(
+                status_code=500,
+                detail="The audio could not be saved here yet; it is saved again at the next "
+                f"start ({getattr(done, 'error', None) or 'stopped'})",
+            )
     return HandoffResult(session_id=sid, replaced=replaced)
+
+
+async def _settled(ctx: AppContext, sid: str, meta: HandoffMeta) -> None:
+    """A retry of a finished meeting (v2) is answered only once the meeting's audio is saved
+    here (its finish, or the recovery after a crash, has run): 409 while it is not."""
+    from ...services.recovery import pending_recordings
+
+    for job in ctx.jobs.list(session_id=sid, active_only=True):
+        if job.kind in ("finish", "recover"):
+            await ctx.jobs.wait(job.id)
+    session = ctx.sessions.get_session(sid)
+    if session is None or not meta.sources:
+        return  # deleted here since (it was received), or nothing to save
+    folder = ctx.settings.recordings_dir / sid
+    if (
+        session.status in (SessionStatus.RECORDING, SessionStatus.ENCODING)
+        or not session.audio_file
+        or (folder.is_dir() and pending_recordings(folder, session))
+    ):
+        raise HTTPException(
+            status_code=409, detail="The meeting's audio is not saved here yet; try again later"
+        )
