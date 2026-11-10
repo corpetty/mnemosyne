@@ -1672,7 +1672,7 @@
 		{/if}
 
 		<p class="text-xs text-gray-600">
-			Saved to <code class="text-gray-500">{settings.config_file}</code>.
+			{#if settings.config_file}Saved to <code class="text-gray-500">{settings.config_file}</code>.{/if}
 			{#if settings.env_overrides.length > 0}
 				Locked fields are set by environment variables: {settings.env_overrides.join(', ')}.
 			{/if}
