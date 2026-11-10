@@ -40,9 +40,9 @@ mnemosyne-capture record --fake <tone[:hz]|silence|file:<path.wav>> [...] <out.w
 
 - `devices`: Core Audio's devices. `id` is the AudioObjectID, `name` the device UID (stable
   across reboots and replugging: it is what the UI saves and what `--target` takes),
-  `description` the device's name. A device with input channels is an `Audio/Source`, one with
-  output channels an `Audio/Sink`; a headset is both (two entries, one id). `default` marks the
-  system's default input and output. First comes `{id: 1, name: "system", description: "System
+  `description` the device's name. Each device with input channels is an `Audio/Source`;
+  `default` marks the system's default input. Output devices are not listed: the system's audio
+  is recorded only as a whole, by the one `Audio/Sink`, which comes first: `{id: 1, name: "system", description: "System
   audio (all apps)", media_class: "Audio/Sink"}` (1 is kAudioObjectSystemObject, never a real
   device). Listing needs no permission.
 - `--target <uid>`: the microphone, a cpal input stream owned by a thread of its own (cpal

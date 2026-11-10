@@ -30,12 +30,13 @@ pub fn system_entry() -> Device {
     }
 }
 
-/// Core Audio's devices in the backend's shape: inputs as `Audio/Source`, outputs as
-/// `Audio/Sink` (a headset is both: two entries, one id), `name` = the UID the UI saves,
-/// `description` = the device's name. The `system` entry comes first.
+/// Core Audio's devices in the backend's shape: the `system` entry first, then every device
+/// with input channels as an `Audio/Source` (`name` = the UID the UI saves, `description` =
+/// the device's name). Output devices are not listed: one output cannot be recorded on its
+/// own (the global tap records them all), and the backend keys devices by id, so a headset
+/// listed as both would record its output in place of its microphone.
 pub fn devices() -> Result<Vec<Device>> {
     let default_in = coreaudio::default_device(true);
-    let default_out = coreaudio::default_device(false);
     let mut out = vec![system_entry()];
     for id in coreaudio::all_devices()? {
         let Ok(uid) = coreaudio::uid(id) else {
@@ -45,20 +46,16 @@ pub fn devices() -> Result<Vec<Device>> {
             continue;
         }
         let description = coreaudio::name(id).unwrap_or_else(|_| uid.clone());
-        let entry = |media_class: &str, default: bool| Device {
-            id,
-            name: uid.clone(),
-            description: description.clone(),
-            media_class: media_class.to_string(),
-            is_monitor: false,
-            is_echo_cancelled: false,
-            default,
-        };
         if coreaudio::channels(id, true) > 0 {
-            out.push(entry("Audio/Source", default_in == Some(id)));
-        }
-        if coreaudio::channels(id, false) > 0 {
-            out.push(entry("Audio/Sink", default_out == Some(id)));
+            out.push(Device {
+                id,
+                name: uid,
+                description,
+                media_class: "Audio/Source".to_string(),
+                is_monitor: false,
+                is_echo_cancelled: false,
+                default: default_in == Some(id),
+            });
         }
     }
     Ok(out)
@@ -158,20 +155,14 @@ mod tests {
             assert_ne!(d.id, 1);
             assert!(!d.name.is_empty());
             assert!(!d.description.is_empty());
-            assert!(
-                d.media_class == "Audio/Source" || d.media_class == "Audio/Sink",
-                "{d:?}"
-            );
+            assert_eq!(d.media_class, "Audio/Source", "{d:?}");
         }
-        let defaults_in = list
-            .iter()
-            .filter(|d| d.default && d.media_class == "Audio/Source")
-            .count();
-        let defaults_out = list
-            .iter()
-            .filter(|d| d.default && d.media_class == "Audio/Sink")
-            .count();
-        assert!(defaults_in <= 1 && defaults_out <= 1);
+        // One entry per id: the backend keys devices by it.
+        let mut ids: Vec<u32> = list.iter().map(|d| d.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), list.len());
+        assert!(list.iter().filter(|d| d.default).count() <= 1);
         // It is valid JSON for the backend.
         let text = serde_json::to_string(&list).unwrap();
         assert!(text.contains("\"name\":\"system\""));
