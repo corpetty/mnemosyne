@@ -5960,6 +5960,13 @@ export interface components {
         };
         /** Invite */
         Invite: {
+            /** App Invite */
+            app_invite: string | null;
+            /**
+             * App Invite Problem
+             * @default
+             */
+            app_invite_problem: string;
             /** Code */
             code: string;
             /**

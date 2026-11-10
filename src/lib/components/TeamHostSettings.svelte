@@ -151,6 +151,10 @@
 						{/if}
 						Recording in a browser needs an HTTPS address. Add people under Your team below and send each their invite link.
 					</p>
+					<p class="text-xs text-gray-500">
+						Teammates away from your network: in the app they need nothing more. In a browser, share only this computer with them in
+						Tailscale and allow them port 8443 alone (docs/team-server.md, Members from home).
+					</p>
 					{#if status.firewall_hint}
 						<p class="text-xs text-gray-500">
 							If others cannot connect, open the port in the firewall:

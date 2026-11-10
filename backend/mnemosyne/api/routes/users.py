@@ -11,6 +11,7 @@ from ... import access
 from ...config import hosts_team, personal_allowed
 from ...models.base import ApiModel
 from ...services import prefs, supervision
+from ...services.pairing_prep import PairingUnavailable, prepare_pairing
 from ...services.users import InvalidInvite, User, admin_refusal
 from ..auth import is_owner_channel
 from ..context import AppContext, get_ctx
@@ -71,6 +72,10 @@ class Invite(ApiModel):
     code: str  # the web app links to <its address>/?invite=<code>
     expires_at: datetime
     user: UserInfo
+    # On a computer that hosts a team: what a teammate pastes in their Mnemosyne app,
+    # `<this computer's ticket>#<code>` (the form pairing invites use). None elsewhere.
+    app_invite: str | None = None
+    app_invite_problem: str = ""  # why there is no app invite on a hosting computer
 
 
 class RedeemRequest(BaseModel):
@@ -81,6 +86,21 @@ class RedeemRequest(BaseModel):
 class Redeemed(ApiModel):
     token: str
     user: UserInfo
+
+
+async def _make_invite(ctx: AppContext, user, code: str, expires: float) -> Invite:
+    """The invite response; on a hosting computer with the app invite beside the code (its
+    sidecar is started first, and the API token made, as for any pairing)."""
+    invite = Invite(
+        code=code, expires_at=datetime.fromtimestamp(expires), user=_info(user, True, ctx)
+    )
+    if hosts_team(ctx.settings):
+        try:
+            await prepare_pairing(ctx, link=True)
+            invite.app_invite = f"{ctx.link.status.ticket}#{code}"
+        except PairingUnavailable as e:
+            invite.app_invite_problem = str(e)
+    return invite
 
 
 def _only_owner_admin(ctx: AppContext, role: str | None, user_id: str = "") -> None:
@@ -185,9 +205,7 @@ async def add_user(body: NewUser, ctx: AppContext = Depends(get_ctx)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     code, expires = ctx.users.invite(user.id)
-    return Invite(
-        code=code, expires_at=datetime.fromtimestamp(expires), user=_info(user, True, ctx)
-    )
+    return await _make_invite(ctx, user, code, expires)
 
 
 @router.patch("/{user_id}", response_model=UserInfo, dependencies=[Depends(admin_only)])
@@ -214,9 +232,7 @@ async def invite(user_id: str, ctx: AppContext = Depends(get_ctx)):
     except KeyError as e:
         raise HTTPException(status_code=404, detail="No such person") from e
     user = ctx.users.get(user_id)
-    return Invite(
-        code=code, expires_at=datetime.fromtimestamp(expires), user=_info(user, True, ctx)
-    )
+    return await _make_invite(ctx, user, code, expires)
 
 
 @router.post("/me/signout")
