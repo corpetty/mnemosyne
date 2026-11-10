@@ -308,7 +308,8 @@ export interface paths {
         /**
          * Import Audio
          * @description Create a session from an uploaded audio/video file and (by default) transcribe it. With
-         *     `session_id`, the file is added to that meeting as its next part instead.
+         *     `session_id`, the file is added to that meeting as its next part instead. `for_team`: the
+         *     meeting moves to the team this computer is in once its work is done.
          */
         post: operations["import_audio_api_audio_import_post"];
         delete?: never;
@@ -1149,6 +1150,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/joined/moves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Moves
+         * @description Meetings recorded here for the team, waiting to move, and the ones moved lately.
+         */
+        get: operations["list_moves_api_joined_moves_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/joined/moves/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queue Move
+         * @description Put a meeting of this computer in the team: it moves there once its work is done and is
+         *     then deleted here. 409 for a meeting recorded elsewhere, shared with you or not yours.
+         */
+        post: operations["queue_move_api_joined_moves__session_id__post"];
+        /**
+         * Unqueue Move
+         * @description Keep a waiting meeting here after all.
+         */
+        delete: operations["unqueue_move_api_joined_moves__session_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/joined/moves/{session_id}/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Consent
+         * @description How the people in a waiting meeting agreed to be recorded (the team asks for it): logged
+         *     in its history as at a recording's start, then the move is tried again.
+         */
+        post: operations["move_consent_api_joined_moves__session_id__consent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/joined/work": {
         parameters: {
             query?: never;
@@ -1637,8 +1704,10 @@ export interface paths {
         put?: never;
         /**
          * Start
-         * @description Record with this computer's devices: streamed to the main computer, which records the
-         *     meeting, or (not reachable) kept here until it can be handed over.
+         * @description Record with this computer's devices: streamed to the destination (the main computer, or
+         *     the team's host), which records the meeting, or (not reachable) kept here until it can be
+         *     handed over. A destination this computer does not have (no main computer, not in a team,
+         *     signed out): 409.
          */
         post: operations["start_api_satellite_start_post"];
         delete?: never;
@@ -4708,6 +4777,11 @@ export interface components {
              * Format: binary
              */
             file: string;
+            /**
+             * For Team
+             * @default false
+             */
+            for_team: boolean;
             /** Name */
             name?: string | null;
             /** Session Id */
@@ -6129,6 +6203,8 @@ export interface components {
             joined: boolean;
             /** New Api Token */
             new_api_token: string | null;
+            /** Pending Moves */
+            pending_moves: number;
             /** Reachable */
             reachable: boolean;
             /** Signed Out */
@@ -6148,6 +6224,8 @@ export interface components {
             host_name: string | null;
             /** Joined */
             joined: boolean;
+            /** Pending Moves */
+            pending_moves: number;
             /** Reachable */
             reachable: boolean;
             /** Signed Out */
@@ -6421,6 +6499,32 @@ export interface components {
         ModelRequest: {
             /** Model */
             model: string;
+        };
+        /** MoveConsentRequest */
+        MoveConsentRequest: {
+            /**
+             * Consent
+             * @enum {string}
+             */
+            consent: "all_parties" | "in_person" | "one_party";
+        };
+        /** MovedMeetingInfo */
+        MovedMeetingInfo: {
+            /** At */
+            at: string;
+            /** Host Session Id */
+            host_session_id: string;
+            /** Name */
+            name: string;
+            /** Session Id */
+            session_id: string;
+        };
+        /** MovesStatus */
+        MovesStatus: {
+            /** Moved */
+            moved: components["schemas"]["MovedMeetingInfo"][];
+            /** Pending */
+            pending: components["schemas"]["PendingMoveInfo"][];
         };
         /** NewUser */
         NewUser: {
@@ -6735,6 +6839,11 @@ export interface components {
         };
         /** OutboxEntry */
         OutboxEntry: {
+            /**
+             * Destination
+             * @enum {string}
+             */
+            destination: "main" | "team";
             /** Id */
             id: string;
             /** Last Error */
@@ -6873,6 +6982,21 @@ export interface components {
             person: string;
             /** Updated At */
             updated_at: string;
+        };
+        /** PendingMoveInfo */
+        PendingMoveInfo: {
+            /** Added At */
+            added_at: string;
+            /** Attempts */
+            attempts: number;
+            /** Host Session Id */
+            host_session_id: string | null;
+            /** Last Error */
+            last_error: string;
+            /** Name */
+            name: string;
+            /** Session Id */
+            session_id: string;
         };
         /**
          * PendingRecording
@@ -7633,6 +7757,11 @@ export interface components {
         };
         /** SatelliteRecording */
         SatelliteRecording: {
+            /**
+             * Destination
+             * @enum {string}
+             */
+            destination: "main" | "team";
             /** Local Id */
             local_id: string;
             /** Session Id */
@@ -7668,6 +7797,12 @@ export interface components {
         SatelliteStartRequest: {
             /** Consent */
             consent?: ("all_parties" | "in_person" | "one_party") | null;
+            /**
+             * Destination
+             * @default main
+             * @enum {string}
+             */
+            destination: "main" | "team";
             /** Mic Device */
             mic_device?: number | null;
             /** System Device */
@@ -7695,6 +7830,9 @@ export interface components {
             /** Reachable */
             reachable: boolean;
             recording: components["schemas"]["SatelliteRecording"] | null;
+            team: components["schemas"]["SatelliteMain"] | null;
+            /** Team Reachable */
+            team_reachable: boolean;
         };
         /** SatelliteStopRequest */
         SatelliteStopRequest: {
@@ -9084,6 +9222,11 @@ export interface components {
             consent?: ("all_parties" | "in_person" | "one_party") | null;
             /** Device Ids */
             device_ids: number[];
+            /**
+             * For Team
+             * @default false
+             */
+            for_team: boolean;
             /** Session Id */
             session_id?: string | null;
         };
@@ -12499,6 +12642,123 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JoinResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_moves_api_joined_moves_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MovesStatus"];
+                };
+            };
+        };
+    };
+    queue_move_api_joined_moves__session_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingMoveInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unqueue_move_api_joined_moves__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MovesStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_consent_api_joined_moves__session_id__consent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveConsentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingMoveInfo"];
                 };
             };
             /** @description Validation Error */
