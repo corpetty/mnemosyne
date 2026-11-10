@@ -56,3 +56,91 @@ def test_a_stopped_recorder_is_reported_and_the_recording_restarts(client, ctx, 
 
 def test_restart_needs_a_recording(client):
     assert client.post("/api/audio/restart/nope").status_code == 404
+
+
+def _system_silence_health(seconds_per_read=30.0, reads=4, **kw):
+    from mnemosyne.audio.health import SILENT, SILENT_HINT
+
+    h = CaptureHealth({1: "Mic", 2: "System audio"})
+    changes = [h.observe_silence(2, seconds_per_read, True, **kw) for _ in range(reads)]
+    return h, changes, SILENT, SILENT_HINT
+
+
+def test_two_minutes_of_exact_zeros_hint_at_the_permission_and_any_sample_clears_it():
+    h, changes, silent, hint = _system_silence_health()
+    assert changes[:3] == [None, None, None]  # 90 s: not yet
+    assert changes[3].state == silent and changes[3].message == hint
+    assert (
+        hint == "System audio is silent: check Privacy & Security → Screen & System Audio Recording"
+    )
+    assert h.problems() == {2: silent}
+    assert h.observe_silence(2, 30, True) is None  # said once
+    change = h.observe_silence(2, 0.25, False)  # one non-zero sample in the chunk
+    assert change.state == OK and h.problems() == {}
+    assert h.observe_silence(2, 100, True) is None  # the run starts over
+
+
+def test_a_stopped_source_keeps_its_stronger_state():
+    h = CaptureHealth({2: "System audio"}, clock=lambda: 0.0)
+    h.update(2, 0, exited=True)
+    assert h.observe_silence(2, 500, True) is None and h.problems() == {2: STOPPED}
+
+
+def _wav(path, seconds, nonzero_at=None, rate=16000):
+    import wave
+
+    import numpy as np
+
+    pcm = np.zeros(int(seconds * rate), dtype=np.int16)
+    if nonzero_at is not None:
+        pcm[nonzero_at] = 1
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(pcm.tobytes())
+
+
+def _run_stream(tmp_path, monkeypatch, platform, source, wav_kw, ctx):
+    """Run _stream_levels over one WAV and return the capture_health events it published."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from mnemosyne.api.routes import audio as routes
+    from mnemosyne.audio.capture import RecordingProcess, RecordingSession
+
+    wav = tmp_path / "s.wav"
+    _wav(wav, **wav_kw)
+    proc = RecordingProcess(
+        device_id=2,
+        process=SimpleNamespace(returncode=None),
+        output_path=wav,
+        source=source,
+    )
+    rec = RecordingSession("sid", tmp_path, [proc], is_recording=True)
+    monkeypatch.setattr(routes.sys, "platform", platform)
+    events = []
+    monkeypatch.setattr(ctx.bus, "publish", events.append)
+
+    async def go():
+        task = asyncio.create_task(routes._stream_levels(ctx, "sid", rec, interval=0.01))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        await task
+
+    asyncio.run(go())
+    return [e for e in events if e["type"] == "capture_health"]
+
+
+def test_stream_hints_only_for_system_audio_on_a_mac(tmp_path, monkeypatch, ctx):
+    from mnemosyne.audio.health import SILENT_HINT
+
+    zeros = {"seconds": 130}
+    (event,) = _run_stream(tmp_path, monkeypatch, "darwin", "system", zeros, ctx)
+    assert (
+        event["state"] == "silent" and event["message"] == SILENT_HINT and event["device_id"] == 2
+    )
+    assert _run_stream(tmp_path, monkeypatch, "linux", "system", zeros, ctx) == []
+    assert _run_stream(tmp_path, monkeypatch, "darwin", "mic", zeros, ctx) == []
+    quiet = {"seconds": 130, "nonzero_at": 5}
+    assert _run_stream(tmp_path, monkeypatch, "darwin", "system", quiet, ctx) == []
