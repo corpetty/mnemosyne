@@ -91,7 +91,9 @@ def _only_owner_admin(ctx: AppContext, role: str | None, user_id: str = "") -> N
         raise HTTPException(status_code=409, detail=message)
 
 
-def _info(u: User, full: bool) -> UserInfo:
+def _info(u: User, full: bool, ctx: AppContext | None = None) -> UserInfo:
+    # An app member's devices (services/pairing.py MEMBER) are listed after the browsers'.
+    apps = ctx.pairing.members_for(u.id) if full and ctx is not None else []
     return UserInfo(
         id=u.id,
         name=u.name,
@@ -103,6 +105,12 @@ def _info(u: User, full: bool) -> UserInfo:
         devices=[
             UserDevice(device=t.device, created_at=t.created_at, last_seen_at=t.last_seen_at)
             for t in u.tokens
+        ]
+        + [
+            UserDevice(
+                device=f"{d.name} (app)", created_at=d.created_at, last_seen_at=d.last_seen_at
+            )
+            for d in apps
         ]
         if full
         else [],
@@ -166,7 +174,7 @@ async def set_my_prefs(body: prefs.UserPrefs, ctx: AppContext = Depends(get_ctx)
 async def list_users(ctx: AppContext = Depends(get_ctx)):
     """Everyone's name and role (a reviewer sees whose meeting is whose); details for admins."""
     full = access.is_admin()
-    return [_info(u, full) for u in ctx.users.list()]
+    return [_info(u, full, ctx) for u in ctx.users.list()]
 
 
 @router.post("", response_model=Invite, dependencies=[Depends(admin_only)])
@@ -177,7 +185,9 @@ async def add_user(body: NewUser, ctx: AppContext = Depends(get_ctx)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     code, expires = ctx.users.invite(user.id)
-    return Invite(code=code, expires_at=datetime.fromtimestamp(expires), user=_info(user, True))
+    return Invite(
+        code=code, expires_at=datetime.fromtimestamp(expires), user=_info(user, True, ctx)
+    )
 
 
 @router.patch("/{user_id}", response_model=UserInfo, dependencies=[Depends(admin_only)])
@@ -189,7 +199,9 @@ async def change_user(user_id: str, body: UserChange, ctx: AppContext = Depends(
         raise HTTPException(status_code=404, detail="No such person") from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return _info(user, True)
+    if user.disabled:  # a disabled person's apps go too: the sidecar stops accepting them
+        ctx.pairing.revoke_members(user.id)
+    return _info(user, True, ctx)
 
 
 @router.post("/{user_id}/invite", response_model=Invite, dependencies=[Depends(admin_only)])
@@ -202,7 +214,9 @@ async def invite(user_id: str, ctx: AppContext = Depends(get_ctx)):
     except KeyError as e:
         raise HTTPException(status_code=404, detail="No such person") from e
     user = ctx.users.get(user_id)
-    return Invite(code=code, expires_at=datetime.fromtimestamp(expires), user=_info(user, True))
+    return Invite(
+        code=code, expires_at=datetime.fromtimestamp(expires), user=_info(user, True, ctx)
+    )
 
 
 @router.post("/me/signout")
@@ -221,6 +235,7 @@ async def sign_out_everywhere(user_id: str, ctx: AppContext = Depends(get_ctx)):
     if ctx.users.get(user_id) is None:
         raise HTTPException(status_code=404, detail="No such person")
     ctx.users.sign_out(user_id)
+    ctx.pairing.revoke_members(user_id)
     return {"ok": True}
 
 

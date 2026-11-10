@@ -22,12 +22,15 @@ from ...services.pairing import (
     CODE_TTL_SECONDS,
     CONTACT_CODE,
     DESKTOP,
+    MEMBER,
     PHONE,
     SYNC,
+    EndpointTaken,
     InvalidPairingCode,
     PairedDevice,
 )
 from ...services.pairing_prep import PairingUnavailable, prepare_pairing
+from ...services.users import InvalidInvite, admin_refusal
 from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 from .mobile import phone_page_urls
@@ -244,8 +247,56 @@ def _person_offer(body: RedeemRequest, ctx: AppContext) -> SyncPersonOffer | Non
     return SyncPersonOffer(pub=mine, adopt=decision)
 
 
+def _invalid_code() -> HTTPException:
+    """The refusal of a pairing code that is not good (unknown, used, expired): also what an
+    invite that cannot be used says, so a caller learns nothing about which codes exist."""
+    return HTTPException(
+        status_code=403,
+        detail=f"{InvalidPairingCode('This pairing code is invalid or has expired')}: "
+        "show a new code in Settings",
+    )
+
+
+def _redeem_member(body: RedeemRequest, ctx: AppContext, user) -> RedeemResponse:
+    """A team member's app redeems a user invite through the sidecar (docs/plans/
+    2026-11-10-team-members-in-the-app.md 1.1): a MEMBER device for that user, no browser token.
+    Everything is checked before the invite is used up."""
+    # An invite this computer cannot honour reads as an invalid code: a disabled person, and
+    # an admin who is not the owner (the browser route refuses them too).
+    if user.disabled or admin_refusal(ctx.settings, user.role, user.id):
+        raise _invalid_code()
+    if not config.hosts_team(ctx.settings):
+        raise HTTPException(status_code=409, detail="This computer does not host a team")
+    if not body.endpoint_id:
+        raise HTTPException(
+            status_code=400, detail="This invite is redeemed by the app through remote access"
+        )
+    try:
+        ctx.pairing.check_member_endpoint(body.endpoint_id, user.id)
+    except EndpointTaken as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    try:
+        user = ctx.users.use_invite(body.code)
+        device, token = ctx.pairing.add_member(body.name, body.endpoint_id, user.id)
+    except InvalidInvite as e:  # used up between the check and here
+        raise _invalid_code() from e
+    except EndpointTaken as e:  # cannot happen between the check and here; be safe
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    logger.info("%s joined the team from the app %s", user.name, device.name)
+    team = {
+        "name": ctx.sync_peers.self_info().name,
+        "user": {"id": user.id, "name": user.name, "role": user.role},
+        "consent_required": ctx.settings.require_consent,
+    }
+    return RedeemResponse(device=_info(device), token=token, sync=None, card={"team": team})
+
+
 @router.post("/redeem", response_model=RedeemResponse)
 async def redeem(body: RedeemRequest, ctx: AppContext = Depends(get_ctx)):
+    if ctx.pairing.code_kind(body.code) is None:
+        invited = ctx.users.invited(body.code)
+        if invited is not None:
+            return _redeem_member(body, ctx, invited)
     if ctx.pairing.code_kind(body.code) == CONTACT_CODE:
         return await _redeem_contact(body, ctx)
     syncing = ctx.pairing.code_kind(body.code) == SYNC
@@ -309,6 +360,17 @@ async def me(request: Request, ctx: AppContext = Depends(get_ctx)):
     if device is None:
         raise HTTPException(status_code=404, detail="Not a paired device")
     return _info(device)
+
+
+@router.delete("/me")
+async def leave(request: Request, ctx: AppContext = Depends(get_ctx)):
+    """An app member leaves the team: revokes the calling device and only that one. Open to
+    the device itself (api/auth.py); every other kind of device is removed by the owner."""
+    device = ctx.pairing.get(getattr(request.state, "device_id", "") or "")
+    if device is None or device.kind != MEMBER:
+        raise HTTPException(status_code=404, detail="Not an app member's device")
+    ctx.pairing.revoke(device.id)
+    return {"message": "You left the team"}
 
 
 @router.get("/remote", response_model=RemoteAccess, dependencies=ADMIN)

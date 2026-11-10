@@ -1328,7 +1328,12 @@ export interface paths {
         get: operations["me_api_pairing_me_get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Leave
+         * @description An app member leaves the team: revokes the calling device and only that one. Open to
+         *     the device itself (api/auth.py); every other kind of device is removed by the owner.
+         */
+        delete: operations["leave_api_pairing_me_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -12706,6 +12711,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PairedDeviceInfo"];
+                };
+            };
+        };
+    };
+    leave_api_pairing_me_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

@@ -882,4 +882,31 @@ mod tests {
             Relays::N0
         );
     }
+
+    /// An app member's device (kind "member", backend/mnemosyne/services/pairing.py) is listed by
+    /// endpoint like any other: the sidecar reads no kind. An endpoint not listed is refused.
+    #[test]
+    fn is_paired_accepts_a_member_entry_and_refuses_an_unknown_endpoint() {
+        let member = SecretKey::generate().public();
+        let stranger = SecretKey::generate().public();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("paired_devices.json");
+        let home = Home {
+            backend: "127.0.0.1:1".parse().unwrap(),
+            devices_file: file.clone(),
+        };
+        assert!(!home.is_paired(&member), "no file: nobody is paired");
+        let devices = serde_json::json!({"devices": [
+            {"id": "a1", "name": "Pat's MacBook", "token_hash": "x", "created_at": "2026-11-10T00:00:00+00:00",
+             "kind": "member", "endpoint_id": member.to_string(), "user_id": "u1"},
+            {"id": "b2", "name": "Phone", "token_hash": "y", "created_at": "2026-11-10T00:00:00+00:00",
+             "kind": "phone"},
+        ]});
+        std::fs::write(&file, devices.to_string()).unwrap();
+        assert!(home.is_paired(&member));
+        assert!(!home.is_paired(&stranger));
+        // Revoked (the backend rewrites the file without it): out at once.
+        std::fs::write(&file, serde_json::json!({"devices": []}).to_string()).unwrap();
+        assert!(!home.is_paired(&member));
+    }
 }

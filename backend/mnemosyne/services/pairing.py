@@ -36,6 +36,10 @@ PHONE, DESKTOP = "phone", "desktop"
 # Another person's machine (services/contacts.py): its token is derived from the contact's
 # shared secret, so it is supplied here, never generated. `person` names the contact.
 CONTACT = "contact"
+# A team member's app (docs/plans/2026-11-10-team-members-in-the-app.md 1.1): redeemed through
+# the sidecar with a user's invite, so it carries `user_id` and runs as that person, never as the
+# owner; its token is accepted only through the tunnel (api/auth.py). `endpoint_id` is the app's.
+MEMBER = "member"
 # A code kind, not a device kind: redeeming it makes a DESKTOP device and, in the route, a
 # sync peer (services/sync_peers.py).
 SYNC = "sync"
@@ -48,6 +52,10 @@ class InvalidPairingCode(Exception):
     pass
 
 
+class EndpointTaken(Exception):
+    """A computer's app is already a member as someone else: one person per machine."""
+
+
 @dataclass
 class PairedDevice:
     id: str
@@ -58,6 +66,7 @@ class PairedDevice:
     kind: str = PHONE  # PHONE: the phone page's paths only; DESKTOP: the whole API
     endpoint_id: str | None = None  # a desktop device's iroh endpoint (services/link.py)
     person: str | None = None  # a CONTACT device's person key (64 hex)
+    user_id: str | None = None  # a MEMBER device's user (services/users.py)
 
 
 def _hash(token: str) -> str:
@@ -140,6 +149,52 @@ class PairingService:
         self._devices[device.id] = device
         self._save()
         return device, token
+
+    def members_at(self, endpoint_id: str) -> list[PairedDevice]:
+        return [
+            d for d in self._devices.values() if d.kind == MEMBER and d.endpoint_id == endpoint_id
+        ]
+
+    def members_for(self, user_id: str) -> list[PairedDevice]:
+        """The app devices of one user, oldest first."""
+        found = [d for d in self._devices.values() if d.kind == MEMBER and d.user_id == user_id]
+        return sorted(found, key=lambda d: d.created_at)
+
+    def check_member_endpoint(self, endpoint_id: str, user_id: str) -> None:
+        """Raises EndpointTaken when another user's app already holds this endpoint."""
+        if any(d.user_id != user_id for d in self.members_at(endpoint_id)):
+            raise EndpointTaken("This computer is already in the team as someone else")
+
+    def add_member(self, name: str, endpoint_id: str, user_id: str) -> tuple[PairedDevice, str]:
+        """A MEMBER device for `user_id`'s app at `endpoint_id` (the sidecar vouched for it).
+        One device per endpoint per user: an earlier one of the same user is replaced, so its
+        token stops working; the endpoint of another user is refused (EndpointTaken)."""
+        self.check_member_endpoint(endpoint_id, user_id)
+        for old in self.members_at(endpoint_id):
+            del self._devices[old.id]
+        token = secrets.token_urlsafe(32)
+        device = PairedDevice(
+            id=secrets.token_hex(8),
+            name=(name.strip() or "Computer")[:80],
+            token_hash=_hash(token),
+            created_at=_iso(self.clock()),
+            kind=MEMBER,
+            endpoint_id=endpoint_id,
+            user_id=user_id,
+        )
+        self._devices[device.id] = device
+        self._save()
+        return device, token
+
+    def revoke_members(self, user_id: str) -> int:
+        """Revoke every app device of `user_id`; how many. The sidecar re-reads the file, so
+        their connections end."""
+        found = self.members_for(user_id)
+        for device in found:
+            del self._devices[device.id]
+        if found:
+            self._save()
+        return len(found)
 
     def desktops_for(self, endpoint_id: str) -> list[PairedDevice]:
         return [

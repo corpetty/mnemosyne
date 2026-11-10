@@ -63,7 +63,8 @@ def _row(
 
 
 def connected_devices(ctx: AppContext) -> list[ConnectedDevice]:
-    """Oldest first. Sync peers and contacts are left out on a team server, which refuses both."""
+    """Oldest first. Sync peers and contacts are left out on a team server, which refuses both.
+    A team member's app (MEMBER) is a person, shown under the team's people, not a device."""
     team = not personal_allowed(ctx.settings)
     out: list[ConnectedDevice] = []
     peers = {} if team else {p.endpoint_id: p for p in ctx.sync_peers.peers()}
