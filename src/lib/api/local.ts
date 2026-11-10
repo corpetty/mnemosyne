@@ -58,6 +58,8 @@ export interface SatelliteStart {
   title?: string;
   consent?: 'all_parties' | 'in_person' | 'one_party' | null;
   destination?: SatelliteDestination;
+  /** A meeting already there (an untouched draft) to record into, instead of a new one. */
+  session_id?: string;
 }
 
 export const startSatellite = (body: SatelliteStart): Promise<SatelliteStartResponse> =>

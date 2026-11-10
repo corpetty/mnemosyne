@@ -288,7 +288,8 @@ class AudioState {
    * and the first output or monitor. */
   async startSatellite(
     consent?: string | null,
-    destination?: SatelliteDestination
+    destination?: SatelliteDestination,
+    sessionId?: string
   ): Promise<SatelliteStartResponse | undefined> {
     const picked = this.devices.filter((d) => this.selectedDeviceIds.has(d.id));
     const mic = picked.find((d) => d.is_input && !d.is_monitor) ?? null;
@@ -304,7 +305,8 @@ class AudioState {
         mic_device: mic?.id ?? null,
         system_device: call?.id ?? null,
         consent: (consent ?? null) as 'all_parties' | 'in_person' | 'one_party' | null,
-        ...(destination ? { destination } : {})
+        ...(destination ? { destination } : {}),
+        ...(sessionId ? { session_id: sessionId } : {})
       });
       this.satellite = true;
       this.satelliteDestination = destination ?? 'main';

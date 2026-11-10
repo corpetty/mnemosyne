@@ -714,6 +714,7 @@ class Satellite:
         title: str = "",
         consent: str | None = None,
         destination: str = MAIN,
+        session_id: str | None = None,
     ) -> Active:
         from fastapi import HTTPException
 
@@ -751,7 +752,7 @@ class Satellite:
             started = None
             if main is not None:
                 try:
-                    started = await self._start_main(main, item, captured, consent)
+                    started = await self._start_main(main, item, captured, consent, session_id)
                 except MainError as e:
                     if e.status == 401:
                         self.signed_out(item)
@@ -798,7 +799,9 @@ class Satellite:
             raise HTTPException(409, f"You were signed out of {m.host_name}; ask for a new invite")
         item.team = m.host_endpoint
 
-    async def _start_main(self, main, item: OutboxItem, captured: Captured, consent):
+    async def _start_main(
+        self, main, item: OutboxItem, captured: Captured, consent, session_id: str | None = None
+    ):
         body: dict = {
             "sources": [s.source for s in captured.sources],
             "sample_rate": captured.sample_rate,
@@ -806,6 +809,8 @@ class Satellite:
         }
         if consent is not None:
             body["consent"] = consent
+        if session_id:  # an empty draft the person opened there: the recording goes into it
+            body["session_id"] = session_id
         try:
             answer = await _call(main, "POST", "/api/audio/start-browser", timeout=8.0, json=body)
         except MainError as e:

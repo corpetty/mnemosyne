@@ -90,6 +90,8 @@ class SatelliteStartRequest(ApiModel):
     title: str = ""
     consent: Consent | None = None
     destination: Destination = "main"  # the main computer, or the team this computer is in
+    # A meeting already there (an empty draft the person opened) to record into, not a new one.
+    session_id: str | None = None
 
 
 class SatelliteStartResponse(ApiModel):
@@ -134,7 +136,12 @@ async def start(body: SatelliteStartRequest, ctx: AppContext = Depends(get_ctx))
     handed over. A destination this computer does not have (no main computer, not in a team,
     signed out): 409."""
     active = await satellite.service(ctx).start(
-        body.mic_device, body.system_device, body.title, body.consent, body.destination
+        body.mic_device,
+        body.system_device,
+        body.title,
+        body.consent,
+        body.destination,
+        body.session_id,
     )
     return SatelliteStartResponse(
         session_id=active.item.session_id,

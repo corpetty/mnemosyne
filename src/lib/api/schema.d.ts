@@ -7805,6 +7805,8 @@ export interface components {
             destination: "main" | "team";
             /** Mic Device */
             mic_device?: number | null;
+            /** Session Id */
+            session_id?: string | null;
             /** System Device */
             system_device?: number | null;
             /**

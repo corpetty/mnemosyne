@@ -269,6 +269,31 @@ async def test_a_recording_streams_to_the_main_computer(
     nothing_here(laptop)
 
 
+async def test_a_recording_can_go_into_a_draft_meeting_there(
+    dest, app, ctx, main_url, laptop, sat, fake, laptop_token
+):
+    """The meeting the person opened there (an empty draft) is recorded into, not a second one."""
+    use(laptop, dest, main_url, laptop_token)
+    draft = ctx.sessions.create_session()
+    before = {s.id for s in ctx.sessions.list_sessions()}
+    async with client(laptop, "admin-laptop") as c:
+        r = await c.post(
+            "/api/satellite/start",
+            json={
+                "mic_device": 1,
+                "system_device": None,
+                "destination": dest,
+                "session_id": draft.id,
+            },
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["session_id"] == draft.id and r.json()["streaming"] is True
+        assert draft.id in ctx.active_recordings
+        assert (await c.post("/api/satellite/stop")).status_code == 200
+    assert {s.id for s in ctx.sessions.list_sessions()} == before  # no extra meeting
+    await jobs_done(ctx, draft.id)
+
+
 async def test_a_stream_with_a_gap_is_completed_by_a_handoff(
     dest, app, ctx, main_url, laptop, sat, fake, laptop_token
 ):
