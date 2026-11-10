@@ -316,6 +316,11 @@ jobs:
       # Backend tests that drive the capture sidecar find this debug build (capture/target/debug).
       - name: Build the capture sidecar
         run: cargo build --locked --manifest-path capture/Cargo.toml
+      # The sidecar's own tests first: Core Audio's device list and doctor, the fake sources,
+      # and that the system tap either opens or fails clearly (hosted runners have no TCC
+      # grants). Before the backend tests so a backend failure does not hide them.
+      - name: Test the capture sidecar
+        run: cargo test --locked --manifest-path capture/Cargo.toml
       # Tests that name PipeWire, /proc, systemd or libc carry the linux_only marker (conftest).
       - name: Test
         working-directory: backend
@@ -334,9 +339,6 @@ jobs:
       # mDNS discovery needs multicast, which the hosted macOS VMs do not pass: that one test
       # is skipped here (it runs on Linux). --no-fail-fast shows every other result.
       - run: cargo test --no-fail-fast --manifest-path link/Cargo.toml -- --skip found_on_the_local_network
-      # The WAV writer, resampler and fake sources (the real Core Audio sources need grants a
-      # hosted runner does not have).
-      - run: cargo test --locked --manifest-path capture/Cargo.toml
 
   link:
     name: Remote-access link (iroh tunnel)
