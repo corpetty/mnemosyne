@@ -1,8 +1,9 @@
 """A meeting as one portable document, and writing one in (library sync).
 
 `export_session` reads everything that travels (models/sync_session.py); `write_session` is the
-apply path for a document that arrived, or a merge of it with ours. The merge itself lives
-elsewhere: this module only reads and writes.
+apply path for a document that arrived, or a merge of it with ours; `take_document` is that
+write plus what follows it for a meeting taken as it came (its notes document adopted). The merge
+itself lives elsewhere: this module only reads and writes.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from ..models.live_flag import LiveFlag
 from ..models.session import (
@@ -33,6 +35,9 @@ from ..models.sync_session import (
 )
 from ..models.transcript import TranscriptSegment
 from ..storage.sqlite import SessionRepository
+
+if TYPE_CHECKING:
+    from ..api.context import AppContext
 
 # Two meetings with the same id are one meeting when they started this close together.
 CLASH_SECONDS = 2.0
@@ -248,10 +253,49 @@ def write_session(
     else ''); an existing one keeps its owner, whatever the document says."""
     if bump and repo.device_id != local_device_id:
         raise ValueError("local_device_id is not this repository's device id")
-    origin = "" if s.origin == local_device_id else s.origin
+    return _write(repo, s, origin=local_origin(s, local_device_id), vv=vv, bump=bump, owner=owner)
+
+
+def local_origin(s: SyncSession, local_device_id: str) -> str:
+    """The document's origin as this machine stores it: '' when the meeting was recorded here
+    (its origin is our own sync id), else the sender's."""
+    return "" if s.origin == local_device_id else s.origin
+
+
+def _write(
+    repo: SessionRepository, s: SyncSession, *, origin: str, vv: dict[str, int], bump: bool,
+    owner: str,
+) -> str:  # fmt: skip
     sid = repo.apply_synced(s, origin=origin, vv=vv, bump=bump, owner=owner)
     if s.notes_items is not None:  # an older peer's document has none: ours stay
         repo.set_notes_items(sid, settle_notes_items(repo.notes_items(sid) or [], s.notes_items))
+    return sid
+
+
+def take_document(
+    ctx: AppContext,
+    s: SyncSession,
+    *,
+    origin: str,
+    vv: dict[str, int],
+    bump: bool,
+    owner: str,
+    by: str,
+    adopt: bool = True,
+) -> str:
+    """A meeting document that arrived, written whole with what follows its write: the meeting
+    (`SessionRepository.apply_synced`, with this machine's `origin` for it), its notes items
+    settled against what our notes document derives (`settle_notes_items`), and, with `adopt`,
+    its notes document taken when this machine has none (services/sync_notes.py `adopt`; `by`
+    names the sender in the document's log). Media rows come with the meeting; their bytes are
+    the caller's to fetch or store. Library sync's fast-forwards (services/sync_service.py) and
+    a team member's finished meeting (api/routes/handoff.py, hand-off v2) both write through
+    this. Returns the meeting id."""
+    from . import sync_notes
+
+    sid = _write(ctx.repo, s, origin=origin, vv=vv, bump=bump, owner=owner)
+    if adopt and s.notes_doc is not None:
+        sync_notes.adopt(ctx, sid, s.notes_doc, by)
     return sid
 
 

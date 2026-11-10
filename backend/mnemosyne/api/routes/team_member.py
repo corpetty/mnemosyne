@@ -32,8 +32,10 @@ from starlette.background import BackgroundTask
 
 from ...models.base import ApiModel
 from ...services.team_member import TeamMember, TeamMemberError
+from ...services.team_move import MoveError, PendingMove
 from ..auth import is_owner_channel, is_tunnelled, require_owner_channel
 from ..context import AppContext, get_ctx, get_ws_ctx
+from .audio import Consent
 from .satellite import _this_computer
 
 logger = logging.getLogger(__name__)
@@ -93,6 +95,7 @@ class JoinedStatus(ApiModel):
     work: Literal["here", "host"]  # where a team recording's work runs by default
     consent_required: bool  # the host's rule for recording (its /health, else as joined)
     signed_out: bool  # the host refused the token: leave and join with a new invite
+    pending_moves: int  # meetings recorded here waiting to move to the team
 
 
 class JoinResponse(JoinedStatus):
@@ -110,12 +113,39 @@ class WorkRequest(BaseModel):
     work: Literal["here", "host"]
 
 
+class PendingMoveInfo(ApiModel):
+    session_id: str
+    name: str  # the meeting's name here ("" when it is gone)
+    added_at: str
+    attempts: int
+    last_error: str  # why it has not moved yet ("" before the first try)
+    host_session_id: str | None  # the team has it; the copy here is not deleted yet
+
+
+class MovedMeetingInfo(ApiModel):
+    session_id: str  # the id it had here
+    host_session_id: str  # its id on the team's computer
+    name: str
+    at: str
+
+
+class MovesStatus(ApiModel):
+    pending: list[PendingMoveInfo]
+    moved: list[MovedMeetingInfo]  # the most recent first
+
+
+class MoveConsentRequest(BaseModel):
+    consent: Consent
+
+
 def _service(ctx: AppContext) -> TeamMember:
     return ctx.team_member
 
 
 async def _status(tm: TeamMember) -> dict:
     m = tm.membership
+    moves = tm.app.team_moves
+    pending = len(moves.store.pending) if moves is not None else 0
     if m is None:
         return {
             "joined": False,
@@ -125,6 +155,7 @@ async def _status(tm: TeamMember) -> dict:
             "work": "here",
             "consent_required": False,
             "signed_out": False,
+            "pending_moves": pending,
         }
     reachable = False if m.signed_out_at else await tm.reachable()
     m = tm.membership or m  # the probe may have refreshed the consent rule
@@ -136,6 +167,7 @@ async def _status(tm: TeamMember) -> dict:
         "work": m.work,
         "consent_required": m.consent_required,
         "signed_out": bool(m.signed_out_at),
+        "pending_moves": pending,
     }
 
 
@@ -178,6 +210,75 @@ async def set_work(body: WorkRequest, ctx: AppContext = Depends(get_ctx)):
     except TeamMemberError as e:
         raise _raise(e) from e
     return JoinedStatus(**await _status(tm))
+
+
+# ---- meetings moving to the team (services/team_move.py) -------------------------------------
+# Declared before the proxy: its catch-all would take these paths.
+
+
+def _move_error(e: MoveError) -> HTTPException:
+    return HTTPException(status_code=e.status or 502, detail=e.detail)
+
+
+def _pending_info(p: PendingMove, session) -> PendingMoveInfo:
+    return PendingMoveInfo(
+        session_id=p.session_id,
+        name=session.name if session is not None else "",
+        added_at=p.added_at,
+        attempts=p.attempts,
+        last_error=p.last_error,
+        host_session_id=p.host_session_id or None,
+    )
+
+
+def _moves(ctx: AppContext) -> MovesStatus:
+    moves = ctx.team_moves
+    return MovesStatus(
+        pending=[_pending_info(p, s) for p, s in moves.pending()],
+        moved=[MovedMeetingInfo(**vars(m)) for m in moves.moved()],
+    )
+
+
+@router.get("/moves", response_model=MovesStatus, dependencies=HERE)
+async def list_moves(ctx: AppContext = Depends(get_ctx)):
+    """Meetings recorded here for the team, waiting to move, and the ones moved lately."""
+    return _moves(ctx)
+
+
+@router.post("/moves/{session_id}", response_model=PendingMoveInfo, dependencies=HERE)
+async def queue_move(session_id: str, ctx: AppContext = Depends(get_ctx)):
+    """Put a meeting of this computer in the team: it moves there once its work is done and is
+    then deleted here. 409 for a meeting recorded elsewhere, shared with you or not yours."""
+    try:
+        p = ctx.team_moves.queue(session_id)
+    except MoveError as e:
+        raise _move_error(e) from e
+    return _pending_info(p, ctx.sessions.get_session(session_id))
+
+
+@router.delete("/moves/{session_id}", response_model=MovesStatus, dependencies=HERE)
+async def unqueue_move(session_id: str, ctx: AppContext = Depends(get_ctx)):
+    """Keep a waiting meeting here after all."""
+    try:
+        removed = ctx.team_moves.unqueue(session_id)
+    except MoveError as e:
+        raise _move_error(e) from e
+    if not removed:
+        raise HTTPException(status_code=404, detail="This meeting is not waiting to move")
+    return _moves(ctx)
+
+
+@router.post("/moves/{session_id}/consent", response_model=PendingMoveInfo, dependencies=HERE)
+async def move_consent(
+    session_id: str, body: MoveConsentRequest, ctx: AppContext = Depends(get_ctx)
+):
+    """How the people in a waiting meeting agreed to be recorded (the team asks for it): logged
+    in its history as at a recording's start, then the move is tried again."""
+    try:
+        p = ctx.team_moves.consent(session_id, body.consent)
+    except MoveError as e:
+        raise _move_error(e) from e
+    return _pending_info(p, ctx.sessions.get_session(session_id))
 
 
 # ---- the proxy -------------------------------------------------------------------------------

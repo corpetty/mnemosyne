@@ -138,6 +138,9 @@ class AppContext:
     # services/team_member.py TeamMember: this computer in a team another computer hosts
     # (<data_dir>/team.json), dialed through the link sidecar; set by build().
     team_member: Any = None
+    # services/team_move.py TeamMoves: meetings recorded here for that team, moved there once
+    # their work is done (<data_dir>/team_moves.json); set by build().
+    team_moves: Any = None
 
     def __post_init__(self) -> None:
         self.summarizer.name_source = self.known_names
@@ -394,6 +397,22 @@ class AppContext:
 
         ctx.team_member = TeamMember.build(ctx)
         ctx.link.on_ready.append(ctx.team_member.redial)  # its dial port is new too
+        from ..services.team_move import TeamMoves
+
+        ctx.team_moves = TeamMoves(ctx)
+
+        async def kick_moves() -> None:
+            """The team may be reachable again: waiting meetings go, once the team's own hook
+            (they run side by side) has dialed it, so a move does not dial it a second time."""
+            if not ctx.team_moves.store.pending:
+                return
+            for _ in range(100):
+                if ctx.team_member.listen or not ctx.team_member.joined:
+                    break
+                await asyncio.sleep(0.1)
+            ctx.team_moves.kick()
+
+        ctx.link.on_ready.append(kick_moves)
         return ctx
 
     async def apply_settings(self, settings: Settings) -> None:
@@ -727,6 +746,8 @@ class AppContext:
         await self._try("Recordings waiting for the main computer", self._start_satellite)
         if self.team_member is not None and self.team_member.joined:
             await self._try("The team this computer is in", self.team_member.startup)
+        if self.team_moves is not None:
+            await self._try("Meetings waiting to move to the team", self.team_moves.start)
         if self.settings.echo_cancel:
             await self._try("Echo cancellation", self._start_echo)
         self._retention_task = asyncio.create_task(self._retention_loop(retention_interval))
@@ -870,6 +891,8 @@ class AppContext:
         await self.echo.stop()
         if self.satellite is not None:  # a recording for the main computer waits in the outbox
             await self.satellite.shutdown()
+        if self.team_moves is not None:  # before the jobs: a move may be waiting on one
+            await self.team_moves.stop()
         await self.jobs.shutdown()
         await self.models.unload()
         from ..services import guest_notes, shared_notes

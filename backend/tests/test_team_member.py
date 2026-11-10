@@ -517,6 +517,7 @@ async def test_status_carries_the_hosts_consent_rule_and_never_the_token(member,
         "work": "here",
         "consent_required": True,
         "signed_out": False,
+        "pending_moves": 0,
     }
     assert host.token not in r.text
 
