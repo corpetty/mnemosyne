@@ -10,7 +10,10 @@ Linux (phonon-requirements.txt): torch comes first, alone, from PyTorch's CPU in
 would be the multi-GB CUDA build), `--no-deps` (its dependencies are in the file and come in the
 second step, which finds torch installed); the rest from PyPI. Mac (phonon-requirements-macos.txt,
 Apple silicon): the plain PyPI torch is the CPU build, so everything comes from PyPI in one step,
-and Fermion runs its CPU engine (phonon.server_env). Both files pin the same versions.
+with Fermion's `mlx` extra (mlx, mlx-metal, mlx-audio, mlx-lm and their dependencies, all hashed
+too), and Fermion runs its MLX engine on the GPU, its CPU engine when that does not start
+(phonon.engine_for, PhononServer._start_healthy). Both files pin the same versions of what they
+share.
 
 Then the model is downloaded once, as its own step (into `<data_dir>/phonon/cache`), checked
 against its pinned SHA-256 (phonon.MODEL_FILES; a mismatch fails the install and empties the
@@ -20,7 +23,11 @@ it.
 
 uv: the app's bundled one (MNEMOSYNE_UV_BIN, set by the desktop shell), else `uv` on PATH.
 Reviewed 2026-10-08 (fermion-research 0.2.11): no telemetry; model archive pinned by sha256 in
-the wheel; the native kernels are prebuilt with no published build provenance.
+the wheel; the native kernels are prebuilt with no published build provenance. The MLX path,
+reviewed 2026-11-17: the same unpacked model files as the CPU engine; Fermion's own MLX dylib
+(_native_mlx) is checked against the SHA-256 shipped beside it in the (hashed) wheel before it is
+loaded; mlx-audio's model-download helpers are not used (Fermion builds the graph from the
+config), and nothing calls home.
 """
 
 from __future__ import annotations
@@ -131,6 +138,7 @@ async def install(data_dir: Path, report: Report, uv: str | None = None) -> None
     python = venv / "bin" / "python"
     (root / "installed").unlink(missing_ok=True)
     phonon._refused.pop(root, None)  # installing again is the way out of a refusal
+    phonon._cpu_fallback.discard(root)  # and tries the Mac's MLX engine again
     root.mkdir(parents=True, exist_ok=True)
     env = {
         **os.environ,
@@ -198,4 +206,5 @@ def remove(data_dir: Path) -> None:
         if server.home == home(data_dir):
             server.stop()
     phonon._refused.pop(home(data_dir), None)
+    phonon._cpu_fallback.discard(home(data_dir))
     shutil.rmtree(home(data_dir), ignore_errors=True)

@@ -29,15 +29,26 @@ STUB = textwrap.dedent(
     p.add_argument("--api-key")
     p.add_argument("--threads", type=int)
     port = p.parse_args().port
+    log = open(sys.argv[0] + ".log", "a")
+    log.write("ARGS " + " ".join(sys.argv[1:]) + "\\n")
+    device = os.environ.get("FERMION_DEVICE", "")
+    log.write("DEVICE " + device + "\\n"); log.flush()
+    # Fermion refusing an engine before any download, as gate.require() does.
+    if device and device == os.environ.get("FAKE_REFUSE_EARLY"):
+        sys.exit("`phonon serve` is unavailable: the speech runtime needs mlx")
     # Like the real one: the first start puts the model into the cache folder it is given.
     cache = os.environ.get("FERMION_CACHE_DIR")
     if cache:
         model = Path(cache) / "models--x" / "snapshots" / "abc" / "model.bin"
         if not model.exists():
+            if os.environ.get("FAKE_DOWNLOAD_FAIL"):
+                sys.exit("could not download the model")
             model.parent.mkdir(parents=True, exist_ok=True)
             model.write_bytes(os.environ.get("FAKE_MODEL", "the model").encode())
-    log = open(sys.argv[0] + ".log", "a")
-    log.write("ARGS " + " ".join(sys.argv[1:]) + "\\n"); log.flush()
+    # An engine that does not load, after the download.
+    if device and device == os.environ.get("FAKE_REFUSE"):
+        print("[fermion] decode backend: " + device, file=sys.stderr)
+        sys.exit("RuntimeError: the engine did not load")
     BODY = {{
         "text": "hello there general kenobi",
         "segments": [{{"start": 0.0, "end": 1.0, "text": "hello there"}},
@@ -84,6 +95,7 @@ def stub(tmp_path):
     for server in phonon._servers.values():
         server.stop()
     phonon._servers.clear()
+    phonon._cpu_fallback.clear()
 
 
 def _audio(path, parts):
@@ -119,7 +131,7 @@ async def test_phonon_serve_transcribes_with_word_times(stub, wav, tmp_path):
     assert [w.word for w in segments[1].words] == ["general", "kenobi"]
     assert t.is_loaded()
     await t.unload()
-    assert not phonon._servers[(stub, None)].running()  # the last user stopped it
+    assert not phonon._servers[(stub, None, None)].running()  # the last user stopped it
 
 
 @pytest.mark.anyio
@@ -127,7 +139,7 @@ async def test_final_and_live_share_one_server(stub, wav):
     final, live = phonon.PhononTranscriber(command=stub), phonon.PhononTranscriber(command=stub)
     await final.load()
     await live.load()
-    server = phonon._servers[(stub, None)]
+    server = phonon._servers[(stub, None, None)]
     pid = server._proc.pid
     await live.transcribe(wav)
     assert server._proc.pid == pid  # not started twice
@@ -141,7 +153,7 @@ async def test_final_and_live_share_one_server(stub, wav):
 async def test_a_dead_server_is_started_again(stub, wav):
     t = phonon.PhononTranscriber(command=stub)
     await t.load()
-    server = phonon._servers[(stub, None)]
+    server = phonon._servers[(stub, None, None)]
     server._proc.kill()
     server._proc.wait()
     assert not t.is_loaded()
@@ -269,7 +281,7 @@ async def test_live_gets_its_thread_budget(stub, wav):
     live = phonon.PhononTranscriber(command=stub, threads=2)
     await live.transcribe(wav)
     assert "--threads 2" in open(stub + ".log").read()
-    assert (stub, 2) in phonon._servers
+    assert (stub, 2, None) in phonon._servers
     await live.unload()
 
 
@@ -349,8 +361,8 @@ async def test_install_into_its_own_folder_then_offline(fake_uv, tmp_path, wav, 
     env = phonon.server_env(home)
     assert env["HF_HUB_OFFLINE"] == "1" and env["FERMION_CACHE_DIR"] == str(home / "cache")
     assert "FERMION_NATIVE_BIN" not in env and "PHONON2_CPU_LIBRARY" not in env
-    # The Mac's default engine is MLX, which is not installed: the CPU engine, by name.
-    assert env.get("FERMION_DEVICE") == ("cpu" if mac else None)
+    # The Mac runs Fermion's MLX engine, by name; Linux leaves the choice to Fermion (CPU).
+    assert env.get("FERMION_DEVICE") == ("mlx" if mac else None)
     t = phonon.PhononTranscriber(home=home)
     assert [s.text for s in await t.transcribe(wav)][0] == "hello there"
     assert "--api-key" in open(str(phonon.managed_program(home)) + ".log").read()
@@ -358,6 +370,122 @@ async def test_install_into_its_own_folder_then_offline(fake_uv, tmp_path, wav, 
 
     phonon_install.remove(data)
     assert not home.exists() and not phonon_install.installed(data)
+
+
+def _devices(home):
+    """FERMION_DEVICE of each start of our install's (stand-in) server, in order."""
+    log = str(phonon.managed_program(home)) + ".log"
+    return [line[7:] for line in open(log).read().splitlines() if line.startswith("DEVICE ")]
+
+
+@pytest.fixture
+def on_a_mac(monkeypatch):
+    from mnemosyne.services import phonon_install
+
+    monkeypatch.setattr(phonon_install, "on_mac", lambda: True)
+    monkeypatch.setattr(phonon, "MAC", True)
+
+
+def test_the_engine_by_platform(tmp_path, monkeypatch):
+    """Our own install: MLX on the Mac (CPU once it fell back, or when forced), nothing on Linux
+    (Fermion's CPU engine). Someone else's `phonon`: Fermion chooses, everywhere."""
+    home = tmp_path / "phonon"
+    monkeypatch.setenv("FERMION_DEVICE", "cuda")  # never passed on
+    monkeypatch.setattr(phonon, "MAC", False)
+    assert "FERMION_DEVICE" not in phonon.server_env(home)
+    assert "FERMION_DEVICE" not in phonon.server_env(None)
+    monkeypatch.setattr(phonon, "MAC", True)
+    assert phonon.server_env(home)["FERMION_DEVICE"] == "mlx"
+    assert phonon.server_env(home, "cpu")["FERMION_DEVICE"] == "cpu"
+    assert "FERMION_DEVICE" not in phonon.server_env(None)
+    phonon._cpu_fallback.add(home)
+    try:
+        assert phonon.server_env(home)["FERMION_DEVICE"] == "cpu"
+    finally:
+        phonon._cpu_fallback.clear()
+
+
+@pytest.mark.anyio
+async def test_mlx_that_does_not_start_falls_back_to_the_cpu(
+    fake_uv, on_a_mac, tmp_path, wav, monkeypatch
+):
+    from mnemosyne.services import phonon_install
+
+    monkeypatch.setenv("FAKE_REFUSE", "mlx")  # downloads the model, then the engine fails
+    data = tmp_path / "data"
+    home = data / "phonon"
+    log = data / "logs" / "phonon.log"
+    await phonon_install.install(data, lambda m, f: None)  # the first start, inside the install
+    assert phonon_install.installed(data)
+    assert _devices(home) == ["mlx", "cpu"]  # once more, with the CPU engine
+    assert home in phonon._cpu_fallback
+    assert "[mnemosyne] Phonon-2 did not start with Fermion's MLX engine" in log.read_text()
+
+    # From then on its servers start with the CPU engine straight away.
+    t = phonon.PhononTranscriber(home=home, log_path=log)
+    assert [s.text for s in await t.transcribe(wav)][0] == "hello there"
+    assert t._server.engine == "cpu"
+    await t.unload()
+    assert _devices(home) == ["mlx", "cpu", "cpu"]
+
+    # Installing again tries MLX again.
+    monkeypatch.delenv("FAKE_REFUSE")
+    await phonon_install.install(data, lambda m, f: None)
+    assert home not in phonon._cpu_fallback
+    assert _devices(home)[-1] == "mlx"
+
+
+@pytest.mark.anyio
+async def test_mlx_refused_before_the_download_falls_back_too(
+    fake_uv, on_a_mac, tmp_path, monkeypatch
+):
+    from mnemosyne.services import phonon_install
+
+    monkeypatch.setenv("FAKE_REFUSE_EARLY", "mlx")
+    data = tmp_path / "data"
+    await phonon_install.install(data, lambda m, f: None)
+    assert phonon_install.installed(data)
+    assert _devices(data / "phonon") == ["mlx", "cpu"]
+
+
+@pytest.mark.anyio
+async def test_a_failed_download_is_not_retried_with_the_cpu(
+    fake_uv, on_a_mac, tmp_path, monkeypatch
+):
+    from mnemosyne.services import phonon_install
+
+    monkeypatch.setenv("FAKE_DOWNLOAD_FAIL", "1")
+    data = tmp_path / "data"
+    with pytest.raises(RuntimeError, match="stopped while starting"):
+        await phonon_install.install(data, lambda m, f: None)
+    assert _devices(data / "phonon") == ["mlx"]  # the CPU engine would fetch the same file
+    assert not phonon._cpu_fallback and not phonon_install.installed(data)
+
+
+@pytest.mark.anyio
+async def test_a_forced_engine_has_no_fallback_and_its_own_server(
+    fake_uv, on_a_mac, tmp_path, wav, monkeypatch
+):
+    from mnemosyne.services import phonon_install
+
+    data = tmp_path / "data"
+    home = data / "phonon"
+    log = data / "logs" / "phonon.log"
+    await phonon_install.install(data, lambda m, f: None)
+    default = phonon.PhononTranscriber(home=home, log_path=log)
+    cpu = phonon.PhononTranscriber(home=home, log_path=log, device="cpu")
+    await default.load()
+    await cpu.load()
+    assert default._server is not cpu._server
+    assert (default._server.engine, cpu._server.engine) == ("mlx", "cpu")
+    await default.unload()
+    await cpu.unload()
+
+    monkeypatch.setenv("FAKE_REFUSE", "mlx")
+    forced = phonon.PhononTranscriber(home=home, log_path=log, device="mlx")
+    with pytest.raises(RuntimeError, match="stopped while starting"):
+        await forced.load()
+    assert _devices(home)[-1] == "mlx" and home not in phonon._cpu_fallback
 
 
 @pytest.mark.anyio
@@ -434,8 +562,23 @@ def test_every_pin_has_hashes(mac):
     assert not any(n.startswith(("nvidia-", "triton")) for n in entries)
 
 
+# Fermion's `mlx` extra on the Mac (its MLX engine) and what those pull in, reviewed 2026-11-17.
+# A re-pin that drags in anything else fails below until it is reviewed and named here.
+MLX_EXTRA = {
+    "mlx",
+    "mlx-metal",
+    "mlx-audio",
+    "mlx-lm",
+    "miniaudio",
+    "protobuf",
+    "sentencepiece",
+    "sounddevice",
+}
+
+
 def test_mac_and_linux_pin_the_same_versions():
-    """One pin set in two files: only torch's local version (+cpu) differs."""
+    """Every Linux package is on the Mac at the same version (torch without +cpu); the Mac adds
+    only the MLX extra's packages."""
     from mnemosyne.services import phonon_install
 
     linux = {
@@ -443,7 +586,8 @@ def test_mac_and_linux_pin_the_same_versions():
         for n, (v, _) in _entries(phonon_install.LINUX_REQUIREMENTS).items()
     }
     mac = {n: v for n, (v, _) in _entries(phonon_install.MAC_REQUIREMENTS).items()}
-    assert linux == mac
+    assert {n: mac.get(n) for n in linux} == linux
+    assert set(mac) - set(linux) == MLX_EXTRA
 
 
 def test_the_platform_picks_its_pins(monkeypatch):

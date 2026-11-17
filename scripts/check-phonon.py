@@ -9,7 +9,10 @@ phonon-requirements.txt or phonon-requirements-macos.txt, ~1 GB, the model downl
 temporary data dir whose path has a space in it (the Mac's is under `Application Support`, and
 uv writes other launchers for such paths), transcribes the
 first minute of the bundled sample meeting with PhononTranscriber and asserts that segments with
-word times came back, and that the server refuses a request without its API key (401).
+word times came back, and that the server refuses a request without its API key (401). On a Mac
+the first transcription must have run Fermion's MLX engine (its "decode backend: mlx" line in
+phonon.log, no fallback to the CPU), and the same cut is then transcribed again with the CPU engine
+forced (`device="cpu"`), printing both timings.
 0.16.0 shipped an installer that never worked because the tests' stand-in `phonon` accepted any
 arguments; this is the test with the real one. Needs ffmpeg. Never run it on a machine you use.
 """
@@ -23,11 +26,68 @@ from pathlib import Path
 
 SAMPLE = Path(__file__).resolve().parent.parent / "backend/mnemosyne/samples/sample-meeting.ogg"
 CUT_SECONDS = 60
+MAC = sys.platform == "darwin"
 
 
 def fail(message: str) -> int:
     print(f"FAILED: {message}", flush=True)
     return 1
+
+
+def log_size(log: Path) -> int:
+    return log.stat().st_size if log.exists() else 0
+
+
+def ran_engine(transcriber, log: Path, mark: int, engine: str) -> str | None:
+    """Why `transcriber`'s server did not run Fermion's `engine`, from what it wrote to phonon.log
+    after `mark` (Fermion prints "decode backend: <engine>" as it loads one); None: it did."""
+    from mnemosyne.transcription.transcribers import phonon
+
+    server = transcriber._server
+    if server is None or server.engine != engine:
+        return f"the server ran with FERMION_DEVICE={getattr(server, 'engine', None)}, not {engine}"
+    if transcriber.home in phonon._cpu_fallback:
+        return "the install fell back to the CPU engine (see phonon.log)"
+    with log.open("rb") as f:
+        f.seek(mark)
+        written = f.read().decode(errors="replace")
+    if f"decode backend: {engine}" not in written:
+        return (
+            f'phonon.log has no "decode backend: {engine}" line from this start:\n{written[-2000:]}'
+        )
+    return None
+
+
+async def cpu_check(data_dir: Path, sample: Path, mlx_took: float) -> int:
+    """The Mac: the same cut with Fermion's CPU engine forced, to compare with the MLX run."""
+    from mnemosyne.services import phonon_install
+    from mnemosyne.transcription.transcribers import phonon
+
+    log = data_dir / "logs" / "phonon.log"
+    transcriber = phonon.PhononTranscriber(
+        log_path=log, home=phonon_install.home(data_dir), device="cpu"
+    )
+    mark = log_size(log)
+    try:
+        try:
+            begun = time.monotonic()
+            segments = await transcriber.transcribe(str(sample), language="en")
+            took = time.monotonic() - begun
+        except Exception as e:  # noqa: BLE001
+            return fail(f"transcribe with the CPU engine: {e.__class__.__name__}: {e}")
+        if not [w for s in segments for w in (s.words or [])]:
+            return fail("the CPU engine returned no words")
+        if why := ran_engine(transcriber, log, mark, "cpu"):
+            return fail(why)
+    finally:
+        await transcriber.unload()
+    print(
+        f"{CUT_SECONDS} s with the MLX engine: {mlx_took:.1f} s, with the CPU engine: "
+        f"{took:.1f} s (server start included)",
+        flush=True,
+    )
+    print(f"CPU engine: {' '.join(s.text for s in segments)[:200]}", flush=True)
+    return 0
 
 
 async def check(data_dir: Path, sample: Path) -> int:
@@ -49,9 +109,9 @@ async def check(data_dir: Path, sample: Path) -> int:
         return fail("install returned, but the install is not marked complete")
     print(f"installed: {phonon_install.size_bytes(data_dir) / 1e6:.0f} MB", flush=True)
 
-    transcriber = phonon.PhononTranscriber(
-        log_path=data_dir / "logs" / "phonon.log", home=phonon_install.home(data_dir)
-    )
+    log = data_dir / "logs" / "phonon.log"
+    transcriber = phonon.PhononTranscriber(log_path=log, home=phonon_install.home(data_dir))
+    mark = log_size(log)
     try:
         try:
             begun = time.monotonic()
@@ -71,6 +131,10 @@ async def check(data_dir: Path, sample: Path) -> int:
         text = " ".join(s.text for s in segments)
         print(f"transcribed {CUT_SECONDS} s in {took:.1f} s (server start included)", flush=True)
         print(f"{len(segments)} segments, {len(words)} words: {text[:200]}", flush=True)
+        if MAC:  # Fermion's MLX engine is the Mac's default, the CPU engine only a fallback
+            if why := ran_engine(transcriber, log, mark, "mlx"):
+                return fail(why)
+            print("engine: mlx", flush=True)
 
         # The server must refuse a request without its API key.
         server = transcriber._server
@@ -92,6 +156,8 @@ async def check(data_dir: Path, sample: Path) -> int:
                 print(f"request {label}: 401", flush=True)
     finally:
         await transcriber.unload()
+    if MAC and await cpu_check(data_dir, sample, took):
+        return 1
     print("phonon OK")
     return 0
 
