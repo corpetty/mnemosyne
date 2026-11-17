@@ -92,6 +92,16 @@ def list_devices() -> list[AudioDevice]:
     return devices
 
 
+def capture_processes(timeout: float = 5) -> list[dict]:
+    """The sidecar's `apps`: processes with audio input running, `[{pid, bundle_id, name}]`
+    (auto-record, audio/streams.py). Raises when the sidecar is missing or fails: the poll
+    keeps its last answer and tries again."""
+    data = _run_json("apps", timeout=timeout)
+    if not isinstance(data, list):
+        raise ValueError("apps did not print a list")
+    return [item for item in data if isinstance(item, dict)]
+
+
 def doctor() -> dict | None:
     """The sidecar's `doctor` JSON (diagnostics, the system info), or None if it cannot run."""
     try:

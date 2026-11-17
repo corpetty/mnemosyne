@@ -11,6 +11,7 @@ cargo test                                   # on any OS: the WAV writer, resamp
 cargo run -- record --fake tone out.wav      # a 440 Hz tone, in real time; Ctrl-C stops it cleanly
 cargo run -- devices                         # JSON, the backend's AudioDevice shape ([] without a real source)
 cargo run -- doctor                          # JSON: version, os, what can be recorded here
+cargo run -- apps                            # JSON: processes capturing audio input (macOS; exit 2 elsewhere)
 ```
 
 ## record
@@ -71,6 +72,12 @@ mnemosyne-capture record --fake <tone[:hz]|silence|file:<path.wav>> [...] <out.w
 - `doctor` adds `macos_version`, `mic_authorization` (not_determined, restricted, denied,
   authorized), `default_input` / `default_output` (id, uid, name, rate), `taps_supported` and
   `sources: ["fake", "device", "system"]`.
+- `apps` (auto-record, backend/mnemosyne/audio/streams.py): Core Audio's process objects
+  (`kAudioHardwarePropertyProcessObjectList`) whose `kAudioProcessPropertyIsRunningInput` is
+  set, as `[{pid, bundle_id, name}]` (`name` is the executable's file name from `proc_pidpath`;
+  `bundle_id` is "" without a bundle), without the sidecar's own pid. Browsers show up as their
+  helpers (`com.google.Chrome.helper`, `com.apple.WebKit.GPU`); the backend names them. Needs no
+  permission.
 - `--log` gets `note` lines from the sources (`source=mic stream_ended=...`,
   `source=system reason=default_output_changed output=...`).
 

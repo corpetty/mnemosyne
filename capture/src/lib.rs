@@ -8,6 +8,7 @@
 //! global process tap for the system's audio); Linux records with `pw-record` and only the
 //! fake sources build here.
 
+pub mod apps;
 pub mod devices;
 pub mod doctor;
 pub mod fake;

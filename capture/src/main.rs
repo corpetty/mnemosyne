@@ -4,7 +4,7 @@ use mnemosyne_capture::fake::{self, Fake};
 use mnemosyne_capture::log::Log;
 use mnemosyne_capture::record::{self, Pipeline, Settings};
 use mnemosyne_capture::source::Source;
-use mnemosyne_capture::{devices, doctor, OpenError, DEFAULT_RATE};
+use mnemosyne_capture::{apps, devices, doctor, OpenError, DEFAULT_RATE};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,6 +33,8 @@ enum Command {
     Devices,
     /// Say what this binary can do on this machine, as JSON.
     Doctor,
+    /// List the processes capturing audio input right now, as JSON (macOS only).
+    Apps,
 }
 
 #[derive(Args)]
@@ -90,6 +92,11 @@ fn main() -> ExitCode {
         Command::Record(args) => return record(*args),
         Command::Devices => devices::list().and_then(|d| print_json(&d)),
         Command::Doctor => print_json(&doctor::report()),
+        Command::Apps if !apps::SUPPORTED => {
+            eprintln!("mnemosyne-capture: listing the apps that capture audio is not supported on this system");
+            return ExitCode::from(EXIT_UNSUPPORTED);
+        }
+        Command::Apps => apps::list().and_then(|a| print_json(&a)),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

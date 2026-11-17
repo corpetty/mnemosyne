@@ -384,3 +384,28 @@ fn devices_and_doctor_print_json() {
     assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(v["os"], std::env::consts::OS);
 }
+
+#[test]
+fn apps_prints_json_on_macos_and_is_unsupported_elsewhere() {
+    let child = capture(&["apps"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let own = i64::from(child.id());
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if cfg!(target_os = "macos") {
+        assert_eq!(output.status.code(), Some(0), "{stderr}");
+        let v: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        // A runner may have no process capturing: the shape is what matters.
+        for p in v.as_array().expect("a list") {
+            let pid = p["pid"].as_i64().unwrap();
+            assert!(pid > 0 && pid != own, "{p}");
+            assert!(p["bundle_id"].is_string() && p["name"].is_string(), "{p}");
+        }
+    } else {
+        assert_eq!(output.status.code(), Some(2), "{stderr}");
+        assert!(stderr.contains("not supported on this system"), "{stderr}");
+    }
+}

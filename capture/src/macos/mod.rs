@@ -3,6 +3,7 @@
 
 pub mod coreaudio;
 pub mod mic;
+pub mod processes;
 pub mod tap;
 
 use crate::devices::Device;
