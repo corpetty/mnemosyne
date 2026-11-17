@@ -5,6 +5,7 @@
 // prepared bytes, uploads that can be made to fail). Exposed as `window.__notes` by the dev-only route
 // src/routes/dev/notes-editor (tests-e2e/notes-editor.spec.ts and the WebKitGTK probe use it).
 // Only ever imported under `import.meta.env.DEV`: production builds drop it.
+import { primary } from '../keys.js';
 import { insertModel, insertText, setLink, type NotesModel } from '../commands.js';
 import type { Chip } from '../chips.js';
 import { ensureTerminated, lines, openDoc, type Doc, type Line } from '../model.js';
@@ -179,7 +180,7 @@ export async function mountHarness(markdown: string, control: HarnessControl, op
     document.addEventListener(
       'keydown',
       (e) => {
-        if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+        if (primary(e) && !e.altKey && e.key.toLowerCase() === 'k') {
           keySel = getSelectionOffsets(rootEl());
         }
       },

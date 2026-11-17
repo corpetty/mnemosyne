@@ -25,6 +25,7 @@
 	import { insertChip, meetingUrl, personUrl, timeUrl } from '../chips.js';
 	import { deleteRange, insertTable, setLineKind } from '../commands.js';
 	import { lineAt, lines, type LineKind } from '../model.js';
+	import { primary } from '../keys.js';
 	import type { Inverse } from '../ops.js';
 	import type { Rect } from './placement.js';
 	import {
@@ -247,7 +248,7 @@
 	export function key(e: KeyboardEvent): boolean {
 		if (e.isComposing) return false;
 		const mod = e.ctrlKey || e.metaKey;
-		if (mod && !e.altKey && !e.shiftKey && (e.key === '/' || e.code === 'Slash')) {
+		if (primary(e) && !e.altKey && !e.shiftKey && (e.key === '/' || e.code === 'Slash')) {
 			if (session) close();
 			else openAtCaret();
 			return true;

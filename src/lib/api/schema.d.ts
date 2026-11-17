@@ -6341,6 +6341,8 @@ export interface components {
         };
         /** LocalModelStatus */
         LocalModelStatus: {
+            /** Metal */
+            metal: boolean;
             /** Models */
             models: components["schemas"]["LocalModelInfo"][];
             ollama: components["schemas"]["OllamaInfo"];

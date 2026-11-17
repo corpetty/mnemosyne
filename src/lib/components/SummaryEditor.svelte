@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { keyHint } from '$lib/notes/keys.js';
 	// Edit a summary by hand (backend services/summary_edit.py): the text, topics (tags),
 	// decisions, action items, chapters, open questions and client facts, saved together.
 	// Each decision and question keeps its transcript time, so its link survives edits.
@@ -251,6 +252,6 @@
 			class="px-4 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium"
 		>{saving ? 'Saving…' : 'Save summary'}</button>
 		<button onclick={ondone} class="px-3 py-1.5 text-sm rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300">Cancel</button>
-		<span class="text-[11px] text-gray-600">Ctrl+Enter saves · Esc cancels</span>
+		<span class="text-[11px] text-gray-600">{keyHint('Mod+Enter')} saves · Esc cancels</span>
 	</div>
 </div>

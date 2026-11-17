@@ -5,6 +5,7 @@ import { insertText } from '../commands.js';
 import { setSelectionOffsets } from '../editor/dom.js';
 import { ensureTerminated, lines, openDoc, type Doc } from '../model.js';
 import { ORIGIN, WasmHashWeb } from '../test-harness.js';
+import { pinPlatform, restorePlatform } from '../test-platform.js';
 import NotesEditor from './NotesEditor.svelte';
 import type { MediaProvider, NotesHost, PreparedImage } from './types.js';
 
@@ -19,6 +20,7 @@ let component: ReturnType<typeof mount> | null = null;
 let webpBytes: number[];
 
 beforeEach(() => {
+  pinPlatform('linux');
   webpBytes = [0x52, 0x49, 0x46, 0x46, 4, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 1];
   vi.stubGlobal('createImageBitmap', async (f: Blob) => {
     if (f.type === 'image/heic') throw new Error('nope');
@@ -33,6 +35,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  restorePlatform();
   if (component) unmount(component);
   component = null;
   target?.remove();

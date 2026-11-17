@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { shortcutHint } from '$lib/app/shortcuts.js';
 	import { startRecording } from '$lib/app/controller.svelte.js';
 	import DeviceSelector from './DeviceSelector.svelte';
 	import { audioState } from '$lib/stores/audio.svelte.js';
@@ -70,11 +71,11 @@
 			<p class="text-xs text-gray-600">or open one from the sidebar</p>
 		{/if}
 		<div class="text-xs text-gray-700 space-y-1 mt-4">
-			<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">Ctrl+R</kbd> Start recording</p>
-			<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">Ctrl+S</kbd> Stop &amp; transcribe</p>
-			<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">Ctrl+E</kbd> Export to Obsidian</p>
-			<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">Ctrl+K</kbd> Find anything, or ask a question</p>
-			<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">Ctrl+B</kbd> Toggle sidebar</p>
+			<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">{shortcutHint('record')}</kbd> Start recording</p>
+			<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">{shortcutHint('stop')}</kbd> Stop &amp; transcribe</p>
+			<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">{shortcutHint('export')}</kbd> Export to Obsidian</p>
+			<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">{shortcutHint('palette')}</kbd> Find anything, or ask a question</p>
+			<p><kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-500">{shortcutHint('sidebar')}</kbd> Toggle sidebar</p>
 		</div>
 	</div>
 </div>
