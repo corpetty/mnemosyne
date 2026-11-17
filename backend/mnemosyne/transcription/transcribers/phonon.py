@@ -10,7 +10,9 @@ for "wanna"). Requests go through RemoteTranscriber, so segments and word times 
 same way as for any remote server.
 
 One server per (command, threads) is shared by the transcribers that use it; it stops when the
-last one unloads, and dies with the backend (PR_SET_PDEATHSIG). Live transcription passes its
+last one unloads, and dies with the backend: PR_SET_PDEATHSIG on Linux, a guard process on the
+Mac (phonon_guard.py), which has no such thing. On the Mac our own install runs Fermion's CPU
+engine (FERMION_DEVICE=cpu; its MLX engine is not installed). Live transcription passes its
 small thread budget (`live_threads`, `--threads`), so it gets a server of its own.
 
 The server refuses large uploads (413 for a 33 MB WAV), so audio goes in pieces of about five
@@ -29,6 +31,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import wave
@@ -145,6 +148,12 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+MAC = sys.platform == "darwin"
+# macOS has no PR_SET_PDEATHSIG: the server runs under a guard that watches the backend.
+GUARDED = MAC
+GUARD = Path(__file__).with_name("phonon_guard.py")
+
+
 def _die_with_parent() -> None:
     """In the child, before exec: get SIGTERM when the backend dies (Linux)."""
     try:
@@ -211,6 +220,8 @@ def server_env(home: Path | None) -> dict[str, str]:
         env["HF_HUB_CACHE"] = str(home / "hf")
         if (home / "installed").exists():
             env["HF_HUB_OFFLINE"] = "1"
+        if MAC:  # Fermion's default there is MLX, which we do not install
+            env["FERMION_DEVICE"] = "cpu"
     return env
 
 
@@ -233,6 +244,7 @@ class PhononServer:
         self.api_key = ""
         self.port = 0
         self._proc: subprocess.Popen | None = None
+        self._group = False  # started under the guard, in a session of its own
         self._users = 0
         self._lock = asyncio.Lock()
 
@@ -292,13 +304,17 @@ class PhononServer:
         ]
         if self.threads:
             args += ["--threads", str(self.threads)]
+        self._group = GUARDED
+        if GUARDED:  # its own session, so that stop() can kill the guard and the server together
+            args = [sys.executable, "-I", str(GUARD), str(os.getpid()), *args]
         self._proc = subprocess.Popen(
             args,
             stdout=log,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             env=server_env(self.home),
-            preexec_fn=_die_with_parent,
+            preexec_fn=None if GUARDED else _die_with_parent,
+            start_new_session=GUARDED,
         )
 
     async def _wait_healthy(self, timeout: float) -> None:
@@ -325,7 +341,14 @@ class PhononServer:
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                if self._group:  # the guard and the server it runs
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                else:
+                    proc.kill()
+                proc.wait()
 
 
 _servers: dict[tuple[str, int | None], PhononServer] = {}

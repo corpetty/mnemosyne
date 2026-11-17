@@ -78,7 +78,8 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   else none. Transcriber `auto` is Phonon-2 when `language` is English and it is installed, else
   WhisperX with working CUDA, else Parakeet. Phonon (transcribers/phonon.py) runs Fermion's
   `phonon serve` from its own venv, `<data_dir>/phonon`, installed on demand
-  (services/phonon_install.py, pins in phonon-requirements.txt; never in the backend's lock:
+  (services/phonon_install.py, pins in phonon-requirements.txt, on a Mac
+  phonon-requirements-macos.txt with the same versions and PyPI torch; never in the backend's lock:
   it needs torch and transformers 5). AMI ES2004a-d (2026-10-08): 22.7 % WER vs Parakeet's
   27.4 % (fillers counted), 53x vs 13x real time, same speaker accuracy; Silero VAD tuning did
   not help Parakeet. Missing, Parakeet is used. pyannote needs
@@ -746,8 +747,10 @@ stable self-signed certificate (APPLE_CERTIFICATE secrets; CN "Mnemosyne Test Si
 Recording through the `mnemosyne-capture` sidecar (capture/: cpal microphone; system audio = a global Core Audio process tap in a private
 aggregate device, `system` = device id 1; WAV header identical to pw-record's), backend audio/coreaudio.py behind the darwin switches in
 capture.py/levels.py, caffeinate while recording, a silent-system-audio hint (`capture_health` "silent"). The System Audio Recording prompt
-blocks `AudioDeviceCreateIOProcID` until answered. Not on the Mac: Phonon-2, the built-in summary model, echo cancellation, noise
-suppression. CI: `macos` job, smoke-macos.yml, the Release `macos` job. Confirmed on a tester's Mac 2026-11-10.
+blocks `AudioDeviceCreateIOProcID` until answered. Not on the Mac: the built-in summary model, echo cancellation, noise
+suppression. Phonon-2 on the Mac (unreleased): Fermion's CPU engine (`FERMION_DEVICE=cpu`, MLX not installed), pins in
+phonon-requirements-macos.txt (one uv step from PyPI), `phonon serve` under phonon_guard.py since there is no PDEATHSIG;
+phonon.yml runs the real install and a transcription on macos-15 too (a Release prerequisite). CI: `macos` job, smoke-macos.yml, the Release `macos` job. Confirmed on a tester's Mac 2026-11-10.
 
 Team members in the app (released as 0.32.0; plan docs/plans/2026-11-10-team-members-in-the-app.md, use in docs/team-server.md "Members in the app"):
 a teammate's app (Linux or Mac) joins a team hosted on someone's main computer and shows its own library and the team's one click apart

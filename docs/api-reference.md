@@ -471,7 +471,8 @@ Transcription start it with the Tauri command `start_gpu_install`.
 Admin. Phonon-2 for English (services/phonon_install.py): an `install_phonon` job that makes
 `<data_dir>/phonon/venv` with uv (the app's bundled one, `MNEMOSYNE_UV_BIN`, else on PATH), installs
 CPU PyTorch from download.pytorch.org and then `fermion-research` with every package pinned
-(transcription/transcribers/phonon-requirements.txt), downloads the model once and writes
+(transcription/transcribers/phonon-requirements.txt; on a Mac everything from PyPI in one step,
+phonon-requirements-macos.txt), downloads the model once and writes
 `installed`; messages are uv's lines, about 1 GB in all. 409 while one runs. DELETE removes the
 folder (409 while recording or transcribing). `GET /api/system` says `phonon`, `phonon_bytes` and
 `phonon_installable`. Transcriber `auto` uses it when `language` is English; servers it starts run

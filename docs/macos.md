@@ -55,9 +55,10 @@ Be aware this is a test build.
 - Recording works: your microphone and the system audio (the other people on a call), live
   transcript included. You can also import recordings (Import, or the sample meeting) and transcribe them.
 - Transcription runs on the CPU with Parakeet, and speaker labels with the onnx diarizer. It is
-  slower than on a PC with a GPU.
-- Not on the Mac yet: Phonon-2 and the built-in summary model. Use Ollama, vLLM, OpenAI or
-  Anthropic for summaries.
+  slower than on a PC with a GPU. For English you can install Phonon-2 (Settings → Transcription,
+  or the setup wizard; about 1 GB): it is more accurate than Parakeet and was faster on Linux.
+- Not on the Mac yet: the built-in summary model. Use Ollama, vLLM, OpenAI or Anthropic for
+  summaries.
 - Linux only: echo cancellation and noise suppression. Use headphones for calls when you can.
 
 ### Checklist

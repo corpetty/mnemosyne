@@ -4,8 +4,10 @@
 Run from backend/ after `uv sync --locked`:
     uv run --no-sync python ../scripts/check-phonon.py
 
-Does the real install (services/phonon_install.py: real uv, the pins in
-phonon-requirements.txt, ~1 GB, the model download) into a temporary data dir, transcribes the
+Does the real install (services/phonon_install.py: real uv, this platform's pins in
+phonon-requirements.txt or phonon-requirements-macos.txt, ~1 GB, the model download) into a
+temporary data dir whose path has a space in it (the Mac's is under `Application Support`, and
+uv writes other launchers for such paths), transcribes the
 first minute of the bundled sample meeting with PhononTranscriber and asserts that segments with
 word times came back, and that the server refuses a request without its API key (401).
 0.16.0 shipped an installer that never worked because the tests' stand-in `phonon` accepted any
@@ -52,7 +54,9 @@ async def check(data_dir: Path, sample: Path) -> int:
     )
     try:
         try:
+            begun = time.monotonic()
             segments = await transcriber.transcribe(str(sample), language="en")
+            took = time.monotonic() - begun
         except Exception as e:  # noqa: BLE001
             return fail(f"transcribe: {e.__class__.__name__}: {e}")
         if not segments:
@@ -65,12 +69,15 @@ async def check(data_dir: Path, sample: Path) -> int:
         if words[-1].start < 5:
             return fail(f"word times look wrong (the last word starts at {words[-1].start:.1f} s)")
         text = " ".join(s.text for s in segments)
+        print(f"transcribed {CUT_SECONDS} s in {took:.1f} s (server start included)", flush=True)
         print(f"{len(segments)} segments, {len(words)} words: {text[:200]}", flush=True)
 
         # The server must refuse a request without its API key.
         server = transcriber._server
         if server is None or not server.running():
             return fail("the server is not running after the transcription")
+        if sys.platform == "darwin" and not server._group:
+            return fail("on a Mac the server must run under its guard (phonon_guard.py)")
         async with httpx.AsyncClient(timeout=30) as client:
             url = f"{server.url}/v1/audio/transcriptions"
             for label, headers in (
@@ -99,7 +106,7 @@ def main() -> int:
             + ["-ac", "1", "-ar", "16000", str(cut)],
             check=True,
         )
-        data_dir = Path(tmp) / "data"
+        data_dir = Path(tmp) / "Application Support" / "data"
         return asyncio.run(check(data_dir, cut))
 
 

@@ -2,8 +2,9 @@ name: Phonon
 
 # 0.16.0 shipped a Phonon installer that never worked (the tests' stand-in `phonon` accepted any
 # arguments). Do the real install here (real uv, the pins in phonon-requirements.txt, the model
-# download) and transcribe a minute of the sample meeting (scripts/check-phonon.py). Called by the
-# Release workflow too.
+# download) and transcribe a minute of the sample meeting (scripts/check-phonon.py), on Linux and
+# on a Mac (phonon-requirements-macos.txt, Fermion's CPU engine, the guard in phonon_guard.py).
+# Called by the Release workflow too.
 on:
   push:
     branches: [main]
@@ -11,6 +12,8 @@ on:
       - "backend/mnemosyne/services/phonon_install.py"
       - "backend/mnemosyne/transcription/transcribers/phonon.py"
       - "backend/mnemosyne/transcription/transcribers/phonon-requirements.txt"
+      - "backend/mnemosyne/transcription/transcribers/phonon-requirements-macos.txt"
+      - "backend/mnemosyne/transcription/transcribers/phonon_guard.py"
       - "scripts/check-phonon.py"
       - ".github/workflows/phonon.yml"
   pull_request:
@@ -18,6 +21,8 @@ on:
       - "backend/mnemosyne/services/phonon_install.py"
       - "backend/mnemosyne/transcription/transcribers/phonon.py"
       - "backend/mnemosyne/transcription/transcribers/phonon-requirements.txt"
+      - "backend/mnemosyne/transcription/transcribers/phonon-requirements-macos.txt"
+      - "backend/mnemosyne/transcription/transcribers/phonon_guard.py"
       - "scripts/check-phonon.py"
       - ".github/workflows/phonon.yml"
   workflow_dispatch:
@@ -28,8 +33,12 @@ permissions:
 
 jobs:
   install:
-    name: Install Phonon and transcribe
-    runs-on: ubuntu-24.04
+    name: Install Phonon and transcribe (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
       UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
@@ -39,12 +48,17 @@ jobs:
         with:
           enable-cache: false # the cache below is keyed on the Phonon pins instead
       - name: Install ffmpeg (cuts the sample meeting)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install ffmpeg
+          else
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
       - name: uv's download cache (keyed on the Phonon pins)
         uses: actions/cache@v6
         with:
           path: ${{ env.UV_CACHE_DIR }}
-          key: uv-phonon-${{ hashFiles('backend/mnemosyne/transcription/transcribers/phonon-requirements.txt') }}
+          key: uv-phonon-${{ runner.os }}-${{ hashFiles('backend/mnemosyne/transcription/transcribers/phonon-requirements*.txt') }}
       - name: Sync the backend (base only; Phonon gets its own environment)
         working-directory: backend
         run: uv sync --locked
@@ -59,4 +73,4 @@ jobs:
           uv run --no-sync python ../scripts/check-phonon.py
       - name: Phonon's log
         if: failure()
-        run: cat .tmp/check-phonon-*/data/logs/phonon.log || true
+        run: cat .tmp/check-phonon-*/"Application Support"/data/logs/phonon.log || true

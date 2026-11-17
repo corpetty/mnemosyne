@@ -174,33 +174,65 @@ def test_registry_builds_it_and_falls_back_when_it_is_gone(stub, tmp_path, monke
     assert registry.resolve_transcriber(Settings(data_dir=tmp_path)) != "phonon"  # not auto
 
 
-@pytest.mark.linux_only("macOS bug: phonon serve outlives a killed backend (no PDEATHSIG)")
-def test_the_server_dies_with_the_backend(stub, tmp_path):
-    """A backend that is killed must not leave a 1.3 GB server behind (PR_SET_PDEATHSIG)."""
+def _listening(port: int) -> bool:
+    import socket
+
+    with socket.socket() as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+@pytest.mark.parametrize(
+    "guarded",
+    [
+        pytest.param(False, marks=pytest.mark.linux_only("PR_SET_PDEATHSIG")),
+        True,  # the Mac's way (phonon_guard.py), which also works here
+    ],
+)
+def test_the_server_dies_with_the_backend(stub, tmp_path, guarded):
+    """A backend that is killed must not leave a 1.3 GB server behind."""
     script = tmp_path / "parent.py"
     script.write_text(
         "import asyncio, sys\n"
-        "from mnemosyne.transcription.transcribers.phonon import server_for\n"
-        f"s = server_for({stub!r})\n"
+        "from mnemosyne.transcription.transcribers import phonon\n"
+        f"phonon.GUARDED = {guarded}\n"
+        f"s = phonon.server_for({stub!r})\n"
         "asyncio.run(s.acquire())\n"
-        "print(s._proc.pid, flush=True)\n"
+        "print(s._proc.pid, s.port, flush=True)\n"
         "import time; time.sleep(60)\n"
     )
     import subprocess
 
     parent = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, text=True)
-    child = int(parent.stdout.readline())
+    child, port = map(int, parent.stdout.readline().split())
+    assert _listening(port)
     parent.kill()
     parent.wait()
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 8  # the guard looks once a second
     while time.monotonic() < deadline:
         try:
             os.kill(child, 0)
         except ProcessLookupError:
-            return
+            if not _listening(port):
+                return
         time.sleep(0.1)
-    os.kill(child, 9)
+    if guarded:
+        os.killpg(child, 9)
+    else:
+        os.kill(child, 9)
     pytest.fail("phonon serve outlived its backend")
+
+
+@pytest.mark.anyio
+async def test_the_guarded_server_stops_with_it(stub, wav, monkeypatch):
+    """On the Mac stop() terminates the guard, which passes it on to the server."""
+    monkeypatch.setattr(phonon, "GUARDED", True)
+    t = phonon.PhononTranscriber(command=stub)
+    assert [s.text for s in await t.transcribe(wav)][0] == "hello there"
+    server = t._server
+    assert server is not None and server._group and _listening(server.port)
+    guard = server._proc
+    await t.unload()
+    assert guard.poll() is not None and not _listening(server.port)
 
 
 def test_cut_points_fall_in_quiet_moments():
@@ -279,25 +311,34 @@ def fake_uv(tmp_path, stub, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_install_into_its_own_folder_then_offline(fake_uv, tmp_path, wav, monkeypatch):
+@pytest.mark.parametrize("mac", [False, True])
+async def test_install_into_its_own_folder_then_offline(fake_uv, tmp_path, wav, monkeypatch, mac):
     from mnemosyne.services import phonon_install
 
+    monkeypatch.setattr(phonon_install, "on_mac", lambda: mac)
+    monkeypatch.setattr(phonon, "MAC", mac)
     data = tmp_path / "data"
     seen = []
     await phonon_install.install(data, lambda m, f: seen.append((m, f)))
     assert phonon_install.installed(data) and phonon_install.size_bytes(data) > 0
     calls = open(fake_uv + ".log").read().splitlines()
     assert calls[0].startswith("venv --python")
-    # CPU torch first, alone, and everything with its hash required.
-    assert "--index-url https://download.pytorch.org/whl/cpu" in calls[1]
-    assert "--require-hashes" in calls[1] and "--no-deps" in calls[1]
-    torch_file = data / "phonon" / "torch-requirements.txt"
-    assert calls[1].endswith(str(torch_file))
-    assert (
-        torch_file.read_text().startswith("torch==") and "--hash=sha256:" in torch_file.read_text()
-    )
-    assert "-r" in calls[2] and calls[2].endswith("phonon-requirements.txt")
-    assert "--require-hashes" in calls[2] and "--no-deps" not in calls[2]
+    if mac:
+        # PyPI's torch is the CPU build there: one step, all from PyPI, every hash required.
+        assert len(calls) == 2 and "--index-url" not in calls[1]
+        assert calls[1].endswith("phonon-requirements-macos.txt")
+        assert "--require-hashes" in calls[1] and "--no-deps" not in calls[1]
+        assert not (data / "phonon" / "torch-requirements.txt").exists()
+    else:
+        # CPU torch first, alone, and everything with its hash required.
+        assert "--index-url https://download.pytorch.org/whl/cpu" in calls[1]
+        assert "--require-hashes" in calls[1] and "--no-deps" in calls[1]
+        torch_file = data / "phonon" / "torch-requirements.txt"
+        assert calls[1].endswith(str(torch_file))
+        torch_pin = torch_file.read_text()
+        assert torch_pin.startswith("torch==") and "--hash=sha256:" in torch_pin
+        assert "-r" in calls[2] and calls[2].endswith("phonon-requirements.txt")
+        assert "--require-hashes" in calls[2] and "--no-deps" not in calls[2]
     assert seen[-1] == ("Phonon-2 is installed", 1.0)
 
     # The transcriber finds our install without a path, and its server runs offline, keyed.
@@ -308,6 +349,8 @@ async def test_install_into_its_own_folder_then_offline(fake_uv, tmp_path, wav, 
     env = phonon.server_env(home)
     assert env["HF_HUB_OFFLINE"] == "1" and env["FERMION_CACHE_DIR"] == str(home / "cache")
     assert "FERMION_NATIVE_BIN" not in env and "PHONON2_CPU_LIBRARY" not in env
+    # The Mac's default engine is MLX, which is not installed: the CPU engine, by name.
+    assert env.get("FERMION_DEVICE") == ("cpu" if mac else None)
     t = phonon.PhononTranscriber(home=home)
     assert [s.text for s in await t.transcribe(wav)][0] == "hello there"
     assert "--api-key" in open(str(phonon.managed_program(home)) + ".log").read()
@@ -356,29 +399,62 @@ def test_install_route(client, ctx, fake_uv):
     assert client.get("/api/system").json()["phonon"] is False
 
 
-def test_every_pin_has_hashes():
-    """The real file: each entry is name==version with at least one sha256 and nothing else."""
-    from mnemosyne.services import phonon_install
-
-    entries: dict[str, list[str]] = {}
+def _entries(file) -> dict[str, tuple[str, list[str]]]:
+    """name -> (version, hash lines) of a requirements file, checking its shape."""
+    entries: dict[str, tuple[str, list[str]]] = {}
     name = ""
-    for line in phonon_install.REQUIREMENTS.read_text().splitlines():
+    for line in file.read_text().splitlines():
         if not line.strip() or line.startswith("#"):
             continue
         if line[:1].isspace():
-            entries[name].append(line.strip().removesuffix("\\").strip())
+            entries[name][1].append(line.strip().removesuffix("\\").strip())
         else:
-            name = line.split("==")[0]
-            assert "==" in line, line
-            entries[name] = []
+            assert "==" in line and ";" not in line, line  # no markers: one platform per file
+            name, version = line.removesuffix("\\").strip().split("==")
+            entries[name] = (version, [])
+    return entries
+
+
+@pytest.mark.parametrize("mac", [False, True])
+def test_every_pin_has_hashes(mac):
+    """The real files: each entry is name==version with at least one sha256 and nothing else."""
+    from mnemosyne.services import phonon_install
+
+    file = phonon_install.MAC_REQUIREMENTS if mac else phonon_install.LINUX_REQUIREMENTS
+    entries = _entries(file)
     assert {"torch", "fermion-research", "transformers", "numpy"} <= set(entries)
-    for name, hashes in entries.items():
+    for name, (_, hashes) in entries.items():
         assert hashes and all(h.startswith("--hash=sha256:") for h in hashes), name
         assert all(len(h) == len("--hash=sha256:") + 64 for h in hashes), name
-    torch = phonon_install._pin("torch")
-    assert torch.startswith("torch==") and "+cpu" in torch.splitlines()[0]
-    assert len(torch.splitlines()) == len(entries["torch"]) + 1
+    torch = phonon_install._pin("torch", file)
+    # Linux: the CPU build from PyTorch's index. Mac: PyPI's, which is the CPU build there.
+    assert torch.startswith("torch==") and ("+cpu" in torch.splitlines()[0]) != mac
+    assert len(torch.splitlines()) == len(entries["torch"][1]) + 1
     assert "annotated-doc" not in torch  # just torch's entry
+    assert not any(n.startswith(("nvidia-", "triton")) for n in entries)
+
+
+def test_mac_and_linux_pin_the_same_versions():
+    """One pin set in two files: only torch's local version (+cpu) differs."""
+    from mnemosyne.services import phonon_install
+
+    linux = {
+        n: v.removesuffix("+cpu")
+        for n, (v, _) in _entries(phonon_install.LINUX_REQUIREMENTS).items()
+    }
+    mac = {n: v for n, (v, _) in _entries(phonon_install.MAC_REQUIREMENTS).items()}
+    assert linux == mac
+
+
+def test_the_platform_picks_its_pins(monkeypatch):
+    from mnemosyne.services import phonon_install
+
+    monkeypatch.setattr(phonon_install, "on_mac", lambda: True)
+    mac_hash = phonon_install.requirements_hash()
+    assert phonon_install.requirements() == phonon_install.MAC_REQUIREMENTS
+    monkeypatch.setattr(phonon_install, "on_mac", lambda: False)
+    assert phonon_install.requirements() == phonon_install.LINUX_REQUIREMENTS
+    assert phonon_install.requirements_hash() != mac_hash  # an install is for its own platform
 
 
 def _model_file(data):
