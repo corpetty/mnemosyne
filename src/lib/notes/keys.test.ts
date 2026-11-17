@@ -19,6 +19,14 @@ describe('isMac', () => {
     expect(isMac()).toBe(false);
   });
 
+  it('believes the platform over a Safari user agent on Linux (WebKitGTK, Playwright WebKit)', () => {
+    vi.stubGlobal('navigator', {
+      platform: 'Linux x86_64',
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15'
+    });
+    expect(isMac()).toBe(false);
+  });
+
   it('is false without a navigator', () => {
     vi.stubGlobal('navigator', undefined);
     expect(isMac()).toBe(false);

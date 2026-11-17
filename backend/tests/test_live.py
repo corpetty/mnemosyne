@@ -225,8 +225,11 @@ def test_adaptive_off_keeps_the_interval(tmp_path):
     assert live.interval == 5.0 and events == []
 
 
-def test_cpu_pressure_reads_psi(tmp_path):
+def test_cpu_pressure_reads_psi(tmp_path, monkeypatch):
+    from mnemosyne.transcription import live
     from mnemosyne.transcription.live import cpu_pressure
+
+    monkeypatch.setattr(live.sys, "platform", "linux")  # no load-average stand-in
 
     psi = tmp_path / "cpu"
     psi.write_text(

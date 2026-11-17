@@ -86,7 +86,8 @@ def test_an_intel_mac_has_no_built_in_model(monkeypatch, tmp_path):
         local_llm.LocalLLM(tmp_path / "llm").install("qwen3-4b")
 
 
-def test_install_unpacks_the_server_flat_and_fetches_the_model(tmp_path, no_network):
+def test_install_unpacks_the_server_flat_and_fetches_the_model(tmp_path, no_network, monkeypatch):
+    monkeypatch.setattr(local_llm.sys, "platform", "linux")  # the Linux builds (a Mac: Metal)
     llm = local_llm.LocalLLM(tmp_path / "llm")
     seen = []
     llm.install("qwen3-4b", lambda done, total: seen.append((done, total)))

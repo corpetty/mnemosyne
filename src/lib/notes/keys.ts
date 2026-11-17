@@ -5,10 +5,16 @@
 // "Primary" is the shortcut modifier: Cmd on a Mac, Ctrl elsewhere. On a Mac a Ctrl-only press does
 // not count: Ctrl+A / E / K / B / F ... move the caret in every macOS text field.
 
-/** True on macOS (also iPadOS asking for a desktop site). False without a `navigator`. */
+/**
+ * True on macOS (also iPadOS asking for a desktop site). False without a `navigator`.
+ * The platform decides: user agents say "Macintosh" elsewhere too (WebKitGTK and Playwright's
+ * WebKit on Linux send Safari's), so the user agent counts only when no platform is given.
+ */
 export function isMac(): boolean {
   if (typeof navigator === 'undefined') return false;
-  return /^Mac/.test(navigator.platform ?? '') || /Macintosh/.test(navigator.userAgent ?? '');
+  const platform = navigator.platform ?? '';
+  if (platform) return /^Mac/.test(platform);
+  return /Macintosh/.test(navigator.userAgent ?? '');
 }
 
 /** The shortcut modifier is down: metaKey on a Mac, ctrlKey elsewhere. */

@@ -83,7 +83,10 @@ def test_all_calendars_when_none_are_chosen():
     assert opened == ["personal", "work-cal"]
 
 
-def test_calendar_source_setting():
+def test_calendar_source_setting(monkeypatch):
+    from mnemosyne.services import calendar_service
+
+    monkeypatch.setattr(calendar_service, "desktop_supported", lambda: True)  # Linux
     assert calendar_source(Settings(calendar_source="off", calendar_ics_url="https://x")) == ""
     assert calendar_source(Settings(calendar_source="ics", calendar_ics_url="https://x")) == (
         "https://x"
