@@ -1,22 +1,24 @@
 """Do pyannote's speaker embedder and the ONNX WeSpeaker ResNet34-LM give the same vectors?
 
-A one-off check for docs/plans/2026-11-17-speakers-without-torch.md (task 0). If the two embed the same audio to
-(nearly) the same vector, voice profiles made on a GPU machine work on a machine with only the ONNX embedder.
-It is a tool for a developer, not part of the app: nothing imports it and the app never runs it.
+A one-off check for docs/plans/2026-11-17-speakers-without-torch.md (task 0). If the two embed the
+same audio to (nearly) the same vector, voice profiles made on a GPU machine work on a machine with
+only the ONNX embedder. It is a tool for a developer, not part of the app: nothing imports it and
+the app never runs it.
 
-Turns: the sample meeting has no reference turns, so this cuts fixed-length windows (default 4 s) at speech-dense
-places: the recording is split into N equal slots and the loudest window of each slot is taken (by RMS energy).
-Windows come from all over the meeting, so they hold several speakers.
+Turns: the sample meeting has no reference turns, so this cuts fixed-length windows (default 4 s) at
+speech-dense places: the recording is split into N equal slots and the loudest window of each slot
+is taken (by RMS energy). Windows come from all over the meeting, so they hold several speakers.
 
-Prints, per turn, the cosine between the pyannote vector and the ONNX vector of the same audio; the median and
-minimum of those; and the Spearman correlation of each embedder's turn-to-turn cosine matrix (do both spaces rank
-pairs of turns the same way). Pass bar: median same-audio cosine >= 0.95.
+Prints, per turn, the cosine between the pyannote vector and the ONNX vector of the same audio; the
+median and minimum of those; and the Spearman correlation of each embedder's turn-to-turn cosine
+matrix (do both spaces rank pairs of turns the same way). Pass bar: median same-audio cosine >=
+0.95.
 
-  --proxy   pyannote/wespeaker-voxceleb-resnet34-LM, not gated, via Model.from_pretrained + Inference("whole")
+  --proxy   pyannote/wespeaker-voxceleb-resnet34-LM (not gated),
+            via Model.from_pretrained + Inference("whole")
   default   the app's own PyannoteEmbedder on --pyannote-model (community-1; needs an HF token)
 
-Run from backend/:  uv run --no-sync python scripts/compare-voice-spaces.py --proxy
-"""
+Run from backend/: uv run --no-sync python scripts/compare-voice-spaces.py --proxy"""
 
 from __future__ import annotations
 
@@ -82,7 +84,9 @@ def fetch_onnx(folder: Path) -> Path:
     return path
 
 
-def onnx_vectors(model: Path, clips: list[np.ndarray], threads: int, scale: float = 1.0) -> np.ndarray:
+def onnx_vectors(
+    model: Path, clips: list[np.ndarray], threads: int, scale: float = 1.0
+) -> np.ndarray:
     import sherpa_onnx
 
     config = sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(model), num_threads=threads)
@@ -108,7 +112,9 @@ def pyannote_vectors(args, clips: list[np.ndarray]) -> np.ndarray:
         vecs = []
         for clip in clips:
             wav = torch.from_numpy(clip).unsqueeze(0)
-            vecs.append(np.asarray(inf({"waveform": wav, "sample_rate": RATE}), dtype=np.float64).ravel())
+            vecs.append(
+                np.asarray(inf({"waveform": wav, "sample_rate": RATE}), dtype=np.float64).ravel()
+            )
         return np.stack(vecs)
 
     from mnemosyne.transcription.live_speakers import PyannoteEmbedder
@@ -129,19 +135,35 @@ def unit(m: np.ndarray) -> np.ndarray:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("audio", nargs="?", type=Path, default=SAMPLE, help="audio file (default: the sample meeting)")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "audio",
+        nargs="?",
+        type=Path,
+        default=SAMPLE,
+        help="audio file (default: the sample meeting)",
+    )
     p.add_argument("--turns", type=int, default=30, help="number of windows to embed (default 30)")
-    p.add_argument("--seconds", type=float, default=4.0, help="window length in seconds (default 4)")
-    p.add_argument("--proxy", action="store_true", help="use the ungated pyannote/wespeaker-voxceleb-resnet34-LM")
+    p.add_argument(
+        "--seconds", type=float, default=4.0, help="window length in seconds (default 4)"
+    )
+    p.add_argument(
+        "--proxy",
+        action="store_true",
+        help="use the ungated pyannote/wespeaker-voxceleb-resnet34-LM",
+    )
     p.add_argument("--pyannote-model", default="pyannote/speaker-diarization-community-1")
     p.add_argument("--hf-token", default=os.environ.get("HF_TOKEN", ""), help="default: $HF_TOKEN")
-    p.add_argument("--models-dir", type=Path, default=Path.home() / ".cache" / "mnemosyne-trials" / "voices")
+    p.add_argument(
+        "--models-dir", type=Path, default=Path.home() / ".cache" / "mnemosyne-trials" / "voices"
+    )
     p.add_argument(
         "--onnx-scale",
         type=float,
         default=1.0,
-        help="multiply samples before sherpa-onnx (default 1; 32768 tests the int16-range hypothesis)",
+        help="multiply samples before sherpa-onnx (default 1; 32768: the int16-range hypothesis)",
     )
     p.add_argument("--threads", type=int, default=2)
     args = p.parse_args()
@@ -154,7 +176,10 @@ def main() -> None:
     pcm = decode_audio(args.audio, RATE).astype(np.float32)
     spans = pick_windows(pcm, args.turns, args.seconds)
     clips = [np.ascontiguousarray(pcm[int(a * RATE) : int(b * RATE)]) for a, b in spans]
-    print(f"{len(clips)} windows of {args.seconds:g} s from {args.audio.name} (loudest window per equal slot)")
+    print(
+        f"{len(clips)} windows of {args.seconds:g} s from {args.audio.name}"
+        " (loudest window per equal slot)"
+    )
 
     onnx = onnx_vectors(fetch_onnx(args.models_dir), clips, args.threads, args.onnx_scale)
     py = pyannote_vectors(args, clips)
@@ -164,7 +189,7 @@ def main() -> None:
 
     pu, ou = unit(py), unit(onnx)
     same = np.sum(pu * ou, axis=1)
-    for (a, b), c in zip(spans, same):
+    for (a, b), c in zip(spans, same, strict=True):
         print(f"  {a:7.1f}-{b:7.1f} s  cos(pyannote, onnx) = {c:.4f}")
     med = float(np.median(same))
     print(f"same audio: median {med:.4f}, min {same.min():.4f}, max {same.max():.4f}")
@@ -176,7 +201,10 @@ def main() -> None:
     rho = float(spearmanr(pm, om).statistic)
     for name, v in (("pyannote", pm), ("onnx", om)):
         q = np.percentile(v, [5, 25, 50, 75, 95])
-        print(f"turn-to-turn cosine, {name}: p5 {q[0]:.3f} p25 {q[1]:.3f} p50 {q[2]:.3f} p75 {q[3]:.3f} p95 {q[4]:.3f}")
+        print(
+            f"turn-to-turn cosine, {name}: p5 {q[0]:.3f} p25 {q[1]:.3f} p50 {q[2]:.3f}"
+            f" p75 {q[3]:.3f} p95 {q[4]:.3f}"
+        )
     print(f"Spearman of the pairwise-cosine matrices: {rho:.4f}")
     print(f"verdict: {'SAME space' if med >= 0.95 else 'NOT the same space'} (bar: median >= 0.95)")
 
