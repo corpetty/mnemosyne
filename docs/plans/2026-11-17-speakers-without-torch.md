@@ -293,3 +293,54 @@ Phase 2 (not in the first deliverable):
   pyannote and Nemotron diarizers, not for voice profiles; the wizard's onnx line says about 75 MB and that voices
   are recognised across meetings; "Who is who?" stays as it is (it becomes true).
 - Implementation runs as two sequential parts: A = tasks 1-3, B = tasks 4-6. Task 7 is a follow-up.
+
+## Task 0 (proxy) result, 2026-11-17
+
+What was compared: **the proxy, not community-1.** `pyannote/wespeaker-voxceleb-resnet34-LM` (`Model.from_pretrained`
++ `Inference(window="whole")`, CPU, pyannote.audio 4.0.7) against sherpa-onnx 1.13.8 running
+`wespeaker_en_voxceleb_resnet34_LM.onnx` (size and SHA-256 checked). Audio: the bundled AMI excerpt
+(`samples/sample-meeting.ogg`, 70 s). It has no reference turns and the script did not call the onnx diarizer; it cut
+17 non-overlapping 4 s windows, the loudest of each equal slot. Several speakers, but only 17 turns (the 70 s clip
+holds no more). Peak memory 1.2 GB, 26 s, 2 threads.
+
+| | |
+|---|---|
+| Dimension | 256 and 256 |
+| Same audio, cosine(pyannote, onnx) | **median 0.547**, min 0.233, max 0.686 |
+| Turn-to-turn cosine, pyannote | p5 -0.14, p25 0.02, p50 0.63, p75 0.73, p95 0.82 |
+| Turn-to-turn cosine, onnx | p5 -0.01, p25 0.14, p50 0.53, p75 0.73, p95 0.80 |
+| Spearman of the two pairwise-cosine matrices | 0.935 |
+
+Conclusion: **not the same space** (bar: median >= 0.95). The two models rank pairs of turns almost the same way
+(Spearman 0.93: same network family, same notion of who sounds alike), but the vectors for one clip are far apart, so
+a pyannote profile cannot be matched with an ONNX vector. With the decision above, the ONNX embedder's space stays
+`wespeaker-r34` until the real check says otherwise. The gap is likely a front-end difference (sample scaling of the
+fbank input, mean normalisation, or the checkpoint), not different weights; not investigated here. Because this is the
+proxy, community-1's bundled embedder could differ again, so the real run is still worth doing.
+
+Real check, on a machine with the HF token and community-1 accepted (about 10 minutes on CPU):
+
+```
+cd backend && HF_TOKEN=hf_... uv run --no-sync python scripts/compare-voice-spaces.py
+```
+
+Add `--turns 17 --seconds 4` (the default turns of 30 give 17 on the 70 s sample) or pass a longer meeting file as the
+first argument for more turns.
+
+### Scaling hypothesis (tested once, 2026-11-17): wrong
+
+The guess was that sherpa-onnx feeds the model samples at a different scale from pyannote. pyannote's WeSpeaker
+wrapper multiplies the waveform by 2^15 and runs `torchaudio.compliance.kaldi.fbank` (80 bins, 25/10 ms, hamming,
+`snip_edges=True`, `round_to_power_of_two=True`, dither 0), then subtracts the clip's mean over time. The ONNX file's
+metadata says `normalize_samples: 0`, so sherpa's feature extractor (fed [-1, 1] by `accept_waveform`) is told to scale
+to the int16 range itself. The scales were therefore probably equal already. Test: `compare-voice-spaces.py --proxy
+--onnx-scale 32768` (new option, multiplies the samples before sherpa) gave same-audio median **-0.061** (min -0.115,
+max 0.095), Spearman 0.455: far worse, as expected if sherpa already scales. So scale is not the cause; the 0.547
+median (Spearman 0.935) stands.
+
+What is left, not tested: sherpa's own fbank options (its defaults for dither, `snip_edges`, window type, mean
+normalisation are in the C++ extractor, not in the Python config of 1.13.8, which exposes only `model`,
+`num_threads`, `debug`, `provider`), or a different checkpoint behind the two files. If the ONNX embedder is to share
+pyannote's space, the next check is to compute the fbank in numpy/torchaudio as pyannote does and run the ONNX model
+on it directly with onnxruntime (the model takes fbank frames). That also makes a pyannote-identical front end possible
+without torch (torchaudio's kaldi fbank is plain DSP), a candidate for a later task. Peak memory of this run 1.2 GB.
