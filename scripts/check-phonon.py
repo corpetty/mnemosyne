@@ -58,7 +58,15 @@ def ran_engine(transcriber, log: Path, mark: int, engine: str) -> str | None:
     return None
 
 
-async def cpu_check(data_dir: Path, sample: Path, mlx_took: float) -> int:
+async def warm(transcriber, sample: Path) -> float:
+    """Seconds for a second transcription of `sample`, the server already up (the first one
+    includes the server's start and, for MLX, compiling its Metal kernels)."""
+    begun = time.monotonic()
+    await transcriber.transcribe(str(sample), language="en")
+    return time.monotonic() - begun
+
+
+async def cpu_check(data_dir: Path, sample: Path, mlx_took: tuple[float, float]) -> int:
     """The Mac: the same cut with Fermion's CPU engine forced, to compare with the MLX run."""
     from mnemosyne.services import phonon_install
     from mnemosyne.transcription.transcribers import phonon
@@ -79,11 +87,13 @@ async def cpu_check(data_dir: Path, sample: Path, mlx_took: float) -> int:
             return fail("the CPU engine returned no words")
         if why := ran_engine(transcriber, log, mark, "cpu"):
             return fail(why)
+        again = await warm(transcriber, sample)
     finally:
         await transcriber.unload()
     print(
-        f"{CUT_SECONDS} s with the MLX engine: {mlx_took:.1f} s, with the CPU engine: "
-        f"{took:.1f} s (server start included)",
+        f"{CUT_SECONDS} s with the MLX engine: {mlx_took[0]:.1f} s first, {mlx_took[1]:.1f} s "
+        f"warm; with the CPU engine: {took:.1f} s first, {again:.1f} s warm (first = server "
+        "start included)",
         flush=True,
     )
     print(f"CPU engine: {' '.join(s.text for s in segments)[:200]}", flush=True)
@@ -135,6 +145,7 @@ async def check(data_dir: Path, sample: Path) -> int:
             if why := ran_engine(transcriber, log, mark, "mlx"):
                 return fail(why)
             print("engine: mlx", flush=True)
+            mlx_warm = await warm(transcriber, sample)
 
         # The server must refuse a request without its API key.
         server = transcriber._server
@@ -156,7 +167,7 @@ async def check(data_dir: Path, sample: Path) -> int:
                 print(f"request {label}: 401", flush=True)
     finally:
         await transcriber.unload()
-    if MAC and await cpu_check(data_dir, sample, took):
+    if MAC and await cpu_check(data_dir, sample, (took, mlx_warm)):
         return 1
     print("phonon OK")
     return 0
