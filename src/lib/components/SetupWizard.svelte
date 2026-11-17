@@ -435,7 +435,9 @@
 				<span class="block text-xs text-gray-500">Recordings are named after the meeting in progress, and you get a brief of what's open from last time.</span>
 				<select bind:value={calendarSource} class={input} aria-label="Calendar source">
 					<option value="off">No calendar</option>
-					<option value="desktop">This computer's calendars (GNOME Online Accounts)</option>
+					{#if !system?.platform.startsWith('Darwin')}
+						<option value="desktop">This computer's calendars (GNOME Online Accounts)</option>
+					{/if}
 					<option value="ics">A private ICS address</option>
 				</select>
 				{#if calendarSource === 'desktop'}

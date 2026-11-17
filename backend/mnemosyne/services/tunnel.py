@@ -19,6 +19,7 @@ import platform
 import re
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -48,6 +49,13 @@ CLOUDFLARED: dict[str, Download] = {
         name=f"cloudflared-{CLOUDFLARED_VERSION}-arm64",
     ),
 }
+# The Mac gets a .tgz holding the binary (Apple silicon only, like the app); same release.
+CLOUDFLARED_MAC = Download(
+    url=f"{_BASE}/cloudflared-darwin-arm64.tgz",
+    sha256="a2f79ff7b9420aa537d74af239f376da170bbabeb529aec416002adac6a72e70",
+    size=19_809_074,
+    name=f"cloudflared-{CLOUDFLARED_VERSION}-darwin-arm64.tgz",
+)
 _ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 
 URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
@@ -65,10 +73,14 @@ class Tunnel(Protocol):
 
 
 def cloudflared_download() -> Download | None:
-    """The pinned cloudflared for this machine (None: Linux x86_64 and arm64 only)."""
-    if platform.system() != "Linux":
+    """The pinned cloudflared for this machine (None: Linux x86_64 and arm64, Mac arm64 only)."""
+    arch = _ARCH.get(platform.machine().lower(), "")
+    system = platform.system()
+    if system == "Darwin":
+        return CLOUDFLARED_MAC if arch == "arm64" else None
+    if system != "Linux":
         return None
-    return CLOUDFLARED.get(_ARCH.get(platform.machine().lower(), ""))
+    return CLOUDFLARED.get(arch)
 
 
 def ensure_cloudflared(app: Any, progress: downloads.ProgressFn | None = None) -> Path:
@@ -82,6 +94,14 @@ def ensure_cloudflared(app: Any, progress: downloads.ProgressFn | None = None) -
         path = downloads.fetch(folder, item, progress)
     except DownloadError as e:
         raise TunnelError(str(e)) from e
+    if path.name.endswith(".tgz"):  # the Mac: the binary is inside the verified archive
+        binary = path.with_name(path.name.removesuffix(".tgz"))
+        if not binary.is_file():
+            try:
+                downloads.extract(path, {"cloudflared": binary.name}, folder)
+            except (DownloadError, KeyError, OSError, tarfile.TarError) as e:
+                raise TunnelError(f"Could not unpack cloudflared: {e}") from e
+        path = binary
     path.chmod(0o755)
     return path
 

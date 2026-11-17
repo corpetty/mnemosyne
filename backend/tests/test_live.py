@@ -253,3 +253,24 @@ async def test_a_failing_transcriber_does_not_grow_the_buffer(growing_wav):
     rate = source.tail.sample_rate
     assert source.buffer.size <= 30 * rate and source.failures == 4
     assert source.buffer_start == pytest.approx(80.5 - 30, abs=0.1)  # 0.5 s + 4 x 20 s
+
+
+def test_cpu_pressure_on_the_mac_uses_load_average(tmp_path, monkeypatch):
+    from mnemosyne.transcription import live
+
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr("os.cpu_count", lambda: 8)
+    monkeypatch.setattr("os.getloadavg", lambda: (8.0, 4.0, 2.0))
+    assert live.cpu_pressure(tmp_path / "missing") == 40.0  # one task per core
+    monkeypatch.setattr("os.getloadavg", lambda: (12.0, 4.0, 2.0))
+    assert live.cpu_pressure(tmp_path / "missing") == 60.0
+    psi = tmp_path / "cpu"
+    psi.write_text("some avg10=3.00 avg60=0 avg300=0 total=1\n")
+    assert live.cpu_pressure(psi) == 3.0  # PSI still wins when there is any
+
+
+def test_cpu_pressure_on_linux_without_psi_is_unknown(tmp_path, monkeypatch):
+    from mnemosyne.transcription import live
+
+    monkeypatch.setattr("sys.platform", "linux")
+    assert live.cpu_pressure(tmp_path / "missing") is None

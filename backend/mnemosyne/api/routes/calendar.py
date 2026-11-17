@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ... import access
 from ...models.base import ApiModel
 from ...models.session import Session
-from ...services.calendar_service import CalendarEvent
+from ...services.calendar_service import CalendarEvent, desktop_supported
 from ...services.desktop_calendar import DesktopCalendar, list_calendars
 from ..context import AppContext, get_ctx
 
@@ -45,6 +45,8 @@ async def calendar(hours: float = 12, refresh: bool = False, ctx: AppContext = D
 async def desktop_calendars():
     """The calendars GNOME Online Accounts and evolution-data-server know about (empty when
     the desktop has none)."""
+    if not desktop_supported():
+        return []
     try:
         return await asyncio.to_thread(list_calendars)
     except Exception:

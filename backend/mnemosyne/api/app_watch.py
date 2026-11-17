@@ -25,6 +25,8 @@ import asyncio
 import logging
 import os
 import signal
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -72,9 +74,27 @@ def _ours(pid: int) -> bool:
         return False
 
 
+# Title and message arrive as argv, so no text is ever part of the script.
+_OSASCRIPT = (
+    "on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run"
+)
+
+
+def _notify_mac(summary: str, body: str) -> None:
+    subprocess.run(
+        ["osascript", "-e", _OSASCRIPT, summary, body],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+
+
 def notify(summary: str, body: str) -> None:
-    """A desktop notification (org.freedesktop.Notifications). Best effort."""
+    """A desktop notification (org.freedesktop.Notifications; osascript on the Mac). Best effort."""
     try:
+        if sys.platform == "darwin":
+            _notify_mac(summary, body)
+            return
         from jeepney import DBusAddress, new_method_call
         from jeepney.io.blocking import open_dbus_connection
 
