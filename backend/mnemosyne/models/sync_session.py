@@ -293,7 +293,13 @@ class SyncSession(ApiModel):
     # peer): ours are kept. Merged as a union by sha256 (services/sync_merge.py); none is ever
     # removed by a merge (each machine sweeps its own unused ones).
     media: list[SyncMedia] | None = None
+    # The meeting's speaker voices, label -> vector. Only the pyannote voice space: what every
+    # older peer knows. Newer ones also send `speaker_voices`.
     speaker_embeddings: dict[str, list[float]] = Field(default_factory=dict)
+    # Every voice space: {space: {label: vector}} (models/speaker.py). None = the sender does not
+    # know the field (an older peer): its `speaker_embeddings` are pyannote voices and the other
+    # spaces we hold stay untouched. Merged per space (services/sync_merge.py).
+    speaker_voices: dict[str, dict[str, list[float]]] | None = None
     assets: list[SyncAsset] = Field(default_factory=list)
     events: list[SyncEvent] = Field(default_factory=list)
     # The recording machine's sync id as the SENDER sees it (its own device id when the meeting

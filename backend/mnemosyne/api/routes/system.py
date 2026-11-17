@@ -57,6 +57,9 @@ class SystemInfo(ApiModel):
     transcriber_in_use: str
     live_transcriber_in_use: str  # the live transcript's (CPU only: Phonon-2 or Parakeet for auto)
     diarizer_in_use: str
+    # What recognises voices here (registry.resolve_speaker_embedder): "pyannote" (torch, with the
+    # Hugging Face token), "onnx" (the CPU, no token) or "none".
+    speaker_embedder_in_use: Literal["pyannote", "onnx", "none"]
     platform: str
     problems: list[str]  # what went wrong when the backend started (config, recovery, ...)
     # For the desktop shell, which installs the gpu extra in the background: not before the
@@ -95,6 +98,7 @@ async def system_info(ctx: AppContext = Depends(get_ctx)):
     from ...transcription.registry import (
         resolve_diarizer,
         resolve_live_transcriber,
+        resolve_speaker_embedder,
         resolve_transcriber,
     )
 
@@ -102,12 +106,14 @@ async def system_info(ctx: AppContext = Depends(get_ctx)):
     transcriber = await asyncio.to_thread(resolve_transcriber, ctx.settings)
     live = await asyncio.to_thread(resolve_live_transcriber, ctx.settings)
     diarizer = await asyncio.to_thread(resolve_diarizer, ctx.settings)
+    embedder = await asyncio.to_thread(resolve_speaker_embedder, ctx.settings)
     capture, capture_problem = await asyncio.to_thread(_capture)  # a Mac asks the helper
     return SystemInfo(
         onnx_diarizer=_has("sherpa_onnx"),
         transcriber_in_use=transcriber,
         live_transcriber_in_use=live,
         diarizer_in_use=diarizer,
+        speaker_embedder_in_use=embedder,
         gpu_driver=_gpu_driver(),
         gpu_stack=_has("torch") and _has("whisperx"),
         parakeet=_has("onnx_asr"),

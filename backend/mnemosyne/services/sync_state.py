@@ -49,6 +49,14 @@ def _b64(raw) -> str:
     return base64.b64encode(bytes(raw)).decode("ascii") if raw else ""
 
 
+def _voices_by_space(rows: list[dict]) -> dict[str, dict[str, list[float]]]:
+    """`session_voices` rows -> {space: {label: vector}}."""
+    out: dict[str, dict[str, list[float]]] = {}
+    for x in rows:
+        out.setdefault(x["space"], {})[x["label"]] = json.loads(x["embedding"])
+    return out
+
+
 def export_session(
     repo: SessionRepository, session_id: str, device_id: str, own: str = ""
 ) -> SyncSession | None:
@@ -193,7 +201,9 @@ def export_session(
             )
             for x in repo.media_rows(session_id)
         ],
-        # The wire format carries the pyannote space only (older peers' voices) for now.
+        # Every space in `speaker_voices`; the pyannote one again in `speaker_embeddings`, which
+        # is all an older peer reads.
+        speaker_voices=_voices_by_space(rows["embeddings"]),
         speaker_embeddings={
             x["label"]: json.loads(x["embedding"])
             for x in rows["embeddings"]

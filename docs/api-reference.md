@@ -453,14 +453,19 @@ once transcribed.
 
 ### `GET /api/system`
 What this machine can do, for the setup wizard: `{gpu_driver, gpu_stack, parakeet, capture, capture_problem, ffmpeg,
-hf_token, onnx_diarizer, transcriber_in_use, diarizer_in_use, platform}`. `gpu_driver` is an NVIDIA
+hf_token, onnx_diarizer, transcriber_in_use, diarizer_in_use, speaker_embedder_in_use, platform}`. `gpu_driver` is an NVIDIA
 driver (nvidia-smi or a loadable libcuda); `gpu_stack` means torch and WhisperX are installed;
 `parakeet` means onnx-asr is; `onnx_diarizer` means sherpa-onnx is. `*_in_use` is what runs for the
 current settings (`transcription/registry.py`): `transcriber = "auto"` (the default) is WhisperX
 with a working CUDA GPU, else Parakeet; `diarizer = "auto"` is Nemotron with a GPU, else pyannote
 when it is installed and `hf_token` is set, else `onnx` (pyannote segmentation + TitaNet-small on
-the CPU via sherpa-onnx, ~50 MB downloaded into `<data_dir>/models/diarization` on first use), else
-none. A saved engine whose packages are not installed falls back the same way. The setting
+the CPU via sherpa-onnx, ~75 MB downloaded into `<data_dir>/models/diarization` on first use), else
+none. A saved engine whose packages are not installed falls back the same way.
+`speaker_embedder_in_use` (`"pyannote"` | `"onnx"` | `"none"`) is what recognises voices here
+(`registry.resolve_speaker_embedder`): `pyannote` when torch and pyannote are installed and `hf_token`
+is set, else `onnx` (WeSpeaker ResNet34 on the CPU through sherpa-onnx, no token), else `none`; the
+diarizer setting `none` means `none`. Voices of the two are kept apart (voice spaces), so changing
+embedder does not recognise profiles learned with the other. The setting
 `setup_complete` records that the first-run wizard was finished or skipped; the app opens the wizard
 when it is false and there are no meetings yet. The answer also carries `setup_complete` and
 `gpu_support` (`auto` | `off`) for the desktop shell: on an NVIDIA machine it installs the gpu extra

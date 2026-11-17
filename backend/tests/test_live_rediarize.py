@@ -93,7 +93,7 @@ async def test_voice_profiles_name_speakers(tmp_path):
         live,
         lambda e: None,
         "s1",
-        match_names=lambda emb: {"SPEAKER_01": "Ana"} if emb else {},
+        match_names=lambda emb, space: {"SPEAKER_01": "Ana"} if emb else {},
     )
     await r.pass_once(source)
     assert [s.speaker for s in live.committed] == ["Speaker 1", "Ana"]
@@ -125,7 +125,7 @@ async def test_the_clusterer_learns_the_corrected_names(tmp_path):
         embeddings={"SPEAKER_01": [0.0, 1.0]},
     )
     r = LiveRediarizer(
-        diarizer, live, lambda e: None, "s1", match_names=lambda emb: {"SPEAKER_01": "Ana"}
+        diarizer, live, lambda e: None, "s1", match_names=lambda emb, space: {"SPEAKER_01": "Ana"}
     )
     await r.pass_once(source)
     assert [c.label for c in clusterer.clusters] == ["Speaker 1", "Ana"]
@@ -172,3 +172,27 @@ async def test_a_long_recording_is_re_diarized_by_its_last_window(tmp_path):
     assert diarizer.calls == [(20 * RATE, RATE)]  # 20 s read, not the whole minute
     # Only the line inside the window (50-55 s = 10-15 s in it) could change.
     assert [s.speaker for s in live.committed][:2] == ["Speaker 1", "Speaker 1"]
+
+
+@pytest.mark.anyio
+async def test_the_diarizers_voice_space_goes_to_the_profile_match(tmp_path):
+    live, source = live_with(tmp_path, [(0, 5, "Speaker 1"), (6, 9, "Speaker 1")])
+
+    class OtherSpace(FakeDiarizer):
+        async def diarize_pcm(self, pcm, sample_rate):
+            result = await super().diarize_pcm(pcm, sample_rate)
+            result.space = "wespeaker-r34"
+            return result
+
+    diarizer = OtherSpace(
+        turns((0, 5.5, "SPEAKER_00"), (5.5, 9, "SPEAKER_01")), embeddings={"SPEAKER_01": [1.0, 0.0]}
+    )
+    asked = []
+
+    def match(emb, space):
+        asked.append(space)
+        return {"SPEAKER_01": "Ana"}
+
+    await LiveRediarizer(diarizer, live, lambda e: None, "s1", match_names=match).pass_once(source)
+    assert asked == ["wespeaker-r34"]
+    assert [s.speaker for s in live.committed] == ["Speaker 1", "Ana"]

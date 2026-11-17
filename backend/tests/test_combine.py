@@ -108,6 +108,64 @@ def test_two_meetings_become_one_in_recording_order(client, ctx):
     assert not (ctx.settings.recordings_dir / later / "rec_mixed.ogg").exists()  # joined now
 
 
+def _session(*speakers):
+    from mnemosyne.models.session import Session
+
+    return Session(
+        name="m",
+        transcript=[
+            TranscriptSegment(text="x", speaker=who, start=i, end=i + 0.5)
+            for i, who in enumerate(speakers)
+        ],
+    )
+
+
+def test_relabel_matches_voices_inside_each_space():
+    from mnemosyne.services.combine import relabel_speakers
+
+    target = _session("Ana", "SPEAKER_01")
+    other = _session("SPEAKER_00", "SPEAKER_01", "Bob")
+    relabel = relabel_speakers(
+        other,
+        {"pyannote": {"SPEAKER_00": [1.0, 0.0]}, "w": {"SPEAKER_01": [0.0, 1.0]}},
+        target,
+        {"pyannote": {"Ana": [0.99, 0.1]}, "w": {"SPEAKER_01": [0.1, 0.99]}},
+        0.6,
+    )
+    # Each other-meeting voice is matched against the target's voices of the same space.
+    assert relabel["SPEAKER_00"] == "Ana" and relabel["SPEAKER_01"] == "SPEAKER_01"
+    assert relabel["Bob"] == "Bob"  # named there, no voice: keeps its name
+
+
+def test_relabel_never_compares_across_spaces():
+    from mnemosyne.services.combine import relabel_speakers
+
+    target = _session("Ana")
+    other = _session("SPEAKER_00")
+    # The same vector, but made by different models: not a match, so a new label.
+    relabel = relabel_speakers(
+        other,
+        {"w": {"SPEAKER_00": [1.0, 0.0]}},
+        target,
+        {"pyannote": {"Ana": [1.0, 0.0]}},
+        0.6,
+    )
+    assert relabel == {"SPEAKER_00": "SPEAKER_00"}
+    relabel = relabel_speakers(other, {}, _session("SPEAKER_00"), {}, 0.6)
+    assert relabel == {"SPEAKER_00": "SPEAKER_01"}  # no voices anywhere: numbered, as before
+
+
+def test_relabel_uses_the_threshold_of_each_space():
+    from mnemosyne.services.combine import relabel_speakers
+
+    target = _session("Ana")
+    other = _session("SPEAKER_00")
+    same = {"pyannote": {"Ana": [1.0, 0.0]}}
+    near = {"pyannote": {"SPEAKER_00": [0.8, 0.6]}}  # cosine 0.8
+    assert relabel_speakers(other, near, target, same, 0.9)["SPEAKER_00"] != "Ana"
+    assert relabel_speakers(other, near, target, same, lambda space: 0.7)["SPEAKER_00"] == "Ana"
+
+
 def _two_parts(ctx, name, at0, at1, notes):
     """A meeting of two 2 s parts (the second at 2 s), recorded at `at0` and `at1`."""
     s = ctx.sessions.create_session(name)

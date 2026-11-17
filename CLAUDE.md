@@ -83,8 +83,9 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   it needs torch and transformers 5). AMI ES2004a-d (2026-10-08): 22.7 % WER vs Parakeet's
   27.4 % (fillers counted), 53x vs 13x real time, same speaker accuracy; Silero VAD tuning did
   not help Parakeet. Missing, Parakeet is used. pyannote needs
-  `HF_TOKEN` with its model license accepted; Nemotron and onnx do not, but voice profiles and live
-  speaker labels still use pyannote's embedding model, so they do. CI has no ML packages: tests
+  `HF_TOKEN` with its model license accepted; Nemotron and onnx do not. Voice profiles and live
+  speaker labels use pyannote's embedding model when pyannote, torch and the token are there, else
+  the ONNX WeSpeaker embedder (no torch, no token; `resolve_speaker_embedder`). CI has no ML packages: tests
   that assume one monkeypatch `registry.installed`.
 - Voice spaces (docs/plans/2026-11-17-speakers-without-torch.md): every stored voice is tagged with the model
   family that made it (`pyannote`, or `wespeaker-r34` from the ONNX `OnnxEmbedder`, transcription/speaker_embedders.py,
@@ -92,6 +93,11 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   (`SpeakerService.match(vectors, space)`, `DiarizationResult.space`, `ComposedEngine.last_speaker_space`).
   `speakers.embedding` and `session_speakers` are gone/unread. Per-space cosine thresholds: `thresholds(space, settings)`
   (the two settings keep meaning pyannote). The onnx diarizer embeds each speaker's clean turns with that embedder.
+  Live: `VoiceNamer`, `AppContext.live_voices` (a `(time, space, voices)` tuple; another space's voices are dropped)
+  and `LiveRediarizer` carry the space, and `match_names(embeddings, space)` takes it. Sync: `SyncSession.speaker_voices`
+  is `{space: {label: vector}}` for every space, `speaker_embeddings` repeats the pyannote one for older peers; `None`
+  (an older peer) means "pyannote only" and never wipes other spaces (apply, three-way merge in `_merge_voices`).
+  Combining meetings matches per space (`relabel_speakers`). `/api/system.speaker_embedder_in_use` reports the embedder.
 - NeMo (for Nemotron) is in the gpu extra as a pinned GitHub source tarball of NVIDIA-NeMo/Speech
   main (PyPI 3.0.0 cannot load the model; a tarball so installs need no git). It pins
   lightning<=2.4, omegaconf<=2.3 and packaging<25, which pyannote and WhisperX accept. When

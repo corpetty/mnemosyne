@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import logging
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from ..models.session import Recording, Session, SessionStatus
 from ..models.transcript import TranscriptSegment
+from ..transcription.speaker_embedders import thresholds
 from . import notes_media, notes_sections, shared_notes
 from .notes_chips import retarget_chips
 from .parts import (
@@ -129,25 +131,39 @@ def renumber_chips(
 
 def relabel_speakers(
     other: Session,
-    other_embeddings: dict[str, list[float]],
+    other_voices: dict[str, dict[str, list[float]]],
     target: Session,
-    target_embeddings: dict[str, list[float]],
-    threshold: float,
+    target_voices: dict[str, dict[str, list[float]]],
+    threshold: float | Callable[[str], float],
 ) -> dict[str, str]:
-    """The other meeting's speaker labels -> labels in this one."""
-    taken = {s.speaker for s in target.transcript} | set(target_embeddings)
-    relabel = match_speakers(other_embeddings, target_embeddings, taken, threshold)
-    for label, new in list(relabel.items()):
-        if not _generic(label) and _generic(new):  # a name given there, no voice match here
-            relabel[label] = label
+    """The other meeting's speaker labels -> labels in this one. Voices are `{space: {label:
+    vector}}` and are only compared inside one space (a meeting recorded with another embedder
+    than the one it joins is not relabelled by voice); `threshold` is a cosine, or a function of
+    the space giving that space's."""
+    taken = {s.speaker for s in target.transcript} | {
+        label for by_label in target_voices.values() for label in by_label
+    }
+    relabel: dict[str, str] = {}
+    claimed: set[str] = set()  # target labels already taken by a match in an earlier space
+    for space in sorted(set(other_voices) & set(target_voices), key=lambda x: (x != "pyannote", x)):
+        known = {k: v for k, v in target_voices[space].items() if k not in claimed}
+        new = {k: v for k, v in other_voices[space].items() if k not in relabel}
+        if not new or not known:
+            continue
+        cut = threshold(space) if callable(threshold) else threshold
+        for label, match in match_speakers(new, known, taken, cut).items():
+            if match in known:  # a voice match; the others are numbered below
+                relabel[label] = match
+                claimed.add(match)
     used = taken | set(relabel.values())
     numbers = [int(x[8:]) for x in used if x.startswith("SPEAKER_") and x[8:].isdigit()]
     n = max(numbers, default=-1) + 1
-    for label in sorted({s.speaker for s in other.transcript} - set(relabel)):
+    voiced = {label for by_label in other_voices.values() for label in by_label}
+    for label in sorted(({s.speaker for s in other.transcript} | voiced) - set(relabel)):
         if label.startswith("SPEAKER_"):
             relabel[label] = f"SPEAKER_{n:02d}"
             n += 1
-        else:
+        else:  # a name given there, no voice match here
             relabel[label] = label
     return relabel
 
@@ -246,10 +262,10 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
         all_pieces.sort(key=lambda p: rank[(p.session.id, p.part)])
         relabel = relabel_speakers(
             other,
-            app.repo.get_session_embeddings(other.id),
+            app.repo.get_session_voices(other.id),
             target,
-            app.repo.get_session_embeddings(target.id),
-            app.settings.speaker_match_threshold,
+            app.repo.get_session_voices(target.id),
+            lambda space: thresholds(space, app.settings).match,
         )
 
         update("Joining the audio", 0.3)
@@ -326,11 +342,14 @@ def _combine(app: AppContext, target: Session, other: Session, update) -> dict:
         from . import supervision
 
         supervision.scan(app, target.id)
-    embeddings = dict(app.repo.get_session_embeddings(target.id))
-    for label, vector in app.repo.get_session_embeddings(other.id).items():
-        embeddings.setdefault(relabel.get(label, label), vector)
-    if embeddings:
-        app.repo.set_session_embeddings(target.id, embeddings)
+    # The other meeting's voices join the target's, space by space.
+    target_voices = app.repo.get_session_voices(target.id)
+    for space, by_label in app.repo.get_session_voices(other.id).items():
+        voices = dict(target_voices.get(space, {}))
+        for label, vector in by_label.items():
+            voices.setdefault(relabel.get(label, label), vector)
+        if voices:
+            app.repo.set_session_voices(target.id, space, voices)
     fields = {"attendees": list(dict.fromkeys([*target.attendees, *other.attendees]))}
     if other.local_only:  # the stricter privacy wins
         fields["local_only"] = True

@@ -391,7 +391,7 @@ async def test_a_voice_profile_names_a_streamed_speaker(tmp_path):
     path = _wav(tmp_path)
     seen = []
 
-    def match(embeddings):
+    def match(embeddings, space):
         seen.append(embeddings)
         return {label: "Dana" for label, v in embeddings.items() if v == E[0]}
 
@@ -416,7 +416,7 @@ async def test_an_unmatched_speaker_is_tried_again_after_a_minute(tmp_path):
 
     path = _wav(tmp_path)
     embedder = ValueEmbedder()
-    namer = VoiceNamer(embedder, match_names=lambda e: {})
+    namer = VoiceNamer(embedder, match_names=lambda e, s: {})
     live, _, _ = _named_live(path, [(0, 200, 0)], namer)
     _append(path, 6.0, value=1000)
     await live.tick()
@@ -472,7 +472,7 @@ async def test_a_failing_embedder_stops_naming_but_not_the_transcript(tmp_path):
     from mnemosyne.transcription.live_streaming import VoiceNamer
 
     path = _wav(tmp_path)
-    namer = VoiceNamer(ValueEmbedder(fail=True), match_names=lambda e: {"Speaker 1": "X"})
+    namer = VoiceNamer(ValueEmbedder(fail=True), match_names=lambda e, s: {"Speaker 1": "X"})
     live, _, events = _named_live(path, [(0, 20, 0)], namer)
     _append(path, 6.0)
     await live.tick()
@@ -615,3 +615,90 @@ def test_session_voices_are_kept_an_hour(monkeypatch):
     clock[0] += 3601
     pipeline._session_voices(app, "c")
     assert set(app.live_voices) == {"c"}
+
+
+# ---- voice spaces ------------------------------------------------------------------------
+
+
+def test_session_voices_of_another_space_are_dropped():
+    import types
+
+    from mnemosyne.services import pipeline
+
+    app = types.SimpleNamespace(live_voices={}, live={})
+    pipeline._session_voices(app, "a", "pyannote")["Speaker 1"] = [1.0]
+    assert pipeline._session_voices(app, "a", "pyannote") == {"Speaker 1": [1.0]}
+    # The embedder changed between two parts: the old vectors cannot be compared with new ones.
+    assert pipeline._session_voices(app, "a", "wespeaker-r34") == {}
+    assert app.live_voices["a"][1] == "wespeaker-r34"
+
+
+async def test_the_namer_matches_profiles_in_its_embedders_space(tmp_path):
+    from mnemosyne.transcription.live_streaming import VoiceNamer
+
+    class OtherSpaceEmbedder(ValueEmbedder):
+        space = "wespeaker-r34"
+
+    path = _wav(tmp_path)
+    asked = []
+
+    def match(embeddings, space):
+        asked.append(space)
+        return {}
+
+    namer = VoiceNamer(OtherSpaceEmbedder(), match_names=match)
+    assert namer.space == "wespeaker-r34"
+    live, _, _ = _named_live(path, [(0, 20, 0)], namer)
+    _append(path, 6.0, value=1000)
+    await live.tick()
+    assert asked == ["wespeaker-r34"]
+    assert VoiceNamer(ValueEmbedder()).space == "pyannote"  # an embedder naming no space
+
+
+def test_the_live_job_uses_the_embedders_space(
+    client, ctx, fake_pipewire, fake_engine, monkeypatch
+):
+    import mnemosyne.api.routes.audio as audio_routes
+    from mnemosyne.services.model_service import ModelService
+    from tests.conftest import drain_until_job
+
+    class OtherSpaceEmbedder(ValueEmbedder):
+        space = "wespeaker-r34"
+
+        def is_loaded(self):
+            return True
+
+        async def load(self):
+            pass
+
+    monkeypatch.setattr(ModelService, "live_embedder", property(lambda self: OtherSpaceEmbedder()))
+    model = FakeStreamModel()
+    monkeypatch.setattr(ModelService, "live_stream_model", property(lambda self: model))
+    monkeypatch.setattr("mnemosyne.audio.capture.list_devices", lambda: audio_routes.list_devices())
+    # Two people, each known in one space only: the live job offers the embedder's space's.
+    ctx.repo.upsert_speaker_sample("Ann", [1.0, 0.0], "pyannote")
+    ctx.repo.upsert_speaker_sample("Bea", [0.0, 1.0], "wespeaker-r34")
+    ctx.settings.speaker_match_threshold = 0.9  # pyannote's setting; wespeaker-r34 has its own
+    seen = {}
+
+    real_tick = LiveTranscriber.tick
+
+    async def tick(self, flush=False):
+        seen["known"] = dict(self.clusterer.known)
+        seen["match"] = self.clusterer.known_threshold
+        seen["namer"] = self.namer
+        return await real_tick(self, flush)
+
+    monkeypatch.setattr(LiveTranscriber, "tick", tick)
+    started = client.post("/api/audio/start", json={"device_ids": [1, 2]}).json()
+    deadline = time.monotonic() + 10
+    while model.loads == 0 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        stopped = client.post(f"/api/audio/stop/{started['session_id']}").json()
+        drain_until_job(ws, stopped["job_id"])
+    assert seen["known"] == {"Bea": [0.0, 1.0]}
+    assert seen["match"] == 0.6
+    assert seen["namer"].space == "wespeaker-r34" and seen["namer"].threshold == 0.6
+    assert ctx.live_voices[started["session_id"]][1] == "wespeaker-r34"

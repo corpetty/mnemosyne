@@ -5307,17 +5307,25 @@ class SessionRepository:
                     for c in s.comments
                 ],
             )
-            # The wire format carries the pyannote space only (every older peer's voices);
-            # voices of other spaces stay as they are here.
-            self._conn.execute(
-                "DELETE FROM session_voices WHERE session_id=? AND space=?",
-                (sid, PYANNOTE_SPACE),
-            )
+            # Voices per space. A document without `speaker_voices` (an older peer) carries the
+            # pyannote space only: the spaces we hold beyond it stay as they are.
+            if s.speaker_voices is None:
+                voices = {PYANNOTE_SPACE: s.speaker_embeddings}
+                self._conn.execute(
+                    "DELETE FROM session_voices WHERE session_id=? AND space=?",
+                    (sid, PYANNOTE_SPACE),
+                )
+            else:
+                voices = {sp: by for sp, by in s.speaker_voices.items()}
+                if s.speaker_embeddings and PYANNOTE_SPACE not in voices:
+                    voices[PYANNOTE_SPACE] = s.speaker_embeddings
+                self._conn.execute("DELETE FROM session_voices WHERE session_id=?", (sid,))
             self._conn.executemany(
                 "INSERT INTO session_voices(session_id, label, space, embedding) VALUES (?,?,?,?)",
                 [
-                    (sid, label, PYANNOTE_SPACE, json.dumps(vec))
-                    for label, vec in s.speaker_embeddings.items()
+                    (sid, label, space, json.dumps(vec))
+                    for space, by_label in voices.items()
+                    for label, vec in by_label.items()
                 ],
             )
             self._link_synced_assets(sid, s)

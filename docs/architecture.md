@@ -339,12 +339,24 @@ survives on the mic channel. The job result reports `echo_dropped`.
 
 ### Voice profiles
 
-pyannote returns one embedding per diarized speaker. The pipeline stores them per session
-(`session_speakers`) and, when `auto_label_speakers` is on, `services/speaker_service.py` matches
-them against known profiles (`speakers` table, cosine ≥ `speaker_match_threshold`, greedy one-to-one)
-and relabels the transcript before it is saved. Renaming a speaker in the UI relabels the session and,
-if that label has an embedding, enrolls it into the named profile as a running mean. Profiles are
-managed in Settings.
+A diarizer returns one voice vector per diarized speaker (pyannote: its pipeline's; Nemotron and the
+onnx diarizer: the speaker embedder's, from each speaker's clean turns). The pipeline stores them per
+session (`session_voices`) and, when `auto_label_speakers` is on, `services/speaker_service.py` matches
+them against known profiles (`speaker_voices` table, cosine ≥ the space's match threshold, greedy
+one-to-one) and relabels the transcript before it is saved. Renaming a speaker in the UI relabels the
+session and enrolls every stored voice of that label into the named profile as a running mean per
+space. Profiles are managed in Settings.
+
+**Voice spaces.** Every stored voice records the model that made it, its *space*: `pyannote` (pyannote's
+embedding model, 256-d; needs torch and the Hugging Face token) or `wespeaker-r34` (WeSpeaker ResNet34
+as ONNX through sherpa-onnx, `transcription/speaker_embedders.py`: no torch, no token, a 26.5 MB
+download). Vectors are compared only inside one space; a profile can hold a voice per space.
+`registry.resolve_speaker_embedder` picks the embedder (`pyannote` with torch and a token, else `onnx`,
+else none) and `/api/system` reports it as `speaker_embedder_in_use`. The two cosine settings
+(`live_speaker_threshold`, `speaker_match_threshold`) mean pyannote; other spaces have constants next to
+the embedder (`thresholds(space, settings)`). Library sync carries a meeting's voices per space
+(`SyncSession.speaker_voices`, with the pyannote space repeated in `speaker_embeddings` for older
+peers); phase 8 sharing carries none. Profiles themselves do not travel.
 
 ### Live speaker labels
 
@@ -390,8 +402,12 @@ eight live labels; the final transcript is unaffected. If the model cannot load 
 the source falls back to voice clustering and the live status says so.
 
 **Voice clustering** (`transcription/live_speakers.py`). Each committed segment's audio is embedded
-with the embedding model inside the configured pyannote pipeline (community-1's bundled model, 256-d,
-~10 ms per segment on GPU), so vectors live in the same space as saved voice profiles.
+with the speaker embedder this machine runs (`registry.build_speaker_embedder`): the embedding model
+inside the configured pyannote pipeline (community-1's bundled model, 256-d, ~10 ms per segment on
+GPU) where pyannote and its token are available, else WeSpeaker ResNet34 on the CPU through
+sherpa-onnx (one thread, so it shares the CPU with the live transcriber). Live vectors are compared
+only with saved profiles of the embedder's voice space (`AppContext.live_voices`, `VoiceNamer`,
+`LiveRediarizer` carry the space).
 `OnlineClusterer` assigns segments to running centroids by cosine similarity
 (`live_speaker_threshold`, default 0.45), merges clusters whose centroids later converge, and names a
 cluster after a saved profile once it matches above `speaker_match_threshold` (one cluster per name;
@@ -399,8 +415,8 @@ the local user's profile is excluded when the mic is a separate channel). Rename
 `live_relabel` events and applied to lines already on screen. Segments under 1 s inherit the previous
 label. With `live_rediarize` (and Nemotron available) the recording so far is re-diarized every
 `live_rediarize_seconds` and changed lines are corrected with `live_labels`
-(`transcription/live_rediarize.py`). Without torch/pyannote (CPU-only installs) the live view keeps
-channel labels.
+(`transcription/live_rediarize.py`). Without a speaker embedder (no sherpa-onnx, or `diarizer =
+"none"`) the live view keeps channel labels.
 
 `mnemosyne-bench --live` (`bench_live.py`) replays a recording through the live transcript and
 scores both ways; with either, the final diarized transcript after stop remains authoritative.

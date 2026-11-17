@@ -54,8 +54,10 @@ Be aware this is a test build.
 
 - Recording works: your microphone and the system audio (the other people on a call), live
   transcript included. You can also import recordings (Import, or the sample meeting) and transcribe them.
-- Transcription runs on the CPU with Parakeet, and speaker labels with the onnx diarizer. It is
-  slower than on a PC with a GPU. For English you can install Phonon-2 (Settings → Transcription,
+- Transcription runs on the CPU with Parakeet, and speaker labels with the onnx diarizer. Voice
+  profiles work too: rename a speaker and tick "remember voice", and they are named in later
+  meetings, and live lines get "Speaker n" and names. This uses a small speaker model that runs
+  without a token (about 26 MB, downloaded the first time). It is slower than on a PC with a GPU. For English you can install Phonon-2 (Settings → Transcription,
   or the setup wizard; about 1 GB): it is more accurate than Parakeet and was faster on Linux.
 - Echo cancellation (the "Echo cancellation" row above the device list, next to Record): turn it on
   for calls without headphones.

@@ -798,9 +798,10 @@
 					<label>
 						<span class={labelClass}>Diarizer</span>
 						<select bind:value={form.diarizer} disabled={locked('diarizer')} class={inputClass}>
-							<option value="auto">Automatic (Nemotron on an NVIDIA GPU, else pyannote)</option>
+							<option value="auto">Automatic (Nemotron on an NVIDIA GPU, else pyannote with a token, else ONNX on the CPU)</option>
 							<option value="nemotron">Nemotron (NVIDIA GPU, NeMo)</option>
 							<option value="pyannote">pyannote (GPU, torch)</option>
+							<option value="onnx">On the CPU (ONNX)</option>
 							<option value="none">None (single speaker)</option>
 						</select>
 					</label>
@@ -890,7 +891,7 @@
 						</label>
 						<label class="col-span-2">
 							<span class={labelClass}>
-								HuggingFace token (pyannote license; Nemotron needs it only for voice profiles)
+								HuggingFace token (needed for the pyannote and Nemotron diarizers; voice profiles work without it)
 								{#if settings.secrets_set.hf_token}<span class="text-green-500 ml-1">set</span>{/if}
 							</span>
 							<div class="flex gap-2">

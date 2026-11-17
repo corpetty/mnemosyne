@@ -10031,6 +10031,12 @@ export interface components {
             speaker_embeddings: {
                 [key: string]: number[];
             };
+            /** Speaker Voices */
+            speaker_voices: {
+                [key: string]: {
+                    [key: string]: number[];
+                };
+            } | null;
             /**
              * Speakers Reviewed
              * @default false
@@ -10113,6 +10119,11 @@ export interface components {
             problems: string[];
             /** Setup Complete */
             setup_complete: boolean;
+            /**
+             * Speaker Embedder In Use
+             * @enum {string}
+             */
+            speaker_embedder_in_use: "pyannote" | "onnx" | "none";
             /** Summary Merge */
             summary_merge: boolean;
             /** Transcriber In Use */

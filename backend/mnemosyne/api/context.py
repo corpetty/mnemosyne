@@ -81,8 +81,9 @@ class AppContext:
     _intervals: tuple[float, float] = (6 * 3600, 900)
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     live: dict = field(default_factory=dict)  # session id -> running LiveTranscriber
-    # session id -> (time.monotonic() last used, {label: voice embedding}): streamed speakers'
-    # voices, so the next part of a meeting gives the same person the same live label.
+    # session id -> (time.monotonic() last used, voice space, {label: voice embedding}): streamed
+    # speakers' voices, so the next part of a meeting gives the same person the same live label.
+    # Voices of another space than the live embedder's are dropped.
     live_voices: dict = field(default_factory=dict)
     copilot_notes: dict = field(default_factory=dict)  # session id -> CopilotNotes
     # Live shared notes (services/shared_notes.py): the open meetings' rooms and fold locks.

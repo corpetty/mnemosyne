@@ -854,9 +854,10 @@ def live_transcribe(app: AppContext, session_id: str, recording):
             stream_model = app.models.live_stream_model
         return app.models.live_transcriber, sources, embedder, clusterer, diarizer, stream_model
 
-    def match_names(embeddings: dict[str, list[float]]) -> dict[str, str]:
-        # Live voices come from the live embedder (the live re-diarizer's is the same kind).
-        space = getattr(app.models.live_embedder, "space", PYANNOTE_SPACE)
+    def match_names(embeddings: dict[str, list[float]], space: str = "") -> dict[str, str]:
+        # `space` is the voice space of `embeddings`: the namer's and the live re-diarizer's say
+        # their own; else the live embedder's. Only profiles of that space are compared.
+        space = space or getattr(app.models.live_embedder, "space", PYANNOTE_SPACE)
         names = app.speakers.match(embeddings, space, thresholds(space, settings).match)
         if multi:  # the local user is on the mic channel, never a remote voice
             names = {k: v for k, v in names.items() if v != settings.local_speaker_name}
@@ -873,14 +874,15 @@ def live_transcribe(app: AppContext, session_id: str, recording):
         except asyncio.CancelledError:  # stopped before it got going
             return {"segments": 0, "speakers": []}
         namer = None
+        voice_space = getattr(embedder, "space", PYANNOTE_SPACE)
         if any(src.stream is not None for src in sources):
             from ..transcription.live_streaming import VoiceNamer
 
             namer = VoiceNamer(
                 embedder,
                 match_names=match_names,
-                voices=_session_voices(app, session_id),
-                threshold=settings.speaker_match_threshold,
+                voices=_session_voices(app, session_id, voice_space),
+                threshold=thresholds(voice_space, settings).match,
             )
         live = LiveTranscriber(
             transcriber=transcriber,
@@ -920,7 +922,8 @@ def live_transcribe(app: AppContext, session_id: str, recording):
                 rediarize.cancel()
             app.live.pop(session_id, None)
             if namer is not None:
-                _session_voices(app, session_id)  # the next part may start within the hour
+                # Touch the voices again: the next part may start within the hour.
+                _session_voices(app, session_id, voice_space)
             for kind, stats in live.stream_stats().items():
                 logger.info("Nemotron streaming (%s): %s", kind, stats)
         return _live_result(live)
@@ -947,15 +950,19 @@ async def _attach_streams(stream_model, sources) -> None:
 LIVE_VOICES_TTL = 3600.0  # seconds a finished meeting's live voices are kept for its next part
 
 
-def _session_voices(app: AppContext, session_id: str) -> dict:
-    """This meeting's streamed speakers' voices (label -> embedding), shared by its parts;
-    other meetings' are dropped an hour after their last live transcript."""
+def _session_voices(app: AppContext, session_id: str, space: str = PYANNOTE_SPACE) -> dict:
+    """This meeting's streamed speakers' voices (label -> embedding in voice space `space`),
+    shared by its parts; other meetings' are dropped an hour after their last live transcript.
+    Voices kept in another space (the embedder changed between parts) are dropped: vectors of
+    different spaces are never compared."""
     now = time.monotonic()
-    for sid, (at, _) in list(app.live_voices.items()):
+    for sid, (at, _, _) in list(app.live_voices.items()):
         if sid != session_id and sid not in app.live and now - at > LIVE_VOICES_TTL:
             del app.live_voices[sid]
-    _, voices = app.live_voices.get(session_id, (now, {}))
-    app.live_voices[session_id] = (now, voices)
+    _, kept_space, voices = app.live_voices.get(session_id, (now, space, {}))
+    if kept_space != space:
+        voices = {}
+    app.live_voices[session_id] = (now, space, voices)
     return voices
 
 

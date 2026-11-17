@@ -1,6 +1,6 @@
 # Voice profiles and live speaker labels without torch: plan
 
-Status: plan only, 2026-11-17, on `mac-parity` (b5ed0fc). No code changed. File:line references are against that
+Status: tasks 1-6 built on `mac-parity` (2026-11-17; part A = tasks 1-3, part B = tasks 4-6, see "Progress" at the end). Task 7 and phase 2 open. The text below is the plan as written; file:line references are against b5ed0fc. File:line references are against that
 commit; re-find them by name before editing.
 
 Anything I could not check is marked **(verify)**. I ran no model and no benchmark here.
@@ -344,3 +344,32 @@ normalisation are in the C++ extractor, not in the Python config of 1.13.8, whic
 pyannote's space, the next check is to compute the fbank in numpy/torchaudio as pyannote does and run the ONNX model
 on it directly with onnxruntime (the model takes fbank frames). That also makes a pyannote-identical front end possible
 without torch (torchaudio's kaldi fbank is plain DSP), a candidate for a later task. Peak memory of this run 1.2 GB.
+
+## Progress (2026-11-17)
+
+Done (part A, tasks 1-3): the ONNX embedder, voice spaces in storage, spaces through the final pipeline.
+
+Done (part B, tasks 4-6 and the UI/doc changes decided above):
+
+- Task 4: `VoiceNamer` keeps its embedder's `space` and passes it to `match_names(embeddings, space)`;
+  `AppContext.live_voices` holds `(time, space, voices)` and `_session_voices` drops voices of another space;
+  `LiveRediarizer` passes the diarizer's `result.space`; the pipeline takes the namer's threshold from
+  `thresholds(space, settings).match`.
+- Task 5: `SyncSession.speaker_voices` (`{space: {label: vector}} | None`) beside `speaker_embeddings` (the pyannote
+  space, for older peers). Apply: None replaces only the pyannote space; otherwise every space is replaced.
+  Three-way merge per space; a side without the field says nothing about the other spaces (no deletion).
+  `combine.relabel_speakers` matches and carries voices per space with each space's threshold. Phase 8 sharing is
+  unchanged.
+- Task 6: `/api/system.speaker_embedder_in_use` (`pyannote` | `onnx` | `none`), `pnpm gen:api`; Settings diarizer list
+  has "On the CPU (ONNX)", the HF-token hint and the wizard's onnx / token lines were reworded; architecture,
+  api-reference, team-server, macos, development and README docs and CLAUDE.md were updated.
+
+Left:
+
+- Task 7: calibration (`bench_live.py --embedder` and a threshold sweep, `mnemosyne-bench --voices`, an on-demand
+  workflow, live ms per tick on a Mac). `wespeaker-r34` runs on pyannote's thresholds (0.45 / 0.6) until then.
+- Task 0, the real run (community-1 with a token): it decides whether `wespeaker-r34` can be retagged `pyannote`.
+- Phase 2: dual enrolment, "re-learn voices", profiles in library sync, the onnx diarizer on ResNet34 alone, live
+  re-diarization on the CPU.
+- The Settings diarizer option "Automatic (Nemotron on an NVIDIA GPU, else pyannote)" does not mention the onnx
+  fallback; the wording was not part of the decided UI changes.
