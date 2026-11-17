@@ -107,7 +107,7 @@
 		{/if}
 		{#if builtin}
 		<p class="text-xs text-gray-500">
-			Built in: runs on this computer ({status.vulkan ? 'your graphics card through Vulkan, else the CPU' : 'the CPU'}; {status.ram_gb} GB of RAM), nothing else to install. Downloaded once; on a CPU a long meeting takes a few minutes to summarize.
+			Built in: runs on this computer ({status.metal ? 'the Mac\'s GPU through Metal' : status.vulkan ? 'your graphics card through Vulkan, else the CPU' : 'the CPU'}; {status.ram_gb} GB of RAM), nothing else to install. Downloaded once; on a CPU a long meeting takes a few minutes to summarize.
 		</p>
 		<ul class="space-y-1">
 			{#each status.models as m (m.id)}

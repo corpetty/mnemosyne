@@ -41,6 +41,7 @@ class OllamaInfo(ApiModel):
 class LocalModelStatus(ApiModel):
     ram_gb: int
     vulkan: bool  # a GPU through Vulkan; else the CPU
+    metal: bool  # an Apple-silicon Mac: the GPU through Metal
     server_installed: bool
     running: str | None  # the built-in model being served now
     models: list[LocalModelInfo]
@@ -74,6 +75,7 @@ async def status(ctx: AppContext = Depends(get_ctx)):
     return LocalModelStatus(
         ram_gb=local_llm.ram_gb(),
         vulkan=local_llm.has_vulkan(),
+        metal=local_llm.server_choice_or_none() == "metal",
         server_installed=llm.server_binary().is_file(),
         running=llm.running,
         models=[
