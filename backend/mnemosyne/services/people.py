@@ -128,7 +128,7 @@ def _collect(repo, generic: tuple[str, ...]) -> tuple[dict[str, _Acc], dict[str,
                     )
                 )
     for p in repo.list_speakers():
-        if is_person(p.name, generic):
+        if p.has_voice and is_person(p.name, generic):
             acc(p.name).has_voice = True
     return people, meta
 

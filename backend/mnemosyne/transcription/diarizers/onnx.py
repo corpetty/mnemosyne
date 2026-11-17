@@ -5,7 +5,13 @@ from k2-fsa's releases, downloaded on first use (services/downloads.py).
 
 Clustering a whole meeting at one threshold leaves a few small clusters for one person (a cough, a
 laugh, a short "yes"); those join the closest real speaker by their mean voice, so a meeting of four
-reads as four. Speaker embeddings are not returned: voice profiles live in pyannote's space.
+reads as four.
+
+Voices: TitaNet only clusters. The voice of each speaker (for voice profiles and for matching a
+later part of the meeting) comes from the injected speaker `embedder` (transcription/
+speaker_embedders.py, WeSpeaker ResNet34 on the CPU), run over each speaker's clean turns after
+diarizing, as Nemotron does. The result names the embedder's voice space; without an embedder it
+has no voices.
 """
 
 from __future__ import annotations
@@ -16,9 +22,12 @@ import os
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from ...audio.mixer import decode_audio
 from ...services.downloads import Download, extract, fetch
 from ..engine import DiarizationResult, SpeakerTurn
+from .nemotron import embedding_spans
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +93,9 @@ def merge_small_clusters(turns, centroid, min_share: float = 0.05, min_seconds: 
 class OnnxDiarizer:
     name = "onnx"
 
-    def __init__(self, models_dir: Path, threads: int | None = None):
+    def __init__(self, models_dir: Path, threads: int | None = None, embedder: Any = None):
         self.models_dir = Path(models_dir)
+        self.embedder = embedder  # a SpeakerEmbedder (live_speakers.py) or None: no voices
         self.threads = threads or max(1, min(8, (os.cpu_count() or 2) - 1))
         self._files: tuple[Path, Path] | None = None
         self._extractor: Any = None
@@ -109,10 +119,20 @@ class OnnxDiarizer:
             return files, extractor
 
         self._files, self._extractor = await asyncio.to_thread(_load)
+        if self.embedder is not None:
+            try:
+                await self.embedder.load()
+            except Exception:
+                logger.warning(
+                    "Speaker embedder unavailable; voice profiles will not match", exc_info=True
+                )
+                self.embedder = None
 
     async def unload(self) -> None:
         self._files = None
         self._extractor = None
+        if self.embedder is not None:
+            await self.embedder.unload()
 
     def _config(self, clusters: int, threshold: float = THRESHOLD):
         import sherpa_onnx
@@ -132,8 +152,6 @@ class OnnxDiarizer:
         )
 
     def _centroid(self, samples, turns, cluster: int, longest: int = 12):
-        import numpy as np
-
         mine = sorted((t for t in turns if t[2] == cluster), key=lambda t: t[0] - t[1])[:longest]
         vectors = []
         for s, e, _ in mine:
@@ -187,15 +205,34 @@ class OnnxDiarizer:
                 turns = merge_small_clusters(turns, lambda k: self._centroid(samples, turns, k))
                 if max_speakers and len({k for *_, k in turns}) > max_speakers:
                     turns = run(max_speakers)
-            if progress is not None:
-                progress(1.0)
-            return turns
+            return turns, samples
 
-        turns = await asyncio.to_thread(_run)
+        raw, samples = await asyncio.to_thread(_run)
         # Labels in order of first appearance, as the other diarizers number them.
         order: dict[int, str] = {}
-        for _, _, k in turns:
+        for _, _, k in raw:
             order.setdefault(k, f"SPEAKER_{len(order):02d}")
-        return DiarizationResult(
-            turns=[SpeakerTurn(start=s, end=e, speaker=order[k]) for s, e, k in turns]
-        )
+        turns = [SpeakerTurn(start=s, end=e, speaker=order[k]) for s, e, k in raw]
+        voices = await self._embed_speakers(samples, turns) if self.embedder else {}
+        if progress is not None:
+            progress(1.0)
+        space = getattr(self.embedder, "space", "") if self.embedder is not None else ""
+        return DiarizationResult(turns=turns, embeddings=voices, space=space)
+
+    async def _embed_speakers(
+        self, samples: np.ndarray, turns: list[SpeakerTurn]
+    ) -> dict[str, list[float]]:
+        """One voice per speaker: the mean of the embedder's vectors over their longest turns
+        that overlap nobody (`embedding_spans`). Speakers with no clean turn get none."""
+        out: dict[str, list[float]] = {}
+        for speaker, spans in embedding_spans(turns).items():
+            vecs = []
+            for start, end in spans:
+                vec = await self.embedder.embed(
+                    samples[int(start * SAMPLE_RATE) : int(end * SAMPLE_RATE)], SAMPLE_RATE
+                )
+                if vec is not None:
+                    vecs.append(np.asarray(vec) / (np.linalg.norm(vec) or 1.0))
+            if vecs:
+                out[speaker] = np.mean(vecs, axis=0).tolist()
+        return out

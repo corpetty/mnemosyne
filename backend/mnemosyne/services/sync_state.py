@@ -22,6 +22,7 @@ from ..models.session import (
     Recording,
     SummaryData,
 )
+from ..models.speaker import PYANNOTE_SPACE
 from ..models.sync_session import (
     SyncAsset,
     SyncBookmark,
@@ -192,7 +193,12 @@ def export_session(
             )
             for x in repo.media_rows(session_id)
         ],
-        speaker_embeddings={x["label"]: json.loads(x["embedding"]) for x in rows["embeddings"]},
+        # The wire format carries the pyannote space only (older peers' voices) for now.
+        speaker_embeddings={
+            x["label"]: json.loads(x["embedding"])
+            for x in rows["embeddings"]
+            if x["space"] == PYANNOTE_SPACE
+        },
         assets=[
             SyncAsset(
                 id=x["id"],

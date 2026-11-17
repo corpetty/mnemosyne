@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 from ...audio.mixer import decode_audio
+from ...models.speaker import PYANNOTE_SPACE
 from ..engine import DiarizationResult, SpeakerTurn
 
 logger = logging.getLogger(__name__)
@@ -130,4 +131,4 @@ def _result_from_output(output: Any) -> DiarizationResult:
                         embeddings[label] = row.tolist()
         except Exception:
             logger.debug("Could not read speaker embeddings", exc_info=True)
-    return DiarizationResult(turns=turns, embeddings=embeddings)
+    return DiarizationResult(turns=turns, embeddings=embeddings, space=PYANNOTE_SPACE)

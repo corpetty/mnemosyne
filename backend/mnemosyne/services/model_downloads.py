@@ -33,7 +33,8 @@ WHISPER_MB = {
     "large-v3-turbo": 1620,
     "turbo": 1620,
 }
-DIARIZER_MB = {"nemotron": 190, "pyannote": 35, "onnx": 45, "none": 0, "demo": 0}
+# onnx: segmentation 7 + TitaNet 40 + the WeSpeaker voice embedder 27.
+DIARIZER_MB = {"nemotron": 190, "pyannote": 35, "onnx": 75, "none": 0, "demo": 0}
 SEARCH_MB = 130  # potion-retrieval-32M
 
 

@@ -132,7 +132,8 @@ class NemotronDiarizer:
         embeddings = await self._embed_speakers(pcm, turns) if self.embedder else {}
         if progress is not None:
             progress(1.0)
-        return DiarizationResult(turns=turns, embeddings=embeddings)
+        space = getattr(self.embedder, "space", "") if self.embedder is not None else ""
+        return DiarizationResult(turns=turns, embeddings=embeddings, space=space)
 
     async def _embed_speakers(self, pcm: np.ndarray, turns: list[SpeakerTurn]):
         out: dict[str, list[float]] = {}

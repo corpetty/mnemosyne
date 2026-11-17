@@ -27,6 +27,7 @@ class FakeEngine:
         self.transcribed_paths: list[str] = []
         self.sources: list[list[AudioSource]] = []
         self.last_speaker_embeddings: dict[str, list[float]] = {}
+        self.last_speaker_space = "pyannote"
         self.last_dropped_echo = 0
 
     def is_loaded(self) -> bool:
@@ -90,7 +91,9 @@ class FakeDiarizer:
         self,
         turns: list[SpeakerTurn] | None = None,
         embeddings: dict[str, list[float]] | None = None,
+        space: str = "pyannote",
     ):
+        self.space = space
         self.turns = (
             turns
             if turns is not None
@@ -117,7 +120,9 @@ class FakeDiarizer:
         self.calls.append(audio_path)
         if progress is not None:
             progress(1.0)
-        return DiarizationResult(turns=list(self.turns), embeddings=dict(self.embeddings))
+        return DiarizationResult(
+            turns=list(self.turns), embeddings=dict(self.embeddings), space=self.space
+        )
 
 
 class FakeProvider:

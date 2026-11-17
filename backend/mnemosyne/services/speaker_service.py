@@ -6,7 +6,7 @@ import logging
 import math
 
 from ..models.session import Session
-from ..models.speaker import SpeakerProfile
+from ..models.speaker import PYANNOTE_SPACE, SpeakerProfile
 from ..storage.sqlite import SessionRepository
 
 logger = logging.getLogger(__name__)
@@ -28,17 +28,26 @@ class SpeakerService:
         self.repo = repo
         self.threshold = threshold
 
-    def match(self, embeddings: dict[str, list[float]]) -> dict[str, str]:
-        """Map diarization labels to known names.
+    def match(
+        self,
+        embeddings: dict[str, list[float]],
+        space: str = PYANNOTE_SPACE,
+        threshold: float | None = None,
+    ) -> dict[str, str]:
+        """Map diarization labels to known names. `embeddings` are in voice space `space`;
+        only profiles with a voice in that space can match (a vector of another space is never
+        compared). `threshold` overrides the service's (each space has its own cosine scale:
+        transcription/speaker_embedders.thresholds).
 
         Greedy by score so one person is never assigned to two labels, and one
         label never gets two names.
         """
-        profiles = self.repo.list_speakers()
+        threshold = self.threshold if threshold is None else threshold
+        profiles = [p for p in self.repo.list_speakers() if space in p.voices]
         if not profiles or not embeddings:
             return {}
         scored = [
-            (cosine(vec, p.embedding), label, p.name)
+            (cosine(vec, p.voices[space]), label, p.name)
             for label, vec in embeddings.items()
             for p in profiles
         ]
@@ -47,7 +56,7 @@ class SpeakerService:
         used_names: set[str] = set()
         mapping: dict[str, str] = {}
         for score, label, name in scored:
-            if score < self.threshold:
+            if score < threshold:
                 break
             if label in used_labels or name in used_names:
                 continue
@@ -62,13 +71,18 @@ class SpeakerService:
         name = name.strip()
         if not name:
             raise ValueError("Name must not be empty")
-        embeddings = self.repo.get_session_embeddings(session_id)
+        voices = self.repo.get_session_voices(session_id)
         session = self.repo.relabel_session_speaker(session_id, label, name)
         if session is None:
             return None
-        if enroll and label in embeddings:
-            self.repo.upsert_speaker_sample(name, embeddings[label])
+        if enroll:
+            # Every space the label has a stored voice in.
+            for space, by_label in voices.items():
+                if label in by_label:
+                    self.repo.upsert_speaker_sample(name, by_label[label], space)
         return session
 
-    def enroll(self, name: str, embedding: list[float]) -> SpeakerProfile:
-        return self.repo.upsert_speaker_sample(name, embedding)
+    def enroll(
+        self, name: str, embedding: list[float], space: str = PYANNOTE_SPACE
+    ) -> SpeakerProfile:
+        return self.repo.upsert_speaker_sample(name, embedding, space)

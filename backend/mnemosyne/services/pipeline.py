@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from ..jobs import JobContext
 from ..models.session import DEFAULT_SESSION_NAME, Session, SessionStatus, transcript_hash
+from ..models.speaker import PYANNOTE_SPACE
 from ..models.transcript import TranscriptSegment
 from ..storage.crypto import plaintext_async
 from ..summarization.privacy import LOCAL_ONLY_ERROR, is_cloud, redact_transcript
@@ -33,6 +34,7 @@ from ..transcription.glossary import (
     llm_correct,
     parse_glossary,
 )
+from ..transcription.speaker_embedders import thresholds
 from . import history, live_flags
 from .copilot import agenda_hint, bookmark_hint, copilot_hint
 from .prefs import for_meeting
@@ -173,7 +175,8 @@ def transcribe_session(
 
             segments = list(kept)
             flagged_removed = 0
-            embeddings = app.repo.get_session_embeddings(session_id) if kept else {}
+            # The voices of the parts kept, by voice space: {space: {label: vector}}.
+            voices = app.repo.get_session_voices(session_id) if kept else {}
             n_sources = 0
             for part in todo:
                 async with contextlib.AsyncExitStack() as stack:
@@ -218,10 +221,18 @@ def transcribe_session(
                 new, gone = live_flags.apply(app, session_id, part, new, engine)
                 flagged_removed += gone
                 part_embeddings = dict(getattr(engine, "last_speaker_embeddings", {}) or {})
-                if embeddings or segments:  # a later part: same voices, same labels
-                    taken = {s.speaker for s in segments}
+                # Voices made by an engine that names no space are pyannote's, as they always were.
+                space = getattr(engine, "last_speaker_space", "") or PYANNOTE_SPACE
+                known = voices.get(space, {})  # only voices of the same space can be compared
+                if known or segments:  # a later part: same voices, same labels
+                    taken = {s.speaker for s in segments} | {
+                        label for by_label in voices.values() for label in by_label
+                    }
                     relabel = match_speakers(
-                        part_embeddings, embeddings, taken, settings.speaker_match_threshold
+                        part_embeddings,
+                        known,
+                        taken,
+                        thresholds(space, settings).match,
                     )
                     new = [
                         s.model_copy(update={"speaker": relabel.get(s.speaker, s.speaker)})
@@ -229,7 +240,7 @@ def transcribe_session(
                     ]
                     part_embeddings = {relabel[k]: v for k, v in part_embeddings.items()}
                 for k, v in part_embeddings.items():
-                    embeddings.setdefault(k, v)
+                    voices.setdefault(space, {}).setdefault(k, v)
                 new = shift(new, starts.get(part, 0.0))
                 if settings.redact_stored_transcripts:  # before anything shows or keeps them
                     new = redact_transcript(new)
@@ -250,12 +261,21 @@ def transcribe_session(
                 # a cue at the end of one part ("your social?") for a number in the next.
                 segments = redact_transcript(segments)
 
-            mapping = app.speakers.match(embeddings) if settings.auto_label_speakers else {}
-            if embeddings:
-                # Store under the final labels so a later rename can still enroll.
-                app.repo.set_session_embeddings(
-                    session_id, {mapping.get(k, k): v for k, v in embeddings.items()}
-                )
+            mapping: dict[str, str] = {}
+            if settings.auto_label_speakers:
+                for space, by_label in voices.items():  # profiles are matched within a space
+                    found = app.speakers.match(
+                        {k: v for k, v in by_label.items() if k not in mapping},
+                        space,
+                        thresholds(space, settings).match,
+                    )
+                    mapping.update({k: n for k, n in found.items() if n not in mapping.values()})
+            # Store under the final labels so a later rename can still enroll.
+            for space, by_label in voices.items():
+                if by_label:
+                    app.repo.set_session_voices(
+                        session_id, space, {mapping.get(k, k): v for k, v in by_label.items()}
+                    )
             if mapping:
                 segments = [
                     s.model_copy(update={"speaker": mapping.get(s.speaker, s.speaker)})
@@ -815,10 +835,17 @@ def live_transcribe(app: AppContext, session_id: str, recording):
 
             embedder = app.models.live_embedder
             if embedder is not None:
+                # Profiles are offered in the embedder's own voice space only.
+                space = getattr(embedder, "space", PYANNOTE_SPACE)
+                cut = thresholds(space, settings)
                 clusterer = OnlineClusterer(
-                    threshold=settings.live_speaker_threshold,
-                    known_threshold=settings.speaker_match_threshold,
-                    known={p.name: p.embedding for p in app.repo.list_speakers()},
+                    threshold=cut.cluster,
+                    known_threshold=cut.match,
+                    known={
+                        p.name: p.voices[space]
+                        for p in app.repo.list_speakers()
+                        if space in p.voices
+                    },
                 )
                 # Never hand the local user's name to a remote voice.
                 if multi:
@@ -828,7 +855,9 @@ def live_transcribe(app: AppContext, session_id: str, recording):
         return app.models.live_transcriber, sources, embedder, clusterer, diarizer, stream_model
 
     def match_names(embeddings: dict[str, list[float]]) -> dict[str, str]:
-        names = app.speakers.match(embeddings)
+        # Live voices come from the live embedder (the live re-diarizer's is the same kind).
+        space = getattr(app.models.live_embedder, "space", PYANNOTE_SPACE)
+        names = app.speakers.match(embeddings, space, thresholds(space, settings).match)
         if multi:  # the local user is on the mic channel, never a remote voice
             names = {k: v for k, v in names.items() if v != settings.local_speaker_name}
         return names

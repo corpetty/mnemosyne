@@ -35,6 +35,9 @@ class DiarizationResult(ApiModel):
     turns: list[SpeakerTurn]
     # One embedding vector per speaker label, when the diarizer can produce them.
     embeddings: dict[str, list[float]] = {}
+    # The voice space of `embeddings` (models/speaker.py): the model family that made them.
+    # "" when the diarizer makes none.
+    space: str = ""
 
 
 SourceKind = Literal["mic", "system", "mixed"]
@@ -100,6 +103,7 @@ class TranscriptionEngine(Protocol):
         """Transcribe one or more sources, yielding segments in time order.
 
         After the iterator is exhausted, `last_speaker_embeddings` (if the engine
-        defines it) holds {speaker_label: vector} for the diarized speakers.
+        defines it) holds {speaker_label: vector} for the diarized speakers and
+        `last_speaker_space` the voice space those vectors are in.
         """
         ...
