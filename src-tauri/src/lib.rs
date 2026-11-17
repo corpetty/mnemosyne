@@ -22,6 +22,7 @@ use tauri::{AppHandle, Emitter, Manager, Wry};
 pub mod display;
 #[cfg(target_os = "linux")]
 mod frames;
+pub mod keychain;
 mod remote;
 mod shell_prefs;
 
@@ -763,6 +764,12 @@ fn release_command(layout: &ReleaseLayout) -> StdCommand {
         .env("MNEMOSYNE_UV_BIN", &layout.uv)
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("PYTHONUNBUFFERED", "1");
+    // The backend keeps its encryption key through this binary (`--keychain`, keychain.rs) so
+    // the keychain item trusts the signed app, not the venv's Python.
+    #[cfg(target_os = "macos")]
+    if let Ok(exe) = std::env::current_exe() {
+        cmd.env("MNEMOSYNE_SHELL_BIN", exe);
+    }
     if let Some(web) = &layout.web_dir {
         cmd.env("WEB_DIR", web);
     }
@@ -958,6 +965,41 @@ fn quit_or_ask(app: &AppHandle) {
     }
 }
 
+/// macOS's app menu with our own Quit item. The default menu's Quit (and so Cmd+Q) sends
+/// `terminate:`, which tao 0.34 turns straight into RunEvent::Exit: no ExitRequested to prevent,
+/// the recording cut off (recovery saves it at the next start). Our item (same title, Cmd+Q)
+/// goes through quit_or_ask like the tray's Quit.
+#[cfg(target_os = "macos")]
+fn mac_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+    let menu = Menu::default(app)?;
+    // The first submenu is the app menu; its Quit is the predefined `terminate:` item.
+    if let Some(app_menu) = menu.items()?.first().and_then(|item| item.as_submenu().cloned()) {
+        let items = app_menu.items()?;
+        if let Some(pos) = items.iter().position(|item| {
+            item.as_predefined_menuitem()
+                .and_then(|p| p.text().ok())
+                .is_some_and(|text| text.starts_with("Quit"))
+        }) {
+            app_menu.remove_at(pos)?;
+            let name = app.package_info().name.clone();
+            let quit = MenuItem::with_id(
+                app,
+                APP_MENU_QUIT,
+                format!("Quit {name}"),
+                true,
+                Some("CmdOrCtrl+Q"),
+            )?;
+            app_menu.insert(&quit, pos)?;
+        } else {
+            warn!("No Quit item in the default app menu; Cmd+Q will not ask while recording");
+        }
+    }
+    Ok(menu)
+}
+
+#[cfg(target_os = "macos")]
+const APP_MENU_QUIT: &str = "app-quit";
+
 /// The quit dialog's answers.
 #[tauri::command]
 fn quit_app(app: AppHandle) {
@@ -1151,7 +1193,15 @@ fn log_dir_hint(path: &Path) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Cmd+Q asks while recording (mac_menu).
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(mac_menu).on_menu_event(|app, event| {
+        if event.id() == APP_MENU_QUIT {
+            quit_or_ask(app);
+        }
+    });
+    let app = builder
         // Must be the first plugin: a second launch hands its args to us and exits.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             #[cfg(target_os = "linux")]
@@ -1284,8 +1334,23 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app_handle, event| {
-        if let tauri::RunEvent::Exit = event {
+    app.run(|app_handle, event| match event {
+        // Any other exit the user asks for while recording (code None: not our own app.exit),
+        // while the window is still there to ask in. Linux is unchanged: there this fires when
+        // the last window closes, which CloseRequested already handles.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::ExitRequested {
+            code: None, api, ..
+        } => {
+            if is_recording(app_handle) && app_handle.get_webview_window("main").is_some() {
+                api.prevent_exit();
+                quit_or_ask(app_handle);
+            }
+        }
+        // A click on the Dock icon brings back a window hidden by close-to-tray.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => show_main_window(app_handle),
+        tauri::RunEvent::Exit => {
             #[cfg(target_os = "linux")]
             display::started(); // a quick quit is not a failed start
             // Not started again by watch_backend once it is gone.
@@ -1310,6 +1375,7 @@ pub fn run() {
                 warn!("No backend child to kill (install may still be running).");
             }
         }
+        _ => {}
     });
 }
 

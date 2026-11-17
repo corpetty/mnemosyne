@@ -3255,6 +3255,7 @@ dependencies = [
  "libc",
  "log",
  "mnemosyne-link",
+ "security-framework",
  "serde",
  "serde_json",
  "tauri",

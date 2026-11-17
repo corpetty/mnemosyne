@@ -1,7 +1,8 @@
 """Encryption at rest: the key, the encrypted audio file format, and plaintext views of it.
 
 One random 256-bit master key per data directory, kept in the system keyring (Secret Service,
-unlocked with the login session). The database key (SQLCipher) and the file key (AES-256-GCM)
+unlocked with the login session; on a Mac started by the app, the app's keychain item:
+ShellKeyStore). The database key (SQLCipher) and the file key (AES-256-GCM)
 are derived from it with HKDF, so neither is used for two purposes. The recovery code shown
 when encryption is turned on is the master key itself, in base32.
 
@@ -16,9 +17,12 @@ import asyncio
 import base64
 import contextlib
 import hashlib
+import logging
 import os
 import secrets
 import struct
+import subprocess
+import sys
 import tempfile
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -32,7 +36,9 @@ NONCE = 12
 TAG = 16
 HEADER = struct.Struct("<8sIQ")  # magic, chunk size, plaintext size
 SUFFIX = ".enc"
-KEYRING_SERVICE = "Mnemosyne"
+KEYRING_SERVICE = "Mnemosyne"  # also the app's keychain service (src-tauri/src/keychain.rs)
+
+logger = logging.getLogger(__name__)
 
 
 # ---- keys ----------------------------------------------------------------------------
@@ -112,6 +118,149 @@ class SystemKeyStore:
 
         with contextlib.suppress(Exception):
             keyring.delete_password(KEYRING_SERVICE, self.account)
+
+
+class ShellUnavailable(RuntimeError):
+    """The app binary cannot keep the key: not there, timed out, denied or failed."""
+
+
+class ShellKeyStore:
+    """macOS: the master key in the keychain, kept by the signed app (`mnemosyne --keychain`,
+    src-tauri/src/keychain.rs; the app passes its path as MNEMOSYNE_SHELL_BIN). An item the
+    venv's Python creates trusts that Python binary, so a Python upgrade made macOS ask
+    "python3.13 wants to use your confidential information"; one the app creates trusts the
+    app's signature, which stays the same across updates.
+
+    The app's item is a separate account (" (app)" appended) under the same service: keyring's
+    macOS backend uses the same SecItem namespace, so the same account would be the very item
+    Python created. The secret goes to the binary on stdin and comes back on stdout, never argv.
+
+    `legacy` is where the key was before (SystemKeyStore). When the app has no key but the old
+    place has one, it is copied over and the old item deleted once it reads back the same
+    (_migrate). Whenever the app cannot be used (binary gone, timeout, the keychain prompt
+    denied) this run falls back to the old place, so the backend still starts.
+
+    A backend started without the app on a Mac (`mnemosyne-backend` in a terminal, no
+    MNEMOSYNE_SHELL_BIN) uses SystemKeyStore and, after a migration, finds no key: it opens
+    locked and asks for the recovery code (nothing is lost; unlocking writes the key back to
+    the old place, which the app's backend then ignores since its own item exists). Leaving
+    the old item in place would spare that, but would keep a second copy that any process
+    running that Python reads without asking, and the item that prompts after each upgrade.
+
+    Later uses: unlock (set), turning encryption on (set) and off (delete) run the binary again;
+    MNEMOSYNE_SHELL_BIN is read on each call. A backend that outlives the app (a recording after
+    a crash, keep_sharing_after_quit) still reaches it: the CLI mode needs no running app, and
+    an update replaces the binary at the same path. When it is gone, set falls back to the old
+    place (the next start with the app migrates it) and the error says why."""
+
+    TIMEOUT = 60.0  # seconds; a keychain prompt waits for the user
+    NOT_FOUND = 3
+    DENIED = 4
+
+    def __init__(self, data_dir: Path, legacy: KeyStore | None = None):
+        self.legacy = legacy if legacy is not None else SystemKeyStore(data_dir)
+        self.account = f"data key for {Path(data_dir).resolve()} (app)"
+
+    @staticmethod
+    def binary() -> str | None:
+        """The app binary, when it is there to run."""
+        path = os.environ.get("MNEMOSYNE_SHELL_BIN")
+        return path if path and os.path.isfile(path) and os.access(path, os.X_OK) else None
+
+    def _run(self, op: str, secret: str | None = None) -> subprocess.CompletedProcess:
+        binary = self.binary()
+        if binary is None:
+            raise ShellUnavailable(
+                "The Mnemosyne app is not there to reach the keychain (MNEMOSYNE_SHELL_BIN: "
+                f"{os.environ.get('MNEMOSYNE_SHELL_BIN') or 'not set'})"
+            )
+        try:
+            return subprocess.run(
+                [binary, "--keychain", op, self.account],
+                input=(secret + "\n").encode() if secret is not None else b"",
+                capture_output=True,
+                timeout=self.TIMEOUT,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise ShellUnavailable(f"The keychain did not answer ({op}): {e}") from e
+
+    def _fail(self, op: str, done: subprocess.CompletedProcess) -> ShellUnavailable:
+        if done.returncode == self.DENIED:
+            return ShellUnavailable(f"Access to the keychain was denied ({op})")
+        # stderr carries Apple's message for the status, never the secret
+        why = done.stderr.decode(errors="replace").strip() or f"exit {done.returncode}"
+        return ShellUnavailable(f"The keychain refused ({op}): {why}")
+
+    def _get(self) -> bytes | None:
+        done = self._run("get")
+        if done.returncode == self.NOT_FOUND:
+            return None
+        if done.returncode != 0:
+            raise self._fail("get", done)
+        try:
+            return base64.b64decode(done.stdout.strip(), validate=True) or None
+        except ValueError as e:
+            raise ShellUnavailable("The keychain item does not hold a key") from e
+
+    def _set(self, key: bytes) -> None:
+        done = self._run("set", base64.b64encode(key).decode())
+        if done.returncode != 0:
+            raise self._fail("set", done)
+
+    def get(self) -> bytes | None:
+        try:
+            key = self._get()
+        except ShellUnavailable as e:
+            logger.warning("%s; using the old keyring item for this run", e)
+            return self.legacy.get()
+        if key is not None:
+            return key
+        old = self.legacy.get()  # may ask "python3.13 wants to use…" one last time
+        if old is not None:
+            self._migrate(old)
+        return old
+
+    def _migrate(self, key: bytes) -> None:
+        """Copy the key from the old place into the app's item; delete the old item only once
+        the app reads the same key back. Any failure (including the user denying a keychain
+        prompt) leaves the old item alone: this run uses the key it read from there, and the
+        next start tries again."""
+        try:
+            self._set(key)
+            if self._get() != key:
+                raise ShellUnavailable("the key read back differs")
+        except ShellUnavailable as e:
+            logger.warning("Could not move the key into the app's keychain item: %s", e)
+            return
+        self.legacy.delete()
+        logger.info("The encryption key is now kept by the app's keychain item")
+
+    def set(self, key: bytes) -> None:
+        try:
+            self._set(key)
+        except ShellUnavailable as e:
+            # The old place keeps it (raising if there is none); a start with the app moves it.
+            logger.warning("%s; keeping the key in the old keyring item", e)
+            self.legacy.set(key)
+
+    def delete(self) -> None:
+        try:
+            done = self._run("delete")
+            if done.returncode != 0:
+                raise self._fail("delete", done)
+        except ShellUnavailable as e:
+            logger.warning("Could not delete the app's keychain item: %s", e)
+        self.legacy.delete()  # a copy left there by a fallback or an older version
+
+
+def system_keystore(data_dir: Path) -> KeyStore:
+    """The desktop's key store: the app's keychain item on a Mac started by the app, else the
+    system keyring."""
+    legacy = SystemKeyStore(data_dir)
+    if sys.platform == "darwin" and ShellKeyStore.binary() is not None:
+        return ShellKeyStore(data_dir, legacy)
+    return legacy
 
 
 class CredentialKeyStore:

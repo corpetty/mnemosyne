@@ -284,7 +284,7 @@ class AppContext:
 
     @classmethod
     def build(cls, settings: Settings, keystore: Any = None) -> AppContext:
-        from ..storage.crypto import SystemKeyStore, derive, key_check
+        from ..storage.crypto import derive, key_check, system_keystore
 
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         if sys.platform == "darwin":  # recorders (the capture sidecar) log beside the backend's
@@ -304,7 +304,7 @@ class AppContext:
             elif os.environ.get("MNEMOSYNE_KEY_FILE"):  # a server: systemd credential
                 keystore = CredentialKeyStore(Path(os.environ["MNEMOSYNE_KEY_FILE"]))
             else:
-                keystore = SystemKeyStore(settings.data_dir)
+                keystore = system_keystore(settings.data_dir)  # the app's keychain on a Mac
         master, locked = None, False
         if settings.encrypt_at_rest:
             master = keystore.get()

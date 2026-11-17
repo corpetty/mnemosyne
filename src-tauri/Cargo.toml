@@ -31,6 +31,10 @@ tokio = { version = "1", features = ["time", "net", "sync"] }
 mnemosyne-link = { path = "../link" }
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# The backend's encryption key in the keychain, kept by the signed app (keychain.rs).
+security-framework = "3.7"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Same version wry uses, to handle the WebKit web process crashing (see lib.rs).
 webkit2gtk = "=2.0.2"
