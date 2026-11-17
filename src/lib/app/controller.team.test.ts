@@ -252,3 +252,57 @@ describe('a meeting that arrived in the team', () => {
 		expect(c.sessionState.activeSession?.id).toBe('other');
 	});
 });
+
+describe('recording from a computer that uses a main computer', () => {
+	const meeting = (over: Record<string, unknown> = {}) => ({
+		id: 'm1',
+		name: 'Untitled Session',
+		status: 'created',
+		transcript: [],
+		recordings: [],
+		notes: '',
+		...over
+	});
+
+	async function usingMain(open: Record<string, unknown> | null) {
+		const c = await fresh();
+		c.connectionState.save('http://127.0.0.1:47321', 'tok', true); // through remote access
+		if (open) c.sessionState.show(open as never);
+		c.audioState.selectedDeviceIds = new Set([1]);
+		return c;
+	}
+
+	const started = () => requests.find((r) => r.path === '/api/satellite/start')?.body;
+
+	it('records into the meeting open in the window, not a new one', async () => {
+		const c = await usingMain(meeting());
+		await c.startRecording();
+		expect(started()).toMatchObject({ destination: 'main', session_id: 'm1' });
+	});
+
+	it('records into an open meeting that already has a recording (a new part)', async () => {
+		const c = await usingMain(meeting({ name: 'Standup', recordings: [{}], transcript: [{}] }));
+		await c.startRecording();
+		expect(started()).toMatchObject({ destination: 'main', session_id: 'm1' });
+	});
+
+	it('starts a new meeting when asked for one, or when none is open', async () => {
+		let c = await usingMain(meeting());
+		await c.startRecording(true);
+		expect(started()).not.toHaveProperty('session_id');
+		requests = [];
+		c = await usingMain(null);
+		await c.startRecording();
+		expect(started()).not.toHaveProperty('session_id');
+	});
+
+	it('never records into a meeting shared with me or recorded on another computer', async () => {
+		let c = await usingMain(meeting({ shared_from: 'ada' }));
+		await c.startRecording();
+		expect(started()).not.toHaveProperty('session_id');
+		requests = [];
+		c = await usingMain(meeting({ origin: 'laptop' }));
+		await c.startRecording();
+		expect(started()).not.toHaveProperty('session_id');
+	});
+});
