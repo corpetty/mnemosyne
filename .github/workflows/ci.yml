@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, mac-parity] # mac-parity: drop before merging (CI for the Mac work)
+    branches: [main]
   pull_request:
 
 jobs:
