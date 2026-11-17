@@ -12,6 +12,12 @@ the canceller: the canceller's source is then the internal "mnemosyne_aec_raw" (
 recordings read) and the visible source, still "mnemosyne_aec_source", comes out of the noise
 suppressor. DeepFilterNet aborts its process when it falls behind; being its own child, that
 leaves the canceller and any recording of it alone, and a plain copy takes the visible source over.
+
+On a Mac there is no PipeWire: echo cancellation is Apple's voice processing on the microphone
+being recorded (the capture sidecar's `--voice-processing`, audio/coreaudio.py). "Running" then
+only means the next recordings of a microphone go through it; there is no process, no separate
+source, no microphone to pick and no noise suppressor behind it (voice processing turns noise
+down by itself).
 """
 
 from __future__ import annotations
@@ -104,6 +110,9 @@ class EchoCancelStatus:
 
 
 class EchoCancelManager:
+    # On a Mac: recordings of a microphone go through voice processing.
+    _mac_on = False
+
     def __init__(self, pw_cli: str = "pw-cli"):
         self.pw_cli = pw_cli
         self._proc: asyncio.subprocess.Process | None = None  # the canceller
@@ -122,7 +131,9 @@ class EchoCancelManager:
 
     def supported(self) -> tuple[bool, str | None]:
         if sys.platform == "darwin":
-            return False, "Not available on a Mac yet"
+            from . import coreaudio
+
+            return coreaudio.voice_processing_supported()
         if shutil.which(self.pw_cli) is None:
             return False, "pw-cli not found (PipeWire tools not installed)"
         if not any(Path(p).is_file() for p in MODULE_PATHS):
@@ -136,6 +147,8 @@ class EchoCancelManager:
 
     @property
     def active(self) -> bool:
+        if sys.platform == "darwin":
+            return self._mac_on
         return self._proc is not None and self._proc.returncode is None
 
     async def start(
@@ -144,7 +157,12 @@ class EchoCancelManager:
         """Load the module capturing from `mic` (a node.name; None = the default source), with
         DeepFilterNet behind it when `denoise` is given. Already running otherwise: restart it.
         When the noise suppressor does not come up, a plain copy of the canceller's audio is
-        the visible source instead."""
+        the visible source instead.
+
+        On a Mac: microphones are recorded through voice processing from the next recording on
+        (`mic` and `denoise` do not apply)."""
+        if sys.platform == "darwin":
+            return self._start_mac()
         mic = valid_mic(mic)
         ok, reason = self.supported()
         if not ok:
@@ -175,6 +193,24 @@ class EchoCancelManager:
         assert self._chain is not None
         self._watch_task = asyncio.create_task(self._watch(self._chain))
         return EchoCancelStatus(True, None, True, node, mic, denoise)
+
+    def _start_mac(self) -> EchoCancelStatus:
+        from . import coreaudio
+
+        ok, reason = self.supported()
+        if not ok:
+            self._set_mac(False)
+            return EchoCancelStatus(False, reason, False, None)
+        logger.info("Echo cancellation: microphones are recorded through voice processing")
+        self._set_mac(True)
+        self.mic, self.denoise, self.denoise_error = None, None, None
+        return EchoCancelStatus(True, None, coreaudio.voice_processing(), None)
+
+    def _set_mac(self, on: bool) -> None:
+        from . import coreaudio
+
+        self._mac_on = on
+        coreaudio.set_voice_processing(on)
 
     async def _watch(self, chain: asyncio.subprocess.Process) -> None:
         """DeepFilterNet aborts the process it runs in once it falls a second behind (a computer
@@ -240,6 +276,8 @@ class EchoCancelManager:
         return node
 
     async def stop(self) -> None:
+        if sys.platform == "darwin" or self._mac_on:
+            self._set_mac(False)
         chain, self._chain = self._chain, None
         proc, self._proc = self._proc, None
         if chain is not None:
@@ -263,6 +301,8 @@ class EchoCancelManager:
 
     async def status(self) -> EchoCancelStatus:
         ok, reason = self.supported()
+        if sys.platform == "darwin":
+            return EchoCancelStatus(ok, reason, ok and self._mac_on, None)
         node = await asyncio.to_thread(find_source_node) if ok else None
         active = self.active and node is not None
         return EchoCancelStatus(

@@ -51,6 +51,10 @@ struct RecordArgs {
     /// Append one line per event to this file.
     #[arg(long)]
     log: Option<PathBuf>,
+    /// macOS: record the microphone through Apple's voice processing, which removes what the
+    /// Mac plays from it (echo cancellation) and turns noise down. Not for "system" or --fake.
+    #[arg(long, conflicts_with = "fake")]
+    voice_processing: bool,
     /// Also stop (cleanly) when standard input reaches end of file.
     #[arg(long)]
     stdin_stop: bool,
@@ -155,7 +159,8 @@ fn record(args: RecordArgs) -> ExitCode {
             Ok(f) => Box::new(f),
             Err(e) => return unsupported(&format!("{e:#}")),
         },
-        (None, Some(target)) => match mnemosyne_capture::open_target(target) {
+        (None, Some(target)) => match mnemosyne_capture::open_target(target, args.voice_processing)
+        {
             Ok(s) => s,
             Err(OpenError::Unsupported(msg)) => return unsupported(&msg),
             Err(e @ OpenError::Failed(_)) => {
@@ -214,5 +219,41 @@ fn record(args: RecordArgs) -> ExitCode {
             eprintln!("mnemosyne-capture: {e:#}");
             ExitCode::from(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<RecordArgs, clap::Error> {
+        let mut all = vec!["mnemosyne-capture", "record"];
+        all.extend_from_slice(args);
+        match Cli::try_parse_from(all)?.command {
+            Command::Record(args) => Ok(*args),
+            _ => unreachable!("a record command"),
+        }
+    }
+
+    #[test]
+    fn voice_processing_is_a_flag_off_by_default() {
+        assert!(
+            !parse(&["--target", "mic", "out.wav"])
+                .unwrap()
+                .voice_processing
+        );
+        let args = parse(&["--target", "mic", "--voice-processing", "out.wav"]).unwrap();
+        assert!(args.voice_processing);
+        assert_eq!(args.target.as_deref(), Some("mic"));
+    }
+
+    #[test]
+    fn voice_processing_is_refused_with_a_fake_source() {
+        let e = parse(&["--fake", "tone", "--voice-processing", "out.wav"])
+            .err()
+            .expect("a usage error");
+        assert_eq!(e.kind(), clap::error::ErrorKind::ArgumentConflict);
+        // clap's usage errors exit 2, as ours do.
+        assert_eq!(e.exit_code(), 2);
     }
 }

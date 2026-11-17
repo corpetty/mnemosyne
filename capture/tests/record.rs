@@ -366,6 +366,50 @@ fn a_real_target_is_not_supported_yet_and_usage_errors_exit_two() {
 }
 
 #[test]
+fn voice_processing_is_refused_where_it_cannot_apply() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("a.wav");
+    let out = out.to_str().unwrap();
+    // A fake source (clap's conflict) and the system audio: refused everywhere, before any
+    // device is opened.
+    for (args, says) in [
+        (
+            vec!["record", "--fake", "tone", "--voice-processing", out],
+            "cannot be used with",
+        ),
+        (
+            vec!["record", "--target", "system", "--voice-processing", out],
+            "not to the system audio",
+        ),
+    ] {
+        let output = capture(&args).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(stderr.contains(says), "{args:?}: {stderr}");
+    }
+    // A microphone: on macOS a device that does not exist fails to open (exit 1); elsewhere
+    // voice processing does not exist (exit 2).
+    let output = capture(&[
+        "record",
+        "--target",
+        "mnemosyne-no-such-device",
+        "--voice-processing",
+        out,
+    ])
+    .output()
+    .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if cfg!(target_os = "macos") {
+        assert_eq!(output.status.code(), Some(1), "{stderr}");
+        assert!(stderr.contains("no audio device with the UID"), "{stderr}");
+    } else {
+        assert_eq!(output.status.code(), Some(2), "{stderr}");
+        assert!(stderr.contains("needs macOS"), "{stderr}");
+    }
+    assert!(!std::path::Path::new(out).exists());
+}
+
+#[test]
 fn devices_and_doctor_print_json() {
     let output = capture(&["devices"]).output().unwrap();
     assert_eq!(output.status.code(), Some(0));

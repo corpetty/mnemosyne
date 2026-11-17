@@ -1052,6 +1052,9 @@ class EchoCancelResponse(ApiModel):
     mic_description: str | None  # its display name, None when not connected or default
     # A different mic was chosen while recording: used from the next recording on.
     pending_mic: str | None
+    # A Mac: the recorded microphone itself goes through Apple's voice processing (no separate
+    # echo-cancelled source, no microphone to pick; from the next recording on).
+    voice_processing: bool
     # DeepFilterNet behind the canceller (audio/noise_suppression.py).
     noise_suppression: NoiseSuppressionStatus
 
@@ -1092,6 +1095,7 @@ async def _echo_response(ctx: AppContext) -> EchoCancelResponse:
         mic=st.mic,
         mic_description=description,
         pending_mic=pending,
+        voice_processing=sys.platform == "darwin",
         noise_suppression=NoiseSuppressionStatus(
             supported=ns_ok,
             reason=ns_reason or st.denoise_error,
@@ -1136,7 +1140,8 @@ async def echo_cancel_status(ctx: AppContext = Depends(get_ctx)):
 @router.post("/echo-cancel", response_model=EchoCancelResponse)
 async def echo_cancel_set(request: EchoCancelRequest, ctx: AppContext = Depends(get_ctx)):
     """Load or unload the PipeWire echo-cancel module (with DeepFilterNet behind it when noise
-    suppression is on) and remember the choices. Turning noise suppression on downloads the
+    suppression is on; on a Mac: record microphones through voice processing) and remember the
+    choices. Turning noise suppression on downloads the
     plugin first if it is not there."""
     from ...audio import noise_suppression as ns
     from ...audio.echo_cancel import valid_mic

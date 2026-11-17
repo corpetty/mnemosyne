@@ -8,6 +8,10 @@ commands and reads its JSON: audio/capture.py calls it on darwin.
 The sidecar is `MNEMOSYNE_CAPTURE_BIN`, else `mnemosyne-capture` on PATH (the desktop shell puts
 the app's Contents/MacOS there). Device `name` is the Core Audio UID (stable, what the UI saves);
 `id` is the AudioObjectID; the extra entry named "system" is all apps' output.
+
+Echo cancellation on a Mac is Apple's voice processing on the microphone itself: while it is on
+(audio/echo_cancel.py `set_voice_processing`), microphones are recorded with
+`--voice-processing`. There is no separate echo-cancelled source as with PipeWire.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from .capture import AudioDevice
 logger = logging.getLogger(__name__)
 
 BIN_NAME = "mnemosyne-capture"
+SYSTEM_TARGET = "system"  # the sidecar's entry for all apps' output
 LOG_NAME = "capture.log"
 LOG_ROTATE_BYTES = 2_000_000  # capture.log becomes capture.log.1 at the next recording after this
 
@@ -32,9 +37,47 @@ LOG_ROTATE_BYTES = 2_000_000  # capture.log becomes capture.log.1 at the next re
 _data_dir: Path | None = None
 
 
+# Echo cancellation is on: microphones are recorded through Apple's voice processing. Set by
+# EchoCancelManager on darwin; read when a recorder's command is built.
+_voice_processing = False
+
+# The sidecar's `doctor` answer about voice processing, per sidecar file (path, mtime).
+_vp_checked: dict[tuple[str, int], bool] = {}
+
+
 def configure(data_dir: Path | None) -> None:
     global _data_dir
     _data_dir = Path(data_dir) if data_dir else None
+
+
+def set_voice_processing(on: bool) -> None:
+    global _voice_processing
+    _voice_processing = bool(on)
+
+
+def voice_processing() -> bool:
+    """Microphones are recorded through voice processing (echo cancellation is on)."""
+    return _voice_processing
+
+
+def voice_processing_supported() -> tuple[bool, str | None]:
+    """Whether this Mac's sidecar can record a microphone through voice processing, and why
+    not. Asks the sidecar's `doctor` once per sidecar file."""
+    binary = sidecar()
+    if binary is None:
+        return False, "The capture helper (mnemosyne-capture) is not available"
+    try:
+        key = (binary, Path(binary).stat().st_mtime_ns)
+    except OSError:
+        key = (binary, 0)
+    if key not in _vp_checked:
+        report = doctor()
+        if report is None:  # not remembered: it may answer next time
+            return False, "The capture helper did not answer"
+        _vp_checked[key] = report.get("voice_processing") is True
+    if _vp_checked[key]:
+        return True, None
+    return False, "Apple's voice processing is not available on this Mac"
 
 
 def log_path(data_dir: Path) -> Path:
@@ -139,11 +182,14 @@ def build_record_command(
     format: str = "s16",
     *,
     log: bool = True,
+    voice_processing: bool = False,
 ) -> list[str]:
     """The sidecar command that records one device (`--target` takes the UID, or "system").
 
     The output is always 16-bit PCM; `format` exists for capture.build_record_command's
     signature. `log=False` for short measurements (level meters) that would only add noise.
+    `voice_processing` records a microphone through Apple's voice processing (echo
+    cancellation); it never applies to the system audio or a fake source.
 
     `MNEMOSYNE_CAPTURE_FAKE` (test-only, e.g. `tone` or `silence`) records the sidecar's fake
     source in place of the device, so the whole recording machinery can run without hardware.
@@ -151,6 +197,8 @@ def build_record_command(
     cmd = [sidecar() or BIN_NAME, "record"]
     fake = os.environ.get("MNEMOSYNE_CAPTURE_FAKE")
     cmd += ["--fake", fake] if fake else ["--target", device.name or str(device.id)]
+    if voice_processing and not fake and device.is_input and device.name != SYSTEM_TARGET:
+        cmd.append("--voice-processing")
     cmd += ["--rate", str(sample_rate), "--channels", str(channels)]
     log_file = _recorder_log() if log else None
     if log_file is not None:

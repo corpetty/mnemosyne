@@ -89,6 +89,8 @@ def mac(monkeypatch, tmp_path):
     monkeypatch.delenv("MNEMOSYNE_CAPTURE_FAKE", raising=False)
     monkeypatch.setenv("MNEMOSYNE_CAPTURE_BIN", str(_stub(tmp_path)))
     monkeypatch.setattr(coreaudio, "_data_dir", None)
+    monkeypatch.setattr(coreaudio, "_voice_processing", False)
+    monkeypatch.setattr(coreaudio, "_vp_checked", {})
     return tmp_path
 
 
@@ -211,6 +213,114 @@ def test_the_test_only_fake_source_replaces_the_target(monkeypatch, mac):
     monkeypatch.setenv("MNEMOSYNE_CAPTURE_FAKE", "tone")
     cmd = capture.build_record_command(MIC, Path("/r/a.wav"), 48000, 1, "s16")
     assert cmd[1:4] == ["record", "--fake", "tone"] and "--target" not in cmd
+
+
+# ---- echo cancellation: Apple's voice processing on the microphone --------------------------
+
+
+def test_voice_processing_goes_on_microphones_only(monkeypatch, mac):
+    coreaudio.set_voice_processing(True)
+    cmd = capture.build_record_command(MIC, Path("/r/a.wav"), 48000, 1, "s16")
+    assert cmd[1:5] == ["record", "--target", "BuiltInMicrophoneDevice", "--voice-processing"]
+    assert "--voice-processing" not in capture.build_record_command(
+        SYSTEM, Path("/r/s.wav"), 48000, 1, "s16"
+    )
+    # Level meters and the self-test measure the plain microphone.
+    assert "--voice-processing" not in coreaudio.build_record_command(
+        MIC, Path("/t.wav"), 48000, 1, log=False
+    )
+    monkeypatch.setenv("MNEMOSYNE_CAPTURE_FAKE", "tone")  # the sidecar refuses it with --fake
+    assert "--voice-processing" not in capture.build_record_command(
+        MIC, Path("/r/a.wav"), 48000, 1, "s16"
+    )
+    coreaudio.set_voice_processing(False)
+    monkeypatch.delenv("MNEMOSYNE_CAPTURE_FAKE")
+    assert "--voice-processing" not in capture.build_record_command(
+        MIC, Path("/r/a.wav"), 48000, 1, "s16"
+    )
+
+
+def _vp_stub(mac, available=True):
+    doctor = {"real_capture": True, "voice_processing": available}
+    return str(_stub(mac / ("vp" if available else "novp"), doctor=doctor))
+
+
+@pytest.mark.anyio
+async def test_echo_cancellation_on_a_mac_is_voice_processing(monkeypatch, mac):
+    from mnemosyne.audio.echo_cancel import EchoCancelManager
+
+    (mac / "vp").mkdir()
+    monkeypatch.setenv("MNEMOSYNE_CAPTURE_BIN", _vp_stub(mac))
+    m = EchoCancelManager(pw_cli="/nonexistent/pw-cli")  # never run on a Mac
+    assert m.supported() == (True, None)
+    assert not m.active and not (await m.status()).active
+    # The mic and noise suppressor are PipeWire's choices: ignored, never validated as node names.
+    st = await m.start("AppleUSBAudioEngine:Vendor:USB Mic:1234:1", denoise=object())
+    assert st.supported and st.active and st.reason is None
+    assert st.source_node_id is None and st.mic is None and st.denoise is None
+    assert m.active and coreaudio.voice_processing() and not m.raw_source
+    assert (await m.status()).active
+    cmd = capture.build_record_command(MIC, Path("/r/a.wav"), 48000, 1, "s16")
+    assert "--voice-processing" in cmd
+    await m.stop()
+    assert not m.active and not coreaudio.voice_processing()
+    assert not (await m.status()).active
+
+
+@pytest.mark.anyio
+async def test_voice_processing_unavailable_says_why(monkeypatch, mac):
+    from mnemosyne.audio.echo_cancel import EchoCancelManager
+
+    (mac / "novp").mkdir()
+    monkeypatch.setenv("MNEMOSYNE_CAPTURE_BIN", _vp_stub(mac, available=False))
+    m = EchoCancelManager()
+    reason = "Apple's voice processing is not available on this Mac"
+    assert m.supported() == (False, reason)
+    st = await m.start()
+    assert not st.supported and not st.active and st.reason == reason
+    assert not coreaudio.voice_processing()
+    monkeypatch.setenv("MNEMOSYNE_CAPTURE_BIN", str(mac / "nope"))
+    assert m.supported() == (False, "The capture helper (mnemosyne-capture) is not available")
+
+
+def test_the_doctor_is_asked_once_per_sidecar(monkeypatch, mac):
+    (mac / "vp").mkdir()
+    monkeypatch.setenv("MNEMOSYNE_CAPTURE_BIN", _vp_stub(mac))
+    calls = []
+    real = coreaudio.doctor
+    monkeypatch.setattr(coreaudio, "doctor", lambda: calls.append(1) or real())
+    assert coreaudio.voice_processing_supported() == (True, None)
+    assert coreaudio.voice_processing_supported() == (True, None)
+    assert len(calls) == 1
+    # A helper that does not answer is not remembered.
+    monkeypatch.setattr(coreaudio, "doctor", lambda: None)
+    monkeypatch.setattr(coreaudio, "_vp_checked", {})
+    assert coreaudio.voice_processing_supported() == (False, "The capture helper did not answer")
+    assert coreaudio._vp_checked == {}
+
+
+def test_echo_cancel_api_on_a_mac(client, ctx, monkeypatch, mac):
+    from mnemosyne.audio.echo_cancel import EchoCancelManager
+
+    (mac / "vp").mkdir()
+    monkeypatch.setenv("MNEMOSYNE_CAPTURE_BIN", _vp_stub(mac))
+    ctx.echo = EchoCancelManager()
+    body = client.get("/api/audio/echo-cancel").json()
+    assert body["supported"] and body["voice_processing"] and not body["active"]
+    ns = body["noise_suppression"]
+    assert not ns["supported"] and "voice processing" in ns["reason"]
+    assert "PipeWire" not in str(body) and "pw-cli" not in str(body)
+
+    body = client.post("/api/audio/echo-cancel", json={"enabled": True}).json()
+    assert body["active"] and body["enabled"] and ctx.settings.echo_cancel
+    assert body["source_node_id"] is None and body["mic"] is None and body["pending_mic"] is None
+    assert coreaudio.voice_processing()
+    # Noise suppression (DeepFilterNet) is Linux only.
+    r = client.post("/api/audio/echo-cancel", json={"enabled": True, "noise_suppression": True})
+    assert r.status_code == 400 and "voice processing" in r.json()["detail"]
+
+    body = client.post("/api/audio/echo-cancel", json={"enabled": False}).json()
+    assert not body["active"] and not body["enabled"] and not coreaudio.voice_processing()
 
 
 def test_linux_is_unchanged(monkeypatch, tmp_path):

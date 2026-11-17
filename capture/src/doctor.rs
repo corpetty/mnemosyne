@@ -1,7 +1,7 @@
 //! `mnemosyne-capture doctor`: what this binary can do on this machine, as JSON for the
 //! diagnostics. On macOS it adds the macOS version, the microphone permission
 //! (`mic_authorization`), the default input and output devices with their rates and
-//! `taps_supported`.
+//! `taps_supported` and `voice_processing` (the voice-processing unit exists).
 
 use serde_json::{json, Value};
 
@@ -15,6 +15,8 @@ pub fn report() -> Value {
         "sources": ["fake"],
         // Whether a real microphone or system audio can be recorded on this system.
         "real_capture": false,
+        // Whether `record --voice-processing` (Apple's echo cancellation on a microphone) works.
+        "voice_processing": false,
     });
     #[cfg(target_os = "macos")]
     if let Value::Object(map) = &mut report {
@@ -31,5 +33,9 @@ mod tests {
         assert_eq!(r["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(r["os"], std::env::consts::OS);
         assert!(r["sources"].as_array().unwrap().iter().any(|s| s == "fake"));
+        assert!(r["voice_processing"].is_boolean());
+        if !cfg!(target_os = "macos") {
+            assert_eq!(r["voice_processing"], false);
+        }
     }
 }

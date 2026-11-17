@@ -17,8 +17,8 @@ cargo run -- apps                            # JSON: processes capturing audio i
 ## record
 
 ```
-mnemosyne-capture record --target <uid|system> [--rate 48000] [--channels 1] [--log <file>]
-                         [--stdin-stop] <out.wav>
+mnemosyne-capture record --target <uid|system> [--voice-processing] [--rate 48000] [--channels 1]
+                         [--log <file>] [--stdin-stop] <out.wav>
 mnemosyne-capture record --fake <tone[:hz]|silence|file:<path.wav>> [...] <out.wav>
 ```
 
@@ -52,6 +52,26 @@ mnemosyne-capture record --fake <tone[:hz]|silence|file:<path.wav>> [...] <out.w
   is opened again at the new rate and the file sees a `rate_change`. A device that is away for
   more than about 5 s (25 tries, 200 ms apart) ends the recording with exit 1 and an `error`
   line. The microphone permission is asked when the stream starts.
+- `--target <uid> --voice-processing`: the microphone through Apple's voice processing
+  (`src/macos/vpio.rs`), the echo cancellation the backend uses while `echo_cancel` is on: a
+  `kAudioUnitSubType_VoiceProcessingIO` AudioUnit in place of cpal. It removes what the Mac plays
+  (the far end of a call on laptop speakers) from the microphone and turns noise down. Setup:
+  `kAudioOutputUnitProperty_EnableIO` on for the input (element 1) and the output (element 0; VPIO
+  is full duplex, the output's render callback hands it silence flagged `OutputIsSilence`, as
+  Chromium's VPIO input does), `kAudioOutputUnitProperty_CurrentDevice` = the microphone on
+  element 1 and the default output (the echo reference) on element 0, Float32 mono at the unit's
+  device-side rate on the input element's output scope (and the output element's input scope),
+  `kAUVoiceIOProperty_VoiceProcessingEnableAGC` = 0 so levels stay those of the plain mic, and
+  `kAUVoiceIOProperty_OtherAudioDuckingConfiguration` = {no advanced ducking, `Min`} (global
+  scope, element 0, macOS 14+) so the Mac's other sound is not turned down; a `note` line says
+  `rate`, `output`, `agc` and `ducking` (`unavailable:<status>` where it could not be set). The
+  input callback renders into a buffer of its own (one allocation per callback, as mic.rs) and
+  sends it down the same channel. The unit is built again (old one disposed of first: one voice
+  processor per process) when the default output device changes, and when nothing arrives for
+  3 s (a Bluetooth profile switch; at most three times in a row, then it waits, as the tap does);
+  the new rate gives a `rate_change`. A device away for about 5 s ends the recording with exit 1
+  and an `error` line. Refused (exit 2)
+  with `--fake` (clap conflict), with `--target system`, and anywhere but macOS.
 - `--target system`: a **global** process tap (`CATapDescription
   initStereoGlobalTapButExcludeProcesses` with an empty list: every process, whichever output
   device it plays to, so switching to AirPods mid-call keeps the far end), private and unmuted,
@@ -70,7 +90,8 @@ mnemosyne-capture record --fake <tone[:hz]|silence|file:<path.wav>> [...] <out.w
   process's HAL client, so coreaudiod drops them with the client when the process is killed
   outright (expected; to be confirmed on a real Mac).
 - `doctor` adds `macos_version`, `mic_authorization` (not_determined, restricted, denied,
-  authorized), `default_input` / `default_output` (id, uid, name, rate), `taps_supported` and
+  authorized), `default_input` / `default_output` (id, uid, name, rate), `taps_supported`,
+  `voice_processing` (the VoiceProcessingIO unit exists; `false` on other systems) and
   `sources: ["fake", "device", "system"]`.
 - `apps` (auto-record, backend/mnemosyne/audio/streams.py): Core Audio's process objects
   (`kAudioHardwarePropertyProcessObjectList`) whose `kAudioProcessPropertyIsRunningInput` is
@@ -81,7 +102,7 @@ mnemosyne-capture record --fake <tone[:hz]|silence|file:<path.wav>> [...] <out.w
 - `--log` gets `note` lines from the sources (`source=mic stream_ended=...`,
   `source=system reason=default_output_changed output=...`).
 
-Crates (pinned): cpal 0.18.2, objc2 0.6.5, objc2-core-audio / -core-audio-types /
+Crates (pinned): cpal 0.18.2, objc2 0.6.5, objc2-audio-toolbox / -core-audio / -core-audio-types /
 -core-foundation / -foundation 0.3.2 (what cpal 0.18 itself uses; its
 `host/coreaudio/macos/loopback.rs`, insidegui/AudioCap and makeusabrew/audiotee are the
 references). `cargo check --target aarch64-apple-darwin` type-checks it on Linux once
