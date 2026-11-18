@@ -114,7 +114,14 @@ export async function startRecording(fresh = false, consent?: Consent) {
     return;
   }
   // A computer that uses a main computer records through its own backend, never the main one's.
-  if (connectionState.usesMain) return startSatelliteRecording(consent, 'main');
+  // The meeting open in the window is the main computer's: it is recorded into, as it would be at
+  // the main computer itself. A new one when asked for, when none is open, or when the open one is
+  // shared with me or recorded on another computer (its audio is not there to add a part to).
+  if (connectionState.usesMain) {
+    const open = sessionState.activeSession;
+    const into = fresh || !open || open.shared_from || open.origin ? undefined : open.id;
+    return startSatelliteRecording(consent, 'main', into);
+  }
   // Streamed to the team: the same path, with the team as its destination.
   if (destination === 'team-host') {
     // An untouched draft open in the team's library is the meeting recorded into, not a second one.
