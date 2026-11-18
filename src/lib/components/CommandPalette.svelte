@@ -14,6 +14,7 @@
 	import { listActionItems, listPeople, listTopics } from '$lib/api/backend.js';
 	import { exportActive, openSetup, openView, startRecording, stopAndTranscribe } from '$lib/app/controller.svelte.js';
 	import { fuzzyScore } from '$lib/app/fuzzy.js';
+	import { appShortcut, shortcutHint } from '$lib/app/shortcuts.js';
 	import { canReview } from '$lib/app/supervision.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
 	import { askState } from '$lib/stores/ask.svelte.js';
@@ -90,14 +91,14 @@
 	const items = $derived.by((): Item[] => {
 		const actions: Item[] = [
 			audioState.isRecording
-				? { id: 'action:stop', group: 'Actions', label: 'Stop and transcribe', hint: 'Ctrl+S', run: () => stopAndTranscribe() }
-				: { id: 'action:record', group: 'Actions', label: 'Start recording', hint: 'Ctrl+R', run: () => startRecording(true) },
+				? { id: 'action:stop', group: 'Actions', label: 'Stop and transcribe', hint: shortcutHint('stop'), run: () => stopAndTranscribe() }
+				: { id: 'action:record', group: 'Actions', label: 'Start recording', hint: shortcutHint('record'), run: () => startRecording(true) },
 			{ id: 'action:import', group: 'Actions', label: 'Import an audio or video file…', run: () => uiState.importRequest++ },
-			{ id: 'action:sidebar', group: 'Actions', label: 'Show or hide the sidebar', hint: 'Ctrl+B', run: () => (uiState.sidebarCollapsed = !uiState.sidebarCollapsed) },
+			{ id: 'action:sidebar', group: 'Actions', label: 'Show or hide the sidebar', hint: shortcutHint('sidebar'), run: () => (uiState.sidebarCollapsed = !uiState.sidebarCollapsed) },
 			{ id: 'action:setup', group: 'Actions', label: 'Run setup again', run: () => openSetup() }
 		];
 		if (sessionState.activeSession) {
-			actions.push({ id: 'action:export', group: 'Actions', label: 'Export this meeting to Obsidian', hint: 'Ctrl+E', run: () => exportActive() });
+			actions.push({ id: 'action:export', group: 'Actions', label: 'Export this meeting to Obsidian', hint: shortcutHint('export'), run: () => exportActive() });
 		}
 		const views: Item[] = [
 			view('home', 'Home'),
@@ -228,7 +229,7 @@
 		tabindex="-1"
 		onclick={(e) => e.stopPropagation()}
 		onkeydown={(e) => {
-			if (!(e.ctrlKey && e.key === 'k')) e.stopPropagation(); // Ctrl+K closes it again
+			if (appShortcut(e) !== 'k') e.stopPropagation(); // Ctrl+K (Cmd+K) closes it again
 		}}
 	>
 		<input

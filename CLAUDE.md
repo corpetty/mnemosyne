@@ -78,13 +78,26 @@ extra out uninstalls it; `onnx` is Parakeet). The `gpu` extra pulls torch
   else none. Transcriber `auto` is Phonon-2 when `language` is English and it is installed, else
   WhisperX with working CUDA, else Parakeet. Phonon (transcribers/phonon.py) runs Fermion's
   `phonon serve` from its own venv, `<data_dir>/phonon`, installed on demand
-  (services/phonon_install.py, pins in phonon-requirements.txt; never in the backend's lock:
+  (services/phonon_install.py, pins in phonon-requirements.txt, on a Mac
+  phonon-requirements-macos.txt with the same versions and PyPI torch; never in the backend's lock:
   it needs torch and transformers 5). AMI ES2004a-d (2026-10-08): 22.7 % WER vs Parakeet's
   27.4 % (fillers counted), 53x vs 13x real time, same speaker accuracy; Silero VAD tuning did
   not help Parakeet. Missing, Parakeet is used. pyannote needs
-  `HF_TOKEN` with its model license accepted; Nemotron and onnx do not, but voice profiles and live
-  speaker labels still use pyannote's embedding model, so they do. CI has no ML packages: tests
+  `HF_TOKEN` with its model license accepted; Nemotron and onnx do not. Voice profiles and live
+  speaker labels use pyannote's embedding model when pyannote, torch and the token are there, else
+  the ONNX WeSpeaker embedder (no torch, no token; `resolve_speaker_embedder`). CI has no ML packages: tests
   that assume one monkeypatch `registry.installed`.
+- Voice spaces (docs/plans/2026-11-17-speakers-without-torch.md): every stored voice is tagged with the model
+  family that made it (`pyannote`, or `wespeaker-r34` from the ONNX `OnnxEmbedder`, transcription/speaker_embedders.py,
+  no torch, no token); `speaker_voices` / `session_voices` tables, never compared across spaces
+  (`SpeakerService.match(vectors, space)`, `DiarizationResult.space`, `ComposedEngine.last_speaker_space`).
+  `speakers.embedding` and `session_speakers` are gone/unread. Per-space cosine thresholds: `thresholds(space, settings)`
+  (the two settings keep meaning pyannote). The onnx diarizer embeds each speaker's clean turns with that embedder.
+  Live: `VoiceNamer`, `AppContext.live_voices` (a `(time, space, voices)` tuple; another space's voices are dropped)
+  and `LiveRediarizer` carry the space, and `match_names(embeddings, space)` takes it. Sync: `SyncSession.speaker_voices`
+  is `{space: {label: vector}}` for every space, `speaker_embeddings` repeats the pyannote one for older peers; `None`
+  (an older peer) means "pyannote only" and never wipes other spaces (apply, three-way merge in `_merge_voices`).
+  Combining meetings matches per space (`relabel_speakers`). `/api/system.speaker_embedder_in_use` reports the embedder.
 - NeMo (for Nemotron) is in the gpu extra as a pinned GitHub source tarball of NVIDIA-NeMo/Speech
   main (PyPI 3.0.0 cannot load the model; a tarball so installs need no git). It pins
   lightning<=2.4, omegaconf<=2.3 and packaging<25, which pyannote and WhisperX accept. When
@@ -746,8 +759,15 @@ stable self-signed certificate (APPLE_CERTIFICATE secrets; CN "Mnemosyne Test Si
 Recording through the `mnemosyne-capture` sidecar (capture/: cpal microphone; system audio = a global Core Audio process tap in a private
 aggregate device, `system` = device id 1; WAV header identical to pw-record's), backend audio/coreaudio.py behind the darwin switches in
 capture.py/levels.py, caffeinate while recording, a silent-system-audio hint (`capture_health` "silent"). The System Audio Recording prompt
-blocks `AudioDeviceCreateIOProcID` until answered. Not on the Mac: Phonon-2, the built-in summary model, echo cancellation, noise
-suppression. CI: `macos` job, smoke-macos.yml, the Release `macos` job. Confirmed on a tester's Mac 2026-11-10.
+blocks `AudioDeviceCreateIOProcID` until answered. Echo cancellation on the Mac (unreleased): Apple's voice processing
+on the recorded microphone (`mnemosyne-capture record --voice-processing`, a VoiceProcessingIO AudioUnit in capture/src/macos/vpio.rs:
+silence rendered to its output, AGC off, ducking of other audio at its minimum; echo_cancel.py `_start_mac` sets
+coreaudio.py `set_voice_processing`, no process, no separate source, `voice_processing` in the API; level meters stay plain;
+not yet run on a Mac). Not on the Mac: noise suppression. The built-in summary model runs with Metal (unreleased: llama.cpp's macos-arm64 build, `server_choice()` in local_llm.py, RAM from sysconf; Intel Macs get an error; only run on a Mac by hand). Phonon-2 on the Mac (unreleased): Fermion's MLX engine (`FERMION_DEVICE=mlx`, its `mlx` extra pinned too),
+started once more with its CPU engine when it does not start (not after a failed download), which that install then
+keeps for the life of the backend (`_cpu_fallback`, a `[mnemosyne]` line in phonon.log); pins in
+phonon-requirements-macos.txt (one uv step from PyPI; the Linux versions plus only the extra's packages, a test names them), `phonon serve` under phonon_guard.py since there is no PDEATHSIG;
+phonon.yml runs the real install and a transcription on macos-15 too (a Release prerequisite). Also unreleased: auto-record via `mnemosyne-capture apps` (Core Audio process objects, named by bundle id in streams.py), notices through `osascript` (text as argv), cloudflared's darwin arm64 tgz, no desktop calendar source (saved "desktop" = off), RSS via psutil, load average for the live interval, Cmd+Q asks while recording (our own app-menu Quit item: the default one's `terminate:` never reaches ExitRequested; the Dock menu's Quit still does), a Dock click shows a hidden window (`RunEvent::Reopen`), the encryption key kept in the keychain by the signed app (`mnemosyne --keychain get|set|delete`, src-tauri/src/keychain.rs; crypto.py `ShellKeyStore` through `MNEMOSYNE_SHELL_BIN`, keyring's old item moved over once). CI: `macos` job, smoke-macos.yml, the Release `macos` job. Confirmed on a tester's Mac 2026-11-10.
 
 Team members in the app (released as 0.32.0; plan docs/plans/2026-11-10-team-members-in-the-app.md, use in docs/team-server.md "Members in the app"):
 a teammate's app (Linux or Mac) joins a team hosted on someone's main computer and shows its own library and the team's one click apart

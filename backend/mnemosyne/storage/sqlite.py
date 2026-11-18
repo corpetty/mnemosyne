@@ -38,7 +38,7 @@ from ..models.session import (
     SummaryData,
 )
 from ..models.shared_meeting import SharedMeeting
-from ..models.speaker import SpeakerProfile
+from ..models.speaker import PYANNOTE_SPACE, SpeakerProfile
 from ..models.sync_session import (
     SyncMedia,
     SyncPeerShare,
@@ -212,11 +212,22 @@ CREATE TABLE IF NOT EXISTS chunk_vectors (
     vec BLOB NOT NULL,            -- float16, unit length
     PRIMARY KEY (session_id, kind, first_idx)
 );
-CREATE TABLE IF NOT EXISTS session_speakers (
+-- Voices by space (the model family that made the vector): a profile holds one running mean per
+-- space, a meeting one vector per label and space. speakers.embedding is no longer read.
+CREATE TABLE IF NOT EXISTS speaker_voices (
+    speaker_id TEXT NOT NULL REFERENCES speakers(id) ON DELETE CASCADE,
+    space TEXT NOT NULL,
+    embedding TEXT NOT NULL,
+    sample_count INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (speaker_id, space)
+);
+CREATE TABLE IF NOT EXISTS session_voices (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     label TEXT NOT NULL,
+    space TEXT NOT NULL,
     embedding TEXT NOT NULL,
-    PRIMARY KEY (session_id, label)
+    PRIMARY KEY (session_id, label, space)
 );
 
 -- A bookmark is kept as (part, seconds into it): a part's place on the meeting's timeline is
@@ -978,7 +989,36 @@ class SessionRepository:
                 " UNION ALL SELECT 1 FROM deletions WHERE owner_id<>'' LIMIT 1"
             ).fetchone():
                 self._conn.execute("UPDATE sync_tombstones SET owner_id='?'")
+        self._migrate_voice_spaces()
         self._conn.commit()
+
+    def _migrate_voice_spaces(self) -> None:
+        """Once: voices stored before spaces existed (`speakers.embedding`, `session_speakers`)
+        were all made by pyannote's embedding model; they move into `speaker_voices` and
+        `session_voices` tagged `pyannote`, and `session_speakers` is dropped. A profile's old
+        `embedding` column is left as it was (no longer read)."""
+        if self._conn.execute("SELECT 1 FROM meta WHERE key='voice_spaces_migrated'").fetchone():
+            return
+        space = PYANNOTE_SPACE
+        self._conn.execute(
+            "INSERT OR IGNORE INTO speaker_voices(speaker_id, space, embedding, sample_count,"
+            " updated_at) SELECT id, ?, embedding, sample_count, updated_at FROM speakers"
+            " WHERE embedding NOT IN ('', '[]')",
+            (space,),
+        )
+        old = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_speakers'"
+        ).fetchone()
+        if old:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO session_voices(session_id, label, space, embedding)"
+                " SELECT session_id, label, ?, embedding FROM session_speakers",
+                (space,),
+            )
+            self._conn.execute("DROP TABLE session_speakers")
+        self._conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('voice_spaces_migrated', '1')"
+        )
 
     def _migrate_fts_rowids(self) -> None:
         """Databases from before the index followed rowids: new triggers, rebuilt index. Once."""
@@ -4699,29 +4739,51 @@ class SessionRepository:
 
     # ---- speakers ------------------------------------------------------
 
-    def set_session_embeddings(self, session_id: str, embeddings: dict[str, list[float]]) -> None:
+    def set_session_voices(
+        self, session_id: str, space: str, voices: dict[str, list[float]]
+    ) -> None:
+        """Store the voices of a meeting's speakers, made by the embedder of `space` (label ->
+        vector). Labels already stored in the space are replaced; others are kept."""
         self._check_write(session_id)
         with self._lock, self._conn:
             self._conn.executemany(
-                "INSERT OR REPLACE INTO session_speakers(session_id, label, embedding)"
-                " VALUES (?,?,?)",
-                [(session_id, label, json.dumps(vec)) for label, vec in embeddings.items()],
+                "INSERT OR REPLACE INTO session_voices(session_id, label, space, embedding)"
+                " VALUES (?,?,?,?)",
+                [(session_id, label, space, json.dumps(vec)) for label, vec in voices.items()],
             )
-            if embeddings:
+            if voices:
                 self._touch(session_id)
 
-    def get_session_embeddings(self, session_id: str) -> dict[str, list[float]]:
+    def get_session_voices(self, session_id: str) -> dict[str, dict[str, list[float]]]:
+        """A meeting's stored voices: {space: {label: vector}}."""
         if not self._readable(session_id):
             return {}
         with self._lock:
             rows = self._conn.execute(
-                "SELECT label, embedding FROM session_speakers WHERE session_id=?", (session_id,)
+                "SELECT space, label, embedding FROM session_voices WHERE session_id=?"
+                " ORDER BY space, label",
+                (session_id,),
             ).fetchall()
-        return {r["label"]: json.loads(r["embedding"]) for r in rows}
+        out: dict[str, dict[str, list[float]]] = {}
+        for r in rows:
+            out.setdefault(r["space"], {})[r["label"]] = json.loads(r["embedding"])
+        return out
+
+    def set_session_embeddings(
+        self, session_id: str, embeddings: dict[str, list[float]], space: str = PYANNOTE_SPACE
+    ) -> None:
+        """`set_session_voices` for one space (pyannote unless said otherwise)."""
+        self.set_session_voices(session_id, space, embeddings)
+
+    def get_session_embeddings(
+        self, session_id: str, space: str = PYANNOTE_SPACE
+    ) -> dict[str, list[float]]:
+        """A meeting's voices in one space (pyannote unless said otherwise)."""
+        return self.get_session_voices(session_id).get(space, {})
 
     def relabel_session_speaker(self, session_id: str, old: str, new: str) -> Session | None:
         """Rename a speaker label everywhere in one session (segments, words,
-        participants, stored embedding)."""
+        participants, stored voices in every space)."""
         self._check_write(session_id)
         session = self.get(session_id)
         if session is None:
@@ -4734,7 +4796,7 @@ class SessionRepository:
                 (new, session_id, old),
             )
             self._conn.execute(
-                "UPDATE OR REPLACE session_speakers SET label=? WHERE session_id=? AND label=?",
+                "UPDATE OR REPLACE session_voices SET label=? WHERE session_id=? AND label=?",
                 (new, session_id, old),
             )
             participants = [new if p == old else p for p in session.participants]
@@ -4775,45 +4837,73 @@ class SessionRepository:
     def list_speakers(self) -> list[SpeakerProfile]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM speakers ORDER BY name").fetchall()
-        return [self._speaker(r) for r in rows]
+            voices = self._conn.execute(
+                "SELECT speaker_id, space, embedding, sample_count FROM speaker_voices"
+                " ORDER BY space"
+            ).fetchall()
+        by_speaker: dict[str, list] = {}
+        for v in voices:
+            by_speaker.setdefault(v["speaker_id"], []).append(v)
+        return [self._speaker(r, by_speaker.get(r["id"], [])) for r in rows]
 
     def get_speaker(self, speaker_id: str) -> SpeakerProfile | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM speakers WHERE id=?", (speaker_id,)).fetchone()
-        return self._speaker(row) if row else None
+            return self._speaker_with_voices(row)
 
     def get_speaker_by_name(self, name: str) -> SpeakerProfile | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM speakers WHERE name=?", (name,)).fetchone()
-        return self._speaker(row) if row else None
+            return self._speaker_with_voices(row)
 
-    def upsert_speaker_sample(self, name: str, embedding: list[float]) -> SpeakerProfile:
-        """Add one voice sample to `name`, keeping a running mean embedding."""
+    def _speaker_with_voices(self, row) -> SpeakerProfile | None:
+        if row is None:
+            return None
+        voices = self._conn.execute(
+            "SELECT speaker_id, space, embedding, sample_count FROM speaker_voices"
+            " WHERE speaker_id=? ORDER BY space",
+            (row["id"],),
+        ).fetchall()
+        return self._speaker(row, voices)
+
+    def upsert_speaker_sample(
+        self, name: str, embedding: list[float], space: str = PYANNOTE_SPACE
+    ) -> SpeakerProfile:
+        """Add one voice sample (made by the embedder of `space`) to `name`, keeping a running
+        mean per space."""
         existing = self.get_speaker_by_name(name)
         now = datetime.now().isoformat()
         with self._lock, self._conn:
             if existing is None:
-                profile = SpeakerProfile(name=name, embedding=embedding, sample_count=1)
+                profile = SpeakerProfile(
+                    name=name, voices={space: embedding}, sample_counts={space: 1}
+                )
+                # speakers.embedding stays for old builds: '[]' never matches there.
                 self._conn.execute(
                     "INSERT INTO speakers"
                     "(id, name, embedding, sample_count, created_at, updated_at)"
                     " VALUES (?,?,?,?,?,?)",
-                    (profile.id, name, json.dumps(embedding), 1, now, now),
+                    (profile.id, name, "[]", 1, now, now),
+                )
+                self._conn.execute(
+                    "INSERT INTO speaker_voices(speaker_id, space, embedding, sample_count,"
+                    " updated_at) VALUES (?,?,?,?,?)",
+                    (profile.id, space, json.dumps(embedding), 1, now),
                 )
                 return profile
-            n = existing.sample_count
-            if len(existing.embedding) == len(embedding):
-                mean = [
-                    (o * n + v) / (n + 1)
-                    for o, v in zip(existing.embedding, embedding, strict=True)
-                ]
+            old = existing.voices.get(space)
+            n = existing.sample_counts.get(space, 0)
+            if old is not None and len(old) == len(embedding):
+                mean = [(o * n + v) / (n + 1) for o, v in zip(old, embedding, strict=True)]
             else:
-                mean = embedding  # embedding model changed; start over
+                mean = embedding  # no voice in this space yet, or its model changed: start over
                 n = 0
             self._conn.execute(
-                "UPDATE speakers SET embedding=?, sample_count=?, updated_at=? WHERE id=?",
-                (json.dumps(mean), n + 1, now, existing.id),
+                "INSERT OR REPLACE INTO speaker_voices(speaker_id, space, embedding, sample_count,"
+                " updated_at) VALUES (?,?,?,?,?)",
+                (existing.id, space, json.dumps(mean), n + 1, now),
             )
+            self._conn.execute("UPDATE speakers SET updated_at=? WHERE id=?", (now, existing.id))
         return self.get_speaker(existing.id)
 
     def rename_speaker(self, speaker_id: str, name: str) -> SpeakerProfile | None:
@@ -4830,12 +4920,12 @@ class SessionRepository:
         return cur.rowcount > 0
 
     @staticmethod
-    def _speaker(row) -> SpeakerProfile:
+    def _speaker(row, voices=()) -> SpeakerProfile:
         return SpeakerProfile(
             id=row["id"],
             name=row["name"],
-            embedding=json.loads(row["embedding"]),
-            sample_count=row["sample_count"],
+            voices={v["space"]: json.loads(v["embedding"]) for v in voices},
+            sample_counts={v["space"]: v["sample_count"] for v in voices},
             created_at=_dt(row["created_at"]),
             updated_at=_dt(row["updated_at"]),
         )
@@ -5039,7 +5129,8 @@ class SessionRepository:
         snapshot, without access checks (the sync service is the machine itself, not a
         request): None when there is no such meeting. Keys: session, segments, recordings,
         bookmarks, live_flags, external_notes, comments (`comment_rows`), publications,
-        peer_shares, embeddings, assets (with `linked_at`), events (with `uid`, oldest first)."""
+        peer_shares, embeddings (`session_voices` rows, each with its `space`), assets (with
+        `linked_at`), events (with `uid`, oldest first)."""
 
         def rows(sql: str) -> list[dict]:
             return [dict(r) for r in self._conn.execute(sql, (session_id,)).fetchall()]
@@ -5071,7 +5162,9 @@ class SessionRepository:
                     ).fetchall()
                 ],
                 "peer_shares": rows("SELECT * FROM peer_shares WHERE session_id=? ORDER BY person"),
-                "embeddings": rows("SELECT * FROM session_speakers WHERE session_id=?"),
+                "embeddings": rows(
+                    "SELECT * FROM session_voices WHERE session_id=? ORDER BY space, label"
+                ),
                 "assets": rows(
                     "SELECT a.*, sa.added_at AS linked_at FROM assets a"
                     " JOIN session_assets sa ON sa.asset_id = a.id WHERE sa.session_id=?"
@@ -5214,10 +5307,26 @@ class SessionRepository:
                     for c in s.comments
                 ],
             )
-            self._conn.execute("DELETE FROM session_speakers WHERE session_id=?", (sid,))
+            # Voices per space. A document without `speaker_voices` (an older peer) carries the
+            # pyannote space only: the spaces we hold beyond it stay as they are.
+            if s.speaker_voices is None:
+                voices = {PYANNOTE_SPACE: s.speaker_embeddings}
+                self._conn.execute(
+                    "DELETE FROM session_voices WHERE session_id=? AND space=?",
+                    (sid, PYANNOTE_SPACE),
+                )
+            else:
+                voices = {sp: by for sp, by in s.speaker_voices.items()}
+                if s.speaker_embeddings and PYANNOTE_SPACE not in voices:
+                    voices[PYANNOTE_SPACE] = s.speaker_embeddings
+                self._conn.execute("DELETE FROM session_voices WHERE session_id=?", (sid,))
             self._conn.executemany(
-                "INSERT INTO session_speakers(session_id, label, embedding) VALUES (?,?,?)",
-                [(sid, label, json.dumps(vec)) for label, vec in s.speaker_embeddings.items()],
+                "INSERT INTO session_voices(session_id, label, space, embedding) VALUES (?,?,?,?)",
+                [
+                    (sid, label, space, json.dumps(vec))
+                    for space, by_label in voices.items()
+                    for label, vec in by_label.items()
+                ],
             )
             self._link_synced_assets(sid, s)
             self.store_synced_publications(sid, s.publications)

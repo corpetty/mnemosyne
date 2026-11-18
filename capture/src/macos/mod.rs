@@ -1,9 +1,12 @@
-//! macOS: Core Audio devices, the microphone through cpal, the system's audio through a
-//! global process tap. Everything here needs macOS 14.2+ (we require 15.4).
+//! macOS: Core Audio devices, the microphone through cpal (or through Apple's voice
+//! processing, `--voice-processing`), the system's audio through a global process tap.
+//! Everything here needs macOS 14.2+ (we require 15.4).
 
 pub mod coreaudio;
 pub mod mic;
+pub mod processes;
 pub mod tap;
+pub mod vpio;
 
 use crate::devices::Device;
 use crate::source::Source;
@@ -14,7 +17,7 @@ use objc2_foundation::NSString;
 use serde_json::{json, Map, Value};
 
 /// The `--target` that means the system's audio (every app's output).
-pub const SYSTEM_TARGET: &str = "system";
+pub const SYSTEM_TARGET: &str = crate::SYSTEM_TARGET;
 
 /// The entry `devices` adds for the system's audio. Its id is kAudioObjectSystemObject (1),
 /// which no real device has.
@@ -61,10 +64,13 @@ pub fn devices() -> Result<Vec<Device>> {
     Ok(out)
 }
 
-/// Open `--target`: "system" or a device UID.
-pub fn open(target: &str) -> Result<Box<dyn Source>> {
+/// Open `--target`: "system" or a device UID, a microphone through voice processing when
+/// `voice_processing` is set (crate::open_target refuses it for "system").
+pub fn open(target: &str, voice_processing: bool) -> Result<Box<dyn Source>> {
     if target == SYSTEM_TARGET {
         Ok(Box::new(tap::SystemTap::open()?))
+    } else if voice_processing {
+        Ok(Box::new(vpio::VoiceMicrophone::open(target)?))
     } else {
         Ok(Box::new(mic::Microphone::open(target)?))
     }
@@ -75,6 +81,7 @@ pub fn doctor_fields(report: &mut Map<String, Value>) {
     report.insert("sources".into(), json!(["fake", "device", "system"]));
     report.insert("real_capture".into(), json!(true));
     report.insert("taps_supported".into(), json!(true));
+    report.insert("voice_processing".into(), json!(vpio::available()));
     report.insert("macos_version".into(), json!(macos_version()));
     report.insert("mic_authorization".into(), json!(mic_authorization()));
     report.insert(
@@ -175,6 +182,7 @@ mod tests {
         assert_eq!(m["taps_supported"], json!(true));
         assert_eq!(m["real_capture"], json!(true));
         assert_eq!(m["sources"], json!(["fake", "device", "system"]));
+        assert!(m["voice_processing"].is_boolean());
         let version = m["macos_version"].as_str().expect("a version string");
         assert!(
             version.starts_with(|c: char| c.is_ascii_digit()),
@@ -200,7 +208,11 @@ mod tests {
 
     #[test]
     fn a_bogus_target_is_a_clear_error() {
-        let e = open("mnemosyne-no-such-device").err().expect("an error");
-        assert!(e.to_string().contains("no audio device"), "{e}");
+        for voice_processing in [false, true] {
+            let e = open("mnemosyne-no-such-device", voice_processing)
+                .err()
+                .expect("an error");
+            assert!(e.to_string().contains("no audio device"), "{e}");
+        }
     }
 }

@@ -46,6 +46,7 @@ import {
 } from '$lib/app/teamDestination.js';
 import { transcriptState } from '$lib/stores/transcript.svelte.js';
 import { uiState, type ShellStage, type View } from '$lib/stores/ui.svelte.js';
+import { appShortcut } from '$lib/app/shortcuts.js';
 import { contactsState } from '$lib/stores/contacts.svelte.js';
 import { syncState } from '$lib/stores/sync.svelte.js';
 import { updateState } from '$lib/stores/update.svelte.js';
@@ -851,17 +852,19 @@ export function runLaunchActionOnce() {
 // ---- keyboard ------------------------------------------------------------------
 
 export function handleKeydown(e: KeyboardEvent) {
-  // A field that used the key itself (the notes editor: Ctrl+B bold, Ctrl+K link, Ctrl+E code).
+  // A field that used the key itself (the notes editor: Ctrl+B bold, Ctrl+K link, Ctrl+E code;
+  // Cmd on a Mac).
   if (e.defaultPrevented) return;
+  const key = appShortcut(e);
   // The palette opens from anywhere, text fields included.
-  if (e.ctrlKey && e.key === 'k') {
+  if (key === 'k') {
     e.preventDefault();
     uiState.paletteOpen = !uiState.paletteOpen;
     return;
   }
   const tag = (e.target as HTMLElement)?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-  if (!e.ctrlKey) return;
+  if (key === null) return;
   const actions: Record<string, () => void> = {
     r: () => {
       if (!audioState.isRecording) startRecording();
@@ -873,7 +876,7 @@ export function handleKeydown(e: KeyboardEvent) {
     m: () => void markMoment(),
     b: () => (uiState.sidebarCollapsed = !uiState.sidebarCollapsed)
   };
-  const action = actions[e.key];
+  const action = actions[key];
   if (action) {
     e.preventDefault();
     action();

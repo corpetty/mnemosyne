@@ -109,6 +109,25 @@ def test_system_says_which_engines_run_here(client, monkeypatch):
     assert info["transcriber_in_use"] == "parakeet" and info["diarizer_in_use"] == "onnx"
 
 
+@pytest.mark.parametrize(
+    ("installed", "token", "diarizer", "expected"),
+    [
+        ({"sherpa_onnx"}, "", "auto", "onnx"),  # no torch: voices on the CPU, no token needed
+        ({"sherpa_onnx", "pyannote.audio", "torch"}, "hf_x", "auto", "pyannote"),
+        ({"sherpa_onnx", "pyannote.audio", "torch"}, "", "auto", "onnx"),  # pyannote needs a token
+        ({"sherpa_onnx"}, "", "onnx", "onnx"),
+        ({"sherpa_onnx"}, "", "none", "none"),
+        (set(), "", "auto", "none"),
+    ],
+)
+def test_system_says_what_recognises_voices(
+    client, monkeypatch, installed, token, diarizer, expected
+):
+    _machine(monkeypatch, installed)
+    client.put("/api/settings", json={"diarizer": diarizer, "hf_token": token})
+    assert client.get("/api/system").json()["speaker_embedder_in_use"] == expected
+
+
 @pytest.mark.parametrize("kind", ["onnx"])
 def test_the_onnx_diarizer_is_built_without_importing_it(settings, monkeypatch, kind):
     _machine(monkeypatch, {"sherpa_onnx"})

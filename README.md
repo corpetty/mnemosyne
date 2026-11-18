@@ -223,7 +223,7 @@ All configuration is via environment variables in `backend/.env`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HF_TOKEN` | | HuggingFace token for pyannote (diarization without an NVIDIA GPU, and voice profiles) |
+| `HF_TOKEN` | | HuggingFace token for the pyannote diarizer (voice profiles work without it) |
 | `WHISPER_MODEL_SIZE` | `medium.en` | WhisperX model size (`base`, `small`, `medium`, `large-v2`, `large-v3`) |
 | `WHISPER_COMPUTE_TYPE` | `float16` | Compute type (`float16`, `int8`) |
 | `WHISPER_BATCH_SIZE` | `8` | Batch size for transcription (lower = less VRAM) |

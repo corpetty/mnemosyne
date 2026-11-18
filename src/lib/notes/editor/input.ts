@@ -23,7 +23,7 @@
 // - Cut copies the selection's markdown first; paste reads text/plain as markdown. Files on a
 //   paste or a drop go to `onFiles` first (images); when it declines, the text path runs.
 //
-// Shortcuts (Ctrl is also Cmd):
+// Shortcuts (Ctrl is Cmd on a Mac; Ctrl+Y redoes only elsewhere):
 //   Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+Shift+X   bold / italic / code / strikethrough on the selection
 //   Ctrl+K                                      link: `requestLink` with the selection (or the
 //                                               link under the caret); the component answers with `setLink`
@@ -64,6 +64,7 @@ import { idsOf, liveRuns, removeRange, type Inverse } from '../ops.js';
 import type { UndoStack } from '../undo.js';
 import { PASTE_LIMIT, cellPasteText, cleanPaste, parsePaste, selectionHtml, selectionMarkdown } from './clipboard.js';
 import { isChipUrl } from '../chips.js';
+import { isMac, primary } from '../keys.js';
 import { extractText, type SelectionOffsets } from './dom.js';
 import { diffAt, domFlagsAt, lineContent, reconcileAffinity } from './native.js';
 import type { EditorView } from './view.js';
@@ -769,7 +770,8 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
       tableDeleteKey(e);
       return;
     }
-    if (!mod) return;
+    // Cmd on a Mac, Ctrl elsewhere; a Mac's Ctrl keys are the system's text-editing keys.
+    if (!primary(e)) return;
     if (e.altKey && !e.shiftKey && e.code in HEADINGS) {
       e.preventDefault();
       setKind(HEADINGS[e.code]);
@@ -806,6 +808,7 @@ export function attachInput(view: EditorView, doc: Doc, opts: InputOptions): Edi
         doUndo();
         break;
       case 'y':
+        if (isMac()) return;
         doRedo();
         break;
       default:

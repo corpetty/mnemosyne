@@ -203,12 +203,20 @@ def build_record_command(
     microphone.) Sources are targeted by node name, which survives restarts.
 
     On a Mac the command is the capture sidecar's (audio/coreaudio.py); PipeWire's node names
-    and properties mean nothing there.
+    and properties mean nothing there. With echo cancellation on, a Mac records microphones
+    through Apple's voice processing (`--voice-processing`).
     """
     if sys.platform == "darwin":
         from . import coreaudio
 
-        return coreaudio.build_record_command(device, output_path, sample_rate, channels, format)
+        return coreaudio.build_record_command(
+            device,
+            output_path,
+            sample_rate,
+            channels,
+            format,
+            voice_processing=coreaudio.voice_processing(),
+        )
     cmd = ["pw-record", f"--rate={sample_rate}", f"--channels={channels}", f"--format={format}"]
     # Named so the meeting-app monitor (audio/streams.py) can tell our streams apart.
     props = ["application.name=Mnemosyne"]

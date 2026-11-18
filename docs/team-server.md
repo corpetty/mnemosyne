@@ -195,10 +195,13 @@ sudo -u mnemosyne bash -c 'corepack enable --install-directory ~/.local/bin && p
 
 ### Voice profiles (optional)
 
-Naming speakers by their saved voice uses pyannote's embedding model, which needs a free Hugging
-Face token with the model's licence accepted (see the main README). Put it in
-`/srv/mnemosyne/secrets.env` (owner mnemosyne, mode 0600) as `HF_TOKEN=hf_...`. Without it,
-speakers are numbered and can be named by hand.
+Naming speakers by their saved voice works on a CPU-only server with no token: the `onnx` extra
+brings a speaker model that runs without torch (about 26 MB, downloaded on first use). A server with
+the gpu extra can use pyannote's embedding model instead, which needs a free Hugging Face token with
+the model's licence accepted (see the main README); put it in `/srv/mnemosyne/secrets.env` (owner
+mnemosyne, mode 0600) as `HF_TOKEN=hf_...`. Voices learned with one model are not recognised by the
+other, so adding the token later starts the profiles over. With neither, speakers are numbered and
+can be named by hand.
 
 ### The summary model
 

@@ -28,7 +28,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 Emit = Callable[[dict], None]
-MatchNames = Callable[[dict[str, list[float]]], dict[str, str]]
+# (embeddings, their voice space) -> {label: name}; only profiles of that space are compared.
+MatchNames = Callable[[dict[str, list[float]], str], dict[str, str]]
 
 
 def _overlap(a0: float, a1: float, b0: float, b1: float) -> float:
@@ -127,7 +128,12 @@ class LiveRediarizer:
             )
             for i in lines
         }
-        names = self.match_names(dict(result.embeddings)) if self.match_names else {}
+        # The diarizer's voices come with their space ("" when it names none: the caller's own).
+        names = (
+            self.match_names(dict(result.embeddings), result.space)
+            if self.match_names and result.embeddings
+            else {}
+        )
         display = self._display_labels(raw, names, source)
         changes = []
         moved: dict[str, Counter] = defaultdict(Counter)

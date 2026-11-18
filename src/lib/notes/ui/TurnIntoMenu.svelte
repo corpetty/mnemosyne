@@ -3,6 +3,7 @@
 	// a button that opens a menu of the line kinds. The trigger keeps the editor's selection
 	// (mousedown is cancelled); the page does the work through `onkind`.
 	import { tick } from 'svelte';
+	import { keyHint } from '../keys.js';
 	import type { LineKind } from '../model.js';
 
 	let {
@@ -23,13 +24,13 @@
 		`px-2 py-1 ${on ? 'bg-gray-700 text-gray-100' : 'bg-gray-900 text-gray-400 hover:text-gray-200'}`;
 
 	const kinds: { kind: LineKind | null; name: string; keys: string }[] = [
-		{ kind: null, name: 'Text', keys: 'Ctrl+Alt+0' },
-		{ kind: 'h1', name: 'Heading 1', keys: 'Ctrl+Alt+1' },
-		{ kind: 'h2', name: 'Heading 2', keys: 'Ctrl+Alt+2' },
-		{ kind: 'h3', name: 'Heading 3', keys: 'Ctrl+Alt+3' },
-		{ kind: 'bullet', name: 'Bulleted list', keys: 'Ctrl+Shift+8' },
-		{ kind: 'number', name: 'Numbered list', keys: 'Ctrl+Shift+7' },
-		{ kind: 'task', name: 'Task list', keys: 'Ctrl+Shift+9' },
+		{ kind: null, name: 'Text', keys: keyHint('Mod+Alt+0') },
+		{ kind: 'h1', name: 'Heading 1', keys: keyHint('Mod+Alt+1') },
+		{ kind: 'h2', name: 'Heading 2', keys: keyHint('Mod+Alt+2') },
+		{ kind: 'h3', name: 'Heading 3', keys: keyHint('Mod+Alt+3') },
+		{ kind: 'bullet', name: 'Bulleted list', keys: keyHint('Mod+Shift+8') },
+		{ kind: 'number', name: 'Numbered list', keys: keyHint('Mod+Shift+7') },
+		{ kind: 'task', name: 'Task list', keys: keyHint('Mod+Shift+9') },
 		{ kind: 'quote', name: 'Quote', keys: 'type > and a space' },
 		{ kind: 'code', name: 'Code block', keys: 'type ``` and Enter' }
 	];

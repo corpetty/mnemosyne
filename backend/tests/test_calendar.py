@@ -219,3 +219,27 @@ def test_new_session_named_during_meeting(client, ctx, ics_file):
     assert client.post("/api/sessions", json={"name": "Mine"}).json()["name"] == "Mine"
     ctx.settings.calendar_auto_name = False
     assert client.post("/api/sessions", json={}).json()["name"] == "Untitled Session"
+
+
+def test_desktop_calendar_is_off_on_the_mac(monkeypatch):
+    from types import SimpleNamespace
+
+    from mnemosyne.services.calendar_service import calendar_source
+
+    st = SimpleNamespace(
+        calendar_source="desktop",
+        calendar_desktop_calendars="a, b",
+        calendar_ics_url="https://example.invalid/x.ics",
+    )
+    monkeypatch.setattr("sys.platform", "linux")
+    assert calendar_source(st) == "desktop:a,b"
+    monkeypatch.setattr("sys.platform", "darwin")
+    assert calendar_source(st) == ""
+    st.calendar_source = "ics"
+    assert calendar_source(st) == "https://example.invalid/x.ics"
+
+
+def test_desktop_calendar_list_is_empty_on_the_mac(client, monkeypatch):
+    monkeypatch.setattr("sys.platform", "darwin")
+    r = client.get("/api/calendar/desktop")
+    assert r.status_code == 200 and r.json() == []

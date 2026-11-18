@@ -10,9 +10,9 @@ item by id, bookmark notes, comment texts) go through the sidecar's one-off thre
 - a scalar changed on one side takes that side, changed on both the side with the newer
   `updated_at` (listed in the report's `fields`);
 - sets (topics, participants, attendees) and rows by id (bookmarks, external notes, live flags,
-  comments, asset links, speaker embeddings) merge present/absent three ways: added on one
-  side → added, removed on one side and untouched on the other → removed, removed vs changed →
-  the change;
+  comments, asset links, speaker voices per voice space) merge present/absent three ways: added
+  on one side → added, removed on one side and untouched on the other → removed, removed vs
+  changed → the change;
 - summary items by id per section the same way, with Corey's rule that a touched item survives
   a deletion on the other side; the order is ours with theirs' additions placed by `place`;
 - chapters, client facts and the agenda are whole lists; agenda `covered` is OR'd per point;
@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..export.note_merge import MergeError, merge_many
 from ..models.session import AgendaItem, Chapter, ClientFact, NotesItem, SummaryData
+from ..models.speaker import PYANNOTE_SPACE
 from ..models.sync_session import (
     SyncMedia,
     SyncSession,
@@ -553,12 +554,7 @@ def merge(
     out.assets = list(
         m.by_id(_rows(base.assets), _rows(ours.assets), _rows(theirs.assets), "asset").values()
     )
-    out.speaker_embeddings = m.by_id(
-        dict(base.speaker_embeddings),
-        dict(ours.speaker_embeddings),
-        dict(theirs.speaker_embeddings),
-        "speaker",
-    )
+    _merge_voices(m, out)
 
     # The transcript as one unit.
     b_tr, o_tr, t_tr = (_dump(d.transcript) for d in (base, ours, theirs))
@@ -618,6 +614,38 @@ def merge_media(ours: list[SyncMedia] | None, theirs: list[SyncMedia] | None) ->
     for m in [*(ours or []), *(theirs or [])]:
         by_sha.setdefault(m.sha256, m)
     return list(by_sha.values())
+
+
+def voices_of(d: SyncSession) -> dict[str, dict[str, list[float]]]:
+    """A document's voices as {space: {label: vector}}. One from an older peer (no
+    `speaker_voices`) knows the pyannote space only, in `speaker_embeddings`."""
+    voices = {space: dict(by) for space, by in (d.speaker_voices or {}).items()}
+    if d.speaker_embeddings and PYANNOTE_SPACE not in voices:
+        voices[PYANNOTE_SPACE] = dict(d.speaker_embeddings)
+    return voices
+
+
+def _merge_voices(m: _Merge, out: SyncSession) -> None:
+    """The speaker voices, three ways per space. A side without `speaker_voices` (an older
+    peer) knows the pyannote space only: for the other spaces it says nothing, so the other side's
+    stand (it must not look like a deletion). With none on either side the field stays None and
+    only the pyannote space is written."""
+    base, ours, theirs = m.base, m.ours, m.theirs
+    b, o, t = voices_of(base), voices_of(ours), voices_of(theirs)
+    merged: dict[str, dict[str, list[float]]] = {}
+    for space in dict.fromkeys([*b, *o, *t]):
+        if space != PYANNOTE_SPACE and ours.speaker_voices is None:
+            by_label = dict(t.get(space, {}))
+        elif space != PYANNOTE_SPACE and theirs.speaker_voices is None:
+            by_label = dict(o.get(space, {}))
+        else:
+            by_label = m.by_id(b.get(space, {}), o.get(space, {}), t.get(space, {}), "speaker")
+        if by_label:
+            merged[space] = by_label
+    out.speaker_embeddings = merged.get(PYANNOTE_SPACE, {})
+    out.speaker_voices = (
+        None if ours.speaker_voices is None and theirs.speaker_voices is None else merged
+    )
 
 
 def _rows(items) -> dict:

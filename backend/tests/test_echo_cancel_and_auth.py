@@ -79,6 +79,7 @@ def test_echo_cancel_api(client, ctx, fake_pwcli, monkeypatch):
     assert not body["active"] and not body["enabled"]
 
 
+@pytest.mark.linux_only("PipeWire echo canceller (pw-cli); a Mac in test_coreaudio.py")
 def test_echo_cancel_api_unsupported(client, ctx, monkeypatch):
     monkeypatch.setattr(ec, "MODULE_PATHS", ("/nonexistent.so",))
     ctx.echo = EchoCancelManager(pw_cli="/nonexistent/pw-cli")
@@ -383,9 +384,12 @@ def test_tunnel_is_not_the_desktop_app(app, tunnel_client, ctx):
     assert desktop.get("/api/system/attach").status_code != 401  # LOCAL_PATHS
 
 
-def test_echo_cancel_unsupported_in_mac_words_on_a_mac(monkeypatch):
+def test_echo_cancel_unsupported_in_mac_words_on_a_mac(monkeypatch, tmp_path):
+    # A Mac's echo cancellation is voice processing in the capture helper (test_coreaudio.py
+    # has the rest); without the helper it says so, never PipeWire words.
     monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setenv("MNEMOSYNE_CAPTURE_BIN", str(tmp_path / "nope"))
     assert EchoCancelManager(pw_cli="pw-cli").supported() == (
         False,
-        "Not available on a Mac yet",
+        "The capture helper (mnemosyne-capture) is not available",
     )

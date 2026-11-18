@@ -1,12 +1,13 @@
 // The `/` menu in jsdom: NotesEditor mounted on a local document with fake inserts, driven by
 // native typing (as input.test.ts does it) and the editor's own keydown.
 import { flushSync, mount, tick, unmount } from 'svelte';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { personUrl, timeUrl } from '../chips.js';
 import { insertText } from '../commands.js';
 import { getSelectionOffsets, setSelectionOffsets } from '../editor/dom.js';
 import { ensureTerminated, lines, openDoc, type Doc } from '../model.js';
 import { ORIGIN, view as viewOf, WasmHashWeb } from '../test-harness.js';
+import { pinPlatform, restorePlatform } from '../test-platform.js';
 import NotesEditor from './NotesEditor.svelte';
 import type { InsertProvider, NotesHost } from './types.js';
 
@@ -20,7 +21,9 @@ globalThis.ResizeObserver ??= class {
 let target: HTMLElement;
 let component: ReturnType<typeof mount> | null = null;
 
+beforeEach(() => pinPlatform('linux'));
 afterEach(() => {
+  restorePlatform();
   if (component) unmount(component);
   component = null;
   target?.remove();
@@ -216,6 +219,17 @@ describe('the / menu', () => {
     key(s.root, 'Enter');
     expect(text(s)).toBe('x\n');
     expect(lines(s.doc)[0].kind).toBe('quote');
+  });
+
+  it('Cmd+/ opens it on a Mac; Ctrl+/ does not', async () => {
+    pinPlatform('mac');
+    const s = setup('x');
+    expect(key(s.root, '/', { ctrlKey: true, code: 'Slash' }).defaultPrevented).toBe(false);
+    await settle();
+    expect(menu()).toBeNull();
+    expect(key(s.root, '/', { metaKey: true, code: 'Slash' }).defaultPrevented).toBe(true);
+    await settle();
+    expect(menu()).not.toBeNull();
   });
 
   it('the Insert button opens it', async () => {

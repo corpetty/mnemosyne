@@ -145,7 +145,7 @@
 			: system?.diarizer_in_use === 'pyannote'
 				? 'Uses pyannote with your Hugging Face token.'
 				: system?.onnx_diarizer
-					? 'Uses a small model on the CPU (about 50 MB, downloaded the first time it runs); no account needed. With an NVIDIA GPU, Nemotron is used instead.'
+					? 'Uses small models on the CPU (about 75 MB, downloaded the first time it runs); no account needed, and voices are recognised across meetings. With an NVIDIA GPU, Nemotron is used instead.'
 					: 'Not available on this install: lines are labelled by channel (you vs. everyone else).'
 	);
 
@@ -374,7 +374,7 @@
 			{/if}
 			{#if identifySpeakers && system?.gpu_stack && !system.hf_token}
 				<label class="block text-xs text-gray-500">
-					Optional: a Hugging Face token (with speaker-diarization-community-1 accepted) lets Mnemosyne recognise voices across meetings.
+					Optional: a Hugging Face token (with speaker-diarization-community-1 accepted) enables the pyannote diarizer.
 					<input type="password" bind:value={hfToken} placeholder="hf_…" class="{input} mt-1" aria-label="Hugging Face token" />
 				</label>
 			{/if}
@@ -435,7 +435,9 @@
 				<span class="block text-xs text-gray-500">Recordings are named after the meeting in progress, and you get a brief of what's open from last time.</span>
 				<select bind:value={calendarSource} class={input} aria-label="Calendar source">
 					<option value="off">No calendar</option>
-					<option value="desktop">This computer's calendars (GNOME Online Accounts)</option>
+					{#if !system?.platform.startsWith('Darwin')}
+						<option value="desktop">This computer's calendars (GNOME Online Accounts)</option>
+					{/if}
 					<option value="ics">A private ICS address</option>
 				</select>
 				{#if calendarSource === 'desktop'}

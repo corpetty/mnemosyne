@@ -54,11 +54,18 @@ Be aware this is a test build.
 
 - Recording works: your microphone and the system audio (the other people on a call), live
   transcript included. You can also import recordings (Import, or the sample meeting) and transcribe them.
-- Transcription runs on the CPU with Parakeet, and speaker labels with the onnx diarizer. It is
-  slower than on a PC with a GPU.
-- Not on the Mac yet: Phonon-2 and the built-in summary model. Use Ollama, vLLM, OpenAI or
-  Anthropic for summaries.
-- Linux only: echo cancellation and noise suppression. Use headphones for calls when you can.
+- Transcription runs on the CPU with Parakeet, and speaker labels with the onnx diarizer. Voice
+  profiles work too: rename a speaker and tick "remember voice", and they are named in later
+  meetings, and live lines get "Speaker n" and names. This uses a small speaker model that runs
+  without a token (about 26 MB, downloaded the first time). It is slower than on a PC with a GPU. For English you can install Phonon-2 (Settings → Transcription,
+  or the setup wizard; about 1 GB): it is more accurate than Parakeet and was faster on Linux.
+- Echo cancellation (the "Echo cancellation" row above the device list, next to Record): turn it on
+  for calls without headphones.
+  Your microphone is then recorded through Apple's voice processing, which takes what the Mac plays
+  (the other people) out of it and turns background noise down. It applies from the next recording.
+  Other apps' sound should not get quieter while it runs; tell us if it does. New, not yet tried on a
+  real Mac.
+- Linux only: noise suppression (voice processing already turns noise down on the Mac).
 
 ### Checklist
 
@@ -70,7 +77,9 @@ Do these in order and write down what happened, especially what surprised you.
 4. Import the sample meeting. Does it play, and does it transcribe with several speakers?
 5. Hold a 30-minute call (Zoom, Meet, whatever you use) with someone, once on headphones and once on
    the laptop speakers. Watch the live transcript, then Stop and transcribe. Are both sides there,
-   with speakers?
+   with speakers? On the laptop speakers, try it with echo cancellation on as well: does the other
+   side still show up in your microphone's lines, does your voice sound normal, and did the call
+   or music get quieter while recording?
 6. During a recording, connect AirPods (or other Bluetooth headphones). Does recording carry on?
 7. During a recording, close the lid for a minute and open it. What happened?
 8. During a recording, Force Quit Mnemosyne (Option-Command-Esc), then reopen it within 15 minutes.

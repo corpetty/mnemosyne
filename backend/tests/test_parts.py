@@ -155,6 +155,32 @@ def test_recording_again_adds_a_part_and_transcribes_only_it(client, ctx, real_a
 
 
 @needs_ffmpeg
+def test_a_later_part_in_another_voice_space_is_not_matched(client, ctx, real_audio, fake_engine):
+    """Voices are compared inside one space: part 1's embedder is another model than part 0's, so
+    its speakers get fresh labels (not part 0's by a cosine that means nothing), and both spaces'
+    voices are kept."""
+    ctx.settings.auto_summarize = False
+    fake_engine.last_speaker_embeddings = {"SPEAKER_00": [1.0, 0.0], "SPEAKER_01": [0.0, 1.0]}
+    sid = _record(client)
+    _, finish = stop_and_finish(client, sid)
+    _wait(client, finish["result"]["transcribe_job_id"])
+
+    fake_engine.last_speaker_embeddings = {"SPEAKER_00": [1.0, 0.0], "SPEAKER_01": [0.0, 1.0]}
+    fake_engine.last_speaker_space = "wespeaker-r34"  # the same vectors would match, in one space
+    assert _record(client, sid) == sid
+    _, finish = stop_and_finish(client, sid)
+    assert _wait(client, finish["result"]["transcribe_job_id"])["status"] == "completed"
+
+    lines = [s["speaker"] for s in client.get(f"/api/sessions/{sid}").json()["transcript"]]
+    assert lines[:3] == ["SPEAKER_00", "SPEAKER_01", "SPEAKER_00"]
+    assert lines[3:] == ["SPEAKER_02", "SPEAKER_03", "SPEAKER_02"]
+    voices = ctx.repo.get_session_voices(sid)
+    assert set(voices) == {"pyannote", "wespeaker-r34"}
+    assert set(voices["pyannote"]) == {"SPEAKER_00", "SPEAKER_01"}
+    assert set(voices["wespeaker-r34"]) == {"SPEAKER_02", "SPEAKER_03"}
+
+
+@needs_ffmpeg
 def test_recovery_after_a_crash_adds_to_the_meeting(settings, keystore, real_audio, fake_engine):
     """A crash during the second recording must not throw away the first."""
     import json

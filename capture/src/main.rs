@@ -4,7 +4,7 @@ use mnemosyne_capture::fake::{self, Fake};
 use mnemosyne_capture::log::Log;
 use mnemosyne_capture::record::{self, Pipeline, Settings};
 use mnemosyne_capture::source::Source;
-use mnemosyne_capture::{devices, doctor, OpenError, DEFAULT_RATE};
+use mnemosyne_capture::{apps, devices, doctor, OpenError, DEFAULT_RATE};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,6 +33,8 @@ enum Command {
     Devices,
     /// Say what this binary can do on this machine, as JSON.
     Doctor,
+    /// List the processes capturing audio input right now, as JSON (macOS only).
+    Apps,
 }
 
 #[derive(Args)]
@@ -49,6 +51,10 @@ struct RecordArgs {
     /// Append one line per event to this file.
     #[arg(long)]
     log: Option<PathBuf>,
+    /// macOS: record the microphone through Apple's voice processing, which removes what the
+    /// Mac plays from it (echo cancellation) and turns noise down. Not for "system" or --fake.
+    #[arg(long, conflicts_with = "fake")]
+    voice_processing: bool,
     /// Also stop (cleanly) when standard input reaches end of file.
     #[arg(long)]
     stdin_stop: bool,
@@ -90,6 +96,11 @@ fn main() -> ExitCode {
         Command::Record(args) => return record(*args),
         Command::Devices => devices::list().and_then(|d| print_json(&d)),
         Command::Doctor => print_json(&doctor::report()),
+        Command::Apps if !apps::SUPPORTED => {
+            eprintln!("mnemosyne-capture: listing the apps that capture audio is not supported on this system");
+            return ExitCode::from(EXIT_UNSUPPORTED);
+        }
+        Command::Apps => apps::list().and_then(|a| print_json(&a)),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -148,7 +159,8 @@ fn record(args: RecordArgs) -> ExitCode {
             Ok(f) => Box::new(f),
             Err(e) => return unsupported(&format!("{e:#}")),
         },
-        (None, Some(target)) => match mnemosyne_capture::open_target(target) {
+        (None, Some(target)) => match mnemosyne_capture::open_target(target, args.voice_processing)
+        {
             Ok(s) => s,
             Err(OpenError::Unsupported(msg)) => return unsupported(&msg),
             Err(e @ OpenError::Failed(_)) => {
@@ -207,5 +219,41 @@ fn record(args: RecordArgs) -> ExitCode {
             eprintln!("mnemosyne-capture: {e:#}");
             ExitCode::from(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<RecordArgs, clap::Error> {
+        let mut all = vec!["mnemosyne-capture", "record"];
+        all.extend_from_slice(args);
+        match Cli::try_parse_from(all)?.command {
+            Command::Record(args) => Ok(*args),
+            _ => unreachable!("a record command"),
+        }
+    }
+
+    #[test]
+    fn voice_processing_is_a_flag_off_by_default() {
+        assert!(
+            !parse(&["--target", "mic", "out.wav"])
+                .unwrap()
+                .voice_processing
+        );
+        let args = parse(&["--target", "mic", "--voice-processing", "out.wav"]).unwrap();
+        assert!(args.voice_processing);
+        assert_eq!(args.target.as_deref(), Some("mic"));
+    }
+
+    #[test]
+    fn voice_processing_is_refused_with_a_fake_source() {
+        let e = parse(&["--fake", "tone", "--voice-processing", "out.wav"])
+            .err()
+            .expect("a usage error");
+        assert_eq!(e.kind(), clap::error::ErrorKind::ArgumentConflict);
+        // clap's usage errors exit 2, as ours do.
+        assert_eq!(e.exit_code(), 2);
     }
 }

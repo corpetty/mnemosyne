@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { shortcutHint } from '$lib/app/shortcuts.js';
 	import { stopAndTranscribe } from '$lib/app/controller.svelte.js';
 	import { audioState } from '$lib/stores/audio.svelte.js';
 	import { satelliteState } from '$lib/stores/satellite.svelte.js';
@@ -37,7 +38,7 @@
 			onclick={stopAndTranscribe}
 			disabled={!!audioState.pending}
 			class="px-3 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-xs font-medium disabled:opacity-60"
-			title="Stop recording (Ctrl+S)"
+			title="Stop recording ({shortcutHint('stop')})"
 		>{audioState.pending === 'stopping' ? 'Stopping…' : 'Stop'}</button>
 	</div>
 {:else if teamWaiting}

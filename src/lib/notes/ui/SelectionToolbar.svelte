@@ -22,6 +22,7 @@
 	// is cancelled); the editor does the work through the callbacks and decides when to show it.
 	// Keyboard: Alt+F10 in the editor focuses the first button (`focusFirst`), the arrow keys, Home
 	// and End move between buttons (roving tabindex), Escape calls `onescape`.
+	import { keyHint } from '../keys.js';
 	import TurnIntoMenu from './TurnIntoMenu.svelte';
 
 	let {
@@ -59,10 +60,10 @@
 		`px-2 py-1 ${on ? 'bg-gray-700 text-gray-100' : 'bg-gray-900 text-gray-400 hover:text-gray-200'}`;
 
 	const marks = [
-		{ kind: 'bold', label: 'B', name: 'Bold', keys: 'Ctrl+B', cls: 'font-bold' },
-		{ kind: 'italic', label: 'I', name: 'Italic', keys: 'Ctrl+I', cls: 'italic' },
-		{ kind: 'strike', label: 'S', name: 'Strikethrough', keys: 'Ctrl+Shift+X', cls: 'line-through' },
-		{ kind: 'code', label: '<>', name: 'Inline code', keys: 'Ctrl+E', cls: 'font-mono' }
+		{ kind: 'bold', label: 'B', name: 'Bold', keys: keyHint('Mod+B'), cls: 'font-bold' },
+		{ kind: 'italic', label: 'I', name: 'Italic', keys: keyHint('Mod+I'), cls: 'italic' },
+		{ kind: 'strike', label: 'S', name: 'Strikethrough', keys: keyHint('Mod+Shift+X'), cls: 'line-through' },
+		{ kind: 'code', label: '<>', name: 'Inline code', keys: keyHint('Mod+E'), cls: 'font-mono' }
 	] as const;
 
 	let el = $state<HTMLElement>();
@@ -160,7 +161,7 @@
 				onclick={onlink}
 				aria-label="Link"
 				aria-pressed={active.link}
-				title="Link (Ctrl+K)"
+				title="Link ({keyHint('Mod+K')})"
 				class={btn(active.link)}>🔗</button
 			>
 		</div>
@@ -173,7 +174,7 @@
 				onmousedown={(e) => e.preventDefault()}
 				onclick={oncomment}
 				aria-label="Comment on the selection"
-				title="Comment on the selected text (Ctrl+Alt+M)"
+				title="Comment on the selected text ({keyHint('Mod+Alt+M')})"
 				class={btn(commentActive)}>💬 Comment</button
 			>
 		</div>

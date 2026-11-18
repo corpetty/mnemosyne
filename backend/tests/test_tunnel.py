@@ -182,3 +182,46 @@ def test_pins_are_complete():
     assert set(tunnel.CLOUDFLARED) == {"amd64", "arm64"}
     for item in tunnel.CLOUDFLARED.values():
         assert len(item.sha256) == 64 and tunnel.CLOUDFLARED_VERSION in item.url
+
+
+def test_cloudflared_download_by_platform(monkeypatch):
+    def pick(system, machine):
+        monkeypatch.setattr("platform.system", lambda: system)
+        monkeypatch.setattr("platform.machine", lambda: machine)
+        return tunnel.cloudflared_download()
+
+    assert pick("Linux", "x86_64") is tunnel.CLOUDFLARED["amd64"]
+    assert pick("Darwin", "arm64") is tunnel.CLOUDFLARED_MAC
+    assert pick("Darwin", "x86_64") is None
+    assert pick("Windows", "AMD64") is None
+    assert tunnel.CLOUDFLARED_MAC.url.endswith("cloudflared-darwin-arm64.tgz")
+    assert tunnel.CLOUDFLARED_VERSION in tunnel.CLOUDFLARED_MAC.url
+
+
+def test_ensure_cloudflared_unpacks_the_mac_archive(tmp_path, monkeypatch):
+    import io
+    import tarfile
+
+    item = downloads.Download(
+        url="https://example.invalid/cloudflared-darwin-arm64.tgz",
+        sha256="0" * 64,
+        size=1,
+        name="cloudflared-x-darwin-arm64.tgz",
+    )
+    monkeypatch.setattr(tunnel, "cloudflared_download", lambda: item)
+
+    def fake_fetch(folder, it, progress=None):
+        folder.mkdir(parents=True, exist_ok=True)
+        archive = folder / it.name
+        with tarfile.open(archive, "w:gz") as tar:
+            info = tarfile.TarInfo("cloudflared")
+            data = b"#!/bin/sh\n"
+            info.size, info.mode = len(data), 0o755
+            tar.addfile(info, io.BytesIO(data))
+        return archive
+
+    monkeypatch.setattr(downloads, "fetch", fake_fetch)
+    app = SimpleNamespace(settings=SimpleNamespace(data_dir=tmp_path))
+    got = tunnel.ensure_cloudflared(app)
+    assert got.name == "cloudflared-x-darwin-arm64" and got.read_bytes() == b"#!/bin/sh\n"
+    assert got.stat().st_mode & 0o111

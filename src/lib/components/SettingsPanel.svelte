@@ -59,6 +59,12 @@
 	let settings = $state<SettingsResponse | null>(null);
 	// What the engines set to Automatic resolve to on this machine (for the hint beside them).
 	let system = $state<SystemInfo | null>(null);
+	// The desktop's calendars come from GNOME Online Accounts: not on the Mac.
+	const calendarSources = $derived(
+		[['off', 'No calendar'], ['desktop', "This computer's calendars"], ['ics', 'Private ICS address']].filter(
+			([value]) => !(value === 'desktop' && system?.platform.startsWith('Darwin'))
+		)
+	);
 	let providers = $state<ProviderModels[]>([]);
 	let voices = $state<SpeakerProfile[]>([]);
 	let loading = $state(false);
@@ -650,7 +656,7 @@
 					auto-record can start with it.
 				</p>
 				<div class="flex flex-wrap gap-2 mb-3" role="radiogroup" aria-label="Calendar source">
-					{#each [['off', 'No calendar'], ['desktop', "This computer's calendars"], ['ics', 'Private ICS address']] as [value, label] (value)}
+					{#each calendarSources as [value, label] (value)}
 						<!-- relative: the sr-only radio is positioned inside the label, not far down the page -->
 						<label class="relative flex items-center gap-2 rounded border px-3 py-1.5 text-sm cursor-pointer {form.calendar_source === value ? 'border-blue-600 bg-blue-950/30 text-gray-100' : 'border-gray-700 text-gray-400'}">
 							<input type="radio" name="calendar-source" value={value} bind:group={form.calendar_source} disabled={locked('calendar_source')} class="sr-only" />
@@ -792,9 +798,10 @@
 					<label>
 						<span class={labelClass}>Diarizer</span>
 						<select bind:value={form.diarizer} disabled={locked('diarizer')} class={inputClass}>
-							<option value="auto">Automatic (Nemotron on an NVIDIA GPU, else pyannote)</option>
+							<option value="auto">Automatic (Nemotron on an NVIDIA GPU, else pyannote with a token, else ONNX on the CPU)</option>
 							<option value="nemotron">Nemotron (NVIDIA GPU, NeMo)</option>
 							<option value="pyannote">pyannote (GPU, torch)</option>
+							<option value="onnx">On the CPU (ONNX)</option>
 							<option value="none">None (single speaker)</option>
 						</select>
 					</label>
@@ -884,7 +891,7 @@
 						</label>
 						<label class="col-span-2">
 							<span class={labelClass}>
-								HuggingFace token (pyannote license; Nemotron needs it only for voice profiles)
+								HuggingFace token (needed for the pyannote and Nemotron diarizers; voice profiles work without it)
 								{#if settings.secrets_set.hf_token}<span class="text-green-500 ml-1">set</span>{/if}
 							</span>
 							<div class="flex gap-2">

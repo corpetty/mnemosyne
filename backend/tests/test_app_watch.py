@@ -270,3 +270,29 @@ def test_a_teammates_browser_recording_goes_on_while_serving(client, ctx, watche
         assert "Mnemosyne closed while recording" not in watched.events.notes
     finally:
         ctx.active_recordings.pop("s1", None)
+
+
+def test_mac_notification_passes_text_as_argv(monkeypatch):
+    from mnemosyne.api import app_watch
+
+    calls = []
+    monkeypatch.setattr(app_watch.sys, "platform", "darwin")
+    monkeypatch.setattr(app_watch.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    nasty = 'Quote " and \\ and `x` $(rm -rf /)'
+    app_watch.notify(nasty, 'Body " end')
+    (cmd,) = calls
+    assert cmd[:2] == ["osascript", "-e"]
+    assert cmd[3:] == [nasty, 'Body " end']
+    assert "rm -rf" not in cmd[2] and "Body" not in cmd[2]
+    assert "item 2 of argv" in cmd[2] and "item 1 of argv" in cmd[2]
+
+
+def test_mac_notification_never_raises(monkeypatch):
+    from mnemosyne.api import app_watch
+
+    def boom(cmd, **kw):
+        raise FileNotFoundError("osascript")
+
+    monkeypatch.setattr(app_watch.sys, "platform", "darwin")
+    monkeypatch.setattr(app_watch.subprocess, "run", boom)
+    app_watch.notify("a", "b")

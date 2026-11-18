@@ -22,6 +22,7 @@ from ..models.session import (
     Recording,
     SummaryData,
 )
+from ..models.speaker import PYANNOTE_SPACE
 from ..models.sync_session import (
     SyncAsset,
     SyncBookmark,
@@ -46,6 +47,14 @@ CLASH_SECONDS = 2.0
 def _b64(raw) -> str:
     """A BLOB column as base64 text, "" for NULL."""
     return base64.b64encode(bytes(raw)).decode("ascii") if raw else ""
+
+
+def _voices_by_space(rows: list[dict]) -> dict[str, dict[str, list[float]]]:
+    """`session_voices` rows -> {space: {label: vector}}."""
+    out: dict[str, dict[str, list[float]]] = {}
+    for x in rows:
+        out.setdefault(x["space"], {})[x["label"]] = json.loads(x["embedding"])
+    return out
 
 
 def export_session(
@@ -192,7 +201,14 @@ def export_session(
             )
             for x in repo.media_rows(session_id)
         ],
-        speaker_embeddings={x["label"]: json.loads(x["embedding"]) for x in rows["embeddings"]},
+        # Every space in `speaker_voices`; the pyannote one again in `speaker_embeddings`, which
+        # is all an older peer reads.
+        speaker_voices=_voices_by_space(rows["embeddings"]),
+        speaker_embeddings={
+            x["label"]: json.loads(x["embedding"])
+            for x in rows["embeddings"]
+            if x["space"] == PYANNOTE_SPACE
+        },
         assets=[
             SyncAsset(
                 id=x["id"],

@@ -62,7 +62,32 @@ def test_the_model_offered_fits_the_memory(monkeypatch):
     assert local_llm.recommended() == "qwen3-30b-a3b"
 
 
-def test_install_unpacks_the_server_flat_and_fetches_the_model(tmp_path, no_network):
+def test_a_mac_gets_the_metal_build_and_its_memory(monkeypatch, tmp_path, no_network):
+    monkeypatch.setattr(local_llm.sys, "platform", "darwin")
+    monkeypatch.setattr(local_llm.platform, "machine", lambda: "arm64")
+    assert local_llm.server_choice() == "metal"
+    assert local_llm.SERVERS["metal"].url.endswith("-bin-macos-arm64.tar.gz")
+    sysconf = {"SC_PAGE_SIZE": 16384, "SC_PHYS_PAGES": 16 * 1024**3 // 16384}
+    monkeypatch.setattr(local_llm.os, "sysconf", lambda name: sysconf[name])
+    assert local_llm.ram_gb() == 16
+    assert local_llm.recommended() == "qwen3-4b"
+    sysconf["SC_PHYS_PAGES"] = 32 * 1024**3 // 16384
+    assert local_llm.recommended() == "qwen3-30b-a3b"
+    llm = local_llm.LocalLLM(tmp_path / "llm")
+    assert llm._discrete_gpu() is None
+    llm.install("qwen3-4b")
+    assert no_network[0].endswith("-metal.tar.gz")
+
+
+def test_an_intel_mac_has_no_built_in_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_llm.sys, "platform", "darwin")
+    monkeypatch.setattr(local_llm.platform, "machine", lambda: "x86_64")
+    with pytest.raises(RuntimeError, match="Apple-silicon"):
+        local_llm.LocalLLM(tmp_path / "llm").install("qwen3-4b")
+
+
+def test_install_unpacks_the_server_flat_and_fetches_the_model(tmp_path, no_network, monkeypatch):
+    monkeypatch.setattr(local_llm.sys, "platform", "linux")  # the Linux builds (a Mac: Metal)
     llm = local_llm.LocalLLM(tmp_path / "llm")
     seen = []
     llm.install("qwen3-4b", lambda done, total: seen.append((done, total)))

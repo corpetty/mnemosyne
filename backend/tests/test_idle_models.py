@@ -73,3 +73,25 @@ def test_compile_workers_are_off():
     import mnemosyne  # noqa: F401
 
     assert os.environ["TORCHINDUCTOR_COMPILE_THREADS"] == "1"
+
+
+def test_rss_on_the_mac_comes_from_psutil(monkeypatch):
+    import builtins
+    import sys
+    from types import SimpleNamespace
+
+    from mnemosyne.services.model_service import rss_mb
+
+    real_open = builtins.open
+
+    def no_proc(path, *a, **kw):
+        if str(path).startswith("/proc"):
+            raise FileNotFoundError(path)
+        return real_open(path, *a, **kw)
+
+    fake = SimpleNamespace(
+        Process=lambda: SimpleNamespace(memory_info=lambda: SimpleNamespace(rss=300 * 1024 * 1024))
+    )
+    monkeypatch.setattr(builtins, "open", no_proc)
+    monkeypatch.setitem(sys.modules, "psutil", fake)
+    assert rss_mb() == 300.0

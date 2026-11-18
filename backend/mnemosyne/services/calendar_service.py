@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -26,9 +27,17 @@ MAX_MEETING = timedelta(hours=8)
 DESKTOP = "desktop:"  # source prefix: the desktop's calendars (desktop_calendar.py)
 
 
+def desktop_supported() -> bool:
+    """The desktop's calendars come from GNOME Online Accounts over D-Bus: not on the Mac."""
+    return sys.platform != "darwin"
+
+
 def calendar_source(settings) -> str:
-    """The CalendarService source for these settings ("" = no calendar)."""
+    """The CalendarService source for these settings ("" = no calendar). A saved "desktop" is
+    off on the Mac, not the ICS address: that one was left behind when they chose otherwise."""
     if settings.calendar_source == "desktop":
+        if not desktop_supported():
+            return ""
         return DESKTOP + settings.calendar_desktop_calendars.replace(" ", "")
     if settings.calendar_source == "ics":
         return settings.calendar_ics_url

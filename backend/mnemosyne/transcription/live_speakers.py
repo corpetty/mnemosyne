@@ -17,6 +17,8 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from ..models.speaker import PYANNOTE_SPACE
+
 logger = logging.getLogger(__name__)
 
 MIN_SECONDS = 1.0  # shorter segments carry too little voice to embed reliably
@@ -24,6 +26,9 @@ MIN_SECONDS = 1.0  # shorter segments carry too little voice to embed reliably
 
 class SpeakerEmbedder(Protocol):
     name: str
+    # The voice space its vectors are in (models/speaker.py): vectors of different spaces are
+    # never compared.
+    space: str
 
     def is_loaded(self) -> bool: ...
 
@@ -41,6 +46,7 @@ class PyannoteEmbedder:
     default), so live labels share a space with saved voice profiles."""
 
     name = "pyannote"
+    space = PYANNOTE_SPACE
 
     def __init__(self, pipeline_model: str, hf_token: str = "", device: str = "auto"):
         self.pipeline_model = pipeline_model

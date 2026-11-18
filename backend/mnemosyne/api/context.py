@@ -81,8 +81,9 @@ class AppContext:
     _intervals: tuple[float, float] = (6 * 3600, 900)
     capture_apps_now: list = field(default_factory=list)  # last poll, for /api/audio/apps
     live: dict = field(default_factory=dict)  # session id -> running LiveTranscriber
-    # session id -> (time.monotonic() last used, {label: voice embedding}): streamed speakers'
-    # voices, so the next part of a meeting gives the same person the same live label.
+    # session id -> (time.monotonic() last used, voice space, {label: voice embedding}): streamed
+    # speakers' voices, so the next part of a meeting gives the same person the same live label.
+    # Voices of another space than the live embedder's are dropped.
     live_voices: dict = field(default_factory=dict)
     copilot_notes: dict = field(default_factory=dict)  # session id -> CopilotNotes
     # Live shared notes (services/shared_notes.py): the open meetings' rooms and fold locks.
@@ -284,7 +285,7 @@ class AppContext:
 
     @classmethod
     def build(cls, settings: Settings, keystore: Any = None) -> AppContext:
-        from ..storage.crypto import SystemKeyStore, derive, key_check
+        from ..storage.crypto import derive, key_check, system_keystore
 
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         if sys.platform == "darwin":  # recorders (the capture sidecar) log beside the backend's
@@ -304,7 +305,7 @@ class AppContext:
             elif os.environ.get("MNEMOSYNE_KEY_FILE"):  # a server: systemd credential
                 keystore = CredentialKeyStore(Path(os.environ["MNEMOSYNE_KEY_FILE"]))
             else:
-                keystore = SystemKeyStore(settings.data_dir)
+                keystore = system_keystore(settings.data_dir)  # the app's keychain on a Mac
         master, locked = None, False
         if settings.encrypt_at_rest:
             master = keystore.get()
@@ -587,12 +588,14 @@ class AppContext:
         logger.info("Scheduled digest for %s %s", range_label(*week), me)
         return self.jobs.submit("digest", make_digest(self, *week))
 
-    def poll_capture_apps(self, dump: list | None = None) -> None:
-        """Compare the apps capturing audio with the last poll and publish changes."""
+    def poll_capture_apps(self, dump: list | None = None, processes: list | None = None) -> None:
+        """Compare the apps capturing audio with the last poll and publish changes.
+
+        `dump` is pw-dump's output (Linux), `processes` the capture sidecar's `apps` (macOS)."""
         from ..audio.streams import capture_apps
 
         ignore = {x.strip() for x in self.settings.auto_record_ignore_apps.split(",") if x.strip()}
-        now = capture_apps(dump, ignore)
+        now = capture_apps(dump, ignore, processes=processes)
         before = {a.app for a in self.capture_apps_now}
         after = {a.app for a in now}
         self.capture_apps_now = now
@@ -608,8 +611,14 @@ class AppContext:
                 self.capture_apps_now = []
                 continue
             try:
-                dump = await asyncio.to_thread(_pw_dump)
-                self.poll_capture_apps(dump)
+                if sys.platform == "darwin":
+                    from ..audio.coreaudio import capture_processes
+
+                    processes = await asyncio.to_thread(capture_processes)
+                    self.poll_capture_apps(processes=processes)
+                else:
+                    dump = await asyncio.to_thread(_pw_dump)
+                    self.poll_capture_apps(dump)
             except Exception as e:
                 logger.debug("Capture app poll failed: %s", e)
 

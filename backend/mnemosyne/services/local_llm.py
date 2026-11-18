@@ -1,7 +1,8 @@
 """The built-in summary model: summaries with nothing else installed (no Ollama, no account).
 
 On first use the backend downloads llama.cpp's `llama-server` (its Vulkan build when the machine
-has Vulkan, which also carries the CPU code; else the CPU build) and a GGUF model into
+has Vulkan, which also carries the CPU code; else the CPU build; on an Apple-silicon Mac its Metal
+build) and a GGUF model into
 `<data_dir>/models/llm`, both pinned and checked by SHA-256 (services/downloads.py). The server
 runs on 127.0.0.1 on a free port only while summaries need it: it starts on the first request and
 stops after `unload_models_after_minutes` without one. llama.cpp fits the model into whatever GPU
@@ -17,8 +18,10 @@ import asyncio
 import ctypes
 import logging
 import os
+import platform
 import socket
 import subprocess
+import sys
 import tarfile
 import time
 from dataclasses import dataclass
@@ -44,6 +47,14 @@ SERVERS = {
         sha256="6b8801b592f19d838a0c5e6bbf6282f8f0788d8c99561b98cc4cd3ef558346f5",
         size=17_544_991,
         name=f"llama-{LLAMA_BUILD}-cpu.tar.gz",
+    ),
+    # Apple silicon: one flat folder like the others, llama-server and its .dylib files side by
+    # side (the binary's rpath is @loader_path, so no DYLD_* variables). Metal is built in.
+    "metal": Download(
+        url=f"{_RELEASE}/llama-{LLAMA_BUILD}-bin-macos-arm64.tar.gz",
+        sha256="f0d3eeed71dd9c76d83226d4571c4593dfe596daa3e614ec94980e32fae4ad8a",
+        size=11_827_755,
+        name=f"llama-{LLAMA_BUILD}-metal.tar.gz",
     ),
 }
 
@@ -92,6 +103,13 @@ MODELS = {
 
 
 def ram_gb() -> int:
+    if sys.platform == "darwin":
+        # Apple silicon's memory is unified: the GPU (Metal) shares it, so the same rule as for
+        # system RAM on Linux applies.
+        try:
+            return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // 1024**3
+        except (OSError, ValueError, AttributeError):
+            return 0
     try:
         with open("/proc/meminfo") as f:
             for line in f:
@@ -114,6 +132,25 @@ def has_vulkan() -> bool:
         return True
     except OSError:
         return False
+
+
+def server_choice() -> str:
+    """Which llama.cpp build to download: a key of SERVERS."""
+    if sys.platform == "darwin":
+        if platform.machine() != "arm64":
+            raise RuntimeError(
+                "The built-in model needs an Apple-silicon Mac; use Ollama, vLLM or a cloud model"
+            )
+        return "metal"
+    return "vulkan" if has_vulkan() else "cpu"
+
+
+def server_choice_or_none() -> str | None:
+    """server_choice(), or None where there is no build for this machine (an Intel Mac)."""
+    try:
+        return server_choice()
+    except RuntimeError:
+        return None
 
 
 def _free_port() -> int:
@@ -158,7 +195,7 @@ class LocalLLM:
         """The server and the model, downloaded and checked; nothing to do when they are here.
         `progress(done, total)` counts the bytes of both."""
         model = MODELS[model_id]
-        server = SERVERS["vulkan" if has_vulkan() else "cpu"]
+        server = SERVERS[server_choice()]
         need_server = not self.server_binary().is_file()
         total = (server.size if need_server else 0) + model.file.size
         offset = 0
@@ -195,6 +232,8 @@ class LocalLLM:
                 with out.open("wb") as f:
                     while chunk := src.read(1 << 20):
                         f.write(chunk)
+                # Files written here carry no com.apple.quarantine attribute (only downloaders
+                # that set it do), so Gatekeeper does not block the unpacked binary.
                 out.chmod(0o755 if member.mode & 0o111 else 0o644)
 
     def remove(self, model_id: str) -> None:
@@ -207,6 +246,8 @@ class LocalLLM:
     def _discrete_gpu(self) -> str | None:
         """llama.cpp's name for an NVIDIA or AMD card, so an integrated GPU next to it is not
         given half the model; None to let llama.cpp choose."""
+        if sys.platform == "darwin":
+            return None  # one Metal device
         try:
             out = subprocess.run(
                 [str(self.server_binary()), "--list-devices"],

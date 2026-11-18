@@ -1044,3 +1044,68 @@ def test_comment_text_edited_on_both_sides_without_a_sidecar_takes_the_newer(bin
     out, report = merge(base, ours, theirs, ours_is_origin=True, binary=None)
     assert out.comments[0].text == "Yours\n"
     assert any("comment c1 text" in f for f in report["fields"])
+
+
+# ---- voices by space ----------------------------------------------------------------------
+
+
+def test_voices_merge_per_space(binary):
+    base = _doc(
+        speaker_voices={"pyannote": {"Ann": [0.1, 0.2]}, "wespeaker-r34": {"Ann": [1.0, 0.0]}}
+    )
+
+    def mine(d):
+        d.speaker_voices["wespeaker-r34"]["Bo"] = [0.0, 1.0]  # a voice added here
+        d.speaker_voices["onnx-x"] = {"Ann": [3.0]}  # a whole space added here
+
+    def yours(d):
+        d.speaker_voices["pyannote"]["Cy"] = [0.4]  # added there
+        del d.speaker_voices["wespeaker-r34"]["Ann"]  # removed there, untouched here: gone
+        d.speaker_embeddings["Cy"] = [0.4]
+
+    out, _ = _merge(base, _ours(base, mine), _theirs(base, yours), binary)
+    assert out.speaker_voices == {
+        "pyannote": {"Ann": [0.1, 0.2], "Cy": [0.4]},
+        "wespeaker-r34": {"Bo": [0.0, 1.0]},
+        "onnx-x": {"Ann": [3.0]},
+    }
+    assert out.speaker_embeddings == {"Ann": [0.1, 0.2], "Cy": [0.4]}  # the pyannote space again
+
+
+def test_an_older_peer_does_not_delete_the_other_spaces(binary):
+    base = _doc(
+        speaker_voices={"pyannote": {"Ann": [0.1, 0.2]}, "wespeaker-r34": {"Ann": [1.0, 0.0]}}
+    )
+    ours = _ours(base, lambda d: setattr(d, "notes", "Intro.\nPlan.\nMine.\n"))
+
+    def older(d):  # an older build: it knows `speaker_embeddings` only
+        d.speaker_voices = None
+        d.speaker_embeddings = {"Ann": [0.1, 0.2], "Dee": [0.6]}
+
+    out, _ = _merge(base, ours, _theirs(base, older), binary)
+    assert out.speaker_voices == {
+        "pyannote": {"Ann": [0.1, 0.2], "Dee": [0.6]},
+        "wespeaker-r34": {"Ann": [1.0, 0.0]},  # silence is not a deletion
+    }
+
+
+def test_a_base_from_before_spaces_counts_as_the_pyannote_space(binary):
+    base = _doc()  # speaker_voices None: a state stored by an older build
+    assert base.speaker_voices is None
+    ours = _ours(
+        base,
+        lambda d: setattr(
+            d, "speaker_voices", {"pyannote": {"Ann": [0.1, 0.2]}, "w": {"Ann": [1.0]}}
+        ),
+    )
+    theirs = _theirs(
+        base, lambda d: setattr(d, "speaker_voices", {"pyannote": {"Ann": [0.1, 0.2], "Bo": [0.5]}})
+    )
+    out, _ = _merge(base, ours, theirs, binary)
+    assert out.speaker_voices == {"pyannote": {"Ann": [0.1, 0.2], "Bo": [0.5]}, "w": {"Ann": [1.0]}}
+
+
+def test_without_speaker_voices_on_either_side_the_field_stays_unset(binary):
+    base = _doc()
+    out, _ = _merge(base, _ours(base), _theirs(base), binary)
+    assert out.speaker_voices is None and out.speaker_embeddings == {"Ann": [0.1, 0.2]}

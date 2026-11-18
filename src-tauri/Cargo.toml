@@ -13,7 +13,7 @@ name = "mnemosyne_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.5.4", features = [] }
+tauri-build = { version = "2.7.5", features = [] } # 2.7.5: finds target/ under Cargo 1.100's build-dir layout
 
 [dependencies]
 serde_json = "1.0"
@@ -30,6 +30,10 @@ tokio = { version = "1", features = ["time", "net", "sync"] }
 # Remote access to a backend on another machine (link/ in the repo).
 mnemosyne-link = { path = "../link" }
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The backend's encryption key in the keychain, kept by the signed app (keychain.rs).
+security-framework = "3.7"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Same version wry uses, to handle the WebKit web process crashing (see lib.rs).

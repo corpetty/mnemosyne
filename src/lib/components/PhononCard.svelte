@@ -93,9 +93,9 @@
 	<section aria-label="Phonon-2" class="col-span-2 rounded border border-gray-800 bg-gray-900 p-3 text-sm space-y-2">
 		<h4 class="font-semibold text-gray-200">Phonon-2 {system.phonon ? '· installed' : ''}</h4>
 		<p class="text-xs text-gray-400">
-			For English meetings: Parakeet TDT 0.6B v3 in a 164 MB file with its own CPU engine, from Fermion Research (model
+			For English meetings: Parakeet TDT 0.6B v3 in a 164 MB file with its own engine ({system.platform.startsWith('Darwin') ? "on the Mac's GPU through MLX" : 'on the CPU'}), from Fermion Research (model
 			CC BY 4.0). On AMI meetings it made fewer errors than Parakeet and ran about four times faster. Mnemosyne installs it
-			in a folder of its own (about 1 GB with CPU PyTorch) and uses it when the language is English or it is chosen here.
+			in a folder of its own (about 1 GB with PyTorch) and uses it when the language is English or it is chosen here.
 		</p>
 		{#if unused && !installing}
 			<div class="rounded border border-amber-700/60 bg-amber-950/30 p-2 text-xs text-gray-300 space-y-2">

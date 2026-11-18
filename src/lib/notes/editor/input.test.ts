@@ -1,15 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { pair, single, view as viewOf, type Client } from '../test-harness.js';
 import { deleteRange, insertText, insertTable, setLineKind, setLink, splitLine, toggleInline, type NotesModel } from '../commands.js';
 import { CELL_SEP, cpLen, ensureTerminated, lines, type LineKind } from '../model.js';
 import { parseMarkdown } from '../pkg/notes_wasm.js';
 import { applyRemote, drain } from '../sync.js';
+import { pinPlatform, restorePlatform } from '../test-platform.js';
 import { UndoStack } from '../undo.js';
 import { cellPasteText, parsePaste, selectionMarkdown, selectionModel } from './clipboard.js';
 import { FILLER, extractText, getSelectionOffsets } from './dom.js';
 import { attachInput, type EditorInput, type InputOptions, type LinkRequest } from './input.js';
 import { diffAt, lineContent } from './native.js';
 import { createEditorView, type EditorView } from './view.js';
+
+// Shortcut cases assume Linux's Ctrl unless a describe pins the Mac.
+beforeEach(() => pinPlatform('linux'));
+afterEach(restorePlatform);
 
 // ---- fixtures ------------------------------------------------------------------------------
 
@@ -408,10 +413,60 @@ describe('shortcuts', () => {
     m.view.setSelection(8);
     key(m.root, 'b', { ctrlKey: true });
     expect(m.A.view()).toBe('"hello world":- "hello"{i,s,c}');
-    // Cmd works like Ctrl.
+    // Cmd is not the shortcut key on Linux.
     m.view.setSelection(6, 11);
-    key(m.root, 'b', { metaKey: true });
-    expect(m.A.view()).toBe('"hello world":- "hello"{i,s,c} "world"{b}');
+    expect(key(m.root, 'b', { metaKey: true }).defaultPrevented).toBe(false);
+    expect(m.A.view()).toBe('"hello world":- "hello"{i,s,c}');
+  });
+
+  describe('on a Mac', () => {
+    beforeEach(() => pinPlatform('mac'));
+
+    it('Cmd+B / I / E / Shift+X toggle marks; a Ctrl press is left to the system', () => {
+      const m = mount(docOf('hello world'));
+      m.view.setSelection(0, 5);
+      expect(key(m.root, 'b', { ctrlKey: true }).defaultPrevented).toBe(false);
+      expect(m.A.view()).toBe('"hello world":-');
+      expect(key(m.root, 'b', { metaKey: true }).defaultPrevented).toBe(true);
+      key(m.root, 'i', { metaKey: true });
+      key(m.root, 'e', { metaKey: true });
+      key(m.root, 'X', { metaKey: true, shiftKey: true });
+      expect(m.A.view()).toBe('"hello world":- "hello"{b,i,s,c}');
+    });
+
+    it('Cmd+Alt+1..3 and Cmd+Shift+9 set line kinds', () => {
+      const m = mount(docOf('a', 'b'));
+      m.view.setSelection(0, 2);
+      key(m.root, '1', { metaKey: true, altKey: true, code: 'Digit1' });
+      expect(lines(m.A.doc).map((l) => l.kind)).toEqual(['h1', 'h1']);
+      key(m.root, '1', { ctrlKey: true, altKey: true, code: 'Digit2' });
+      expect(lines(m.A.doc).map((l) => l.kind)).toEqual(['h1', 'h1']);
+      key(m.root, '(', { metaKey: true, shiftKey: true, code: 'Digit9' });
+      expect(lines(m.A.doc).map((l) => l.kind)).toEqual(['task', 'task']);
+    });
+
+    it('Cmd+Z undoes, Cmd+Shift+Z redoes, Cmd+Y does nothing', () => {
+      const m = mount(docOf('a'));
+      m.view.setSelection(1);
+      typeNative(m, 'b');
+      expect(key(m.root, 'z', { ctrlKey: true }).defaultPrevented).toBe(false);
+      expect(m.A.text()).toBe('ab\n');
+      expect(key(m.root, 'z', { metaKey: true }).defaultPrevented).toBe(true);
+      expect(m.A.text()).toBe('a\n');
+      expect(key(m.root, 'y', { metaKey: true }).defaultPrevented).toBe(false);
+      expect(m.A.text()).toBe('a\n');
+      key(m.root, 'Z', { metaKey: true, shiftKey: true });
+      expect(m.A.text()).toBe('ab\n');
+    });
+
+    it('Cmd+K asks for a link', () => {
+      const m = mount(docOf('see here now'));
+      m.view.setSelection(4, 8);
+      expect(key(m.root, 'k', { ctrlKey: true }).defaultPrevented).toBe(false);
+      expect(m.links).toEqual([]);
+      expect(key(m.root, 'k', { metaKey: true }).defaultPrevented).toBe(true);
+      expect(m.links).toEqual([{ from: 4, to: 8, url: null }]);
+    });
   });
 
   it('Ctrl+Alt+1..3 and Ctrl+Shift+7..9 set and toggle line kinds', () => {

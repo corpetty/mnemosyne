@@ -265,7 +265,8 @@ export interface paths {
         /**
          * Echo Cancel Set
          * @description Load or unload the PipeWire echo-cancel module (with DeepFilterNet behind it when noise
-         *     suppression is on) and remember the choices. Turning noise suppression on downloads the
+         *     suppression is on; on a Mac: record microphones through voice processing) and remember the
+         *     choices. Turning noise suppression on downloads the
          *     plugin first if it is not there.
          */
         post: operations["echo_cancel_set_api_audio_echo_cancel_post"];
@@ -3097,7 +3098,7 @@ export interface paths {
         };
         /**
          * Session Speakers
-         * @description Which labels in this session have a stored voice embedding (can be enrolled).
+         * @description Which labels in this session have a stored voice, in any space (can be enrolled).
          */
         get: operations["session_speakers_api_sessions__session_id__speakers_get"];
         put?: never;
@@ -5740,6 +5741,8 @@ export interface components {
             source_node_id: number | null;
             /** Supported */
             supported: boolean;
+            /** Voice Processing */
+            voice_processing: boolean;
         };
         /** EncryptionEnabled */
         EncryptionEnabled: {
@@ -6341,6 +6344,8 @@ export interface components {
         };
         /** LocalModelStatus */
         LocalModelStatus: {
+            /** Metal */
+            metal: boolean;
             /** Models */
             models: components["schemas"]["LocalModelInfo"][];
             ollama: components["schemas"]["OllamaInfo"];
@@ -10026,6 +10031,12 @@ export interface components {
             speaker_embeddings: {
                 [key: string]: number[];
             };
+            /** Speaker Voices */
+            speaker_voices: {
+                [key: string]: {
+                    [key: string]: number[];
+                };
+            } | null;
             /**
              * Speakers Reviewed
              * @default false
@@ -10108,6 +10119,11 @@ export interface components {
             problems: string[];
             /** Setup Complete */
             setup_complete: boolean;
+            /**
+             * Speaker Embedder In Use
+             * @enum {string}
+             */
+            speaker_embedder_in_use: "pyannote" | "onnx" | "none";
             /** Summary Merge */
             summary_merge: boolean;
             /** Transcriber In Use */

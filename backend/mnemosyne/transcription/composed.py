@@ -61,6 +61,8 @@ class ComposedEngine:
         self.echo_similarity = echo_similarity
         self.mic_speech_gate = mic_speech_gate
         self.last_speaker_embeddings: dict[str, list[float]] = {}
+        # The voice space of last_speaker_embeddings ("" when there are none).
+        self.last_speaker_space: str = ""
         self.last_dropped_echo: int = 0
         self.last_dropped_noise: int = 0
         # (segment, source kind) of what the last transcribe_sources yielded, by identity:
@@ -90,9 +92,10 @@ class ComposedEngine:
 
     async def transcribe_source(
         self, source: AudioSource, report: Callable[[str, float], None] | None = None
-    ) -> tuple[list[TranscriptSegment], dict[str, list[float]]]:
-        """Transcribe (and maybe diarize) one source. `report(stage, fraction)` gets this
-        source's own 0..1 progress."""
+    ) -> tuple[list[TranscriptSegment], dict[str, list[float]], str]:
+        """Transcribe (and maybe diarize) one source: (segments, voices by speaker label, the
+        voice space of those voices). `report(stage, fraction)` gets this source's own 0..1
+        progress."""
         diarize = source.speaker_label is None and self.diarizer is not None
         share = 0.7 if diarize else 1.0
         kind = "" if source.kind == "mixed" else f"{source.kind} "
@@ -105,9 +108,9 @@ class ComposedEngine:
             source.path, language=self.language, progress=t_progress
         )
         if source.speaker_label is not None:
-            return relabel(segments, source.speaker_label), {}
+            return relabel(segments, source.speaker_label), {}, ""
         if self.diarizer is None:
-            return relabel(segments, "SPEAKER_00"), {}
+            return relabel(segments, "SPEAKER_00"), {}, ""
 
         def d_progress(f: float) -> None:
             if report:
@@ -125,7 +128,7 @@ class ComposedEngine:
             len(result.turns),
             sorted({t.speaker for t in result.turns}),
         )
-        return assign_speakers(segments, result.turns), dict(result.embeddings)
+        return assign_speakers(segments, result.turns), dict(result.embeddings), result.space
 
     async def transcribe_sources(
         self, sources: list[AudioSource], on_progress: StageProgressFn | None = None
@@ -139,6 +142,7 @@ class ComposedEngine:
         if not self.is_loaded():
             await self.load()
         self.last_speaker_embeddings = {}
+        self.last_speaker_space = ""
         self.last_dropped_echo = 0
         self.last_dropped_noise = 0
         self.last_segment_sources = []
@@ -156,7 +160,7 @@ class ComposedEngine:
                 if on_progress is not None:
                     loop.call_soon_threadsafe(on_progress, stage, base + weight * frac)
 
-            segments, embeddings = await self.transcribe_source(source, report)
+            segments, embeddings, space = await self.transcribe_source(source, report)
             if self.mic_speech_gate and source.speaker_label is not None and segments:
                 # Phantom lines from clicks and silence (transcription/speech_gate.py). The
                 # kept segments are the same objects: last_segment_sources relies on that.
@@ -168,6 +172,8 @@ class ComposedEngine:
                     logger.info("Dropped %d mic segment(s) without speech", len(noise))
             done += weight
             self.last_speaker_embeddings.update(embeddings)
+            if embeddings:
+                self.last_speaker_space = space
             (labelled if source.speaker_label is not None else diarized).extend(segments)
             self.last_segment_sources.extend((seg, source.kind) for seg in segments)
 

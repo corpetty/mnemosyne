@@ -3,19 +3,31 @@
 Fermion's fermion-research package needs torch and transformers 5, which do not belong in the
 backend's environment (the GPU extra resolves transformers 4.57, and CPU-only installs have no
 torch at all), so it gets its own: `<data_dir>/phonon/venv`, made by uv from the backend's own
-Python, with every package at the exact version in phonon-requirements.txt. torch comes first,
-alone, from PyTorch's CPU index (from PyPI it would be the multi-GB CUDA build); the rest from
-PyPI. Every requirement carries the SHA-256 of its files (phonon-requirements.txt) and uv runs
-with --require-hashes; torch's step is `--no-deps` (its dependencies are in the file and come in
-the second step, which finds torch installed). Then the model is downloaded once, as its own step
-(into `<data_dir>/phonon/cache`), checked against its pinned SHA-256 (phonon.MODEL_FILES; a
-mismatch fails the install and empties the cache), and `installed` is written: from then on the
-server runs with HF_HUB_OFFLINE=1, and checks the model again before each start. About 1 GB in
-all; removing the folder removes all of it.
+Python, with every package at the exact version in the platform's requirements file. Every
+requirement carries the SHA-256 of its files and uv runs with --require-hashes.
+
+Linux (phonon-requirements.txt): torch comes first, alone, from PyTorch's CPU index (from PyPI it
+would be the multi-GB CUDA build), `--no-deps` (its dependencies are in the file and come in the
+second step, which finds torch installed); the rest from PyPI. Mac (phonon-requirements-macos.txt,
+Apple silicon): the plain PyPI torch is the CPU build, so everything comes from PyPI in one step,
+with Fermion's `mlx` extra (mlx, mlx-metal, mlx-audio, mlx-lm and their dependencies, all hashed
+too), and Fermion runs its MLX engine on the GPU, its CPU engine when that does not start
+(phonon.engine_for, PhononServer._start_healthy). Both files pin the same versions of what they
+share.
+
+Then the model is downloaded once, as its own step (into `<data_dir>/phonon/cache`), checked
+against its pinned SHA-256 (phonon.MODEL_FILES; a mismatch fails the install and empties the
+cache), and `installed` is written: from then on the server runs with HF_HUB_OFFLINE=1, and
+checks the model again before each start. About 1 GB in all; removing the folder removes all of
+it.
 
 uv: the app's bundled one (MNEMOSYNE_UV_BIN, set by the desktop shell), else `uv` on PATH.
 Reviewed 2026-10-08 (fermion-research 0.2.11): no telemetry; model archive pinned by sha256 in
-the wheel; the native kernels are prebuilt with no published build provenance.
+the wheel; the native kernels are prebuilt with no published build provenance. The MLX path,
+reviewed 2026-11-17: the same unpacked model files as the CPU engine; Fermion's own MLX dylib
+(_native_mlx) is checked against the SHA-256 shipped beside it in the (hashed) wheel before it is
+loaded; mlx-audio's model-download helpers are not used (Fermion builds the graph from the
+config), and nothing calls home.
 """
 
 from __future__ import annotations
@@ -33,7 +45,8 @@ from ..transcription.transcribers import phonon
 
 logger = logging.getLogger(__name__)
 
-REQUIREMENTS = Path(phonon.__file__).with_name("phonon-requirements.txt")
+LINUX_REQUIREMENTS = Path(phonon.__file__).with_name("phonon-requirements.txt")
+MAC_REQUIREMENTS = Path(phonon.__file__).with_name("phonon-requirements-macos.txt")
 TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
 
 Report = Callable[[str, float], None]  # message, fraction done
@@ -43,8 +56,17 @@ def home(data_dir: Path) -> Path:
     return Path(data_dir) / "phonon"
 
 
+def on_mac() -> bool:
+    return sys.platform == "darwin"
+
+
+def requirements() -> Path:
+    """This platform's pins."""
+    return MAC_REQUIREMENTS if on_mac() else LINUX_REQUIREMENTS
+
+
 def requirements_hash() -> str:
-    return hashlib.sha256(REQUIREMENTS.read_bytes()).hexdigest()[:16]
+    return hashlib.sha256(requirements().read_bytes()).hexdigest()[:16]
 
 
 def installed(data_dir: Path) -> bool:
@@ -68,10 +90,11 @@ def uv_binary() -> str | None:
     return os.environ.get("MNEMOSYNE_UV_BIN") or shutil.which("uv")
 
 
-def _pin(name: str) -> str:
+def _pin(name: str, file: Path | None = None) -> str:
     """The requirement `name==version` with its `--hash` lines, as a requirements file's text."""
+    file = file or requirements()
     lines: list[str] = []
-    for line in REQUIREMENTS.read_text().splitlines():
+    for line in file.read_text().splitlines():
         if lines:  # inside the entry: its hashes are indented continuation lines
             if line[:1].isspace():
                 lines.append(line)
@@ -80,7 +103,7 @@ def _pin(name: str) -> str:
         if line.lower().startswith(f"{name}=="):
             lines.append(line)
     if not lines or not any("--hash=" in line for line in lines):
-        raise ValueError(f"{name} is not pinned with hashes in {REQUIREMENTS.name}")
+        raise ValueError(f"{name} is not pinned with hashes in {file.name}")
     return "\n".join(lines) + "\n"
 
 
@@ -115,6 +138,7 @@ async def install(data_dir: Path, report: Report, uv: str | None = None) -> None
     python = venv / "bin" / "python"
     (root / "installed").unlink(missing_ok=True)
     phonon._refused.pop(root, None)  # installing again is the way out of a refusal
+    phonon._cpu_fallback.discard(root)  # and tries the Mac's MLX engine again
     root.mkdir(parents=True, exist_ok=True)
     env = {
         **os.environ,
@@ -125,20 +149,23 @@ async def install(data_dir: Path, report: Report, uv: str | None = None) -> None
     if not python.exists():
         report("Making Phonon's environment", 0.02)
         await _run([uv, "venv", "--python", sys.executable, str(venv)], report, 0.02, env)
-    report("Installing PyTorch for the CPU (about 700 MB)", 0.05)
-    torch_file = root / "torch-requirements.txt"
-    torch_file.write_text(_pin("torch"))
-    await _run(
-        [uv, "pip", "install", "--python", str(python), "--require-hashes", "--no-deps"]
-        + ["--index-url", TORCH_INDEX, "-r", str(torch_file)],
-        report,
-        0.4,
-        env,
-    )
-    report("Installing Fermion's Phonon package", 0.5)
+    if on_mac():  # PyPI's torch is the CPU build here: one step, all from PyPI
+        report("Installing Fermion's Phonon package and PyTorch", 0.05)
+    else:
+        report("Installing PyTorch for the CPU (about 700 MB)", 0.05)
+        torch_file = root / "torch-requirements.txt"
+        torch_file.write_text(_pin("torch"))
+        await _run(
+            [uv, "pip", "install", "--python", str(python), "--require-hashes", "--no-deps"]
+            + ["--index-url", TORCH_INDEX, "-r", str(torch_file)],
+            report,
+            0.4,
+            env,
+        )
+        report("Installing Fermion's Phonon package", 0.5)
     await _run(
         [uv, "pip", "install", "--python", str(python), "--require-hashes"]
-        + ["-r", str(REQUIREMENTS)],
+        + ["-r", str(requirements())],
         report,
         0.7,
         env,
@@ -179,4 +206,5 @@ def remove(data_dir: Path) -> None:
         if server.home == home(data_dir):
             server.stop()
     phonon._refused.pop(home(data_dir), None)
+    phonon._cpu_fallback.discard(home(data_dir))
     shutil.rmtree(home(data_dir), ignore_errors=True)

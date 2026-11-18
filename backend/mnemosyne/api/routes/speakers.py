@@ -72,11 +72,13 @@ class SessionSpeaker(ApiModel):
 
 @router.get("/sessions/{session_id}/speakers", response_model=list[SessionSpeaker])
 async def session_speakers(session_id: str, ctx: AppContext = Depends(get_ctx)):
-    """Which labels in this session have a stored voice embedding (can be enrolled)."""
+    """Which labels in this session have a stored voice, in any space (can be enrolled)."""
     session = ctx.sessions.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    with_voice = set(ctx.repo.get_session_embeddings(session_id))
+    with_voice = {
+        label for by_label in ctx.repo.get_session_voices(session_id).values() for label in by_label
+    }
     return [{"label": p, "has_voice": p in with_voice} for p in session.participants]
 
 

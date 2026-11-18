@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..models.speaker import PYANNOTE_SPACE
 from ..models.transcript import TranscriptSegment, WordSegment
 from .diarizers.nemotron_stream import FRAME_SECONDS, SpeakerFrames
 from .engine import SpeakerTurn
@@ -187,7 +188,8 @@ class LiveSpeakerNames:
 MIN_NAMING_SECONDS = 3.0  # clean speech before a speaker is first embedded
 RETRY_SECONDS = 60.0  # more clean speech before trying a profile match again
 
-MatchNames = Callable[[dict[str, list[float]]], dict[str, str]]
+# (embeddings, their voice space) -> {label: name}; only profiles of that space are compared.
+MatchNames = Callable[[dict[str, list[float]], str], dict[str, str]]
 
 
 def _unit(v) -> np.ndarray:
@@ -199,7 +201,9 @@ class VoiceNamer:
     """Names streamed speakers by voice: first as the same speaker of an earlier part of this
     meeting (`voices`: label -> embedding, shared across the meeting's recordings and updated
     here), then by voice profile (`match_names`, e.g. SpeakerService.match). Embeds each
-    speaker's longest clean turns with the pyannote embedder, at most one speaker per tick."""
+    speaker's longest clean turns with the speaker embedder, at most one speaker per tick.
+    Every vector here is in the embedder's voice space (`space`); `voices` must be too, and
+    `threshold` is that space's cosine threshold."""
 
     def __init__(
         self,
@@ -209,6 +213,7 @@ class VoiceNamer:
         threshold: float = 0.6,
     ):
         self.embedder = embedder
+        self.space = getattr(embedder, "space", PYANNOTE_SPACE)
         self.match_names = match_names
         self.voices = voices if voices is not None else {}
         self.threshold = threshold
@@ -253,7 +258,8 @@ class VoiceNamer:
             label = live.names.labels[key]
             if last is None:  # first look: the same person as in an earlier part?
                 label = self._continue(live, label, vec)
-            name = (self.match_names({label: vec}) if self.match_names else {}).get(label)
+            found = self.match_names({label: vec}, self.space) if self.match_names else {}
+            name = found.get(label)
             if name and name != label:
                 live.rename(label, name)
                 label = live.names.labels[key]

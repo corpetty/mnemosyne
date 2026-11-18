@@ -2,6 +2,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // `mnemosyne --keychain …` (the backend's key on macOS, keychain.rs): answered here, before
+    // single-instance could hand the arguments to a running app.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(code) = mnemosyne_lib::keychain::run_cli(&args) {
+        std::process::exit(code);
+    }
     // WebKitGTK's DMA-BUF renderer fails on NVIDIA + Wayland ("Failed to create GBM
     // buffer") and the window stays white. Must be set before WebKit initialises.
     // Users can still override by exporting the variable themselves.

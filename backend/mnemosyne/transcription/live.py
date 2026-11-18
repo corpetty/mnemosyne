@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import struct
+import sys
 import tempfile
 import time
 import wave
@@ -142,7 +144,10 @@ class LiveSource:
 
 
 def cpu_pressure(path: Path = Path("/proc/pressure/cpu")) -> float | None:
-    """Share of the last 10 s in which some task waited for a CPU (Linux PSI), in percent."""
+    """Share of the last 10 s in which some task waited for a CPU (Linux PSI), in percent.
+    Without PSI (the Mac) the 1-minute load average per core stands in: a load of 1.0 per core
+    means every core is just kept busy, which is where tasks start to wait, so it maps to the
+    same 40 % the live interval backs off at (PRESSURE_LIMIT); 1.5 per core reads as 60 %."""
     try:
         for line in path.read_text().splitlines():
             if line.startswith("some "):
@@ -152,6 +157,11 @@ def cpu_pressure(path: Path = Path("/proc/pressure/cpu")) -> float | None:
                         return float(value)
     except (OSError, ValueError):
         pass
+    if sys.platform == "darwin":
+        try:
+            return os.getloadavg()[0] / (os.cpu_count() or 1) * 40.0
+        except OSError:
+            pass
     return None
 
 

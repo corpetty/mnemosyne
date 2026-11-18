@@ -18,6 +18,7 @@
 	import { commentRange, commentSelection, type CommentSelection } from '../comments.js';
 	import { insertImageLine, removeImageLine, toggleTask } from '../commands.js';
 	import { imageValue } from '../images.js';
+	import { foreignMod, primary } from '../keys.js';
 	import { ImageRefused, prepareImage, UNREADABLE, type PreparedImage } from '../prepareImage.js';
 	import { PASTE_LIMIT } from '../editor/clipboard.js';
 	import '../editor/editor.css';
@@ -363,7 +364,7 @@
 			} else if (sentSel !== null) schedule();
 		};
 		document.addEventListener('selectionchange', onSelection);
-		// Ctrl+Alt+M comments on the selection, also in a read-only editor (which has no focus of
+		// Ctrl+Alt+M (Cmd+Alt+M on a Mac) comments on the selection, also in a read-only editor (which has no focus of
 		// its own to carry the key press).
 		const onKey = (e: KeyboardEvent) => {
 			if (barPos && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
@@ -384,7 +385,7 @@
 					return;
 				}
 			}
-			if (!(e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && e.code === 'KeyM')) return;
+			if (!(primary(e) && e.altKey && !e.shiftKey && !foreignMod(e) && e.code === 'KeyM')) return;
 			const node = document.getSelection()?.anchorNode;
 			if (!rootEl || !node || !rootEl.contains(node)) return;
 			e.preventDefault();

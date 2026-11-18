@@ -105,7 +105,8 @@ def users_command(argv: list[str]) -> None:
 
 
 def prefetch_command(argv: list[str]) -> None:
-    """Download the CPU engines' models (Parakeet, the speaker models, the search model) into a
+    """Download the CPU engines' models (Parakeet, the speaker models: segmentation, TitaNet and the
+    WeSpeaker voice embedder, the search model) into a
     folder laid out for the offline AppImage (scripts/build-offline-appimage.sh): <dest>/hf is a
     Hugging Face cache, <dest>/data/models is a `models_dir`. The shell copies them into place on
     first launch (install_offline in src-tauri/src/lib.rs)."""
@@ -122,7 +123,10 @@ def prefetch_command(argv: list[str]) -> None:
     from .search.embeddings import build_embedder
     from .transcription.registry import build_diarizer, build_transcriber
 
-    settings = Settings(data_dir=dest / "data", transcriber="parakeet", diarizer="onnx")
+    # No token: the ONNX speaker embedder (loaded with the diarizer), never pyannote's.
+    settings = Settings(
+        data_dir=dest / "data", transcriber="parakeet", diarizer="onnx", hf_token=""
+    )
 
     async def fetch() -> None:
         await build_transcriber(settings, "parakeet").load()

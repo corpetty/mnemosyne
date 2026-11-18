@@ -64,7 +64,7 @@ def test_the_expected_size_follows_the_engines(settings, monkeypatch):
 
     monkeypatch.setattr(registry, "installed", lambda *modules: True)  # CI has no ML packages
     settings.transcriber, settings.diarizer = "parakeet", "onnx"
-    assert model_downloads.speech_mb(settings) == 690 + 45
+    assert model_downloads.speech_mb(settings) == 690 + 75
     settings.diarizer = "none"
     assert model_downloads.speech_mb(settings) == 690
 

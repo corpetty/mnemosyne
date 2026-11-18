@@ -56,10 +56,13 @@
 		toggling = true;
 		try {
 			// Enabling: cancel echo on the mic picked below (it gets swapped for the echo-cancelled one).
-			const picked = aecMics.find((d) => audioState.selectedDeviceIds.has(d.id));
+			// A Mac has no mic to pick: whichever microphone is recorded goes through voice processing.
+			const picked = echo.voice_processing ? undefined : aecMics.find((d) => audioState.selectedDeviceIds.has(d.id));
 			echo = await setEchoCancel(!echo.active, !echo.active && picked ? picked.name : undefined);
 			await audioState.loadDevices();
-			if (echo.active) {
+			if (echo.active && echo.voice_processing) {
+				toastState.success('Echo cancellation on: the microphone is recorded through voice processing');
+			} else if (echo.active) {
 				// Prefer the echo-cancelled mic over raw mics.
 				const aec = audioState.devices.find((d) => d.is_echo_cancelled);
 				if (aec) {
@@ -129,7 +132,7 @@
 			<span class="font-medium text-gray-300">Echo cancellation</span>
 			<span class="text-gray-600"> · removes what your speakers play from the mic, so you can record without headphones</span>
 		</div>
-		{#if echo.active}
+		{#if echo.active && !echo.voice_processing}
 			<label class="flex items-center gap-1.5 text-xs text-gray-500 shrink-0">
 				on
 				<select

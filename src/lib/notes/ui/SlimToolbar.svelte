@@ -3,6 +3,7 @@
 	// Bold, Italic, Task, Insert (the `/` menu at the caret), Comment, and on the
 	// guest page Undo/Redo. Read-only: Comment only, when commenting is allowed. Buttons keep the
 	// editor's selection (mousedown is cancelled); the editor does the work through the callbacks.
+	import { keyHint } from '../keys.js';
 	import type { LineKind } from '../model.js';
 	import type { ToolbarActive } from './types.js';
 	import TurnIntoMenu from './TurnIntoMenu.svelte';
@@ -55,8 +56,8 @@
 		`px-2 py-1 ${on ? 'bg-gray-700 text-gray-100' : 'bg-gray-900 text-gray-400 hover:text-gray-200'}`;
 
 	const marks = [
-		{ kind: 'bold', label: 'B', name: 'Bold', keys: 'Ctrl+B', cls: 'font-bold' },
-		{ kind: 'italic', label: 'I', name: 'Italic', keys: 'Ctrl+I', cls: 'italic' }
+		{ kind: 'bold', label: 'B', name: 'Bold', keys: keyHint('Mod+B'), cls: 'font-bold' },
+		{ kind: 'italic', label: 'I', name: 'Italic', keys: keyHint('Mod+I'), cls: 'italic' }
 	] as const;
 
 	const showComment = $derived(canComment && !hideComment && (selected || !hideCommentUntilSelected));
@@ -84,7 +85,7 @@
 					onclick={ontask}
 					aria-label="Task list"
 					aria-pressed={active.kind === 'task'}
-					title="Task list (Ctrl+Shift+9)"
+					title="Task list ({keyHint('Mod+Shift+9')})"
 					class={btn(active.kind === 'task')}>☐</button
 				>
 			</div>
@@ -96,7 +97,7 @@
 					disabled={!oninsert}
 					aria-label="Insert"
 					aria-haspopup="listbox"
-					title="Insert (Ctrl+/)"
+					title="Insert ({keyHint('Mod+/')})"
 					class="{btn(false)} disabled:opacity-40 disabled:hover:text-gray-400">＋ Insert</button
 				>
 			</div>
@@ -108,7 +109,7 @@
 						onclick={() => onundo?.()}
 						disabled={!canUndo}
 						aria-label="Undo"
-						title="Undo your last edit (Ctrl+Z)"
+						title="Undo your last edit ({keyHint('Mod+Z')})"
 						class="{btn(false)} disabled:opacity-40 disabled:hover:text-gray-400">↶</button
 					>
 					<button
@@ -117,7 +118,7 @@
 						onclick={() => onredo?.()}
 						disabled={!canRedo}
 						aria-label="Redo"
-						title="Redo (Ctrl+Shift+Z)"
+						title="Redo ({keyHint('Mod+Shift+Z')})"
 						class="{btn(false)} disabled:opacity-40 disabled:hover:text-gray-400">↷</button
 					>
 				</div>
@@ -131,7 +132,7 @@
 					onclick={oncomment}
 					disabled={!selected}
 					aria-label="Comment on the selection"
-					title={selected ? 'Comment on the selected text (Ctrl+Alt+M)' : 'Select text to comment on (Ctrl+Alt+M)'}
+					title={(selected ? 'Comment on the selected text' : 'Select text to comment on') + ` (${keyHint('Mod+Alt+M')})`}
 					class="{btn(commentActive)} disabled:opacity-40 disabled:hover:text-gray-400">💬 Comment</button
 				>
 			</div>

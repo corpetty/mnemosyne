@@ -135,9 +135,10 @@ class ModelService:
     def live_embedder(self):
         """Speaker embedder for live labels (None if unavailable); built once."""
         if not self._live_embedder_built:
-            from ..transcription.registry import build_live_embedder
+            from ..transcription.registry import build_speaker_embedder
 
-            self._live_embedder = build_live_embedder(self.settings)
+            # One thread: live labelling shares the CPU with the live transcriber.
+            self._live_embedder = build_speaker_embedder(self.settings, threads=1)
             self._live_embedder_built = True
         return self._live_embedder
 

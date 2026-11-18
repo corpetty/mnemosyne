@@ -286,6 +286,7 @@ def test_second_write_replaces_children_and_leaves_one_row(repo, other):
             "live_flags": [],
             "external_notes": [],
             "speaker_embeddings": {"Ann": [9.0]},
+            "speaker_voices": {"pyannote": {"Ann": [9.0]}},
             "assets": doc.assets[:1],
         }
     )
@@ -470,3 +471,65 @@ def test_same_meeting_within_two_seconds():
     assert same_meeting(t + timedelta(seconds=-2), t)
     assert not same_meeting(t, t + timedelta(seconds=2.5))
     assert not same_meeting(t, t - timedelta(hours=1))
+
+
+# ---- voices by space ----------------------------------------------------------------------
+
+
+def _two_spaces(repo, sid):
+    repo.set_session_voices(sid, "wespeaker-r34", {"Ann": [0.7, 0.8], "Cy": [0.9, 1.0]})
+
+
+def test_export_carries_every_space_and_the_pyannote_one_again(repo):
+    sid = _meeting(repo)  # pyannote voices of Ann and Bo
+    _two_spaces(repo, sid)
+    doc = export_session(repo, sid, "dev-a")
+    assert doc.speaker_voices == {
+        "pyannote": {"Ann": [0.1, 0.2], "Bo": [0.3, 0.4]},
+        "wespeaker-r34": {"Ann": [0.7, 0.8], "Cy": [0.9, 1.0]},
+    }
+    assert doc.speaker_embeddings == {"Ann": [0.1, 0.2], "Bo": [0.3, 0.4]}  # older peers read this
+
+
+def test_voices_of_two_spaces_round_trip(repo, other):
+    sid = _meeting(repo)
+    _two_spaces(repo, sid)
+    doc = export_session(repo, sid, "dev-a")
+    write_session(other, doc, local_device_id="dev-b", vv=doc.vv, bump=False)
+    assert other.get_session_voices(sid) == repo.get_session_voices(sid)
+    # Through the wire format (JSON) as well.
+    again = SyncSession.model_validate_json(doc.model_dump_json())
+    assert again.speaker_voices == doc.speaker_voices
+
+
+def test_a_newer_documents_voices_replace_every_space(repo, other):
+    sid = _meeting(repo)
+    _two_spaces(repo, sid)
+    doc = export_session(repo, sid, "dev-a")
+    write_session(other, doc, local_device_id="dev-b", vv=doc.vv, bump=False)
+    newer = doc.model_copy(
+        update={
+            "speaker_voices": {"wespeaker-r34": {"Ann": [5.0, 5.0]}},
+            "speaker_embeddings": {},
+        }
+    )
+    write_session(other, newer, local_device_id="dev-b", vv=doc.vv, bump=False)
+    assert other.get_session_voices(sid) == {"wespeaker-r34": {"Ann": [5.0, 5.0]}}
+
+
+def test_an_older_peers_document_never_wipes_the_other_spaces(repo, other):
+    sid = _meeting(repo)
+    _two_spaces(repo, sid)
+    doc = export_session(repo, sid, "dev-a")
+    write_session(other, doc, local_device_id="dev-b", vv=doc.vv, bump=False)
+    # What an older build sends: no `speaker_voices` at all, and new pyannote voices.
+    wire = doc.model_dump(mode="json")
+    del wire["speaker_voices"]
+    wire["speaker_embeddings"] = {"Ann": [9.0, 9.0]}
+    older = SyncSession.model_validate(wire)
+    assert older.speaker_voices is None
+    write_session(other, older, local_device_id="dev-b", vv=doc.vv, bump=False)
+    assert other.get_session_voices(sid) == {
+        "pyannote": {"Ann": [9.0, 9.0]},  # replaced, as before
+        "wespeaker-r34": {"Ann": [0.7, 0.8], "Cy": [0.9, 1.0]},  # kept
+    }

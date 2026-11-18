@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { shortcutHint } from '$lib/app/shortcuts.js';
 	import RecordingPill from './RecordingPill.svelte';
 	import { toggleView } from '$lib/app/controller.svelte.js';
 	import { connectionState } from '$lib/stores/connection.svelte.js';
@@ -49,7 +50,7 @@
 		<button
 			onclick={() => (uiState.sidebarCollapsed = !uiState.sidebarCollapsed)}
 			class="p-1 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
-			title="Toggle sidebar (Ctrl+B)"
+			title="Toggle sidebar ({shortcutHint('sidebar')})"
 			aria-label="Toggle sidebar"
 		>
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -107,7 +108,7 @@
 			class="hidden lg:flex items-center gap-2 px-2 py-1 rounded border border-gray-800 text-xs text-gray-500 hover:text-gray-300 hover:border-gray-700"
 			title="Find a meeting, person, topic or setting, or ask a question"
 		>
-			Search <kbd class="px-1 rounded bg-gray-800 text-[10px] text-gray-400">Ctrl+K</kbd>
+			Search <kbd class="px-1 rounded bg-gray-800 text-[10px] text-gray-400">{shortcutHint('palette')}</kbd>
 		</button>
 		<button
 			onclick={() => toggleView('settings')}

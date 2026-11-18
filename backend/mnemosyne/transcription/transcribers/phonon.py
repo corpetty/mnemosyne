@@ -9,9 +9,15 @@ and 7 % of words differing from Parakeet's transcript, mostly fillers and spelli
 for "wanna"). Requests go through RemoteTranscriber, so segments and word times are parsed the
 same way as for any remote server.
 
-One server per (command, threads) is shared by the transcribers that use it; it stops when the
-last one unloads, and dies with the backend (PR_SET_PDEATHSIG). Live transcription passes its
-small thread budget (`live_threads`, `--threads`), so it gets a server of its own.
+One server per (command, threads, engine) is shared by the transcribers that use it; it stops
+when the last one unloads, and dies with the backend: PR_SET_PDEATHSIG on Linux, a guard process
+on the Mac (phonon_guard.py), which has no such thing. On the Mac our own install runs Fermion's
+MLX engine (FERMION_DEVICE=mlx, on the GPU); when a server does not start with it, it is started
+once more with the CPU engine (FERMION_DEVICE=cpu), and that install keeps the CPU engine for the
+life of the backend (`_cpu_fallback`, a `[mnemosyne]` line in phonon.log). A failed or slow model
+download is not retried that way: the CPU engine would fetch the same file. Both engines load the
+same unpacked files (model.fermion and config.json, pinned in MODEL_FILES). Live transcription
+passes its small thread budget (`live_threads`, `--threads`), so it gets a server of its own.
 
 The server refuses large uploads (413 for a 33 MB WAV), so audio goes in pieces of about five
 minutes, cut at the quietest moment before each boundary so no word is split; pieces that are
@@ -29,6 +35,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import wave
@@ -52,14 +59,18 @@ SILENT_DBFS = -55.0  # a piece whose loudest 100 ms stays below this is not sent
 # Fermion itself verified against the hashes in its wheel: the archive "verified against the pinned
 # sha256 (98125795b6dd…)", every member of it after unpacking). Paths are relative to our own
 # install's cache folder (`<data_dir>/phonon/cache`, FERMION_CACHE_DIR). The archive is what is
-# downloaded, `model.fermion` what the engine loads: checked again here so that a file replaced
-# after the install is not run.
+# downloaded, `model.fermion` (weights) and `config.json` (architecture and vocabulary) what both
+# engines load, MLX and CPU alike (fermion/_speech/engine_phonon2.py, engine_phonon2_cpu.py):
+# checked again here so that a file replaced after the install is not run.
 MODEL_FILES = {
     "models--FermionResearch--Phonon-2/snapshots/*/phonon-2.bps.tar.zst": (
         "98125795b6dda72f5c6eee9ba33d19815df65dcb18b50a357bf9f73c9935309e"
     ),
     "speech/FermionResearch__Phonon-2/*/model.fermion": (
         "4b6bfa3a12cc3c4e0a54f2ab3ec4ca7a842b09e5c7ecfc8e7ca0ac6cc8c11468"
+    ),
+    "speech/FermionResearch__Phonon-2/*/config.json": (
+        "d0daad3b2a182893844f4abdc11e4f5b7083f7d42c8ad7e8203f71559785a31b"
     ),
 }
 INSTALL_HINT = (
@@ -121,6 +132,12 @@ def verify_model(home: Path) -> None:
     _refused.pop(home, None)
 
 
+def model_downloaded(home: Path) -> bool:
+    """Every file in MODEL_FILES is in our install's cache (downloaded and unpacked), whatever
+    its hash."""
+    return all(any((home / "cache").glob(pattern)) for pattern in MODEL_FILES)
+
+
 def find_phonon(command: str = "", home: Path | None = None) -> str | None:
     """The `phonon` program to run: `command` when it is set (a path or a name on PATH), else
     our own install under `home` once it is complete, else `phonon` on PATH. None: there is none."""
@@ -143,6 +160,12 @@ def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+MAC = sys.platform == "darwin"
+# macOS has no PR_SET_PDEATHSIG: the server runs under a guard that watches the backend.
+GUARDED = MAC
+GUARD = Path(__file__).with_name("phonon_guard.py")
 
 
 def _die_with_parent() -> None:
@@ -202,22 +225,45 @@ def _shifted(segment: TranscriptSegment, by: float) -> TranscriptSegment:
 _UNSAFE_ENV = ("PHONON", "FERMION_")
 
 
-def server_env(home: Path | None) -> dict[str, str]:
+# Our installs (their `home`) whose server did not start with Fermion's MLX engine: they run its
+# CPU engine for the life of this backend. Installing again tries MLX again.
+_cpu_fallback: set[Path] = set()
+
+# What Fermion says when it refuses an engine before downloading anything (gate.require).
+_REFUSED = "is unavailable:"
+
+
+def engine_for(home: Path | None, device: str | None = None) -> str | None:
+    """FERMION_DEVICE for a server: `device` when it is forced; for our own install on the Mac,
+    mlx unless that install fell back to the CPU; else None (Fermion's own choice)."""
+    if device:
+        return device
+    if home is None or not MAC:
+        return None
+    return "cpu" if home in _cpu_fallback else "mlx"
+
+
+def server_env(home: Path | None, device: str | None = None) -> dict[str, str]:
     """The server's environment: ours without Fermion's overrides; with `home` (our own install,
-    services/phonon_install.py) its caches there and no network once the model is installed."""
+    services/phonon_install.py) its caches there and no network once the model is installed.
+    FERMION_DEVICE is `engine_for(home, device)`."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(_UNSAFE_ENV)}
     if home is not None:
         env["FERMION_CACHE_DIR"] = str(home / "cache")
         env["HF_HUB_CACHE"] = str(home / "hf")
         if (home / "installed").exists():
             env["HF_HUB_OFFLINE"] = "1"
+    engine = engine_for(home, device)
+    if engine:
+        env["FERMION_DEVICE"] = engine
     return env
 
 
 class PhononServer:
     """`phonon serve` on a free local port, started on first use. Loopback only (Fermion's
     default host, never --host), with a random API key per start: nothing else on the machine
-    gets to use it (it has no host or origin check)."""
+    gets to use it (it has no host or origin check). `device` forces Fermion's engine ("cpu" or
+    "mlx") with no fallback; None: `engine_for` chooses, and a Mac install falls back to the CPU."""
 
     def __init__(
         self,
@@ -225,14 +271,18 @@ class PhononServer:
         log_path: Path | None = None,
         threads: int | None = None,
         home: Path | None = None,
+        device: str | None = None,
     ):
         self.program = program
         self.log_path = log_path
         self.threads = threads
         self.home = home
+        self.device = device
+        self.engine: str | None = None  # FERMION_DEVICE of the last start (None: Fermion's own)
         self.api_key = ""
         self.port = 0
         self._proc: subprocess.Popen | None = None
+        self._group = False  # started under the guard, in a session of its own
         self._users = 0
         self._lock = asyncio.Lock()
 
@@ -248,10 +298,63 @@ class PhononServer:
         Returns its base URL."""
         async with self._lock:
             if not self.running():
-                await asyncio.to_thread(self._start)
-                await self._wait_healthy(timeout)
+                await self._start_healthy(timeout)
             self._users += 1
             return self.url
+
+    async def _start_healthy(self, timeout: float) -> None:
+        """Start the server and wait for /health. A Mac install whose server does not start with
+        the MLX engine is started once more with the CPU engine, and keeps it from then on."""
+        engine = engine_for(self.home, self.device)
+        mark = self._log_size()
+        await asyncio.to_thread(self._start, engine)
+        try:
+            await self._wait_healthy(timeout)
+        except RuntimeError as e:
+            if engine != "mlx" or self.device is not None or not self._cpu_may_help(mark):
+                raise
+            assert self.home is not None
+            _cpu_fallback.add(self.home)
+            message = (
+                f"Phonon-2 did not start with Fermion's MLX engine ({e}); "
+                "using its CPU engine from now on"
+            )
+            logger.warning("%s", message)
+            self._note(message)
+            await asyncio.to_thread(self._start, "cpu")
+            await self._wait_healthy(timeout)
+
+    def _cpu_may_help(self, mark: int) -> bool:
+        """After a start with MLX failed: would the CPU engine get further? Yes once the model is
+        downloaded and unpacked (the failure came later, in the engine), or when Fermion refused
+        the MLX engine before downloading anything. Not after a download that failed or ran out
+        of time: the CPU engine would fetch the same file and fail again, slowly."""
+        if self.home is not None and model_downloaded(self.home):
+            return True
+        return _REFUSED in self._log_since(mark)
+
+    def _log_size(self) -> int:
+        try:
+            return self.log_path.stat().st_size if self.log_path else 0
+        except OSError:
+            return 0
+
+    def _log_since(self, mark: int) -> str:
+        """What the server wrote to its log after `mark` (a size from `_log_size`)."""
+        if not self.log_path:
+            return ""
+        try:
+            with self.log_path.open("rb") as f:
+                f.seek(mark)
+                return f.read().decode(errors="replace")
+        except OSError:
+            return ""
+
+    def _note(self, message: str) -> None:
+        """A `[mnemosyne]` line in phonon.log, between the server's own."""
+        if self.log_path:
+            with self.log_path.open("a") as f:
+                f.write(f"[mnemosyne] {message}\n")
 
     async def release(self) -> None:
         async with self._lock:
@@ -259,7 +362,7 @@ class PhononServer:
             if self._users == 0:
                 await asyncio.to_thread(self.stop)
 
-    def _start(self) -> None:
+    def _start(self, engine: str | None = None) -> None:
         if self.log_path:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
         # Our own finished install: its model must be the pinned one before it is run. (The first
@@ -270,13 +373,16 @@ class PhononServer:
                 verify_model(self.home)
             except ModelMismatch as e:
                 logger.error("%s", e)
-                if self.log_path:
-                    with self.log_path.open("a") as f:
-                        f.write(f"[mnemosyne] {e}\n")
+                self._note(str(e))
                 raise
         self.port = _free_port()
         log = self.log_path.open("ab") if self.log_path else subprocess.DEVNULL
-        logger.info("Starting phonon serve on port %d", self.port)
+        self.engine = engine
+        logger.info(
+            "Starting phonon serve on port %d%s",
+            self.port,
+            f" (FERMION_DEVICE={engine})" if engine else "",
+        )
         # hex, not urlsafe base64: a key that starts with "-" is taken for an option and the server
         # does not start (1 in 64 starts)
         self.api_key = secrets.token_hex(24)
@@ -292,13 +398,17 @@ class PhononServer:
         ]
         if self.threads:
             args += ["--threads", str(self.threads)]
+        self._group = GUARDED
+        if GUARDED:  # its own session, so that stop() can kill the guard and the server together
+            args = [sys.executable, "-I", str(GUARD), str(os.getpid()), *args]
         self._proc = subprocess.Popen(
             args,
             stdout=log,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
-            env=server_env(self.home),
-            preexec_fn=_die_with_parent,
+            env=server_env(self.home, engine),
+            preexec_fn=None if GUARDED else _die_with_parent,
+            start_new_session=GUARDED,
         )
 
     async def _wait_healthy(self, timeout: float) -> None:
@@ -325,18 +435,29 @@ class PhononServer:
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                if self._group:  # the guard and the server it runs
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                else:
+                    proc.kill()
+                proc.wait()
 
 
-_servers: dict[tuple[str, int | None], PhononServer] = {}
+_servers: dict[tuple[str, int | None, str | None], PhononServer] = {}
 
 
 def server_for(
-    program: str, log_path: Path | None = None, threads: int | None = None, home: Path | None = None
+    program: str,
+    log_path: Path | None = None,
+    threads: int | None = None,
+    home: Path | None = None,
+    device: str | None = None,
 ):
-    key = (program, threads)
+    key = (program, threads, device)
     if key not in _servers:
-        _servers[key] = PhononServer(program, log_path, threads, home)
+        _servers[key] = PhononServer(program, log_path, threads, home, device)
     return _servers[key]
 
 
@@ -350,12 +471,14 @@ class PhononTranscriber:
         model: str = MODEL,
         threads: int | None = None,
         home: Path | None = None,
+        device: str | None = None,
     ):
         self.command = command
         self.home = home  # <data_dir>/phonon: our own install, when there is one
         self.log_path = log_path
         self.model = model
         self.threads = threads  # CPU threads for its server; None: Fermion's default
+        self.device = device  # Fermion's engine, forced ("cpu"/"mlx"); None: see engine_for
         self._server: PhononServer | None = None
         self._client: RemoteTranscriber | None = None
 
@@ -373,7 +496,7 @@ class PhononTranscriber:
                 raise ModelMismatch(_refused[self.home])
             raise RuntimeError(INSTALL_HINT)
         home = self.home if self.home and program == str(managed_program(self.home)) else None
-        server = server_for(program, self.log_path, self.threads, home)
+        server = server_for(program, self.log_path, self.threads, home, self.device)
         url = await server.acquire()
         self._server = server
         self._client = RemoteTranscriber(

@@ -166,19 +166,36 @@ def _cpu_fallback() -> str:
     return "onnx" if installed("sherpa_onnx") else "none"
 
 
-def build_live_embedder(settings: Settings):
-    """pyannote speaker embedder (live labels; voice profiles under nemotron), or None when
-    pyannote/torch are unavailable."""
-    if settings.diarizer not in ("auto", "pyannote", "nemotron"):
-        return None
-    try:
-        import pyannote.audio  # noqa: F401
-        import torch  # noqa: F401
-    except ImportError:
-        return None
-    from .live_speakers import PyannoteEmbedder
+def resolve_speaker_embedder(settings: Settings) -> str:
+    """Which speaker embedder this machine runs: "pyannote" (torch + pyannote with its token: the
+    machines that always had voice profiles), "onnx" (sherpa-onnx on the CPU, no torch, no token),
+    or "none". The diarizer setting "none" (and the demo) means no voices."""
+    if settings.diarizer in ("none", "demo"):
+        return "none"
+    if installed("pyannote.audio", "torch") and settings.hf_token:
+        return "pyannote"
+    if installed("sherpa_onnx"):
+        return "onnx"
+    return "none"
 
-    return PyannoteEmbedder(settings.diarization_model, settings.hf_token)
+
+def build_speaker_embedder(settings: Settings, threads: int | None = None):
+    """The speaker embedder (voice profiles, live labels, clean-turn voices of the final
+    diarizers), or None. `threads` is for the ONNX one (default: min(4, cores - 1); the live
+    path asks for one)."""
+    kind = resolve_speaker_embedder(settings)
+    if kind == "pyannote":
+        from .live_speakers import PyannoteEmbedder
+
+        return PyannoteEmbedder(settings.diarization_model, settings.hf_token)
+    if kind == "onnx":
+        from .speaker_embedders import OnnxEmbedder
+
+        return OnnxEmbedder(settings.models_dir / "diarization", threads=threads)
+    return None
+
+
+build_live_embedder = build_speaker_embedder  # the old name (bench_live.py)
 
 
 def resolve_live_diarizer(settings: Settings) -> str:
@@ -218,7 +235,7 @@ def build_live_rediarizer(settings: Settings):
         return None
     from .diarizers.nemotron import NemotronDiarizer
 
-    return NemotronDiarizer(embedder=build_live_embedder(settings))
+    return NemotronDiarizer(embedder=build_speaker_embedder(settings))
 
 
 def build_diarizer(settings: Settings) -> Diarizer | None:
@@ -236,12 +253,15 @@ def build_diarizer(settings: Settings) -> Diarizer | None:
     if kind == "nemotron":
         from .diarizers.nemotron import NemotronDiarizer
 
-        # Nemotron has no speaker embeddings; voice profiles use pyannote's embedder.
-        return NemotronDiarizer(embedder=build_live_embedder(settings))
+        # Nemotron has no speaker embeddings; voices come from the speaker embedder.
+        return NemotronDiarizer(embedder=build_speaker_embedder(settings))
     if kind == "onnx":
         from .diarizers.onnx import OnnxDiarizer
 
-        return OnnxDiarizer(models_dir=settings.models_dir / "diarization")
+        return OnnxDiarizer(
+            models_dir=settings.models_dir / "diarization",
+            embedder=build_speaker_embedder(settings),
+        )
     raise ValueError(f"Unknown diarizer '{kind}'. Choose one of {DIARIZERS}")
 
 

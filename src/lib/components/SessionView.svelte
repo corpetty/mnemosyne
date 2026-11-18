@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { shortcutHint } from '$lib/app/shortcuts.js';
 	import { tick } from 'svelte';
 	import { markMoment, startRecording, stopAndTranscribe } from '$lib/app/controller.svelte.js';
 	import { setLocalOnly } from '$lib/api/backend.js';
@@ -324,7 +325,7 @@
 						<AudioControls onStartOverride={() => startRecording()} onStopOverride={stopAndTranscribe} />
 						<button
 							onclick={markMoment}
-							title="Mark this moment as important (Ctrl+M); the summary gives it weight"
+							title="Mark this moment as important ({shortcutHint('mark')}); the summary gives it weight"
 							class="rounded border border-amber-700/70 bg-amber-950/40 px-2.5 py-1 text-sm text-amber-200 hover:bg-amber-900/50"
 						>
 							🔖 Mark{audioState.marks ? ` · ${audioState.marks}` : ''}
@@ -387,8 +388,8 @@
 					{#if !sharedFrom}
 						<RecordsCard />
 						<p class="text-xs text-gray-600">
-							Shortcuts: <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+R</kbd> Record
-							&middot; <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">Ctrl+S</kbd> Stop
+							Shortcuts: <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">{shortcutHint('record')}</kbd> Record
+							&middot; <kbd class="px-1 py-0.5 bg-gray-800 rounded text-gray-400">{shortcutHint('stop')}</kbd> Stop
 						</p>
 					{/if}
 					<LiveTranscript />

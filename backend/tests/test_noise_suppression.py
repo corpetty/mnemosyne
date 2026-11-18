@@ -279,4 +279,5 @@ async def test_start_recording_records_the_target_in_place_of_the_device(tmp_pat
 
 def test_noise_suppression_unsupported_in_mac_words_on_a_mac(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
-    assert ns.supported() == (False, "Not available on a Mac yet")
+    ok, reason = ns.supported()
+    assert not ok and reason.startswith("Not on a Mac") and "voice processing" in reason

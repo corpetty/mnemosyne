@@ -62,7 +62,10 @@ class Denoise:
 
 def supported() -> tuple[bool, str | None]:
     if sys.platform == "darwin":
-        return False, "Not available on a Mac yet"
+        return (
+            False,
+            "Not on a Mac: echo cancellation there (voice processing) turns noise down too",
+        )
     if platform.machine() not in ("x86_64", "AMD64"):
         return False, "DeepFilterNet is only set up for x86-64 computers"
     if not any(Path(p).is_file() for p in FILTER_CHAIN_PATHS):
