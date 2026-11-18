@@ -294,6 +294,16 @@ Phase 2 (not in the first deliverable):
   are recognised across meetings; "Who is who?" stays as it is (it becomes true).
 - Implementation runs as two sequential parts: A = tasks 1-3, B = tasks 4-6. Task 7 is a follow-up.
 
+## Task 0 (real) result, 2026-11-18
+
+Corey ran the real check with community-1 and his HF token on his desktop (`compare-voice-spaces.py`, default
+options, the bundled sample, 17 windows of 4 s). Every number matches the proxy below to four decimals: same audio
+median **0.5466** (min 0.2330, max 0.6856), Spearman 0.9348, turn-to-turn p50 0.629 (pyannote) and 0.527 (onnx).
+So community-1's bundled embedder is the same network as `pyannote/wespeaker-voxceleb-resnet34-LM`, and the answer is
+final: **not the same space**. `OnnxEmbedder.space` stays `wespeaker-r34`; no retagging migration. Open question 1
+is answered. Sharing one space would need a pyannote-identical front end (the last paragraph of this section's
+proxy notes), which is not planned.
+
 ## Task 0 (proxy) result, 2026-11-17
 
 What was compared: **the proxy, not community-1.** `pyannote/wespeaker-voxceleb-resnet34-LM` (`Model.from_pretrained`
