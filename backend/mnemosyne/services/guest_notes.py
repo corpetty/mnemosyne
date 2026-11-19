@@ -2174,9 +2174,9 @@ def forget_session(app: AppContext, session_id: str):
         return None
 
     def after() -> None:
-        try:
-            _spawn(app, _forget(app, session_id, row))
-        except RuntimeError:  # no event loop
+        # Library sync and combining delete meetings on a worker thread: the cleanup goes to
+        # the app's loop, and the coroutine is made there, so it is never left unawaited.
+        if not app.on_loop(lambda: _spawn(app, _forget(app, session_id, row))):
             logger.warning("Guest notes room %s stays on %s", row["room"], row["host_url"])
 
     return after

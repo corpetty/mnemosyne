@@ -172,6 +172,24 @@ class AppContext:
             except Exception:
                 logger.warning("Could not adopt meetings without an owner", exc_info=True)
 
+    def on_loop(self, fn, *args) -> bool:
+        """Run `fn(*args)` on the event loop: now when one is running here, soon from a worker
+        thread (library sync and combining delete meetings in `asyncio.to_thread`). False when
+        there is no loop to hand it to (before startup, after shutdown)."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            loop = self._loop
+            if loop is None or loop.is_closed():
+                return False
+            try:
+                loop.call_soon_threadsafe(fn, *args)
+            except RuntimeError:  # closed meanwhile
+                return False
+            return True
+        fn(*args)
+        return True
+
     def _summary_changed(self, session_id: str) -> None:
         """The repository wrote a meeting's summary (from any thread): its notes' Summary
         section is synced `summary_notes_delay` s after the last such write. Never blocks."""
