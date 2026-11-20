@@ -2,7 +2,7 @@
 
 Status: phase 1 built on `docs/narration-voices-plan` (2026-11-20) with KittenTTS 2 as the engine, see "KittenTTS" and "Progress" at the end. The text below is the plan as written; file:line references are against `4b91407` (Release 0.33.0).
 against that commit; re-find them by name before editing. Anything I could not check is marked **(verify)**.
-I ran no model and no benchmark.
+When the plan was written no model had been run; Task 0 was run on 2026-11-20 (see "Task 0 results").
 
 ## Goal
 
@@ -297,8 +297,7 @@ recording (same path as `StartBrowserRecordingRequest`); per-user narration logs
 ## KittenTTS (evaluated 2026-11-20)
 
 Corey asked on the PR to evaluate [KittenTTS](https://github.com/KittenML/KittenTTS). Read from its repository, model
-card and the kittenml 0.9.8 wheel; **I ran no model** (it could not be installed on the machine this was built on),
-so speed and quality are the project's own claims until Task 0 measures them.
+card and the kittenml 0.9.8 wheel, then measured: see "Task 0 results" below.
 
 - **What fits.** KittenTTS 2 (1.7B, ternary) clones a voice zero-shot from 5-30 s plus the clip's transcript
   (`generate(text, reference=wav, reference_text=...)`), 24 kHz, 20 languages, sentence chunking built in. One model
@@ -320,6 +319,50 @@ so speed and quality are the project's own claims until Task 0 measures them.
 Decision for phase 1: KittenTTS 2 behind the `Synthesizer` Protocol, with the licence accepted at install. If the
 licence is a problem, Chatterbox (MIT, PerTh watermark built in) goes behind the same Protocol: only
 synthesis/kitten.py, its worker and the requirement files are engine-specific.
+
+## Task 0 results (2026-11-20)
+
+KittenTTS 2 at the pinned revision, driven through **our own worker** (synthesis/kitten_worker.py, the protocol
+kitten.py speaks) and scored with the models Mnemosyne itself runs: Parakeet TDT 0.6B v3 int8 for the round trip,
+WeSpeaker ResNet34-LM for similarity, AudioSeal's detector for the watermark. Script: backend/scripts/kitten_task0.py.
+Machine: Windows 11, 32 threads, RTX 4070 12 GB, kittenml 0.9.8, torch 2.15.0 (CPU build, then +cu132). Three of
+KittenTTS's own sample voices as references (10-11 s each: an audiobook narrator, a radio DJ, an older professor) and
+the six narration paragraphs in the script (summary prose, a decision, action items with names, a question, a digest
+overview, a sentence about Mnemosyne): 18 chunks of 7-12 s each per run. Nothing was played.
+
+| | CPU (PyTorch) | RTX 4070 (CUDA PyTorch) |
+|---|---|---|
+| Time to make / audio length (RTF) | **3.26** (3.19-3.39) | **0.86** (0.78-0.97) |
+| Round-trip WER, mean / median | 1.8 % / 0 | 2.6 % / 0 |
+| Chunks above 10 % WER | 1 of 18 (18 %, a dropped "the") | 1 of 18 (14 %) |
+| Similarity to its own reference, mean (min) | 0.933 (0.908) | 0.932 (0.894) |
+| Highest similarity to another voice, mean | 0.699 | 0.700 |
+| AudioSeal score on outputs (min) / on the references | 0.999 / 0.01-0.10 | 0.998 / same |
+| Worker start (load) | 14 s | 16 s |
+
+What this says:
+
+- **Quality passes the plan's mark** (similarity above the 0.6 profile threshold, WER at or under 5 %) on both.
+- **Speed**: on this CPU a 1-minute summary takes about 3.3 minutes; on the GPU it is faster than real time. The
+  narrate job runs in the background either way, but **the Linux install should use CUDA PyTorch on NVIDIA** (3.8x).
+  That needs a choice of CUDA build and minimum driver (the backend's gpu extra is cu128; torch 2.15 exists for cu132,
+  this machine's driver 610 ran it). **Corey: which CUDA baseline?**
+- **The watermark works**: every output was detected (0.998+), the untouched references were not (0.10 at most).
+- **Caveats**: the references are the model's own sample voices, which it may clone better than a stranger's voice;
+  run the script on recordings of yourselves before trusting the similarity numbers. Different cloned voices scored
+  0.70-0.83 against each other, above the 0.6 wespeaker-r34 "same person" threshold, so the threshold the consent and
+  same-voice checks use should be calibrated on real voices (the 2026-11-17 plan's task 7 does that for profiles).
+
+Fixed because of this run (the stand-in worker in the tests could not show them):
+
+- The prefetch downloaded the whole model repository, **7.7 GB** (every weight variant, a llama.cpp bundle, every
+  sample voice). It now takes only the files the config names for the chosen weights (kittenml's own list): **1.0 GB**
+  model + 1.1 GB vocoder and AudioSeal.
+- **AudioSeal compiles itself with torch.compile** on first use, which needs a C++ compiler, so every narration failed
+  on a machine without one. The worker sets `NO_TORCH_COMPILE=1`.
+- AudioSeal fetched its weights from `main` into `~/.cache/audioseal`, and the Hub client wrote to
+  `~/.cache/huggingface`: outside the install, unpinned and kept by Remove. Its files are now fetched at a pinned
+  revision into the install (`AUDIOSEAL_REVISION`), and `HF_HOME` points inside it too.
 
 ## Progress
 
@@ -349,9 +392,9 @@ Phase 1, built 2026-11-20 on `docs/narration-voices-plan`:
 
 Not done yet, in order:
 
-1. **Task 0 for real**: install KittenTTS on an NVIDIA box and the Mac and measure speaker similarity, round-trip WER
-   and real-time factor (a `mnemosyne-bench --tts` mode is not written). Until then the CPU speed is unknown; on Linux
-   the install uses PyTorch's CPU build even with NVIDIA (CUDA torch or kitten-tts-2-cpp is a follow-up).
+1. **CUDA PyTorch on NVIDIA** (see Task 0 results): a third hashed requirement set and the installer choosing it
+   when `nvidia-smi` works, as the backend does for its gpu extra. Then Task 0 on the Mac (MLX) and on Linux, with
+   real voices, and the similarity thresholds calibrated on them.
 2. **Watermark detection on import**: only the metadata tag is checked today (cheap, and anyone can strip it); the
    worker already has AudioSeal's detector (`detect`), not yet called on import.
 3. Listen on notes and follow-ups in the UI (the API takes them), Obsidian embeds, publications, the MCP `narrate`

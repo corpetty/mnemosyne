@@ -120,6 +120,7 @@ async def install_engine(request: InstallRequest, ctx: AppContext = Depends(get_
             ctx.settings.data_dir,
             lambda message, frac: job.update(message, progress=frac),
             accepted_license=True,
+            weights=ctx.settings.kitten_weights,
         )
         narration.forget_engine(ctx)
         return {"mb": round(tts_install.size_bytes(ctx.settings.data_dir) / 1e6)}

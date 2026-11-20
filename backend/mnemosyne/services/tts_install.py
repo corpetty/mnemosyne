@@ -7,7 +7,8 @@ requirements file (synthesis/kitten-requirements.txt, -macos.txt; --require-hash
 comes first, alone, from PyTorch's CPU index (`--no-deps`), then the rest from PyPI.
 
 Then the model is downloaded once at its pinned revision into `<home>/model` (the worker's
-`--prefetch`, which also fetches the Chatterbox-Turbo vocoder and AudioSeal into `<home>/cache`).
+`--prefetch`: only the files of the chosen weight variant, then the Chatterbox-Turbo vocoder and
+AudioSeal's generator and detector, each at its pinned revision, into `<home>/cache`).
 Every downloaded file's SHA-256 goes into `installed` (JSON) and `verify` checks them again; from
 then on the worker runs with HF_HUB_OFFLINE=1. About 3 GB in all; removing the folder removes it.
 
@@ -157,7 +158,11 @@ async def _run(args: list[str], report: Report, done: float, env: dict[str, str]
 
 
 async def install(
-    data_dir: Path, report: Report, accepted_license: bool, uv: str | None = None
+    data_dir: Path,
+    report: Report,
+    accepted_license: bool,
+    uv: str | None = None,
+    weights: str = "",
 ) -> None:
     """Install (or bring up to date) KittenTTS under <data_dir>/tts/kitten. A failed install
     leaves no `installed` stamp, so it is not used."""
@@ -204,7 +209,8 @@ async def install(
     report("Downloading the KittenTTS 2 model (about 1.5 GB)", 0.65)
     await _run(
         [str(python), "-I", str(kitten.WORKER), "--prefetch", "--model", str(root / "model")]
-        + ["--revision", kitten.MODEL_REVISION, "--vocoder-revision", kitten.VOCODER_REVISION],
+        + ["--revision", kitten.MODEL_REVISION, "--vocoder-revision", kitten.VOCODER_REVISION]
+        + ["--audioseal-revision", kitten.AUDIOSEAL_REVISION, "--weights", weights],
         report,
         0.9,
         kitten.worker_env(root, offline=False),
@@ -217,6 +223,8 @@ async def install(
                 "requirements": requirements_hash(),
                 "revision": kitten.MODEL_REVISION,
                 "vocoder_revision": kitten.VOCODER_REVISION,
+                "audioseal_revision": kitten.AUDIOSEAL_REVISION,
+                "weights": weights,  # a different `kitten_weights` needs installing again
                 "license": kitten.LICENSE_NAME,
                 "license_accepted_at": datetime.now().isoformat(timespec="seconds"),
                 "files": files,

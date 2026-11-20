@@ -100,6 +100,10 @@ def test_the_worker_runs_offline_without_the_backends_python_env(tmp_path, monke
     assert env["HF_HUB_OFFLINE"] == "1" and env["HF_HUB_CACHE"] == str(tmp_path / "cache")
     assert "PYTHONHOME" not in env and "VIRTUAL_ENV" not in env
     assert "HF_HUB_OFFLINE" not in kitten.worker_env(tmp_path, offline=False)
+    # Nothing outside the install: AudioSeal's weights and the Hub client's own files are in it
+    # (by default they go to ~/.cache/audioseal and ~/.cache/huggingface).
+    for key in ("AUDIOSEAL_CACHE_DIR", "HF_HOME"):
+        assert Path(env[key]).is_relative_to(tmp_path / "cache")
 
 
 def test_requirements_are_pinned_with_hashes():

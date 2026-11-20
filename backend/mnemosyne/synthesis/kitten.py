@@ -36,6 +36,7 @@ MODEL_REPO = "KittenML/kitten-tts-2"
 # Pinned 2026-11-20 (the Hub's head of each repository then).
 MODEL_REVISION = "c93cb7c271baa51d9ae8204d5277988906f235a2"
 VOCODER_REVISION = "749d1c1a46eb10492095d68fbcf55691ccf137cd"  # ResembleAI/chatterbox-turbo, MIT
+AUDIOSEAL_REVISION = "3c19eba53390776cf2cc9ed5f6c9ac67ce72ecba"  # facebook/audioseal, MIT
 LICENSE_URL = "https://huggingface.co/KittenML/kitten-tts-2/blob/main/LICENSE.md"
 LICENSE_NAME = "Stellon Labs Community License"
 ATTRIBUTION = "Powered by KittenML"
@@ -61,6 +62,10 @@ def installed(data_dir: Path) -> bool:
 def worker_env(root: Path, offline: bool = True) -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTHON", "VIRTUAL_ENV"))}
     env["HF_HUB_CACHE"] = str(root / "cache")
+    # AudioSeal keeps its weights here, not in ~/.cache: inside the install, removed with it.
+    env["AUDIOSEAL_CACHE_DIR"] = str(root / "cache" / "audioseal")
+    # The rest of the Hub client (its xet transfer logs and staging) too, not ~/.cache/huggingface.
+    env["HF_HOME"] = str(root / "cache" / "hf-home")
     env["HF_HUB_DISABLE_TELEMETRY"] = "1"
     if offline:
         env["HF_HUB_OFFLINE"] = "1"

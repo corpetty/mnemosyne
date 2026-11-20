@@ -22,8 +22,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import traceback
+
+# AudioSeal's bundled Moshi layers torch.compile themselves on first use, which needs a C++
+# compiler (cl, gcc) people do not have: found in Task 0, 2026-11-20. Read at import time.
+os.environ.setdefault("NO_TORCH_COMPILE", "1")
 
 MODEL_REPO = "KittenML/kitten-tts-2"
 AUDIOSEAL_GENERATOR = "audioseal_wm_16bits"
@@ -108,19 +113,64 @@ class Worker:
         return {"score": float(score)}
 
 
-def prefetch(model_dir: str, revision: str, vocoder_revision: str) -> None:
+def prefetch(
+    model_dir: str, revision: str, vocoder_revision: str, audioseal_revision: str, weights: str
+) -> None:
     """The installer's download step: the model at its pinned revision into `model_dir`, then
-    one load (which fetches the vocoder and AudioSeal into the HF cache)."""
-    from huggingface_hub import snapshot_download
+    the vocoder at its revision into the HF cache, AudioSeal's generator and detector at theirs
+    into AUDIOSEAL_CACHE_DIR, then one load of everything (which needs nothing more)."""
+    from huggingface_hub import hf_hub_download, snapshot_download
 
-    snapshot_download(repo_id=MODEL_REPO, revision=revision, local_dir=model_dir)
-    from huggingface_hub import hf_hub_download
+    # Only the files the config names for this weight variant: the repository also carries the
+    # other variants and a llama.cpp bundle (7.7 GB in all, about 1.1 GB needed).
+    config = hf_hub_download(MODEL_REPO, "config.json", revision=revision, local_dir=model_dir)
+    with open(config) as f:
+        config = json.load(f)
+    try:
+        from kittenml.get_model import _kitten2_files  # kittenml's own list for its loader
 
+        patterns = _kitten2_files(config, None, weights or None)
+    except ImportError:
+        patterns = None
+    snapshot_download(
+        repo_id=MODEL_REPO, revision=revision, local_dir=model_dir, allow_patterns=patterns
+    )
     hf_hub_download(
         "ResembleAI/chatterbox-turbo", "s3gen_meanflow.safetensors", revision=vocoder_revision
     )
-    Worker(model_dir, None, None).load()
+    _pin_audioseal(audioseal_revision, os.environ["AUDIOSEAL_CACHE_DIR"])
+    worker = Worker(model_dir, None, weights or None)
+    worker.load()
+    from audioseal import AudioSeal
+
+    AudioSeal.load_detector(AUDIOSEAL_DETECTOR)
     log("prefetched")
+
+
+def _pin_audioseal(revision: str, cache_dir: str) -> None:
+    """AudioSeal's model cards name `.../resolve/main/<file>`, which torch.hub keeps as
+    `<cache>/audioseal/<sha1 of the URL path>[:24]`. Put the file of the pinned revision exactly
+    there, so AudioSeal loads it and never fetches `main` (nor anything once offline)."""
+    import hashlib
+    import shutil
+    from pathlib import Path
+    from urllib.parse import urlparse
+
+    from audioseal.loader import load_local_model_config
+    from huggingface_hub import hf_hub_download
+
+    root = Path(cache_dir) / "audioseal"  # audioseal.loader._get_cache_dir adds "audioseal"
+    staging = root / "pinned"
+    for card in (AUDIOSEAL_GENERATOR, AUDIOSEAL_DETECTOR):
+        url = str(load_local_model_config(card)["checkpoint"])
+        dest = root / hashlib.sha1(urlparse(url).path.encode()).hexdigest()[:24]
+        if dest.exists():
+            continue
+        name = url.rsplit("/", 1)[1]
+        got = hf_hub_download("facebook/audioseal", name, revision=revision, local_dir=staging)
+        root.mkdir(parents=True, exist_ok=True)
+        shutil.move(got, dest)
+    shutil.rmtree(staging, ignore_errors=True)
 
 
 def main() -> int:
@@ -131,9 +181,12 @@ def main() -> int:
     parser.add_argument("--prefetch", action="store_true")
     parser.add_argument("--revision", default="")
     parser.add_argument("--vocoder-revision", default="")
+    parser.add_argument("--audioseal-revision", default="")
     args = parser.parse_args()
     if args.prefetch:
-        prefetch(args.model, args.revision, args.vocoder_revision)
+        prefetch(
+            args.model, args.revision, args.vocoder_revision, args.audioseal_revision, args.weights
+        )
         return 0
     worker = Worker(args.model, args.backend or None, args.weights or None)
     ops = {"load": lambda r: worker.load(), "speak": worker.speak, "detect": worker.detect}
