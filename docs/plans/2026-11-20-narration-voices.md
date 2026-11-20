@@ -158,6 +158,39 @@ Where it shows up:
 - **No live voice output.** v1 renders files only: no reading into a call or a virtual mic. That keeps it
   a narration feature, not an impersonation tool.
 
+### Why watermark
+
+A watermark is a signal hidden in the generated audio. People can't hear it, but software can detect it,
+and it survives ordinary handling (MP3/Opus compression, trimming, mixing). Chatterbox's PerTh hides it in
+sound masked by louder sound; AudioSeal uses a neural generator and detector, with detection per frame. It
+does three jobs here:
+
+1. **Mnemosyne must not fool itself.** The app learns voices: name a speaker once and it labels that person
+   in later meetings, and each rename adds to their profile's running mean. A narration played into a call,
+   or a narration file imported, sounds like the real person *to our own embedder*, because a good clone is
+   built to fool exactly that kind of model. Without a mark the app would label the clone as the person and
+   could fold the clone into the person's profile. With one, import and live capture can check for it, flag
+   the meeting "contains synthetic speech" and keep those voices out of `speaker_voices`. Nothing else
+   tells a voice from its clone reliably.
+2. **It protects the person whose voice it is.** Hosts and anyone with public recordings already have lots of
+   real audio online. A clone could put words in their mouth (a fake endorsement, a fake ad read, a scam).
+   The mark lets them show a clip came from a synthesizer. Resemble offers a detector for PerTh, and
+   Chatterbox stamps every output whether or not anyone remembers to.
+3. **Rules and records are heading this way.** The EU AI Act (Article 50) asks providers of generative systems
+   to mark synthetic audio in a machine-readable way, with obligations from August 2026 **(verify scope for an
+   app like ours)**; US rules are a patchwork (state voice-likeness laws such as Tennessee's ELVIS Act; the
+   FCC treats AI voices in robocalls as "artificial"). The records features (seals, legal holds, flagged
+   phrases) also need synthetic audio to stay distinguishable from real recordings.
+
+**What it does not do.** It does not stop a determined bad actor: the engines are open source, so the marking
+code can be removed from one's own copy, and heavy processing or re-recording through a speaker can weaken
+it. The `SYNTHETIC=mnemosyne` metadata tag is weaker still (anyone can delete it). So the watermark keeps
+honest use honest and the app's own loop clean; the live consent check is the main defence against misuse
+(it controls who can *make* a voice; the mark identifies the output afterwards).
+
+**Cost.** Inaudible and cheap: a small step after synthesis (or none, for Chatterbox). Proposal: always on, no
+setting to turn it off (question 7).
+
 ### Data
 
 ```sql
@@ -243,6 +276,7 @@ recording (same path as `StartBrowserRecordingRequest`); per-user narration logs
 4. Is a cloud engine wanted at all, given "local-first"?
 5. Should narrated audio be publishable on the public pages and guest notes, or stay private for now?
 6. Default to "rewrite for listening" through the LLM, or read the text exactly as written?
+7. Watermark always on with no off switch, or a setting (default on)? The plan says always on.
 
 ## Sources
 
