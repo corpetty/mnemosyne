@@ -1310,6 +1310,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/narrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Narrations
+         * @description Your narrations, newest first; of one meeting or digest with `source_kind`/`source_id`.
+         */
+        get: operations["list_narrations_api_narrations_get"];
+        put?: never;
+        /**
+         * Narrate
+         * @description Read a summary, notes, follow-up, digest or any text in your voice (a `narrate` job;
+         *     its result names the narration).
+         */
+        post: operations["narrate_api_narrations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/narrations/{narration_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Narration */
+        get: operations["get_narration_api_narrations__narration_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Narration */
+        delete: operations["delete_narration_api_narrations__narration_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/narrations/{narration_id}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Narration Audio */
+        get: operations["narration_audio_api_narrations__narration_id__audio_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ollama/pull": {
         parameters: {
             query?: never;
@@ -4417,6 +4477,195 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/voices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Voices */
+        get: operations["list_voices_api_voices_get"];
+        put?: never;
+        /** Create Voice */
+        post: operations["create_voice_api_voices_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/voices/engine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Engine Status */
+        get: operations["engine_status_api_voices_engine_get"];
+        put?: never;
+        /**
+         * Install Engine
+         * @description Install KittenTTS 2 (an `install_voice_engine` job, about 3 GB). Its weights are not open
+         *     source: the request must say the licence was accepted.
+         */
+        post: operations["install_engine_api_voices_engine_post"];
+        /**
+         * Remove Engine
+         * @description Remove the engine and its model (voices and narrations stay).
+         */
+        delete: operations["remove_engine_api_voices_engine_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/voices/script": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Guided Script
+         * @description Sentences to read, one take each, when recording a voice in the app.
+         */
+        get: operations["guided_script_api_voices_script_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/voices/{voice_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Voice */
+        get: operations["get_voice_api_voices__voice_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Voice
+         * @description The voice and every recording of it, the consent recording included.
+         */
+        delete: operations["delete_voice_api_voices__voice_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Voice */
+        patch: operations["rename_voice_api_voices__voice_id__patch"];
+        trace?: never;
+    };
+    "/api/voices/{voice_id}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Voice Audio
+         * @description Add a recording: one take of a script sentence (`single`, with its `text`), or a longer
+         *     upload cut into pieces. The checks run as a `voice_audio` job; its result is the voice.
+         */
+        post: operations["add_voice_audio_api_voices__voice_id__audio_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/voices/{voice_id}/clips/{idx}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Clip */
+        delete: operations["delete_clip_api_voices__voice_id__clips__idx__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Correct Clip
+         * @description Correct what is said in a recording (the engine reads it with the audio).
+         */
+        patch: operations["correct_clip_api_voices__voice_id__clips__idx__patch"];
+        trace?: never;
+    };
+    "/api/voices/{voice_id}/clips/{idx}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Clip Audio
+         * @description Listen back to one of your own recordings.
+         */
+        get: operations["clip_audio_api_voices__voice_id__clips__idx__audio_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/voices/{voice_id}/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Consent
+         * @description The live recording of the statement; checked as a `voice_consent` job whose result is
+         *     a ConsentResult.
+         */
+        post: operations["consent_api_voices__voice_id__consent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/voices/{voice_id}/consent/challenge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Consent Challenge
+         * @description The statement to read aloud now, with random words shown only this once.
+         */
+        post: operations["consent_challenge_api_voices__voice_id__consent_challenge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -4771,6 +5020,32 @@ export interface components {
              */
             title: string;
         };
+        /** Body_add_voice_audio_api_voices__voice_id__audio_post */
+        Body_add_voice_audio_api_voices__voice_id__audio_post: {
+            /**
+             * File
+             * Format: binary
+             */
+            file: string;
+            /**
+             * Single
+             * @default false
+             */
+            single: boolean;
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+        };
+        /** Body_consent_api_voices__voice_id__consent_post */
+        Body_consent_api_voices__voice_id__consent_post: {
+            /**
+             * File
+             * Format: binary
+             */
+            file: string;
+        };
         /** Body_import_audio_api_audio_import_post */
         Body_import_audio_api_audio_import_post: {
             /**
@@ -4981,6 +5256,14 @@ export interface components {
             /** Ticket */
             ticket: string;
         };
+        /** ChallengeRequest */
+        ChallengeRequest: {
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+        };
         /** Chapter */
         Chapter: {
             /** Start */
@@ -5071,6 +5354,11 @@ export interface components {
             first_idx: number;
             /** Last Idx */
             last_idx: number;
+        };
+        /** ClipUpdate */
+        ClipUpdate: {
+            /** Text */
+            text: string;
         };
         /** CodeRequest */
         CodeRequest: {
@@ -5297,6 +5585,18 @@ export interface components {
             name: string;
             /** Remove */
             remove: string;
+        };
+        /**
+         * ConsentChallenge
+         * @description What to read aloud, live, to prove the voice is yours. Valid for `expires_in` seconds.
+         */
+        ConsentChallenge: {
+            /** Expires In */
+            expires_in: number;
+            /** Text */
+            text: string;
+            /** Words */
+            words: string[];
         };
         /** ContactCodeRequest */
         ContactCodeRequest: {
@@ -6096,6 +6396,14 @@ export interface components {
             index: number;
             segment: components["schemas"]["TranscriptSegment-Input"];
         };
+        /** InstallRequest */
+        InstallRequest: {
+            /**
+             * Accept License
+             * @default false
+             */
+            accept_license: boolean;
+        };
         /** Invite */
         Invite: {
             /** App Invite */
@@ -6530,6 +6838,82 @@ export interface components {
             moved: components["schemas"]["MovedMeetingInfo"][];
             /** Pending */
             pending: components["schemas"]["PendingMoveInfo"][];
+        };
+        /** Narration */
+        Narration: {
+            /** Chunks */
+            chunks: components["schemas"]["NarrationChunk"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Engine */
+            engine: string;
+            /** Id */
+            id: string;
+            /** Model */
+            model: string;
+            /** Seconds */
+            seconds: number;
+            /** Source Id */
+            source_id: string | null;
+            /**
+             * Source Kind
+             * @enum {string}
+             */
+            source_kind: "summary" | "notes" | "digest" | "followup" | "text";
+            /** Title */
+            title: string;
+            /** User Id */
+            user_id: string;
+            /** Voice Id */
+            voice_id: string | null;
+            /** Voice Name */
+            voice_name: string;
+            /** Watermarked */
+            watermarked: boolean;
+        };
+        /** NarrationChunk */
+        NarrationChunk: {
+            /** End */
+            end: number;
+            /**
+             * Flagged
+             * @default false
+             */
+            flagged: boolean;
+            /** Start */
+            start: number;
+            /** Text */
+            text: string;
+        };
+        /** NarrationRequest */
+        NarrationRequest: {
+            /**
+             * Check
+             * @default true
+             */
+            check: boolean;
+            /** Source Id */
+            source_id?: string | null;
+            /**
+             * Source Kind
+             * @enum {string}
+             */
+            source_kind: "summary" | "notes" | "digest" | "followup" | "text";
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /** Voice Id */
+            voice_id: string;
         };
         /** NewUser */
         NewUser: {
@@ -8314,6 +8698,8 @@ export interface components {
             keep_awake_while_sharing?: boolean | null;
             /** Keep Sharing After Quit */
             keep_sharing_after_quit?: boolean | null;
+            /** Kitten Weights */
+            kitten_weights?: string | null;
             /** Language */
             language?: string | null;
             /** Linear Api Key */
@@ -8360,6 +8746,8 @@ export interface components {
             mic_speech_gate?: boolean | null;
             /** Min Speakers */
             min_speakers?: number | null;
+            /** Narration Pronunciations */
+            narration_pronunciations?: string | null;
             /** Noise Suppression */
             noise_suppression?: boolean | null;
             /** Noise Suppression Db */
@@ -8462,6 +8850,8 @@ export interface components {
             summary_instructions?: string | null;
             /** Summary Style */
             summary_style?: string | null;
+            /** Synthesizer */
+            synthesizer?: string | null;
             /** Task Linking */
             task_linking?: ("off" | "exact" | "related") | null;
             /** Task Linking Llm */
@@ -8626,6 +9016,8 @@ export interface components {
             keep_awake_while_sharing: boolean;
             /** Keep Sharing After Quit */
             keep_sharing_after_quit: boolean;
+            /** Kitten Weights */
+            kitten_weights: string;
             /** Language */
             language: string;
             /** Linear Api Key */
@@ -8672,6 +9064,8 @@ export interface components {
             mic_speech_gate: boolean;
             /** Min Speakers */
             min_speakers: number | null;
+            /** Narration Pronunciations */
+            narration_pronunciations: string;
             /** Noise Suppression */
             noise_suppression: boolean;
             /** Noise Suppression Db */
@@ -8777,6 +9171,8 @@ export interface components {
             summary_instructions: string;
             /** Summary Style */
             summary_style: string;
+            /** Synthesizer */
+            synthesizer: string;
             /**
              * Task Linking
              * @enum {string}
@@ -10625,6 +11021,102 @@ export interface components {
             id: number;
             /** Reason */
             reason: string;
+        };
+        /** Voice */
+        Voice: {
+            /** Clips */
+            clips: components["schemas"]["VoiceClip"][];
+            /** Consent At */
+            consent_at: string | null;
+            /** Consented */
+            consented: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Language */
+            language: string;
+            /** Name */
+            name: string;
+            /**
+             * Needs
+             * @default
+             */
+            needs: string;
+            /** Owner Id */
+            owner_id: string;
+            /** Ready */
+            ready: boolean;
+            /** Seconds */
+            seconds: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** VoiceClip */
+        VoiceClip: {
+            /** Accepted */
+            accepted: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Idx */
+            idx: number;
+            /**
+             * Problem
+             * @default
+             */
+            problem: string;
+            /** Quality */
+            quality: number;
+            /** Seconds */
+            seconds: number;
+            /** Text */
+            text: string;
+        };
+        /** VoiceCreate */
+        VoiceCreate: {
+            /**
+             * Language
+             * @default en
+             */
+            language: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * VoiceEngine
+         * @description The narration engine on this computer, for Settings -> Voices.
+         */
+        VoiceEngine: {
+            /** Attribution */
+            attribution: string;
+            /** Can Check Voices */
+            can_check_voices: boolean;
+            /** Engine */
+            engine: string;
+            /** Install Bytes */
+            install_bytes: number;
+            /** Installable */
+            installable: boolean;
+            /** Installed */
+            installed: boolean;
+            /** License Name */
+            license_name: string;
+            /** License Url */
+            license_url: string;
+        };
+        /** VoiceUpdate */
+        VoiceUpdate: {
+            /** Name */
+            name: string;
         };
         /** WordSegment */
         "WordSegment-Input": {
@@ -12923,6 +13415,165 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderModels"][];
+                };
+            };
+        };
+    };
+    list_narrations_api_narrations_get: {
+        parameters: {
+            query?: {
+                source_kind?: ("summary" | "notes" | "digest" | "followup" | "text") | null;
+                source_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Narration"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    narrate_api_narrations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NarrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_narration_api_narrations__narration_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                narration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Narration"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_narration_api_narrations__narration_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                narration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    narration_audio_api_narrations__narration_id__audio_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                narration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -18549,6 +19200,454 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_voices_api_voices_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Voice"][];
+                };
+            };
+        };
+    };
+    create_voice_api_voices_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoiceCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Voice"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    engine_status_api_voices_engine_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceEngine"];
+                };
+            };
+        };
+    };
+    install_engine_api_voices_engine_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstallRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_engine_api_voices_engine_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    guided_script_api_voices_script_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+        };
+    };
+    get_voice_api_voices__voice_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Voice"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_voice_api_voices__voice_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_voice_api_voices__voice_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoiceUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Voice"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_voice_audio_api_voices__voice_id__audio_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_add_voice_audio_api_voices__voice_id__audio_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_clip_api_voices__voice_id__clips__idx__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: string;
+                idx: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Voice"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    correct_clip_api_voices__voice_id__clips__idx__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: string;
+                idx: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClipUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Voice"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clip_audio_api_voices__voice_id__clips__idx__audio_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: string;
+                idx: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    consent_api_voices__voice_id__consent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_consent_api_voices__voice_id__consent_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    consent_challenge_api_voices__voice_id__consent_challenge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChallengeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentChallenge"];
                 };
             };
             /** @description Validation Error */

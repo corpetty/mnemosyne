@@ -336,6 +336,15 @@ class Settings(BaseSettings):
     # other programs; they load again for the next transcription. 0 keeps them loaded.
     unload_models_after_minutes: int = 15
 
+    # Narration voices (docs/plans/2026-11-20-narration-voices.md, synthesis/registry.py):
+    # auto | kitten | demo | none. auto = KittenTTS 2 once installed (Settings -> Voices).
+    synthesizer: str = "auto"
+    # KittenTTS 2's weights: "" = the lossless default (954 MB), "emb4" = half the size.
+    kitten_weights: str = ""
+    # How names and jargon are said when narrating: `written -> spoken`, one per line
+    # (synthesis/text.py), e.g. "Mnemosyne -> nee-MOSS-ih-nee".
+    narration_pronunciations: str = ""
+
     # Backups (services/backup.py): where they go ("" = ~/Documents/Mnemosyne backups), how
     # often one is made on its own (days; 0 = only when asked) and how many are kept.
     backup_dir: str = ""
@@ -493,6 +502,16 @@ class Settings(BaseSettings):
     def notes_media_dir(self) -> Path:
         """Images in the meetings' notes, a folder per meeting (services/notes_media.py)."""
         return self.data_dir / "notes_media"
+
+    @property
+    def voices_dir(self) -> Path:
+        """Narration voices' clips and prompts, a folder per voice (services/voices.py)."""
+        return self.data_dir / "voices"
+
+    @property
+    def narrations_dir(self) -> Path:
+        """Narrated audio (services/narration.py)."""
+        return self.data_dir / "narrations"
 
     @property
     def db_path(self) -> Path:

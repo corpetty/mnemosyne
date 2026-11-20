@@ -100,7 +100,12 @@ import type {
   StartRecordingResponse,
   StopRecordingResponse,
   StorageReport,
-  SummaryStyle
+  SummaryStyle,
+  Voice,
+  VoiceEngine,
+  ConsentChallenge,
+  Narration,
+  NarrationRequest
 } from '$lib/types/index.js';
 
 import { connectionState } from '$lib/stores/connection.svelte.js';
@@ -1472,4 +1477,117 @@ export async function putNotesMedia(sessionId: string, sha256: string, bytes: Ui
     /* plain text */
   }
   throw new Error(`${res.status}: ${detail}`);
+}
+
+// ---- narration voices (routes/voices.py) -----------------------------------------------------------
+// A voice is its owner's alone. Checking recordings, consent and narrating run as jobs.
+
+/** The narration engine here: installed or not, its licence and attribution. */
+export async function getVoiceEngine(): Promise<VoiceEngine> {
+  return request('/api/voices/engine');
+}
+
+/** Install KittenTTS 2 (an `install_voice_engine` job). Its weights are not open source. */
+export async function installVoiceEngine(acceptLicense: boolean): Promise<Job> {
+  return request('/api/voices/engine', { method: 'POST', body: JSON.stringify({ accept_license: acceptLicense }) });
+}
+
+export async function removeVoiceEngine(): Promise<void> {
+  await request('/api/voices/engine', { method: 'DELETE' });
+}
+
+export async function getVoiceScript(): Promise<string[]> {
+  return request('/api/voices/script');
+}
+
+export async function listVoices(): Promise<Voice[]> {
+  return request('/api/voices');
+}
+
+export async function createVoice(name: string, language = 'en'): Promise<Voice> {
+  return request('/api/voices', { method: 'POST', body: JSON.stringify({ name, language }) });
+}
+
+export async function getVoice(voiceId: string): Promise<Voice> {
+  return request(`/api/voices/${voiceId}`);
+}
+
+export async function renameVoice(voiceId: string, name: string): Promise<Voice> {
+  return request(`/api/voices/${voiceId}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+}
+
+export async function deleteVoice(voiceId: string): Promise<void> {
+  await request(`/api/voices/${voiceId}`, { method: 'DELETE' });
+}
+
+async function postForm<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${base()}${path}`, { method: 'POST', body: form, headers: connectionState.headers() });
+  if (!res.ok) {
+    let detail = await res.text();
+    try {
+      detail = JSON.parse(detail).detail ?? detail;
+    } catch {
+      /* plain text */
+    }
+    throw new Error(`${res.status}: ${detail}`);
+  }
+  return res.json();
+}
+
+/** Add a recording: one take of a script sentence (`text` given, `single`), or a longer upload
+ * the backend cuts into pieces. A `voice_audio` job whose result is `{ voice }`. */
+export async function addVoiceAudio(voiceId: string, audio: Blob, filename: string, text = '', single = false): Promise<Job> {
+  const form = new FormData();
+  form.append('file', audio, filename);
+  form.append('text', text);
+  form.append('single', single ? 'true' : 'false');
+  return postForm(`/api/voices/${voiceId}/audio`, form);
+}
+
+export async function correctVoiceClip(voiceId: string, idx: number, text: string): Promise<Voice> {
+  return request(`/api/voices/${voiceId}/clips/${idx}`, { method: 'PATCH', body: JSON.stringify({ text }) });
+}
+
+export async function deleteVoiceClip(voiceId: string, idx: number): Promise<Voice> {
+  return request(`/api/voices/${voiceId}/clips/${idx}`, { method: 'DELETE' });
+}
+
+export function voiceClipUrl(voiceId: string, idx: number): string {
+  return connectionState.withToken(`${base()}/api/voices/${voiceId}/clips/${idx}/audio`);
+}
+
+/** The statement to read aloud now, with random words shown only this once. */
+export async function getConsentChallenge(voiceId: string, name = ''): Promise<ConsentChallenge> {
+  return request(`/api/voices/${voiceId}/consent/challenge`, { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+/** The live recording of the statement: a `voice_consent` job whose result is a ConsentResult. */
+export async function sendConsent(voiceId: string, audio: Blob, filename: string): Promise<Job> {
+  const form = new FormData();
+  form.append('file', audio, filename);
+  return postForm(`/api/voices/${voiceId}/consent`, form);
+}
+
+/** Narrate in a voice (a `narrate` job; its result is `{ narration_id }`). */
+export async function narrate(body: NarrationRequest): Promise<Job> {
+  return request('/api/narrations', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function listNarrations(sourceKind?: string, sourceId?: string): Promise<Narration[]> {
+  const q = new URLSearchParams();
+  if (sourceKind) q.set('source_kind', sourceKind);
+  if (sourceId) q.set('source_id', sourceId);
+  return request(`/api/narrations${q.size ? `?${q}` : ''}`);
+}
+
+export async function getNarration(narrationId: string): Promise<Narration> {
+  return request(`/api/narrations/${narrationId}`);
+}
+
+export async function deleteNarration(narrationId: string): Promise<void> {
+  await request(`/api/narrations/${narrationId}`, { method: 'DELETE' });
+}
+
+export function narrationAudioUrl(narrationId: string): string {
+  return connectionState.withToken(`${base()}/api/narrations/${narrationId}/audio`);
 }

@@ -1955,6 +1955,44 @@ start, every 30 s, on a poke and after the sidecar dials the peers again; local 
 peers. Meetings from before sync count their revisions under this computer's sync id from the
 first start on.
 
+## Narration voices
+
+Reading text aloud in a voice the person enrolled (docs/plans/2026-11-20-narration-voices.md;
+services/voices.py, services/narration.py, routes/voices.py). A voice is its owner's alone: every voice and
+narration route answers 404 for anyone else's (an admin may delete a voice, not use it). Long work runs as jobs.
+
+- `GET /api/voices/engine` → `VoiceEngine`: `engine` (`kitten` | `demo` | `none`, setting `synthesizer`),
+  `installed`, `installable` (uv is here), `install_bytes`, the model's `license_name`/`license_url`,
+  `attribution` ("Powered by KittenML", to show), `can_check_voices` (a speaker embedder runs here).
+- `POST /api/voices/engine` `{accept_license: true}` (admin) → Job `install_voice_engine`: KittenTTS 2 into
+  `<data_dir>/tts/kitten` (services/tts_install.py). 400 without `accept_license`. `DELETE` removes it.
+- `GET /api/voices/script` → the guided sentences. `GET /api/voices`, `POST /api/voices` `{name, language}`,
+  `GET|PATCH|DELETE /api/voices/{id}` → `Voice` (`clips`, `seconds` of accepted audio, `consented`, `ready`,
+  `needs` in words). Delete removes every recording and the consent recording; narrations stay.
+- `POST /api/voices/{id}/audio` (multipart `file`, `text`, `single`) → Job `voice_audio`, result `{voice}`. One
+  take with its sentence (`single`), or an upload (up to 15 minutes) cut at quiet moments into 6-20 s pieces.
+  Each piece is checked (level, clipping, noise, speech) and must be the same voice as the accepted ones;
+  refused pieces are kept with `problem` and never used. A piece without `text` is transcribed.
+  `PATCH /api/voices/{id}/clips/{idx}` `{text}` corrects the transcript; `DELETE` removes it;
+  `GET …/clips/{idx}/audio` plays it back. 409 when no speaker embedder runs here.
+- `POST /api/voices/{id}/consent/challenge` `{name?}` → `ConsentChallenge` `{text, words, expires_in}`: a fixed
+  statement with four random words, valid once for 5 minutes. `POST /api/voices/{id}/consent` (multipart
+  `file`, recorded live) → Job `voice_consent`, result `ConsentResult` `{passed, heard, text_match, voice_match,
+  problem, voice}`: every random word heard, 80 % of the statement, and the voice matching the clips at the
+  space's profile threshold.
+- `POST /api/narrations` `NarrationRequest` `{voice_id, source_kind, source_id, text, title, check}` → Job
+  `narrate`, result `{narration_id}`. `source_kind`: `summary`, `notes` (own notes), `followup` (a meeting's,
+  read through the caller's access) | `digest` | `text`. 400 when the voice is not ready or there is nothing to
+  read, 409 without an engine. `check` transcribes each chunk and speaks a wrong one again (`flagged` when
+  both takes are poor).
+- `GET /api/narrations?source_kind&source_id` → the caller's `Narration`s, newest first;
+  `GET|DELETE /api/narrations/{id}`; `GET /api/narrations/{id}/audio` → OGG/Opus (range requests; encrypted
+  files served as plaintext). `Narration.chunks` `[{text, start, end, flagged}]` drive the highlight.
+
+Every narration is tagged `SYNTHETIC=mnemosyne` and, with KittenTTS, watermarked with AudioSeal. A meeting
+imported from a tagged file gets history `synthetic_audio` and its speakers are never enrolled into voice
+profiles. A meeting's narration logs `narrated` in its history.
+
 ## WebSocket
 
 ### `ws://127.0.0.1:8008/ws`

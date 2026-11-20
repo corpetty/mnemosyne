@@ -6,6 +6,7 @@
 </script>
 
 <script lang="ts">
+	import NarrateButton from './NarrateButton.svelte';
 	import { copyText } from '$lib/app/clipboard.js';
 	import { listModels, listSummaryStyles, summarizeSession, getSettings, getSystemInfo } from '$lib/api/backend.js';
 	import { sessionState } from '$lib/stores/session.svelte.js';
@@ -635,6 +636,7 @@
 					>
 						Copy
 					</button>
+					<NarrateButton sourceKind="summary" sourceId={sessionState.activeSession.id} />
 				</div>
 			</div>
 			{#if showVersions}

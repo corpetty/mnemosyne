@@ -47,6 +47,7 @@ from ..models.sync_session import (
     peer_share_rank,
 )
 from ..models.transcript import TranscriptSegment
+from .voices import VOICE_SCHEMA, VoiceRows
 
 logger = logging.getLogger(__name__)
 
@@ -642,6 +643,7 @@ CREATE INDEX IF NOT EXISTS idx_share_outbox_session ON share_outbox(session_id, 
 CREATE INDEX IF NOT EXISTS idx_share_outbox_person ON share_outbox(person, status);
 """
 SCHEMA = SCHEMA.replace("{FTS_TRIGGERS}", FTS_TRIGGERS).replace("{COMMENT_FTS}", COMMENT_FTS)
+SCHEMA += VOICE_SCHEMA  # narration voices (storage/voices.py)
 
 
 def _ranges_json(comments: dict | None) -> str | None:
@@ -766,7 +768,7 @@ def _local_naive(dt: datetime) -> datetime:
     return dt.astimezone().replace(tzinfo=None) if dt.tzinfo is not None else dt
 
 
-class SessionRepository:
+class SessionRepository(VoiceRows):
     def __init__(self, db_path: Path, key: bytes | None = None):
         self._lock = threading.RLock()
         # Called with (session id, owner id) after a new meeting is saved (services/prefs.py).

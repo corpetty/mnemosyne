@@ -1,4 +1,5 @@
 <script lang="ts">
+	import NarrateButton from './NarrateButton.svelte';
 	import { copyText } from '$lib/app/clipboard.js';
 	import { digestState } from '$lib/stores/digest.svelte.js';
 	import { jobsState } from '$lib/stores/jobs.svelte.js';
@@ -145,6 +146,7 @@
 				<span>{fmtRange(current)} · {current.session_ids.length} meeting{current.session_ids.length === 1 ? '' : 's'}</span>
 				<div class="flex items-center gap-3 flex-shrink-0">
 					<button onclick={() => copy(current)} class="hover:text-gray-300">Copy</button>
+					<NarrateButton sourceKind="digest" sourceId={current.id} />
 					<button onclick={() => digestState.remove(current.id)} class="hover:text-red-400" title="Delete">✕</button>
 				</div>
 			</header>

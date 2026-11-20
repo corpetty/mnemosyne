@@ -70,6 +70,16 @@ export type SettingsResponse = S['SettingsResponse'];
 /** Partial update. For secrets: '' keeps the current value, null clears it. */
 export type SettingsUpdate = S['SettingsUpdate'];
 export type SpeakerProfile = S['SpeakerProfileSummary'];
+// Narration voices (backend services/voices.py, services/narration.py)
+export type Voice = S['Voice'];
+export type VoiceClip = S['VoiceClip'];
+export type VoiceEngine = S['VoiceEngine'];
+export type ConsentChallenge = S['ConsentChallenge'];
+/** The `voice_consent` job's result (models/voice.py ConsentResult; job results are not in the schema). */
+export type ConsentResult = { passed: boolean; heard: string; text_match: number; voice_match: number; problem: string; voice: Voice };
+export type Narration = S['Narration'];
+export type NarrationChunk = S['NarrationChunk'];
+export type NarrationRequest = S['NarrationRequest'];
 export type SessionSpeaker = S['SessionSpeaker'];
 export type SegmentHit = S['SegmentHit'];
 export type SearchHit = S['SearchHit'];

@@ -62,6 +62,7 @@ from .routes.team import router as team_router
 from .routes.team_member import router as team_member_router
 from .routes.topics import router as topics_router
 from .routes.users import router as users_router
+from .routes.voices import router as voices_router
 from .websocket import router as ws_router
 
 
@@ -141,6 +142,7 @@ def create_app(settings: Settings | None = None, keystore=None) -> FastAPI:
     app.include_router(demo_router)
     app.include_router(sync_router)
     app.include_router(users_router)
+    app.include_router(voices_router)
     app.include_router(system_router)
     app.include_router(storage_router)
     app.include_router(history_router)
