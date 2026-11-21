@@ -4502,20 +4502,39 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Engine Status */
+        /**
+         * Engine Status
+         * @description The engine in use and every engine this computer can install, recommended first.
+         */
         get: operations["engine_status_api_voices_engine_get"];
         put?: never;
         /**
          * Install Engine
-         * @description Install KittenTTS 2 (an `install_voice_engine` job, about 3 GB). Its weights are not open
-         *     source: the request must say the licence was accepted.
+         * @description Install a narration engine (an `install_voice_engine` job, several GB). One whose weights
+         *     are not open source (KittenTTS) needs `accept_license`.
          */
         post: operations["install_engine_api_voices_engine_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/voices/engine/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
         /**
          * Remove Engine
-         * @description Remove the engine and its model (voices and narrations stay).
+         * @description Remove an engine and its model (voices and narrations stay).
          */
-        delete: operations["remove_engine_api_voices_engine_delete"];
+        delete: operations["remove_engine_api_voices_engine__name__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4559,8 +4578,8 @@ export interface paths {
         delete: operations["delete_voice_api_voices__voice_id__delete"];
         options?: never;
         head?: never;
-        /** Rename Voice */
-        patch: operations["rename_voice_api_voices__voice_id__patch"];
+        /** Update Voice */
+        patch: operations["update_voice_api_voices__voice_id__patch"];
         trace?: never;
     };
     "/api/voices/{voice_id}/audio": {
@@ -6061,6 +6080,34 @@ export interface components {
             locked: boolean;
         };
         /**
+         * EngineInfo
+         * @description One narration engine Mnemosyne can install (synthesis/workers.py EngineSpec).
+         */
+        EngineInfo: {
+            /** Attribution */
+            attribution: string;
+            /** Install Bytes */
+            install_bytes: number;
+            /** Installed */
+            installed: boolean;
+            /** License Name */
+            license_name: string;
+            /** License Url */
+            license_url: string;
+            /** Name */
+            name: string;
+            /** Open License */
+            open_license: boolean;
+            /** Platform */
+            platform: string;
+            /** Recommended */
+            recommended: boolean;
+            /** Size Note */
+            size_note: string;
+            /** Title */
+            title: string;
+        };
+        /**
          * Erasure
          * @description Audio deleted on purpose (retention, an admin with a reason): still in the record by its
          *     plaintext SHA-256, so a copy kept elsewhere (an export) can be checked against it.
@@ -6403,6 +6450,11 @@ export interface components {
              * @default false
              */
             accept_license: boolean;
+            /**
+             * Engine
+             * @default qwen3
+             */
+            engine: string;
         };
         /** Invite */
         Invite: {
@@ -11050,6 +11102,8 @@ export interface components {
             owner_id: string;
             /** Ready */
             ready: boolean;
+            /** Reference Idx */
+            reference_idx: number | null;
             /** Seconds */
             seconds: number;
             /**
@@ -11093,30 +11147,24 @@ export interface components {
         };
         /**
          * VoiceEngine
-         * @description The narration engine on this computer, for Settings -> Voices.
+         * @description The narration engines on this computer, for Settings -> Voices.
          */
         VoiceEngine: {
-            /** Attribution */
-            attribution: string;
             /** Can Check Voices */
             can_check_voices: boolean;
             /** Engine */
             engine: string;
-            /** Install Bytes */
-            install_bytes: number;
+            /** Engines */
+            engines: components["schemas"]["EngineInfo"][];
             /** Installable */
             installable: boolean;
-            /** Installed */
-            installed: boolean;
-            /** License Name */
-            license_name: string;
-            /** License Url */
-            license_url: string;
         };
         /** VoiceUpdate */
         VoiceUpdate: {
             /** Name */
-            name: string;
+            name?: string | null;
+            /** Reference Idx */
+            reference_idx?: number | null;
         };
         /** WordSegment */
         "WordSegment-Input": {
@@ -19319,11 +19367,13 @@ export interface operations {
             };
         };
     };
-    remove_engine_api_voices_engine_delete: {
+    remove_engine_api_voices_engine__name__delete: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                name: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -19335,6 +19385,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -19421,7 +19480,7 @@ export interface operations {
             };
         };
     };
-    rename_voice_api_voices__voice_id__patch: {
+    update_voice_api_voices__voice_id__patch: {
         parameters: {
             query?: never;
             header?: never;

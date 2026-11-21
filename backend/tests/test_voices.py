@@ -171,6 +171,59 @@ def test_correcting_and_removing_recordings(client, ctx):
     assert list((ctx.settings.voices_dir / vid).glob("clip-*")) == []
 
 
+def test_the_owner_picks_the_reference_by_ear(client, ctx, fake_live_transcriber):
+    voice = make_ready_voice(client, fake_live_transcriber)
+    vid = voice["id"]
+    # One more take, with words of its own, to choose as the reference.
+    voice = upload(client, vid, speech(DEE, 12), single=True, text="This one sounds like me.")
+    pick = voice["clips"][-1]["idx"]
+    narrate = {"voice_id": vid, "source_kind": "text", "text": "Hello there.", "check": False}
+    assert run_job(client, "post", "/api/narrations", json=narrate)["status"] == "completed"
+    auto = ctx.repo.get_prompt_row(vid, "demo")["text"]
+    assert auto != "This one sounds like me."  # the engine chose among (and joined) the clips
+    chosen = client.patch(f"/api/voices/{vid}", json={"reference_idx": pick}).json()
+    assert chosen["reference_idx"] == pick and chosen["name"] == "Dee"
+    assert ctx.repo.get_prompt_row(vid, "demo") is None  # the prepared prompt was dropped
+    assert run_job(client, "post", "/api/narrations", json=narrate)["status"] == "completed"
+    assert ctx.repo.get_prompt_row(vid, "demo")["text"] == "This one sounds like me."
+    # Back to the engine's choice; a refused recording cannot be chosen; a deleted one unsets it.
+    assert (
+        client.patch(f"/api/voices/{vid}", json={"reference_idx": -1}).json()["reference_idx"]
+        is None
+    )
+    bad = upload(client, vid, speech(DEE, 6, level=0.002), single=True, text="Too quiet.")
+    refused = client.patch(f"/api/voices/{vid}", json={"reference_idx": bad["clips"][-1]["idx"]})
+    assert refused.status_code == 400 and "did not pass" in refused.json()["detail"]
+    client.patch(f"/api/voices/{vid}", json={"reference_idx": pick})
+    assert client.delete(f"/api/voices/{vid}/clips/{pick}").json()["reference_idx"] is None
+    renamed = client.patch(f"/api/voices/{vid}", json={"name": "Dee, warmer"}).json()
+    assert renamed["name"] == "Dee, warmer"
+
+
+def test_older_voice_tables_gain_the_reference_column(tmp_path):
+    import sqlite3
+
+    from mnemosyne.storage.sqlite import SessionRepository
+
+    db = tmp_path / "old.db"
+    con = sqlite3.connect(db)
+    con.execute(  # the table as the first test builds made it, without reference_idx
+        "CREATE TABLE narration_voices (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL DEFAULT '',"
+        " name TEXT NOT NULL, language TEXT NOT NULL DEFAULT 'en', consent_path TEXT,"
+        " consent_at TEXT, consent_text TEXT, consent_score REAL, created_at TEXT NOT NULL,"
+        " updated_at TEXT NOT NULL)"
+    )
+    con.execute(
+        "INSERT INTO narration_voices (id, name, created_at, updated_at)"
+        " VALUES ('v', 'Dee', '2026-11-20T10:00:00', '2026-11-20T10:00:00')"
+    )
+    con.commit()
+    con.close()
+    repo = SessionRepository(db)
+    assert repo.get_voice_row("v")["reference_idx"] is None
+    assert repo.update_voice("v", reference_idx=3)["reference_idx"] == 3
+
+
 def test_narrating_a_summary(client, ctx, fake_live_transcriber):
     voice = make_ready_voice(client, fake_live_transcriber)
     sid = ctx.sessions.create_session("Weekly sync").id

@@ -1,14 +1,14 @@
-"""Task 0 of docs/plans/2026-11-20-narration-voices.md: KittenTTS 2 through Mnemosyne's own worker
-(mnemosyne/synthesis/kitten_worker.py), scored with the models Mnemosyne itself uses: Parakeet TDT
+"""Task 0 of docs/plans/2026-11-20-narration-voices.md: a narration engine through our worker
+(mnemosyne/synthesis/tts_worker.py), scored with the models Mnemosyne itself uses: Parakeet TDT
 0.6B v3 int8 (onnx-asr) for the round-trip word error rate, WeSpeaker ResNet34-LM (sherpa-onnx)
 for speaker similarity, AudioSeal's detector for the watermark. Files only; nothing is played.
 
-Run it with the Python of an installed engine (<data_dir>/tts/kitten/venv) after adding the two
+Run it with the Python of an installed engine (<data_dir>/tts/<engine>/venv) after adding the two
 scorers to that venv (`uv pip install sherpa-onnx onnx-asr[cpu,hub]`), never the backend's:
 
-    <venv>/bin/python -I backend/scripts/kitten_task0.py
-        --worker backend/mnemosyne/synthesis/kitten_worker.py
-        --model <data_dir>/tts/kitten/model --cache <data_dir>/tts/kitten/cache
+    <venv>/bin/python -I backend/scripts/tts_task0.py --engine qwen3|kitten
+        --repo <the engine's model repository> --worker backend/mnemosyne/synthesis/tts_worker.py
+        --model <data_dir>/tts/<engine>/model --cache <data_dir>/tts/<engine>/cache
         --out /tmp/task0 --refs <reference voice WAVs, 10-30 s each>
 
 Use recordings of people who agreed to it (yourself): the 2026-11-20 run used KittenTTS's own
@@ -80,11 +80,20 @@ def cosine(a, b) -> float:
 
 
 class Worker:
-    """kitten.py's side of the protocol, synchronously."""
+    """synthesis/workers.py's side of the protocol, synchronously."""
 
-    def __init__(self, python: str, worker: Path, model: Path, cache: Path, log_path: Path):
+    def __init__(
+        self,
+        python: str,
+        worker: Path,
+        model: Path,
+        cache: Path,
+        log_path: Path,
+        engine: str,
+        repo: str,
+    ):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTHON", "VIRTUAL_ENV"))}
-        # As synthesis/kitten.py worker_env sets it.
+        # As synthesis/workers.py worker_env sets it.
         env.update(
             HF_HUB_CACHE=str(cache),
             AUDIOSEAL_CACHE_DIR=str(cache / "audioseal"),
@@ -93,7 +102,7 @@ class Worker:
             HF_HUB_DISABLE_TELEMETRY="1",
         )
         self.proc = subprocess.Popen(
-            [python, "-I", str(worker), "--model", str(model)],
+            [python, "-I", str(worker), "--engine", engine, "--model", str(model), "--repo", repo],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=open(log_path, "ab"),  # noqa: SIM115
@@ -162,6 +171,8 @@ def parakeet():
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--engine", default="kitten", choices=["kitten", "qwen3"])
+    ap.add_argument("--repo", default="")
     ap.add_argument("--worker", type=Path, required=True)
     ap.add_argument("--model", type=Path, required=True)
     ap.add_argument("--cache", type=Path, required=True)
@@ -177,7 +188,15 @@ def main() -> int:
     embed = wespeaker(args.out.parent / "models")
 
     t0 = time.perf_counter()
-    worker = Worker(sys.executable, args.worker, args.model, args.cache, args.out / "worker.log")
+    worker = Worker(
+        sys.executable,
+        args.worker,
+        args.model,
+        args.cache,
+        args.out / "worker.log",
+        args.engine,
+        args.repo,
+    )
     rate = worker.ask({"op": "load"})["sample_rate"]
     load_s = time.perf_counter() - t0
     log(f"worker loaded in {load_s:.1f} s (sample rate {rate})")

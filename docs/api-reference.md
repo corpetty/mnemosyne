@@ -1961,14 +1961,19 @@ Reading text aloud in a voice the person enrolled (docs/plans/2026-11-20-narrati
 services/voices.py, services/narration.py, routes/voices.py). A voice is its owner's alone: every voice and
 narration route answers 404 for anyone else's (an admin may delete a voice, not use it). Long work runs as jobs.
 
-- `GET /api/voices/engine` → `VoiceEngine`: `engine` (`kitten` | `demo` | `none`, setting `synthesizer`),
-  `installed`, `installable` (uv is here), `install_bytes`, the model's `license_name`/`license_url`,
-  `attribution` ("Powered by KittenML", to show), `can_check_voices` (a speaker embedder runs here).
-- `POST /api/voices/engine` `{accept_license: true}` (admin) → Job `install_voice_engine`: KittenTTS 2 into
-  `<data_dir>/tts/kitten` (services/tts_install.py). 400 without `accept_license`. `DELETE` removes it.
+- `GET /api/voices/engine` → `VoiceEngine`: `engine` in use (`qwen3` | `kitten` | `demo` | `none`, setting
+  `synthesizer`; auto prefers Qwen3-TTS), `installable` (uv is here), `can_check_voices` (a speaker embedder
+  runs here), and `engines`, recommended first: `EngineInfo` `{name, title, installed, install_bytes, platform
+  (what an install here uses: linux | linux-cuda | macos), license_name, license_url, open_license,
+  attribution ("Powered by KittenML" for KittenTTS), size_note, recommended}`.
+- `POST /api/voices/engine` `{engine: "qwen3" | "kitten", accept_license}` (admin) → Job
+  `install_voice_engine` into `<data_dir>/tts/<engine>` (services/tts_install.py). KittenTTS needs
+  `accept_license` (400 without). `DELETE /api/voices/engine/{name}` removes one.
 - `GET /api/voices/script` → the guided sentences. `GET /api/voices`, `POST /api/voices` `{name, language}`,
   `GET|PATCH|DELETE /api/voices/{id}` → `Voice` (`clips`, `seconds` of accepted audio, `consented`, `ready`,
-  `needs` in words). Delete removes every recording and the consent recording; narrations stay.
+  `needs` in words, `reference_idx`). `PATCH` takes `{name?, reference_idx?}`: the clip narration copies
+  ("Sounds like me"; -1 lets the engine pick; 400 for a clip that failed its checks). Delete removes every
+  recording and the consent recording; narrations stay.
 - `POST /api/voices/{id}/audio` (multipart `file`, `text`, `single`) → Job `voice_audio`, result `{voice}`. One
   take with its sentence (`single`), or an upload (up to 15 minutes) cut at quiet moments into 6-20 s pieces.
   Each piece is checked (level, clipping, noise, speech) and must be the same voice as the accepted ones;
@@ -1989,7 +1994,7 @@ narration route answers 404 for anyone else's (an admin may delete a voice, not 
   `GET|DELETE /api/narrations/{id}`; `GET /api/narrations/{id}/audio` → OGG/Opus (range requests; encrypted
   files served as plaintext). `Narration.chunks` `[{text, start, end, flagged}]` drive the highlight.
 
-Every narration is tagged `SYNTHETIC=mnemosyne` and, with KittenTTS, watermarked with AudioSeal. A meeting
+Every narration is tagged `SYNTHETIC=mnemosyne` and watermarked with AudioSeal (both engines). A meeting
 imported from a tagged file gets history `synthetic_audio` and its speakers are never enrolled into voice
 profiles. A meeting's narration logs `narrated` in its history.
 

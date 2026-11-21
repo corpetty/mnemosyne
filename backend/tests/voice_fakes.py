@@ -95,13 +95,13 @@ def voice_models(ctx, monkeypatch, fake_live_transcriber):
     narration.forget_engine(ctx)
     if shutil.which("ffmpeg") is None:
         from mnemosyne.audio import mixer
-        from mnemosyne.synthesis.kitten import _write_wav
+        from mnemosyne.synthesis.workers import write_wav
 
         monkeypatch.setattr(mixer, "decode_audio", _decode)
 
         def encode(samples, dest, title):
             dest.parent.mkdir(parents=True, exist_ok=True)
-            _write_wav(dest, samples, narration.OUT_RATE)
+            write_wav(dest, samples, narration.OUT_RATE)
             return dest
 
         monkeypatch.setattr(narration, "encode", encode)

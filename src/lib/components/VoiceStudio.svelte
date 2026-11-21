@@ -9,6 +9,7 @@
 		narrate,
 		narrationAudioUrl,
 		sendConsent,
+		setVoiceReference,
 		voiceClipUrl
 	} from '$lib/api/backend.js';
 	import { VoiceRecorder, plainError, waitForJob } from '$lib/app/voiceRecording.js';
@@ -102,6 +103,12 @@
 		onchange();
 	}
 
+	// The clip narration copies. Picking it by ear beat every automatic choice we measured.
+	async function useAsReference(idx: number) {
+		await run('Saving', () => setVoiceReference(voice.id, voice.reference_idx === idx ? -1 : idx));
+		onchange();
+	}
+
 	async function askConsent() {
 		consentResult = null;
 		challenge = await run('Preparing the statement', () => getConsentChallenge(voice.id));
@@ -164,6 +171,13 @@
 							<audio controls preload="none" src={voiceClipUrl(voice.id, c.idx)} class="h-7 w-full max-w-xs"></audio>
 						</div>
 						<span class="text-gray-600">{c.seconds.toFixed(1)} s</span>
+						{#if c.accepted}
+							<button
+								onclick={() => useAsReference(c.idx)}
+								class={voice.reference_idx === c.idx ? 'text-blue-300 hover:text-blue-200' : 'text-gray-500 hover:text-gray-300'}
+								title={voice.reference_idx === c.idx ? 'Narration copies this recording; click to let Mnemosyne choose again' : 'Narrate by copying this recording'}
+							>{voice.reference_idx === c.idx ? '★ Reference' : 'Sounds like me'}</button>
+						{/if}
 						{#if editing !== c.idx}
 							<button onclick={() => ((editing = c.idx), (draft = c.text))} class="text-gray-500 hover:text-gray-300" title="Correct what is said in it">Edit</button>
 						{/if}
@@ -171,7 +185,10 @@
 					</li>
 				{/each}
 			</ul>
-			<p class="text-xs text-gray-500">{Math.round(voice.seconds)} s of usable recording.</p>
+			<p class="text-xs text-gray-500">
+				{Math.round(voice.seconds)} s of usable recording. Narration copies one recording of 8–20 s: play a few and mark the
+				one that sounds most like you talking naturally with <em>Sounds like me</em>{voice.reference_idx === null || voice.reference_idx === undefined ? ' (until then Mnemosyne picks the clearest)' : ''}.
+			</p>
 		{/if}
 	</section>
 

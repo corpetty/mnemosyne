@@ -1,19 +1,22 @@
-"""Installing KittenTTS 2 (synthesis/kitten.py) for people who choose narration voices.
+"""Installing a narration engine (synthesis/workers.py `EngineSpec`: qwen3.py, kitten.py).
 
-Like Phonon (services/phonon_install.py, whose steps this follows), it needs torch and
-transformers 5, so it gets its own environment, `<data_dir>/tts/kitten/venv`, made by uv from the
-backend's own Python with every package at the exact version and SHA-256 in the platform's
-requirements file (synthesis/kitten-requirements.txt, -macos.txt; --require-hashes). On Linux torch
-comes first, alone, from PyTorch's CPU index (`--no-deps`), then the rest from PyPI.
+Like Phonon (services/phonon_install.py, whose steps this follows), an engine needs its own
+torch and transformers, so it gets its own environment, `<data_dir>/tts/<engine>/venv`, made by uv
+from the backend's own Python with every package at the exact version and SHA-256 in the
+platform's requirements file (synthesis/requirements/<engine>-<platform>.txt, --require-hashes):
+`macos` on a Mac; on Linux `linux-cuda` when an NVIDIA driver answers (`nvidia-smi`; CUDA 12.8,
+the backend's gpu extra's baseline: 3.8x faster for KittenTTS in Task 0), else `linux` with
+PyTorch's CPU build. On Linux torch comes first, alone, from PyTorch's index (`--no-deps`), then
+the rest.
 
 Then the model is downloaded once at its pinned revision into `<home>/model` (the worker's
-`--prefetch`: only the files of the chosen weight variant, then the Chatterbox-Turbo vocoder and
-AudioSeal's generator and detector, each at its pinned revision, into `<home>/cache`).
-Every downloaded file's SHA-256 goes into `installed` (JSON) and `verify` checks them again; from
-then on the worker runs with HF_HUB_OFFLINE=1. About 3 GB in all; removing the folder removes it.
+`--prefetch`, with what the engine loads besides and AudioSeal's generator and detector, each at
+its pinned revision, into `<home>/cache`). Every downloaded file's SHA-256 goes into `installed`
+(JSON) and `verify` checks them again; from then on the worker runs with HF_HUB_OFFLINE=1.
+Removing the folder removes all of it.
 
-The model's weights are not open source (kitten.py, LICENSE_NAME): `install` refuses unless the
-person accepted that licence, and `installed` keeps when they did.
+An engine whose weights are not open source (`EngineSpec.open_license` False: KittenTTS) is
+installed only once the person accepted its licence, and `installed` keeps when they did.
 """
 
 from __future__ import annotations
@@ -24,18 +27,22 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from ..synthesis import kitten
+from ..synthesis import kitten, qwen3
+from ..synthesis.workers import AUDIOSEAL_REVISION, WORKER, EngineSpec, python_of, worker_env
 
 logger = logging.getLogger(__name__)
 
-LINUX_REQUIREMENTS = Path(kitten.__file__).with_name("kitten-requirements.txt")
-MAC_REQUIREMENTS = Path(kitten.__file__).with_name("kitten-requirements-macos.txt")
-TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
+ENGINES: dict[str, EngineSpec] = {s.name: s for s in (qwen3.SPEC, kitten.SPEC)}
+TORCH_INDEX = {
+    "linux": "https://download.pytorch.org/whl/cpu",
+    "linux-cuda": "https://download.pytorch.org/whl/cu128",
+}
 
 Report = Callable[[str, float], None]  # message, fraction done
 
@@ -52,34 +59,46 @@ def on_mac() -> bool:
     return sys.platform == "darwin"
 
 
-def requirements() -> Path:
-    return MAC_REQUIREMENTS if on_mac() else LINUX_REQUIREMENTS
-
-
-def requirements_hash() -> str:
-    return hashlib.sha256(requirements().read_bytes()).hexdigest()[:16]
-
-
-def stamp(data_dir: Path) -> dict | None:
+def has_nvidia() -> bool:
+    """An NVIDIA driver answers (the backend's first-launch install asks the same way)."""
     try:
-        return json.loads((kitten.home(data_dir) / "installed").read_text())
+        return subprocess.run(["nvidia-smi", "-L"], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def platform(spec: EngineSpec) -> str:
+    if on_mac():
+        return "macos"
+    return "linux-cuda" if spec.cuda and has_nvidia() else "linux"
+
+
+def requirements_hash(spec: EngineSpec, plat: str) -> str:
+    return hashlib.sha256(spec.requirements(plat).read_bytes()).hexdigest()[:16]
+
+
+def stamp(spec: EngineSpec, data_dir: Path) -> dict | None:
+    try:
+        return json.loads((spec.home(data_dir) / "installed").read_text())
     except (OSError, ValueError):
         return None
 
 
-def installed(data_dir: Path) -> bool:
-    """Installed from the requirements and model revision this backend carries."""
-    s = stamp(data_dir)
-    return (
-        s is not None
-        and s.get("requirements") == requirements_hash()
-        and s.get("revision") == kitten.MODEL_REVISION
-        and kitten.python_of(kitten.home(data_dir)).exists()
-    )
+def installed(spec: EngineSpec, data_dir: Path) -> bool:
+    """Installed from requirements and a model revision this backend carries."""
+    s = stamp(spec, data_dir)
+    if s is None or s.get("revision") != spec.revision:
+        return False
+    plat = s.get("platform", "")
+    try:
+        same = s.get("requirements") == requirements_hash(spec, plat)
+    except OSError:
+        return False
+    return same and python_of(spec.home(data_dir)).exists()
 
 
-def size_bytes(data_dir: Path) -> int:
-    root = kitten.home(data_dir)
+def size_bytes(spec: EngineSpec, data_dir: Path) -> int:
+    root = spec.home(data_dir)
     if not root.exists():
         return 0
     return sum(f.stat().st_size for f in root.rglob("*") if f.is_file() and not f.is_symlink())
@@ -119,17 +138,20 @@ def model_files(root: Path) -> list[Path]:
     for top in (root / "model", root / "cache"):
         if top.exists():
             files += [p for p in top.rglob("*") if p.is_file() and not p.is_symlink()]
-    return sorted(f for f in files if ".cache" not in f.parts and not f.name.endswith(".lock"))
+    skip = (".cache", "hf-home")
+    return sorted(
+        f for f in files if not any(s in f.parts for s in skip) and not f.name.endswith(".lock")
+    )
 
 
 def manifest(root: Path) -> dict[str, str]:
     return {str(p.relative_to(root)): _sha256(p) for p in model_files(root)}
 
 
-def verify(data_dir: Path) -> None:
+def verify(spec: EngineSpec, data_dir: Path) -> None:
     """Raise ModelMismatch when a model file differs from what the install recorded."""
-    root = kitten.home(data_dir)
-    recorded = (stamp(data_dir) or {}).get("files") or {}
+    root = spec.home(data_dir)
+    recorded = (stamp(spec, data_dir) or {}).get("files") or {}
     if not recorded:
         raise ModelMismatch("No record of the model's files: install again")
     for rel, digest in recorded.items():
@@ -154,27 +176,31 @@ async def _run(args: list[str], report: Report, done: float, env: dict[str, str]
             tail = (tail + [line])[-20:]
             report(line[:200], done)
     if await proc.wait() != 0:
-        raise RuntimeError("Installing KittenTTS failed: " + " | ".join(tail[-5:]))
+        raise RuntimeError("Installing the voice engine failed: " + " | ".join(tail[-5:]))
 
 
 async def install(
+    spec: EngineSpec,
     data_dir: Path,
     report: Report,
     accepted_license: bool,
     uv: str | None = None,
     weights: str = "",
+    plat: str | None = None,
 ) -> None:
-    """Install (or bring up to date) KittenTTS under <data_dir>/tts/kitten. A failed install
-    leaves no `installed` stamp, so it is not used."""
-    if not accepted_license:
+    """Install (or bring up to date) `spec` under <data_dir>/tts/<name>. A failed install leaves
+    no `installed` stamp, so it is not used."""
+    if not spec.open_license and not accepted_license:
         raise LicenseNotAccepted(
-            f"KittenTTS 2's weights are under the {kitten.LICENSE_NAME}: accept it to install"
+            f"{spec.title}'s weights are under the {spec.license_name}: accept it to install"
         )
     uv = uv or uv_binary()
     if uv is None:
-        raise RuntimeError("Installing KittenTTS needs uv, which was not found")
-    root = kitten.home(data_dir)
-    python = kitten.python_of(root)
+        raise RuntimeError("Installing a voice engine needs uv, which was not found")
+    plat = plat or platform(spec)
+    reqs = spec.requirements(plat)
+    root = spec.home(data_dir)
+    python = python_of(root)
     (root / "installed").unlink(missing_ok=True)
     root.mkdir(parents=True, exist_ok=True)
     env = {
@@ -184,57 +210,67 @@ async def install(
         "VIRTUAL_ENV": "",
     }
     if not python.exists():
-        report("Making the voice engine's environment", 0.02)
+        report(f"Making {spec.title}'s environment", 0.02)
         await _run([uv, "venv", "--python", sys.executable, str(root / "venv")], report, 0.02, env)
-    if not on_mac():
-        report("Installing PyTorch for the CPU (about 700 MB)", 0.05)
+    index = TORCH_INDEX.get(plat)
+    if index:
+        what = (
+            "for NVIDIA GPUs (about 3 GB)" if plat == "linux-cuda" else "for the CPU (about 700 MB)"
+        )
+        report(f"Installing PyTorch {what}", 0.05)
         torch_file = root / "torch-requirements.txt"
-        torch_file.write_text(_pin("torch", requirements()))
+        torch_file.write_text(_pin("torch", reqs))
         await _run(
             [uv, "pip", "install", "--python", str(python), "--require-hashes", "--no-deps"]
-            + ["--index-url", TORCH_INDEX, "-r", str(torch_file)],
+            + ["--index-url", index, "-r", str(torch_file)],
             report,
             0.3,
             env,
         )
-    report("Installing KittenTTS", 0.35)
+    report(f"Installing {spec.title}", 0.35)
     await _run(
         [uv, "pip", "install", "--python", str(python), "--require-hashes"]
-        + (["--extra-index-url", TORCH_INDEX] if not on_mac() else [])
-        + ["-r", str(requirements())],
+        + (["--extra-index-url", index, "--index-strategy", "unsafe-best-match"] if index else [])
+        + ["-r", str(reqs)],
         report,
         0.6,
         env,
     )
-    report("Downloading the KittenTTS 2 model (about 1.5 GB)", 0.65)
-    await _run(
-        [str(python), "-I", str(kitten.WORKER), "--prefetch", "--model", str(root / "model")]
-        + ["--revision", kitten.MODEL_REVISION, "--vocoder-revision", kitten.VOCODER_REVISION]
-        + ["--audioseal-revision", kitten.AUDIOSEAL_REVISION, "--weights", weights],
-        report,
-        0.9,
-        kitten.worker_env(root, offline=False),
-    )
+    report(f"Downloading the {spec.title} model", 0.65)
+    prefetch = [str(python), "-I", str(WORKER), "--engine", spec.name, "--prefetch"]
+    prefetch += ["--model", str(root / "model"), "--repo", spec.repo, "--revision", spec.revision]
+    prefetch += [
+        "--vocoder-revision",
+        spec.extra_revision,
+        "--audioseal-revision",
+        AUDIOSEAL_REVISION,
+    ]
+    prefetch += ["--weights", weights]
+    await _run(prefetch, report, 0.9, worker_env(root, offline=False))
     report("Recording the model's checksums", 0.95)
     files = await asyncio.to_thread(manifest, root)
     (root / "installed").write_text(
         json.dumps(
             {
-                "requirements": requirements_hash(),
-                "revision": kitten.MODEL_REVISION,
-                "vocoder_revision": kitten.VOCODER_REVISION,
-                "audioseal_revision": kitten.AUDIOSEAL_REVISION,
-                "weights": weights,  # a different `kitten_weights` needs installing again
-                "license": kitten.LICENSE_NAME,
-                "license_accepted_at": datetime.now().isoformat(timespec="seconds"),
+                "engine": spec.name,
+                "platform": plat,
+                "requirements": requirements_hash(spec, plat),
+                "revision": spec.revision,
+                "extra_revision": spec.extra_revision,
+                "audioseal_revision": AUDIOSEAL_REVISION,
+                "weights": weights,  # KittenTTS: a different `kitten_weights` installs again
+                "license": spec.license_name,
+                "license_accepted_at": (
+                    None if spec.open_license else datetime.now().isoformat(timespec="seconds")
+                ),
                 "files": files,
             },
             indent=1,
         )
     )
-    report("KittenTTS is installed", 1.0)
-    logger.info("KittenTTS installed in %s (%.0f MB)", root, size_bytes(data_dir) / 1e6)
+    report(f"{spec.title} is installed", 1.0)
+    logger.info("%s installed in %s (%.0f MB)", spec.title, root, size_bytes(spec, data_dir) / 1e6)
 
 
-def remove(data_dir: Path) -> None:
-    kitten.remove(data_dir)
+def remove(spec: EngineSpec, data_dir: Path) -> None:
+    shutil.rmtree(spec.home(data_dir), ignore_errors=True)

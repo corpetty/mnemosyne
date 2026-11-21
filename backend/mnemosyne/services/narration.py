@@ -240,10 +240,10 @@ async def _speak_checked(app, synth, prompt, text, language, check, workdir):
 
 
 async def _heard(app, samples, text, language, workdir) -> float:
-    from ..synthesis.kitten import _write_wav
+    from ..synthesis.workers import write_wav
 
     path = workdir / f"check-{uuid4().hex[:6]}.wav"
-    await asyncio.to_thread(_write_wav, path, samples, OUT_RATE)
+    await asyncio.to_thread(write_wav, path, samples, OUT_RATE)
     try:
         heard = await voices.transcribe(app, path, language)
     except Exception:

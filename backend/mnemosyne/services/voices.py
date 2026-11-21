@@ -167,6 +167,7 @@ def view(app: AppContext, row: dict) -> Voice:
         seconds=round(seconds, 1),
         consented=consented,
         consent_at=row["consent_at"],
+        reference_idx=row["reference_idx"],
         ready=not needs,
         needs=" and ".join(needs),
         created_at=row["created_at"],
@@ -349,10 +350,10 @@ def _threshold(app: AppContext, space: str) -> float:
 
 def _store_wav(app: AppContext, dest: Path, samples: np.ndarray, rate: int) -> Path:
     """Write a WAV, sealed when encryption at rest is on. Returns the stored path."""
-    from ..synthesis.kitten import _write_wav
+    from ..synthesis.workers import write_wav
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    _write_wav(dest, samples, rate)
+    write_wav(dest, samples, rate)
     if app.settings.encrypt_at_rest and app.file_key is not None:
         from ..storage.crypto import encrypt_file
 
@@ -452,12 +453,29 @@ def set_clip_text(app: AppContext, voice_id: str, idx: int, text: str) -> Voice:
 
 
 def delete_clip(app: AppContext, voice_id: str, idx: int) -> Voice:
-    get_own(app, voice_id)
+    row = get_own(app, voice_id)
     relative = app.repo.delete_voice_clip(voice_id, idx)
     if relative is None:
         raise VoiceNotFound("No such recording")
     stored(app, relative).unlink(missing_ok=True)
+    if row["reference_idx"] == idx:
+        app.repo.update_voice(voice_id, reference_idx=None)
     return view(app, app.repo.get_voice_row(voice_id))
+
+
+def set_reference(app: AppContext, voice_id: str, idx: int) -> None:
+    """Make clip `idx` the voice's reference (-1: let the engine pick again). The owner's ear
+    beat every measure tried for this (plan, "Picking the reference")."""
+    get_own(app, voice_id)
+    if idx < 0:
+        app.repo.update_voice(voice_id, reference_idx=None)
+        return
+    clip = next((c for c in app.repo.voice_clips(voice_id) if c["idx"] == idx), None)
+    if clip is None:
+        raise VoiceNotFound("No such recording")
+    if not clip["accepted"]:
+        raise VoiceError("That recording did not pass the checks, so it cannot be the reference")
+    app.repo.update_voice(voice_id, reference_idx=idx)
 
 
 # ---- consent -------------------------------------------------------------
@@ -591,13 +609,17 @@ async def prompt_for(
 
     row = app.repo.get_voice_row(voice_id)
     clips = [c for c in app.repo.voice_clips(voice_id) if c["accepted"]]
+    chosen = [c for c in clips if c["idx"] == row["reference_idx"]]
+    if chosen:  # the owner picked the clip that sounds like them: only that one
+        clips = chosen
+    extra = {"language": row["language"]}
     saved = app.repo.get_prompt_row(voice_id, synth.space)
     key = app.file_key
     if saved and stored(app, saved["path"]).exists():
         dest = workdir / Path(saved["path"]).name.removesuffix(".enc")
         with plaintext(stored(app, saved["path"]), key) as plain:
             shutil.copyfile(plain, dest)
-        return VoicePrompt(synth.space, dest, saved["text"])
+        return VoicePrompt(synth.space, dest, saved["text"], extra)
     refs = []
     for c in clips:
         dest = workdir / f"ref-{c['idx']}.wav"
@@ -605,6 +627,7 @@ async def prompt_for(
             shutil.copyfile(plain, dest)
         refs.append(RefClip(dest, c["text"], c["seconds"], c["quality"]))
     prompt = await synth.prepare(refs, workdir / "prepared")
+    prompt = VoicePrompt(prompt.space, prompt.path, prompt.text, {**prompt.extra, **extra})
     keep = folder(app, voice_id) / f"prompt-{synth.space}.wav"
     shutil.copyfile(prompt.path, keep)
     if app.settings.encrypt_at_rest and key is not None:

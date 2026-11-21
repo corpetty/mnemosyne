@@ -17,6 +17,7 @@ from ...jobs import Job
 from ...models.base import ApiModel
 from ...models.voice import (
     ConsentChallenge,
+    EngineInfo,
     Narration,
     NarrationRequest,
     NarrationSource,
@@ -25,7 +26,6 @@ from ...models.voice import (
 )
 from ...services import narration, tts_install, voices
 from ...storage.crypto import is_encrypted
-from ...synthesis import kitten
 from ..context import AppContext, get_ctx
 
 router = APIRouter(prefix="/api", tags=["voices"])
@@ -39,7 +39,9 @@ class VoiceCreate(ApiModel):
 
 
 class VoiceUpdate(ApiModel):
-    name: str
+    name: str | None = None
+    # The clip to use as the voice's reference ("sounds like me"); -1 lets the engine pick.
+    reference_idx: int | None = None
 
 
 class ClipUpdate(ApiModel):
@@ -47,6 +49,7 @@ class ClipUpdate(ApiModel):
 
 
 class InstallRequest(ApiModel):
+    engine: str = "qwen3"
     accept_license: bool = False
 
 
@@ -84,58 +87,86 @@ def _serve(request: Request, ctx: AppContext, path: Path, filename: str):
     return FileResponse(path, filename=filename)
 
 
-# ---- the engine -------------------------------------------------------------
+# ---- the engines ------------------------------------------------------------
+
+
+def _engine(name: str):
+    spec = tts_install.ENGINES.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"No narration engine {name!r}")
+    return spec
 
 
 @router.get("/voices/engine", response_model=VoiceEngine)
 async def engine_status(ctx: AppContext = Depends(get_ctx)):
-    from ...synthesis.registry import resolve_synthesizer
+    """The engine in use and every engine this computer can install, recommended first."""
+    from ...synthesis.registry import ORDER, resolve_synthesizer
 
     data_dir = ctx.settings.data_dir
+    engines = []
+    for name in ORDER:
+        spec = tts_install.ENGINES[name]
+        engines.append(
+            EngineInfo(
+                name=spec.name,
+                title=spec.title,
+                installed=tts_install.installed(spec, data_dir),
+                install_bytes=await asyncio.to_thread(tts_install.size_bytes, spec, data_dir),
+                platform=await asyncio.to_thread(tts_install.platform, spec),
+                license_name=spec.license_name,
+                license_url=spec.license_url,
+                open_license=spec.open_license,
+                attribution=spec.attribution,
+                size_note=spec.size_note,
+                recommended=name == ORDER[0],
+            )
+        )
     return VoiceEngine(
         engine=resolve_synthesizer(ctx.settings),
-        installed=tts_install.installed(data_dir),
         installable=tts_install.uv_binary() is not None,
-        install_bytes=await asyncio.to_thread(tts_install.size_bytes, data_dir),
-        license_name=kitten.LICENSE_NAME,
-        license_url=kitten.LICENSE_URL,
-        attribution=kitten.ATTRIBUTION,
         can_check_voices=voices.can_check(ctx),
+        engines=engines,
     )
 
 
 @router.post("/voices/engine", response_model=Job, dependencies=ADMIN)
 async def install_engine(request: InstallRequest, ctx: AppContext = Depends(get_ctx)):
-    """Install KittenTTS 2 (an `install_voice_engine` job, about 3 GB). Its weights are not open
-    source: the request must say the licence was accepted."""
-    if not request.accept_license:
+    """Install a narration engine (an `install_voice_engine` job, several GB). One whose weights
+    are not open source (KittenTTS) needs `accept_license`."""
+    spec = _engine(request.engine)
+    if not spec.open_license and not request.accept_license:
         raise HTTPException(
-            status_code=400, detail=f"Accept the {kitten.LICENSE_NAME} to install KittenTTS 2"
+            status_code=400, detail=f"Accept the {spec.license_name} to install {spec.title}"
         )
     if any(j.kind == "install_voice_engine" for j in ctx.jobs.list(active_only=True)):
-        raise HTTPException(status_code=409, detail="The voice engine is already being installed")
+        raise HTTPException(status_code=409, detail="A voice engine is already being installed")
 
     async def run(job) -> dict:
         await tts_install.install(
+            spec,
             ctx.settings.data_dir,
             lambda message, frac: job.update(message, progress=frac),
-            accepted_license=True,
-            weights=ctx.settings.kitten_weights,
+            accepted_license=request.accept_license,
+            weights=ctx.settings.kitten_weights if spec.name == "kitten" else "",
         )
         narration.forget_engine(ctx)
-        return {"mb": round(tts_install.size_bytes(ctx.settings.data_dir) / 1e6)}
+        return {
+            "engine": spec.name,
+            "mb": round(tts_install.size_bytes(spec, ctx.settings.data_dir) / 1e6),
+        }
 
     return ctx.jobs.submit("install_voice_engine", run)
 
 
-@router.delete("/voices/engine", dependencies=ADMIN)
-async def remove_engine(ctx: AppContext = Depends(get_ctx)):
-    """Remove the engine and its model (voices and narrations stay)."""
+@router.delete("/voices/engine/{name}", dependencies=ADMIN)
+async def remove_engine(name: str, ctx: AppContext = Depends(get_ctx)):
+    """Remove an engine and its model (voices and narrations stay)."""
+    spec = _engine(name)
     synth = narration.engine(ctx)
-    if synth is not None and synth.is_loaded():
+    if synth is not None and synth.name == spec.name and synth.is_loaded():
         await synth.unload()
     narration.forget_engine(ctx)
-    await asyncio.to_thread(tts_install.remove, ctx.settings.data_dir)
+    await asyncio.to_thread(tts_install.remove, spec, ctx.settings.data_dir)
     return {"removed": True}
 
 
@@ -170,14 +201,21 @@ async def get_voice(voice_id: str, ctx: AppContext = Depends(get_ctx)):
 
 
 @router.patch("/voices/{voice_id}", response_model=Voice)
-async def rename_voice(voice_id: str, request: VoiceUpdate, ctx: AppContext = Depends(get_ctx)):
+async def update_voice(voice_id: str, request: VoiceUpdate, ctx: AppContext = Depends(get_ctx)):
     try:
         voices.get_own(ctx, voice_id)
     except voices.VoiceError as e:
         raise _refuse(e) from e
-    if not request.name.strip():
-        raise HTTPException(status_code=400, detail="Give the voice a name")
-    return voices.view(ctx, ctx.repo.update_voice(voice_id, name=request.name.strip()[:80]))
+    if request.name is not None:
+        if not request.name.strip():
+            raise HTTPException(status_code=400, detail="Give the voice a name")
+        ctx.repo.update_voice(voice_id, name=request.name.strip()[:80])
+    if request.reference_idx is not None:
+        try:
+            voices.set_reference(ctx, voice_id, request.reference_idx)
+        except voices.VoiceError as e:
+            raise _refuse(e) from e
+    return voices.view(ctx, ctx.repo.get_voice_row(voice_id))
 
 
 @router.delete("/voices/{voice_id}")

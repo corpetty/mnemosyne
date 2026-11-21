@@ -337,7 +337,8 @@ class Settings(BaseSettings):
     unload_models_after_minutes: int = 15
 
     # Narration voices (docs/plans/2026-11-20-narration-voices.md, synthesis/registry.py):
-    # auto | kitten | demo | none. auto = KittenTTS 2 once installed (Settings -> Voices).
+    # auto | qwen3 | kitten | demo | none. auto = Qwen3-TTS 1.7B when installed, else KittenTTS 2
+    # (Settings -> Voices).
     synthesizer: str = "auto"
     # KittenTTS 2's weights: "" = the lossless default (954 MB), "emb4" = half the size.
     kitten_weights: str = ""

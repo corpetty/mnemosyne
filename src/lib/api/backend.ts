@@ -1487,13 +1487,14 @@ export async function getVoiceEngine(): Promise<VoiceEngine> {
   return request('/api/voices/engine');
 }
 
-/** Install KittenTTS 2 (an `install_voice_engine` job). Its weights are not open source. */
-export async function installVoiceEngine(acceptLicense: boolean): Promise<Job> {
-  return request('/api/voices/engine', { method: 'POST', body: JSON.stringify({ accept_license: acceptLicense }) });
+/** Install a narration engine (an `install_voice_engine` job). KittenTTS's weights are not open
+ * source, so it needs `acceptLicense`. */
+export async function installVoiceEngine(engine: string, acceptLicense: boolean): Promise<Job> {
+  return request('/api/voices/engine', { method: 'POST', body: JSON.stringify({ engine, accept_license: acceptLicense }) });
 }
 
-export async function removeVoiceEngine(): Promise<void> {
-  await request('/api/voices/engine', { method: 'DELETE' });
+export async function removeVoiceEngine(engine: string): Promise<void> {
+  await request(`/api/voices/engine/${engine}`, { method: 'DELETE' });
 }
 
 export async function getVoiceScript(): Promise<string[]> {
@@ -1514,6 +1515,11 @@ export async function getVoice(voiceId: string): Promise<Voice> {
 
 export async function renameVoice(voiceId: string, name: string): Promise<Voice> {
   return request(`/api/voices/${voiceId}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+}
+
+/** Use clip `idx` as the voice's reference ("sounds like me"); -1 lets the engine pick. */
+export async function setVoiceReference(voiceId: string, idx: number): Promise<Voice> {
+  return request(`/api/voices/${voiceId}`, { method: 'PATCH', body: JSON.stringify({ reference_idx: idx }) });
 }
 
 export async function deleteVoice(voiceId: string): Promise<void> {

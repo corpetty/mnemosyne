@@ -74,6 +74,7 @@ export type SpeakerProfile = S['SpeakerProfileSummary'];
 export type Voice = S['Voice'];
 export type VoiceClip = S['VoiceClip'];
 export type VoiceEngine = S['VoiceEngine'];
+export type EngineInfo = S['EngineInfo'];
 export type ConsentChallenge = S['ConsentChallenge'];
 /** The `voice_consent` job's result (models/voice.py ConsentResult; job results are not in the schema). */
 export type ConsentResult = { passed: boolean; heard: string; text_match: number; voice_match: number; problem: string; voice: Voice };

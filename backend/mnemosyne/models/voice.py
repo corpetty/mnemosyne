@@ -33,6 +33,9 @@ class Voice(ApiModel):
     consent_at: datetime | None = None
     ready: bool  # consented and enough accepted audio: can narrate
     needs: str = ""  # what is missing before it is ready, in words
+    # The clip the owner chose as the voice's reference ("sounds like me"); None: the engine
+    # picks from the accepted clips.
+    reference_idx: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -86,14 +89,26 @@ class NarrationRequest(ApiModel):
     check: bool = True  # transcribe the result and redo chunks that came out wrong
 
 
-class VoiceEngine(ApiModel):
-    """The narration engine on this computer, for Settings -> Voices."""
+class EngineInfo(ApiModel):
+    """One narration engine Mnemosyne can install (synthesis/workers.py EngineSpec)."""
 
-    engine: str  # kitten | demo | none
+    name: str  # qwen3 | kitten
+    title: str
     installed: bool
-    installable: bool  # uv is here (the install can run)
     install_bytes: int  # on disk now
+    platform: str  # what an install here would use: linux | linux-cuda | macos
     license_name: str
     license_url: str
-    attribution: str
+    open_license: bool  # False: the licence is accepted before installing
+    attribution: str  # to show when it is used ("" when none is asked for)
+    size_note: str
+    recommended: bool
+
+
+class VoiceEngine(ApiModel):
+    """The narration engines on this computer, for Settings -> Voices."""
+
+    engine: str  # in use: qwen3 | kitten | demo | none (setting `synthesizer`)
+    installable: bool  # uv is here (an install can run)
     can_check_voices: bool  # a speaker embedder runs here (same-person and consent checks)
+    engines: list[EngineInfo] = Field(default_factory=list)

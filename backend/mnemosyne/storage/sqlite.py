@@ -804,6 +804,7 @@ class SessionRepository(VoiceRows):
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
         self._migrate_columns()
+        self._migrate_voice_columns()  # storage/voices.py
         self._migrate_fts_rowids()
         self._conn.execute(
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",

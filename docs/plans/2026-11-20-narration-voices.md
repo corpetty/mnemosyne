@@ -324,7 +324,7 @@ synthesis/kitten.py, its worker and the requirement files are engine-specific.
 
 KittenTTS 2 at the pinned revision, driven through **our own worker** (synthesis/kitten_worker.py, the protocol
 kitten.py speaks) and scored with the models Mnemosyne itself runs: Parakeet TDT 0.6B v3 int8 for the round trip,
-WeSpeaker ResNet34-LM for similarity, AudioSeal's detector for the watermark. Script: backend/scripts/kitten_task0.py.
+WeSpeaker ResNet34-LM for similarity, AudioSeal's detector for the watermark. Script: backend/scripts/tts_task0.py.
 Machine: Windows 11, 32 threads, RTX 4070 12 GB, kittenml 0.9.8, torch 2.15.0 (CPU build, then +cu132). Three of
 KittenTTS's own sample voices as references (10-11 s each: an audiobook narrator, a radio DJ, an older professor) and
 the six narration paragraphs in the script (summary prose, a decision, action items with names, a question, a digest
@@ -364,6 +364,38 @@ Fixed because of this run (the stand-in worker in the tests could not show them)
   `~/.cache/huggingface`: outside the install, unpinned and kept by Remove. Its files are now fetched at a pinned
   revision into the install (`AUDIOSEAL_REVISION`), and `HF_HOME` points inside it too.
 
+## Qwen3-TTS, fine-tuning, and the owner's ear (2026-11-20)
+
+The owner said KittenTTS cloned his voice but sounded robotic, and gave a 12-minute solo cut of himself to learn
+from. What was tried, measured against his real recordings of the same sentences (6 held out from training, the
+other 80 clips, 12.9 min, used for training; scored with Parakeet and WeSpeaker as in Task 0), and then judged by
+his own listening:
+
+| On his 6 held-out sentences | Similarity to him | Round-trip WER | Length vs his |
+|---|---|---|---|
+| Qwen3-TTS 0.6B, instant clone | 0.80 | 2.9 % | 0.83x |
+| Qwen3-TTS 0.6B, fine-tuned (lr 2e-6, 5 epochs) | 0.78 | 4.5 % | 0.53x |
+| **Qwen3-TTS 1.7B, instant clone** | 0.78 | **1.2 %** | 0.74x |
+| Qwen3-TTS 1.7B, fine-tuned (lr 2e-6, 8-bit AdamW, 5 epochs) | 0.77 | 7.1 % | 0.44x |
+
+- **His verdict: the 1.7B instant clone sounds most like him.** It is now the default engine (synthesis/qwen3.py),
+  Apache-2.0 for code and weights, so the licence question about KittenTTS (above) no longer blocks narration;
+  KittenTTS stays as the faster choice.
+- **Fine-tuning is not offered.** The official script (finetuning/sft_12hz.py) needed three fixes to run here (no
+  FlashAttention on Windows, a TensorBoard folder, and the unmerged QwenLM/Qwen3-TTS#336 text projection for 0.6B).
+  At lr 1e-5 it produced noise and never stopped (655 s for a 10 s sentence; #39); at 2e-6 with 1 s of silence
+  after each clip it worked but **spoke faster with every epoch** (#179) and never came closer to him. KittenTTS 2
+  cannot be fine-tuned yet (KittenML/KittenTTS#190).
+- **Speed** (RTX 4070, Windows, PyTorch SDPA attention): Qwen3-TTS 1.7B 1.9x real time on CUDA, 7x on the CPU, about
+  twice KittenTTS's. Fine as a background job on a GPU, slow on a CPU. On the owner's Mac (Apple silicon, MPS,
+  float16) the app made 11 s of narration in 44 s, the first engine start and the round-trip check included.
+- **Picking the reference.** Measured "closeness" to his delivery (stop-and-restart rate, loudness spread, pitch
+  spread) did not pick a reference reliably: take-to-take randomness was as large as any setting. So the owner
+  picks it by ear ("Sounds like me" on a clip, `reference_idx`); without a pick, Qwen3-TTS uses the clearest single
+  8-20 s clip and KittenTTS joins the best clips to about 20 s.
+- **Not robotic by settings.** Earlier "pace" findings (KittenTTS "55 % faster") were wrong: the same text was 8 %
+  slower than him; what differed was choppiness and flat loudness, which no preset, emotion tag or reference fixed.
+
 ## Progress
 
 Phase 1, built 2026-11-20 on `docs/narration-voices-plan`:
@@ -371,16 +403,18 @@ Phase 1, built 2026-11-20 on `docs/narration-voices-plan`:
 - **Synthesis stage** (backend/mnemosyne/synthesis/): `Synthesizer` Protocol, `RefClip`, `VoicePrompt`, `Speech`,
   `pick_reference` (engine.py); `FakeSynthesizer` for tests and demo mode (fake.py); speakable text, chunks and
   pronunciations (text.py, setting `narration_pronunciations`); the engine choice (registry.py, setting
-  `synthesizer` auto|kitten|demo|none).
-- **KittenTTS 2** (kitten.py, kitten_worker.py): a worker in `<data_dir>/tts/kitten/venv` over stdin/stdout JSON
+  `synthesizer` auto|qwen3|kitten|demo|none; auto prefers Qwen3-TTS).
+- **Engines** (workers.py `EngineSpec` + `WorkerSynthesizer`; qwen3.py, kitten.py; one worker, tts_worker.py
+  `--engine`): Qwen3-TTS 1.7B (default, revision `fd4b254`) and KittenTTS 2, each a worker in `<data_dir>/tts/kitten/venv` over stdin/stdout JSON
   lines, started on first use; the model pinned at revision `c93cb7c`, loaded from a local copy with
   `HF_HUB_OFFLINE=1`; every output watermarked with AudioSeal. Installer services/tts_install.py (Phonon's steps:
-  hashed requirements for Linux and Mac, regenerated by `backend/scripts/lock-kitten.sh`; licence acceptance
-  required; the SHA-256 of every model file recorded, `verify`).
+  hashed requirements per engine for Linux, Linux with NVIDIA (CUDA 12.8) and Mac, regenerated by
+  `backend/scripts/lock-tts.sh`; KittenTTS's licence accepted first; the SHA-256 of every model file recorded,
+  `verify`). The worker answers on a private copy of stdout: libraries that print cannot break it.
 - **Voices** (services/voices.py; storage/voices.py tables `narration_voices`, `narration_voice_clips`,
   `narration_prompts`, `narrations`): guided script or uploads cut into pieces, level/clipping/noise/speech checks,
   the same-person check with the speaker embedder voice profiles use, transcripts the person can correct, the live
-  consent check, owner-only access, files sealed by encryption at rest (`convert_files`, hooked into
+  consent check, the reference picked by ear, owner-only access, files sealed by encryption at rest (`convert_files`, hooked into
   services/encryption.py).
 - **Narration** (services/narration.py): the `narrate` job (summary, own notes, follow-up, digest, text), chunked
   synthesis, evened loudness, the transcription round trip, OGG/Opus tagged `SYNTHETIC=mnemosyne`, chunk times,
@@ -388,13 +422,13 @@ Phase 1, built 2026-11-20 on `docs/narration-voices-plan`:
   from such a meeting (`has_synthetic`).
 - **API** routes/voices.py (docs/api-reference.md "Narration voices"); **UI** Settings → Voices
   (VoicesSettings.svelte, VoiceStudio.svelte) and Listen on summaries and digests (NarrateButton.svelte).
-- **Tests** test_voices.py, test_synthesis_kitten.py (a stand-in worker), test_synthesis_text.py.
+- **Tests** test_voices.py, test_synthesis_engines.py (a stand-in worker for both engines),
+  test_synthesis_text.py; backend/scripts/tts_task0.py measures a real engine.
 
 Not done yet, in order:
 
-1. **CUDA PyTorch on NVIDIA** (see Task 0 results): a third hashed requirement set and the installer choosing it
-   when `nvidia-smi` works, as the backend does for its gpu extra. Then Task 0 on the Mac (MLX) and on Linux, with
-   real voices, and the similarity thresholds calibrated on them.
+1. **Measure on Linux** with Qwen3-TTS (done on Windows with CUDA and on the Mac), and calibrate the same-person and consent thresholds on
+   real voices. (CUDA PyTorch on NVIDIA is done: requirements/<engine>-linux-cuda.txt.)
 2. **Watermark detection on import**: only the metadata tag is checked today (cheap, and anyone can strip it); the
    worker already has AudioSeal's detector (`detect`), not yet called on import.
 3. Listen on notes and follow-ups in the UI (the API takes them), Obsidian embeds, publications, the MCP `narrate`

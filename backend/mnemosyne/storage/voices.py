@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS narration_voices (
     consent_at TEXT,
     consent_text TEXT,
     consent_score REAL,
+    reference_idx INTEGER,  -- the clip the owner chose as the reference; NULL: the engine picks
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -86,6 +87,12 @@ def _dt(text: str | None) -> datetime | None:
 class VoiceRows:
     """Row access for the tables above. Expects the repository's `_conn` and `_lock`."""
 
+    def _migrate_voice_columns(self) -> None:
+        """Columns added after the tables were first made (databases of earlier test builds)."""
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(narration_voices)")}
+        if "reference_idx" not in cols:
+            self._conn.execute("ALTER TABLE narration_voices ADD COLUMN reference_idx INTEGER")
+
     # ---- voices --------------------------------------------------------
 
     def add_voice(self, name: str, owner_id: str, language: str = "en") -> dict:
@@ -119,7 +126,7 @@ class VoiceRows:
 
     def update_voice(self, voice_id: str, **fields) -> dict | None:
         allowed = {"name", "language", "consent_path", "consent_at", "consent_text"}
-        allowed |= {"consent_score"}
+        allowed |= {"consent_score", "reference_idx"}
         changes = {k: v for k, v in fields.items() if k in allowed}
         if changes:
             changes["updated_at"] = _now()
@@ -128,6 +135,10 @@ class VoiceRows:
                 self._conn.execute(
                     f"UPDATE narration_voices SET {cols} WHERE id=?", (*changes.values(), voice_id)
                 )
+                if "reference_idx" in changes:  # another reference: the prepared prompts are stale
+                    self._conn.execute(
+                        "DELETE FROM narration_prompts WHERE voice_id=?", (voice_id,)
+                    )
         return self.get_voice_row(voice_id)
 
     def delete_voice(self, voice_id: str) -> bool:
@@ -341,6 +352,7 @@ def _voice(row) -> dict:
         "consent_at": _dt(row["consent_at"]),
         "consent_text": row["consent_text"],
         "consent_score": row["consent_score"],
+        "reference_idx": row["reference_idx"],
         "created_at": _dt(row["created_at"]),
         "updated_at": _dt(row["updated_at"]),
     }
