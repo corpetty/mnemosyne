@@ -24,6 +24,7 @@
 	import WindowSettings from './WindowSettings.svelte';
 	import GpuSupportCard from './GpuSupportCard.svelte';
 	import PhononCard from './PhononCard.svelte';
+	import VoicesSettings from './VoicesSettings.svelte';
 	import MyPreferences from './MyPreferences.svelte';
 	import LocalModelCard from './LocalModelCard.svelte';
 	import RecordsSettings from './RecordsSettings.svelte';
@@ -443,6 +444,7 @@
 		{ id: 'transcription', label: 'Transcription' },
 		{ id: 'ai', label: 'AI' },
 		{ id: 'notes', label: 'Notes' },
+		{ id: 'voices', label: 'Voices' },
 		{ id: 'devices', label: 'Devices and people' }
 	] as const;
 	const tab = $derived(uiState.settingsTab);
@@ -466,6 +468,9 @@
 
 	{#if tab === 'general' && connectionState.me?.team_mode && connectionState.me.id}
 		<MyPreferences />
+	{/if}
+	{#if tab === 'voices'}
+		<VoicesSettings />
 	{/if}
 	{#if readOnly}
 		<p class="rounded border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-400">

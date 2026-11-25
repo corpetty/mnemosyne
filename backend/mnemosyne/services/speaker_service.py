@@ -12,6 +12,12 @@ from ..storage.sqlite import SessionRepository
 logger = logging.getLogger(__name__)
 
 
+def has_synthetic(repo: SessionRepository, session_id: str) -> bool:
+    """The meeting has audio marked as a narration (history `synthetic_audio`, written on import
+    by api/routes/audio.py): its voices are not learned into profiles."""
+    return any(e["kind"] == "synthetic_audio" for e in repo.events(session_id))
+
+
 def cosine(a: list[float], b: list[float]) -> float:
     if len(a) != len(b) or not a:
         return -1.0
@@ -75,6 +81,10 @@ class SpeakerService:
         session = self.repo.relabel_session_speaker(session_id, label, name)
         if session is None:
             return None
+        if enroll and has_synthetic(self.repo, session_id):
+            # A narration made in someone's voice must never teach their profile that voice.
+            logger.info("Not enrolling %r from %s: it contains synthetic speech", name, session_id)
+            enroll = False
         if enroll:
             # Every space the label has a stored voice in.
             for space, by_label in voices.items():

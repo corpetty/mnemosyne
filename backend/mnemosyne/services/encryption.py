@@ -214,6 +214,12 @@ def enable(app: AppContext) -> EncryptionEnabled:
         files += convert_files(app, app.file_key)
     except Exception as e:
         errors.append(f"resources: {e}")
+    from .voices import convert_files as convert_voices
+
+    try:
+        files += convert_voices(app, app.file_key)
+    except Exception as e:
+        errors.append(f"voices: {e}")
     logger.info("Encryption on: database and %d files", files)
     return EncryptionEnabled(recovery_code=recovery_code(master), files=files, errors=errors)
 
@@ -235,6 +241,9 @@ def disable(app: AppContext) -> int:
     from .assets import convert_files
 
     files += convert_files(app, None)
+    from .voices import convert_files as convert_voices
+
+    files += convert_voices(app, None)
     try:
         app.person.unseal()  # while the master key is still here to open it
     except Exception as e:

@@ -917,6 +917,7 @@ async def _import_new(
         offset=0.0,
         seconds=round(seconds, 1) if seconds is not None else None,
     )
+    await _note_synthetic(ctx, session.id, saved, 0, original.name)
 
     job_id = None
     if transcribe:
@@ -928,6 +929,16 @@ async def _import_new(
         will_transcribe=transcribe,
         message=f"Imported {original.name}",
     )
+
+
+async def _note_synthetic(ctx: AppContext, session_id: str, saved: Path, part, name: str) -> None:
+    """A Mnemosyne narration imported as a meeting (its SYNTHETIC tag): say so in the history,
+    which also keeps its speakers' voices out of the voice profiles (services/speaker_service.py
+    `has_synthetic`)."""
+    from ...services import narration
+
+    if await asyncio.to_thread(narration.is_tagged_synthetic, saved):
+        history.log(ctx, session_id, "synthetic_audio", part, file=name)
 
 
 SAMPLE = Path(__file__).resolve().parents[2] / "samples" / "sample-meeting.ogg"
@@ -1009,6 +1020,7 @@ async def _import_part(ctx: AppContext, session_id: str, file, original: Path, t
         offset=round(offset, 1),
         seconds=round(seconds, 1) if seconds is not None else None,
     )
+    await _note_synthetic(ctx, session_id, saved, recording.part, original.name)
     await asyncio.to_thread(seal_session_audio, ctx, session_id)
 
     job_id = None
