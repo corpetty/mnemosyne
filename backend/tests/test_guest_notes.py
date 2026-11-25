@@ -4,6 +4,7 @@ the WebSocket on 127.0.0.1); the sidecar is the toy `notes doc` of tests/fake_li
 
 import asyncio
 import base64
+import gc
 import hashlib
 import json
 import struct
@@ -13,9 +14,11 @@ import httpx
 import pytest
 
 from mnemosyne.models.session import AgendaItem, Session
+from mnemosyne.models.sync_session import SyncTombstone
 from mnemosyne.services import guest_format as gf
 from mnemosyne.services import guest_notes, notes_media, shared_notes
 from mnemosyne.services import publication_format as pf
+from mnemosyne.services.sync_peers import SyncPeer
 from tests import fake_link
 from tests.fake_guest_room import (
     T_MEDIA_PUT,
@@ -619,6 +622,31 @@ async def test_stop_deletes_the_room(ctx, host):
     fresh = await guest_notes.new_link(ctx, sid, by="Corey")
     assert fresh["room"] != row["room"] and fresh["key"] != row["key"]
     assert guest_notes.state(ctx.repo.guest_room(sid)) == "live"
+
+
+async def test_a_sync_delete_on_a_worker_thread_removes_the_room(ctx, host, recwarn):
+    """Library sync takes a page of tombstones in `asyncio.to_thread`: no running loop there."""
+    sid = meeting(ctx)
+    row, _ = await started(ctx, host, sid)
+    ctx._loop = asyncio.get_running_loop()  # `startup` sets it; these tests do not run that
+    peer = SyncPeer("p1", "bean", "ep", "ticket", "tok", "2026-10-29T00:00:00+00:00")
+    t = SyncTombstone(session_id=sid, at="2026-10-29T15:22:27", device="bean")
+    outcome = await asyncio.to_thread(ctx.sync.take_tombstone, peer, t)
+    assert outcome.kind == "deleted" and ctx.repo.get(sid) is None
+    await until(lambda: host.rooms[row["room"]].deleted)
+    await until(lambda: guest_notes.bridge_for(ctx, sid) is None)
+    gc.collect()
+    assert not [w for w in recwarn if "never awaited" in str(w.message)]
+
+
+async def test_a_delete_with_no_loop_to_hand_to_says_so(ctx, host, recwarn, caplog):
+    sid = meeting(ctx)
+    row, _ = await started(ctx, host, sid)
+    assert ctx._loop is None
+    assert await asyncio.to_thread(ctx.sessions.delete_session, sid)
+    assert f"Guest notes room {row['room']} stays" in caplog.text
+    gc.collect()
+    assert not [w for w in recwarn if "never awaited" in str(w.message)]
 
 
 async def test_resume_rejoins_from_the_last_seq_and_catches_up(ctx, host):

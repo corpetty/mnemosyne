@@ -1572,14 +1572,16 @@ def forget_session(app: AppContext, session_id: str):
             if pub_dir(app, row["id"]).exists() or not row.get("origin"):
                 bury(app, row["id"], "deleted", session_id)
             if row["place"] == "host" and row["host_url"] and not row["unpublished_at"]:
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
+                # Library sync and combining delete meetings on a worker thread: the delete goes
+                # to the app's loop, and the coroutine is made there, so it is never left unawaited.
+                if not app.on_loop(_delete_in_background, app, row):
                     logger.warning("Publication %s stays on %s", row["id"], row["host_url"])
-                    continue
-                loop.create_task(delete_quietly(app, row))
 
     return after
+
+
+def _delete_in_background(app: AppContext, row: dict) -> None:
+    asyncio.get_running_loop().create_task(delete_quietly(app, row))
 
 
 async def delete_quietly(app: AppContext, row: dict) -> None:

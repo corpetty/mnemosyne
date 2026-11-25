@@ -2,6 +2,8 @@
 `merge_publications`, phase 7 P8): two apps in this process pulling from each other (the pattern
 of test_sync_service), one fake publish host shared through httpx.MockTransport."""
 
+import asyncio
+import gc
 import time
 from datetime import datetime, timedelta
 
@@ -294,6 +296,49 @@ async def test_deleting_the_meeting_removes_the_files_on_b(nodes, host, fake_cut
     assert b.repo.get(sid) is None
     assert not (folder(b, pub["id"]) / "manifest").exists()
     assert publishing.read_meta(b.ctx, pub["id"])["gone"] == "deleted"
+
+
+async def test_a_delete_from_sync_removes_the_hosted_copy(nodes, host, fake_cut, recwarn):  # noqa: F811
+    """Library sync takes a page of tombstones on a worker thread: no running loop there."""
+    a, b = nodes
+    sid = talk(a)
+    pub = await publish(a, sid, where="host", expires_days=30)
+    await pull(b, a)
+    a.ctx.sessions.delete_session(sid)
+    await until(lambda: _host_deletes(host, pub["id"]))  # A's own, on its loop
+    host.calls.clear()
+    b.ctx._loop = asyncio.get_running_loop()  # `startup` sets it; these tests do not run that
+    await pull(b, a)
+    assert b.repo.get(sid) is None
+    await until(lambda: _host_deletes(host, pub["id"]))
+    gc.collect()
+    assert not [w for w in recwarn if "never awaited" in str(w.message)]
+
+
+async def test_a_delete_with_no_loop_to_hand_to_says_so(nodes, host, fake_cut, recwarn, caplog):  # noqa: F811
+    a, _ = nodes
+    sid = talk(a)
+    pub = await publish(a, sid, where="host", expires_days=30)
+    host.calls.clear()
+    assert a.ctx._loop is None
+    assert await asyncio.to_thread(a.ctx.sessions.delete_session, sid)
+    assert f"Publication {pub['id']} stays" in caplog.text
+    assert not _host_deletes(host, pub["id"])
+    gc.collect()
+    assert not [w for w in recwarn if "never awaited" in str(w.message)]
+
+
+def _host_deletes(host: Host, pub_id: str) -> list:
+    return [c for c in host.calls if c[0] == "DELETE" and c[1] == f"/pub/{pub_id}"]
+
+
+async def until(check, timeout: float = 5.0) -> None:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if check():
+            return
+        await anyio.sleep(0.01)
+    raise AssertionError("timed out")
 
 
 # ---- concurrent changes ----------------------------------------------------------------------
