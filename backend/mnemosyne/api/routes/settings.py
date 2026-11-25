@@ -77,6 +77,9 @@ PERSONAL_SETTINGS = frozenset(
         "shared_in_search",
         "shared_in_digest",
         "shared_in_obsidian",
+        # final transcriptions on another of the owner's computers (services/peer_compute.py)
+        "transcribe_on",
+        "transcribe_on_fallback",
         # the owner's calendar
         "calendar_source",
         "calendar_ics_url",

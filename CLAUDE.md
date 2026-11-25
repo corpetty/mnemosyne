@@ -784,6 +784,17 @@ record: team meetings never leave the host and a member's personal meetings neve
 Browser members from home: Tailscale machine sharing of the host only (docs/team-server.md "Members from home"). e2e as in Gotchas.
 Out of scope: dedicated servers taking app members, more than one team per computer, an offline team cache, Windows.
 
+Paired computers' models (unreleased): a library-sync peer lends its LLMs and transcription engine
+(services/peer_compute.py, api/routes/compute.py; only a sync peer's DESKTOP token, `require_owner_channel`,
+refused on a dedicated team server like sync). Borrowing is off in team mode, hosting included (team meetings
+never leave the host). Results carry the voice `space` with the embeddings. Borrowing: provider `peer:<sync id>` per peer (summarization/peer.py, models
+`<provider>/<model>`, `SummarizationService.peer_source`, `local_providers` vs `providers`), and
+`transcribe_on` + `transcribe_on_fallback` (transcription/peer.py `PeerEngine`, picked by
+`ModelService.job_engine`: upload, poll, fall back to our engine). Lending: only `LENT` providers
+(never cloud, never `peer:`, so a peer provider is never cloud for local-only meetings), a
+`peer_transcribe` job sharing the `transcribe` limit, audio in the crypto scratch folder until the
+job ends. Live transcription stays local. Tests: tests/test_peer_compute.py (two apps via ASGITransport).
+
 Candidates next: offline installer (pre-seeded uv cache). Flathub is on hold (Corey, 2026-09-29).
 
 Frontend package manager: pnpm is pinned via `packageManager` (corepack). If `pnpm` complains

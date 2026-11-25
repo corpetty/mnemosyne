@@ -20,6 +20,8 @@ router = APIRouter(prefix="/api", tags=["models"])
 
 class ProviderModels(ApiModel):
     provider: str
+    # What the UI shows: the provider's name, or "<computer> (paired computer)" for `peer:<id>`.
+    label: str
     models: list[str]
 
 

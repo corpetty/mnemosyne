@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -37,11 +38,15 @@ class SummarizationService:
     chunk_chars = 0  # 0: never split (see Settings.summary_chunk_chars)
     # Names to hide from cloud providers when cloud_redaction is on; set by AppContext.
     name_source: Callable[[], list[str]] | None = None
+    # The `peer:<id>` providers of the computers paired for library sync
+    # (services/peer_compute.py PeerProviders); set by AppContext.
+    peer_source: Callable[[], dict[str, SummarizationProvider]] | None = None
 
     PARTS_KEPT = 64
 
     def __init__(self, settings: Settings | None = None):
-        self.providers: dict[str, SummarizationProvider] = {}
+        # This computer's own providers; `providers` adds the paired computers' (peer_source).
+        self.local_providers: dict[str, SummarizationProvider] = {}
         # Replies for parts of long meetings: summarizing again after one part failed (or
         # with a different style of merge) does not redo the parts that came back.
         self._parts: OrderedDict[str, str] = OrderedDict()
@@ -49,44 +54,58 @@ class SummarizationService:
         if settings is not None:
             self._init_providers(settings)
 
+    @property
+    def providers(self) -> dict[str, SummarizationProvider]:
+        """Every provider a request may name: this computer's, then each paired computer's."""
+        peers = self.peer_source() if self.peer_source is not None else {}
+        return {**self.local_providers, **peers} if peers else self.local_providers
+
+    @providers.setter
+    def providers(self, value: dict[str, SummarizationProvider]) -> None:
+        self.local_providers = value
+
     def _init_providers(self, settings: Settings) -> None:
-        self.providers["ollama"] = OllamaProvider(base_url=settings.ollama_url)
-        self.providers["vllm"] = VLLMProvider(base_url=settings.vllm_url)
+        own = self.local_providers
+        own["ollama"] = OllamaProvider(base_url=settings.ollama_url)
+        own["vllm"] = VLLMProvider(base_url=settings.vllm_url)
         # With cloud models off, no cloud provider exists to be picked by a setting, a meeting
         # type or a request.
         cloud = settings.cloud_models
         if cloud and settings.openai_api_key:
-            self.providers["openai"] = OpenAIProvider(api_key=settings.openai_api_key)
+            own["openai"] = OpenAIProvider(api_key=settings.openai_api_key)
         if cloud and settings.anthropic_api_key:
-            self.providers["anthropic"] = AnthropicProvider(api_key=settings.anthropic_api_key)
+            own["anthropic"] = AnthropicProvider(api_key=settings.anthropic_api_key)
         from ..summarization.retry import RetryingProvider
 
-        for name in list(self.providers):
-            self.providers[name] = RetryingProvider(self.providers[name])
+        for name in list(own):
+            own[name] = RetryingProvider(own[name])
         # The built-in model (services/local_llm.py). Not retried: on a CPU one request can run
         # for minutes, and a retry would start it over.
         from ..services.local_llm import manager
         from ..summarization.local import LocalProvider
 
-        self.providers["local"] = LocalProvider(manager(settings.models_dir))
+        own["local"] = LocalProvider(manager(settings.models_dir))
         if settings.cloud_redaction:
             from ..summarization.privacy import CLOUD_PROVIDERS, RedactingProvider
 
-            for name in CLOUD_PROVIDERS & set(self.providers):
-                self.providers[name] = RedactingProvider(
-                    self.providers[name], lambda: self.name_source() if self.name_source else []
+            for name in CLOUD_PROVIDERS & set(own):
+                own[name] = RedactingProvider(
+                    own[name], lambda: self.name_source() if self.name_source else []
                 )
         from .. import demo
 
         if demo.enabled():
-            self.providers = {"demo": demo.DemoProvider()}
+            self.local_providers = {"demo": demo.DemoProvider()}
 
     async def list_all_models(self) -> list[dict]:
-        results = []
-        for name, provider in self.providers.items():
-            models = await provider.list_models()
-            results.append({"provider": name, "models": models})
-        return results
+        """Every provider with its models, asked at the same time (a paired computer that
+        does not answer must not hold up the others)."""
+        providers = self.providers
+        listed = await asyncio.gather(*(p.list_models() for p in providers.values()))
+        return [
+            {"provider": name, "label": getattr(p, "label", "") or name, "models": models}
+            for (name, p), models in zip(providers.items(), listed, strict=True)
+        ]
 
     async def resolve_model(self, provider_name: str, model: str = "") -> str:
         """The model to use: `model` itself, or the provider's first one."""
@@ -132,7 +151,7 @@ class SummarizationService:
 
         lines = transcript_lines(segments)
         starts = [float(seg["start"]) for seg in segments]
-        budget = self.budget(provider)
+        budget = self.budget(provider, model)
         ranges = (
             split_lines(lines, budget)
             if budget and sum(len(x) + 1 for x in lines) > budget
@@ -159,10 +178,13 @@ class SummarizationService:
         data.provider, data.model = provider_name, model
         return {"summary": summary, "data": data, "provider": provider_name, "model": model}
 
-    def budget(self, provider) -> int:
+    def budget(self, provider, model: str = "") -> int:
         """Transcript characters per request (0: no limit): `summary_chunk_chars`, or less when
-        the provider says its context holds less (`max_chars`, the built-in model)."""
-        limits = [n for n in (self.chunk_chars, getattr(provider, "max_chars", 0)) if n]
+        the provider says its context holds less (`max_chars`, the built-in model; for a paired
+        computer's, `max_chars_for(model)`)."""
+        per_model = getattr(provider, "max_chars_for", None)
+        own = per_model(model) if callable(per_model) else getattr(provider, "max_chars", 0)
+        limits = [n for n in (self.chunk_chars, own) if n]
         return min(limits) if limits else 0
 
     async def _summarize_in_parts(
@@ -203,7 +225,7 @@ class SummarizationService:
     ) -> tuple[str, SummaryData]:
         """Merge partial notes into one summary. When the notes themselves exceed the
         budget (very long meetings), merge them in groups first, then merge the groups."""
-        budget = self.budget(provider)
+        budget = self.budget(provider, model)
         groups = _group_parts(parts, budget) if budget else [parts]
         if len(groups) > 1:
             merged = []

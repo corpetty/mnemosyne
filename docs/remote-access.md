@@ -121,6 +121,28 @@ changes every half minute and right after a change. Removing a computer stops th
 already synced stays on both. Sync is refused only on a dedicated team server (see [team-server.md](team-server.md)), not on a
 computer that hosts a team: there it syncs only its owner's own meetings, never the team's.
 
+### Use the other computer's models
+
+Two computers in sync (two main computers, or a laptop with a copy of the library) can also do the
+heavy work for each other, for example a desktop with a GPU and a local inference server for a
+laptop:
+
+- **Summaries and the other LLM work** (copilot, Ask, the glossary pass, digests): each computer in
+  sync with this one is a provider, shown as "<name> (paired computer)". Its models are the other
+  computer's Ollama, vLLM and built-in models, written `<provider>/<model>`. Pick it as the default
+  provider (Settings → AI) or for one summary. The other computer never lends its OpenAI or
+  Anthropic keys, so meetings marked local-only can use it too. Leave the model blank to use the
+  other computer's default model.
+- **Final transcriptions**: Settings → Transcription → Transcribe on. The audio of each part goes
+  to that computer through the sync connection, is transcribed and diarized there with its engine
+  (in turn with its own transcriptions), and is deleted there when the job ends. This computer's
+  language, speaker count and echo settings apply. Live transcription while recording stays on this
+  computer. When the other computer cannot be reached or fails, this one transcribes the meeting
+  itself, unless you turn that off (then the job fails and says why).
+
+A computer that hosts a team still lends its models to its owner's other computers, but does not
+borrow theirs: team meetings never leave it.
+
 ## How the connection is made
 
 Mnemosyne's remote access needs no Tailscale or VPN app: an end-to-end encrypted
