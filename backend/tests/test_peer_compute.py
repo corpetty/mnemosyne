@@ -169,13 +169,38 @@ async def test_only_a_synced_computer_may_borrow(nodes):
     _, b = nodes
     async with b.client() as admin:  # the admin token is not a synced computer
         assert (await admin.get("/api/compute/models")).status_code == 403
-    b.ctx.settings.team_mode = True
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=b.app),
-        base_url="http://peer",
-        headers={"Authorization": f"Bearer {nodes[0].ctx.sync_peers.get(b.id).token}"},
-    ) as as_a:
+    b.ctx.settings.team_mode = True  # a dedicated team server: nobody's own computer
+    async with as_peer(nodes[0], b) as as_a:
         assert (await as_a.get("/api/compute/models")).status_code == 409
+
+
+def as_peer(x: Node, y: Node) -> httpx.AsyncClient:
+    """x calling y's backend with the token y gave it at pairing (a DESKTOP device)."""
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=y.app),
+        base_url="http://peer",
+        headers={"Authorization": f"Bearer {x.ctx.sync_peers.get(y.id).token}"},
+    )
+
+
+async def test_a_computer_that_hosts_a_team_still_lends_to_its_owner(nodes):
+    """Lending is personal like library sync: open on a computer that hosts a team (to its
+    owner's paired computers), refused only on a dedicated team server."""
+    a, b = nodes
+    b.ctx.settings.team_mode, b.ctx.settings.team_owner_id = True, "owner"
+    async with as_peer(a, b) as as_a:
+        r = await as_a.get("/api/compute/models")
+    assert r.status_code == 200, r.text
+    assert r.json()["providers"]
+
+
+async def test_a_computer_in_team_mode_borrows_nothing(nodes):
+    """Team meetings never leave the host: no `peer:` provider, no transcription elsewhere."""
+    a, b = nodes
+    a.ctx.settings.team_mode, a.ctx.settings.team_owner_id = True, "owner"
+    a.ctx.settings.transcribe_on = b.id
+    assert peer_name(b) not in a.ctx.summarizer.providers
+    assert isinstance(await a.ctx.models.job_engine(), FakeEngine)
 
 
 async def test_an_unreachable_desktop_lists_no_models(nodes):
@@ -258,6 +283,21 @@ async def test_the_desktop_transcribes_and_keeps_no_audio(nodes, tmp_path):
     job = next(j for j in b.ctx.jobs.list() if j.kind == "peer_transcribe")
     assert job.status == JobStatus.COMPLETED and job.session_id is None
     assert engine.name.endswith("on B")
+
+
+async def test_the_voices_come_back_in_their_space(nodes, tmp_path):
+    """Voices from different embedders are never compared: the space travels with them."""
+    a, b = nodes
+    desktop = b.ctx.models._engine
+    desktop.last_speaker_embeddings = {"SPEAKER_00": [0.1, 0.2, 0.3]}
+    desktop.last_speaker_space = "wespeaker-r34"
+    a.ctx.settings.transcribe_on = b.id
+    engine = await a.ctx.models.job_engine()
+    engine.poll_interval = 0.01
+    sources = [AudioSource(audio(tmp_path), "mixed")]
+    assert [s async for s in engine.transcribe_sources(sources)]
+    assert engine.last_speaker_embeddings == {"SPEAKER_00": [0.1, 0.2, 0.3]}
+    assert engine.last_speaker_space == "wespeaker-r34"
 
 
 async def test_an_unreachable_desktop_falls_back_to_this_computer(nodes, tmp_path):

@@ -9,7 +9,11 @@ have its meetings transcribed by the desktop's engine (transcription/peer.py: se
 Lending (api/routes/compute.py) runs on the other computer: its own providers, never the cloud
 ones (LENT), and its own engine in a `peer_transcribe` job that waits for its transcriptions
 (the same limit of one), on audio kept only in its scratch folder until the job ends.
-Never on a team server, and never passed on: a computer does not lend what it borrows.
+Never passed on: a computer does not lend what it borrows. Lending is personal like library
+sync (not on a dedicated team server; on a computer that hosts a team, to its owner's paired
+computers only). Borrowing is off while a computer is in team mode at all (`team_mode`, hosting
+included): team meetings never leave the host, so their prompts and audio must not go to the
+owner's other computers.
 """
 
 from __future__ import annotations
@@ -231,6 +235,9 @@ class ComputeHost:
                         for seg in segments
                     ],
                     "embeddings": dict(getattr(view, "last_speaker_embeddings", {}) or {}),
+                    # The voice space of those vectors (pyannote, wespeaker-r34): never
+                    # compared across spaces, so it travels with them.
+                    "space": str(getattr(view, "last_speaker_space", "") or ""),
                     "dropped_echo": int(getattr(view, "last_dropped_echo", 0) or 0),
                     "dropped_noise": int(getattr(view, "last_dropped_noise", 0) or 0),
                 }

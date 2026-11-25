@@ -1,8 +1,10 @@
 """This computer's models, lent to the person's other computers (services/peer_compute.py).
 
 Only a computer paired with this one for library sync may call these (its DESKTOP token, the
-caller found as for /api/sync), and never on a team server. The caller is the client of
-summarization/peer.py and transcription/peer.py.
+caller found as for /api/sync). Like library sync they are personal: refused on a dedicated team
+server, open on a computer that hosts a team only to its owner's channels (the router's guard).
+Lending reads no meetings: the caller sends its own audio and prompts. The caller is the client
+of summarization/peer.py and transcription/peer.py.
 """
 
 import asyncio
@@ -14,14 +16,18 @@ import shutil
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
-from ... import access
+from ... import access, config
 from ...models.base import ApiModel
 from ...services import peer_compute
 from ...services.sync_peers import SyncPeer
+from ..auth import require_owner_channel
 from ..context import AppContext, get_ctx
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/compute", tags=["compute"])
+# Personal: on a computer that hosts a team only its owner (api/auth.py require_owner_channel).
+router = APIRouter(
+    prefix="/api/compute", tags=["compute"], dependencies=[Depends(require_owner_channel)]
+)
 ADMIN = [Depends(access.require_admin)]
 
 
@@ -66,7 +72,7 @@ class TranscribeStatus(ApiModel):
 
 
 def _caller(request: Request, ctx: AppContext) -> SyncPeer:
-    if ctx.settings.team_mode:
+    if not config.personal_allowed(ctx.settings):
         raise HTTPException(409, "A team server does not lend its models")
     peer = ctx.sync.calling_peer(getattr(request.state, "device_id", None))
     if peer is None:

@@ -53,6 +53,7 @@ class PeerEngine:
         self.remote_name = ""  # the other computer's engine, once it said
         self.used_fallback = False
         self.last_speaker_embeddings: dict[str, list[float]] = {}
+        self.last_speaker_space = ""  # the voice space of those, as the other computer said
         self.last_dropped_echo = 0
         self.last_dropped_noise = 0
         self.last_segment_sources: list[tuple[TranscriptSegment, str]] = []
@@ -90,6 +91,7 @@ class PeerEngine:
                 yield seg
             for attr in (
                 "last_speaker_embeddings",
+                "last_speaker_space",
                 "last_dropped_echo",
                 "last_dropped_noise",
                 "last_segment_sources",
@@ -200,6 +202,9 @@ class PeerEngine:
         self.last_speaker_embeddings = {
             str(k): [float(x) for x in v] for k, v in (result.get("embeddings") or {}).items()
         }
+        self.last_speaker_space = (
+            str(result.get("space") or "") if self.last_speaker_embeddings else ""
+        )
         self.last_dropped_echo = int(result.get("dropped_echo") or 0)
         self.last_dropped_noise = int(result.get("dropped_noise") or 0)
         return segments

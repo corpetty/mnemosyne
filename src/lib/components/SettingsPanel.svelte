@@ -801,7 +801,7 @@
 								{#if form.transcribe_on}
 									The audio goes to that computer through the sync connection, is transcribed with its transcriber and diarizer, and is deleted there after. Live transcription while recording stays here.
 								{:else}
-									Send final transcriptions to a computer paired in Connection → Library sync, to use its GPU and models.
+									Send final transcriptions to a computer in library sync with this one (Devices and people → My devices), to use its GPU and models.
 								{/if}
 							</span>
 						</label>

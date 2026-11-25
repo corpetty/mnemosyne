@@ -785,8 +785,9 @@ Browser members from home: Tailscale machine sharing of the host only (docs/team
 Out of scope: dedicated servers taking app members, more than one team per computer, an offline team cache, Windows.
 
 Paired computers' models (unreleased): a library-sync peer lends its LLMs and transcription engine
-(services/peer_compute.py, api/routes/compute.py; only a sync peer's DESKTOP token, never on a team
-server). Borrowing: provider `peer:<sync id>` per peer (summarization/peer.py, models
+(services/peer_compute.py, api/routes/compute.py; only a sync peer's DESKTOP token, `require_owner_channel`,
+refused on a dedicated team server like sync). Borrowing is off in team mode, hosting included (team meetings
+never leave the host). Results carry the voice `space` with the embeddings. Borrowing: provider `peer:<sync id>` per peer (summarization/peer.py, models
 `<provider>/<model>`, `SummarizationService.peer_source`, `local_providers` vs `providers`), and
 `transcribe_on` + `transcribe_on_fallback` (transcription/peer.py `PeerEngine`, picked by
 `ModelService.job_engine`: upload, poll, fall back to our engine). Lending: only `LENT` providers

@@ -1959,7 +1959,9 @@ first start on.
 
 A computer paired for library sync lends its LLMs and its transcription engine to the person's
 other computers (services/peer_compute.py). Only a sync peer's DESKTOP token is accepted (403
-for anything else, the admin token included; 409 on a team server).
+for anything else, the admin token included; 409 on a dedicated team server; on a computer that
+hosts a team, the owner's channels only, like `/api/sync`). Borrowing (`peer:` providers,
+`transcribe_on`) is off in team mode, hosting included: team meetings never leave the host.
 
 - `GET /api/compute/models` → `{providers: [{provider, models, max_chars}]}`: the lent providers
   (`vllm`, `ollama`, `local`; never `openai`/`anthropic`, never another computer's), the default
@@ -1981,7 +1983,8 @@ for anything else, the admin token included; 409 on a team server).
 On the borrowing side, each sync peer is a provider `peer:<sync id>` in `GET /api/models`
 (`label` "<name> (paired computer)", models `<provider>/<model>`), and the setting `transcribe_on`
 (a sync id) sends final transcriptions there, with `transcribe_on_fallback` (default on) to
-transcribe here when it cannot.
+transcribe here when it cannot. The result's `embeddings` come with their voice `space`
+(`pyannote`, `wespeaker-r34`), so they are only matched against voices of that space.
 
 ## WebSocket
 
